@@ -1,0 +1,6 @@
+{"type":"ai-title","aiTitle":"Stale auto title","sessionId":"sess-abc"}
+{"type":"user","sessionId":"sess-abc","cwd":"/Users/me/dev/proj","timestamp":"2026-06-15T12:00:00.000Z","message":{"role":"user","content":"first thing I said"}}
+{"type":"assistant","sessionId":"sess-abc","timestamp":"2026-06-15T12:00:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/Users/me/dev/proj/a.ts"}}]}}
+{"type":"user","sessionId":"sess-abc","timestamp":"2026-06-15T12:01:00.000Z","message":{"role":"user","content":"second thing"}}
+{"type":"user","sessionId":"sess-abc","timestamp":"2026-06-17T12:00:00.000Z","message":{"role":"user","content":"next day message"}}
+{"type":"assistant","sessionId":"sess-abc","timestamp":"2026-06-17T12:00:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/Users/me/dev/proj/b.ts"}}]}}

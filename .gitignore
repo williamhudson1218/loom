@@ -1,0 +1,30 @@
+# ── Dependencies & build output ────────────────────────────
+node_modules/
+app/node_modules/
+app/dist/
+app/release/
+*.tsbuildinfo
+
+# ── Runtime data — PRIVATE: embeds your indexed chat content ──
+manager.db
+manager.db-wal
+manager.db-shm
+dashboard.html
+placements.jsonl
+layout.json
+
+# ── Logs ────────────────────────────────────────────────────
+*.log
+
+# ── Machine-specific / retired ──────────────────────────────
+# launchd plists hardcode an absolute home path and are superseded by the app
+*.plist
+retired-launchd/
+
+# ── OS / editor cruft ───────────────────────────────────────
+.DS_Store
+.vscode/
+*.swp
+
+# temp files
+*.tmp

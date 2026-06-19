@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Wrapper that exec's the local tsx so cron/launchd works without a global tsx.
+set -e
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  LINK="$(readlink "$SCRIPT")"
+  case "$LINK" in
+    /*) SCRIPT="$LINK" ;;
+    *)  SCRIPT="$(dirname "$SCRIPT")/$LINK" ;;
+  esac
+done
+DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+exec "$DIR/../node_modules/.bin/tsx" "$DIR/../src/cli.ts" "$@"

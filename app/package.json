@@ -1,0 +1,36 @@
+{
+  "name": "loom-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loom desktop app",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "start": "yarn build && electron .",
+    "dist": "yarn build && electron-builder"
+  },
+  "build": {
+    "appId": "com.loom.app",
+    "productName": "Loom",
+    "directories": { "output": "release" },
+    "files": ["dist/**", "node_modules/**", "package.json"],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
+    "mac": {
+      "target": "dir",
+      "icon": "assets/icon.icns",
+      "identity": null,
+      "category": "public.app-category.developer-tools"
+    },
+    "npmRebuild": true
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0"
+  }
+}
