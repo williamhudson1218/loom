@@ -1,9 +1,35 @@
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 
 export const CLAUDE_HOME = path.join(os.homedir(), '.claude');
 export const CLAUDE_PROJECTS_DIR = path.join(CLAUDE_HOME, 'projects');
-export const TOOL_DIR = path.join(CLAUDE_HOME, 'tools', 'chat-manager');
+
+// Legacy data dir from the original single-machine install, where the repo *was*
+// the data dir. Kept only as a back-compat fallback so existing installs don't
+// lose their DB/layout/placements on upgrade.
+const LEGACY_TOOL_DIR = path.join(CLAUDE_HOME, 'tools', 'chat-manager');
+
+// Loom's runtime/data dir: holds manager.db, dashboard.html, layout.json, and
+// placements.jsonl, and is the cwd for the headless `claude -p` summary calls.
+// This is deliberately decoupled from where the repo is cloned, so the code can
+// live anywhere. Resolution (identical in the CLI, the Electron app, and the
+// bash placement hook, so all three agree with no env propagation between them):
+//   1. $LOOM_HOME              — explicit override / shared or relocated dir
+//   2. ~/.claude/tools/chat-manager, if it already exists — legacy installs
+//   3. ~/.loom                 — default for fresh installs
+function resolveLoomHome(): string {
+  const env = process.env.LOOM_HOME?.trim();
+  if (env) return path.resolve(env);
+  try {
+    if (fs.existsSync(LEGACY_TOOL_DIR)) return LEGACY_TOOL_DIR;
+  } catch {
+    /* fall through to default */
+  }
+  return path.join(os.homedir(), '.loom');
+}
+
+export const TOOL_DIR = resolveLoomHome();
 export const DB_PATH = path.join(TOOL_DIR, 'manager.db');
 export const DASHBOARD_PATH = path.join(TOOL_DIR, 'dashboard.html');
 export const LAYOUT_PATH = path.join(TOOL_DIR, 'layout.json');

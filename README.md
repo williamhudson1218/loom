@@ -38,9 +38,12 @@ The backend runs as a daemon (the app), serves the dashboard at `localhost:4317`
 
 ## Requirements
 
-- macOS, [tmux](https://github.com/tmux/tmux), and Claude Code (the `claude` CLI, logged in)
+- macOS (Apple Silicon **or** Intel), [tmux](https://github.com/tmux/tmux), and Claude Code (the `claude` CLI, logged in)
 - Node 20+ (the CLI uses a native `better-sqlite3`; the app rebuilds it for Electron)
 - Optional: [Ghostty](https://ghostty.org) for click-to-jump tab focus (any terminal works for the rest)
+
+**Full setup guide (fresh machine, one script, permissions, gotchas): [SETUP.md](./SETUP.md).**
+Quick version: clone anywhere, then `./setup.sh --install`.
 
 ## Install (CLI / dev)
 
@@ -75,6 +78,7 @@ Copy `Loom.app` to `/Applications` and launch it. It embeds the server, runs the
 
 - The app is **unsigned** (personal use). Built locally it has no quarantine flag and opens directly.
 - Privacy: your indexed chat content lives only in local files (`manager.db`, `dashboard.html`, `layout.json`, `placements.jsonl`) — all git-ignored, never committed.
+- Data dir: those files live in `~/.loom` by default (override with `$LOOM_HOME`; existing installs under `~/.claude/tools/chat-manager` are reused automatically). Nothing is written into the repo, so you can clone it anywhere — see [SETUP.md](./SETUP.md#4-where-loom-stores-data).
 
 ## License
 

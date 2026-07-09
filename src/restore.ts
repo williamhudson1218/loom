@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { readLayout, type PaneSnap, type Layout } from './snapshot.ts';
+import { LAYOUT_PATH } from './paths.ts';
 
 function shq(s: string): string {
   return "'" + s.replace(/'/g, `'\\''`) + "'";
@@ -40,7 +41,7 @@ export interface RestoreResult {
 export function restore(opts: { dryRun?: boolean; layout?: Layout | null; existing?: Set<string> } = {}): RestoreResult {
   const layout = opts.layout ?? readLayout();
   if (!layout) {
-    throw new Error('no layout snapshot found at ~/.claude/tools/chat-manager/layout.json');
+    throw new Error(`no layout snapshot found at ${LAYOUT_PATH}`);
   }
   const dry = !!opts.dryRun;
   const existing = opts.existing ?? existingSessions();

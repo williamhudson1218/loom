@@ -12,11 +12,13 @@ import { toChatViews } from '../src/dashboard.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 
 // Finder-launched apps inherit a minimal PATH; restore the dirs we shell out to
-// (claude, tmux, osascript). TMUX_TMPDIR so tmux finds the running server socket.
+// (claude, tmux, osascript). Both Homebrew prefixes are included so this works on
+// Apple Silicon (/opt/homebrew/bin) and Intel (/usr/local/bin) Macs.
+// TMUX_TMPDIR so tmux finds the running server socket.
 const home = os.homedir();
 process.env.PATH = [
   path.join(home, '.local/bin'),
-  '/opt/homebrew/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
+  '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
   process.env.PATH || '',
 ].join(':');
 process.env.TMUX_TMPDIR = process.env.TMUX_TMPDIR || '/tmp';
