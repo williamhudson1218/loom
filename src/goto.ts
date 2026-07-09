@@ -79,9 +79,25 @@ export function closeSession(paneId: string): GotoResult {
   return { ok: true, detail: 'sent Ctrl-C x2' };
 }
 
-// Resume a stale chat into an idle (shell) pane: type the resume command into
-// that pane, run it, then focus the pane.
-export function resumeInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
+// Seed prompt submitted as the first turn of a branched session. A fork carries
+// the original's full transcript, so the model can't otherwise tell it was
+// forked (it looks identical to a resume from the inside) — this tells it.
+const BRANCH_SEED =
+  'Heads up from Loom: this is a forked branch of a previous Claude Code session. ' +
+  "You carry that session's full context, but this is now an independent branch with a new " +
+  'session id — nothing you do here affects the original session, and there is no need to redo ' +
+  'prior work. Briefly acknowledge that you understand this is a fork, then wait for my next instruction.';
+
+// Launch Claude into an idle (shell) pane: type the command into that pane, run
+// it, then focus the pane. With `fork`, --fork-session branches the resumed
+// context into a NEW session id, leaving the original session untouched, and a
+// seed prompt is passed positionally so the new session knows it was forked.
+function launchInPane(
+  paneId: string,
+  projectDir: string,
+  sessionId: string,
+  fork: boolean,
+): GotoResult {
   let tmuxSession = '';
   try {
     tmuxSession = execFileSync('tmux', ['display-message', '-p', '-t', paneId, '#{session_name}'], {
@@ -90,12 +106,25 @@ export function resumeInPane(paneId: string, projectDir: string, sessionId: stri
   } catch {
     /* focus will be skipped */
   }
-  const cmd = `cd ${shq(projectDir)} && claude --resume ${shq(sessionId)} --dangerously-skip-permissions`;
+  const forkFlag = fork ? ' --fork-session' : '';
+  const seedArg = fork ? ' ' + shq(BRANCH_SEED) : '';
+  const cmd = `cd ${shq(projectDir)} && claude --resume ${shq(sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
   try {
     execFileSync('tmux', ['send-keys', '-t', paneId, cmd, 'Enter']);
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
   const focus = tmuxSession ? gotoPane(paneId, tmuxSession) : { ok: true, detail: 'no focus' };
-  return { ok: true, detail: 'resumed; ' + focus.detail };
+  return { ok: true, detail: (fork ? 'branched; ' : 'resumed; ') + focus.detail };
+}
+
+// Resume a stale chat into an idle (shell) pane: continue the original session.
+export function resumeInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
+  return launchInPane(paneId, projectDir, sessionId, false);
+}
+
+// Branch a chat into an idle (shell) pane: fork the existing context into a new
+// session (original left running/resumable) and drop it into the chosen pane.
+export function branchInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
+  return launchInPane(paneId, projectDir, sessionId, true);
 }

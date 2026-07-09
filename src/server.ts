@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { openDb } from './db.ts';
 import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './dashboard.ts';
 import { liveSessions, listTmuxPanes, idlePanes } from './placements.ts';
-import { gotoPane, resumeInPane, closeSession, sendToPane } from './goto.ts';
+import { gotoPane, resumeInPane, branchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
 import { writeLayout } from './snapshot.ts';
 
@@ -129,6 +129,17 @@ export function createServer(): http.Server {
       const v = views.find((x) => x.session_id === sid);
       if (!v) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'unknown session' }));
       const r = resumeInPane(pane, v.project_dir, sid);
+      return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
+    }
+
+    if (url.pathname === '/branch') {
+      const sid = url.searchParams.get('session') || '';
+      const pane = url.searchParams.get('pane') || '';
+      if (!pane) return send(res, 400, 'application/json', JSON.stringify({ ok: false, detail: 'no pane' }));
+      const { views } = snapshot();
+      const v = views.find((x) => x.session_id === sid);
+      if (!v) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'unknown session' }));
+      const r = branchInPane(pane, v.project_dir, sid);
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
     }
 
