@@ -215,6 +215,7 @@ export function renderDashboard(
       <option value="long">Longest</option>
     </select>
     <button id="livetoggle" class="chip on"></button>
+    <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore workspace</button>
     <div class="chips" id="chips"></div>
   </div>
 </header>
@@ -282,6 +283,8 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeChat();});
 var lastRenderAt=0;
 function dataSig(){return DATA.chats.map(c=>c.session_id+':'+(c.state||'')+':'+(c.summary_pending?'p':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
 function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
+$('#restorebtn').onclick=restoreWorkspace;
 heat();projects();liveToggle();chips();render();
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(refresh,5000);

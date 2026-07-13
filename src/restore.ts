@@ -38,13 +38,19 @@ export interface RestoreResult {
   log: string[];
 }
 
-export function restore(opts: { dryRun?: boolean; layout?: Layout | null; existing?: Set<string> } = {}): RestoreResult {
+export function restore(
+  opts: { dryRun?: boolean; layout?: Layout | null; existing?: Set<string>; prefix?: string } = {},
+): RestoreResult {
   const layout = opts.layout ?? readLayout();
   if (!layout) {
     throw new Error(`no layout snapshot found at ${LAYOUT_PATH}`);
   }
   const dry = !!opts.dryRun;
   const existing = opts.existing ?? existingSessions();
+  // Belt-and-suspenders: snapshots are already prefix-filtered, but an entry
+  // point can pass a prefix so a stale/unfiltered layout still only restores the
+  // workspace set. Omitted -> restore every session in the layout.
+  const sessions = opts.prefix ? layout.sessions.filter((s) => s.name.startsWith(opts.prefix!)) : layout.sessions;
   const restored: string[] = [];
   const skipped: string[] = [];
   const log: string[] = [];
@@ -57,7 +63,7 @@ export function restore(opts: { dryRun?: boolean; layout?: Layout | null; existi
     return execFileSync('tmux', args, { encoding: 'utf-8' }).trim();
   };
 
-  for (const s of layout.sessions) {
+  for (const s of sessions) {
     if (existing.has(s.name)) {
       skipped.push(s.name);
       continue;

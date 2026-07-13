@@ -42,4 +42,16 @@ describe('restore (dry-run)', () => {
     expect(r.restored).toEqual([]);
     expect(r.skipped).toEqual(['taxpilot']);
   });
+
+  it('restores every session when no prefix is given', () => {
+    const mixed: Layout = { taken_at: 0, sessions: [{ name: 'scratch', windows: [] }, { name: 'loom-work', windows: [] }] };
+    const r = restore({ dryRun: true, layout: mixed, existing: new Set() });
+    expect(r.restored).toEqual(['scratch', 'loom-work']);
+  });
+
+  it('restores only prefix-matched sessions when a prefix is given', () => {
+    const mixed: Layout = { taken_at: 0, sessions: [{ name: 'scratch', windows: [] }, { name: 'loom-work', windows: [] }] };
+    const r = restore({ dryRun: true, layout: mixed, existing: new Set(), prefix: 'loom-' });
+    expect(r.restored).toEqual(['loom-work']);
+  });
 });

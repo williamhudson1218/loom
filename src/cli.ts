@@ -5,7 +5,8 @@ import { summarizeDirty, defaultRunner, type ClaudeRunner } from './analyzer.ts'
 import { writeDashboard } from './dashboard.ts';
 import { restore } from './restore.ts';
 import { writeLayout } from './snapshot.ts';
-import { DASHBOARD_PATH } from './paths.ts';
+import { openGhosttyTabs } from './ghostty.ts';
+import { DASHBOARD_PATH, SESSION_PREFIX } from './paths.ts';
 
 export async function runPass(
   db: Database.Database,
@@ -24,15 +25,29 @@ async function main() {
 
   if (cmd === 'restore') {
     const dryRun = process.argv.includes('--dry-run');
-    const r = restore({ dryRun });
+    const noOpen = process.argv.includes('--no-open'); // rebuild tmux only, skip Ghostty tabs
+    const r = restore({ dryRun, prefix: SESSION_PREFIX });
     if (dryRun) {
       console.log(r.log.join('\n'));
       console.log(`\n[dry-run] would restore ${r.restored.length} sessions: ${r.restored.join(', ') || '(none)'}`);
       if (r.skipped.length) console.log(`[dry-run] skipped (already running): ${r.skipped.join(', ')}`);
+      if (r.attach.length && !noOpen) {
+        const g = openGhosttyTabs(r.attach, { dryRun: true });
+        console.log(`\n[dry-run] would open ${r.attach.length} Ghostty tab(s) via osascript:\n${g.script}`);
+      }
     } else {
       console.log(`[loom] restored ${r.restored.length} session(s): ${r.restored.join(', ') || '(none)'}`);
       if (r.skipped.length) console.log(`  skipped (already running): ${r.skipped.join(', ')}`);
-      if (r.attach.length) {
+      if (r.attach.length && !noOpen) {
+        const g = openGhosttyTabs(r.attach);
+        if (g.ok) {
+          console.log(`[loom] ${g.detail}`);
+        } else {
+          console.log(`[loom] tab open failed: ${g.detail}`);
+          console.log('  attach manually:');
+          for (const s of r.attach) console.log(`    ta ${s}`);
+        }
+      } else if (r.attach.length) {
         console.log('\nOpen a Ghostty tab per session and attach:');
         for (const s of r.attach) console.log(`  ta ${s}`);
       }

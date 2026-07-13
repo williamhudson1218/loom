@@ -34,6 +34,12 @@ export const DB_PATH = path.join(TOOL_DIR, 'manager.db');
 export const DASHBOARD_PATH = path.join(TOOL_DIR, 'dashboard.html');
 export const LAYOUT_PATH = path.join(TOOL_DIR, 'layout.json');
 
+// Only tmux sessions whose name starts with this prefix are part of the saved
+// "workspace" — snapshotted for crash recovery and rebuilt by restore. Scratch
+// sessions without the prefix are ignored. Override with $LOOM_SESSION_PREFIX;
+// set it to an empty string to include every session.
+export const SESSION_PREFIX = process.env.LOOM_SESSION_PREFIX?.trim() ?? 'loom-';
+
 export const ANALYZE_CAP = 25;
 export const ANALYZE_CONCURRENCY = 3;
 export const MIN_MESSAGES_FOR_LLM = 3;

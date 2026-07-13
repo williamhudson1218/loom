@@ -6,6 +6,9 @@ import { liveSessions, listTmuxPanes, idlePanes } from './placements.ts';
 import { gotoPane, resumeInPane, branchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
 import { writeLayout } from './snapshot.ts';
+import { restore } from './restore.ts';
+import { openGhosttyTabs } from './ghostty.ts';
+import { SESSION_PREFIX } from './paths.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -88,6 +91,21 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/idle-panes') {
       return send(res, 200, 'application/json', JSON.stringify(idlePanes()));
+    }
+
+    if (url.pathname === '/restore') {
+      // Rebuild any workspace (loom-*) session not already running, then open a
+      // Ghostty tab attached to each newly-restored session.
+      let r;
+      try {
+        r = restore({ prefix: SESSION_PREFIX });
+      } catch (e) {
+        return send(res, 200, 'application/json', JSON.stringify({ ok: false, detail: (e as Error).message }));
+      }
+      const g = r.attach.length ? openGhosttyTabs(r.attach) : { ok: true, opened: 0, detail: 'nothing to restore' };
+      return send(res, 200, 'application/json', JSON.stringify({
+        ok: g.ok, restored: r.restored, skipped: r.skipped, opened: g.opened, detail: g.detail,
+      }));
     }
 
     if (url.pathname === '/api/transcript') {

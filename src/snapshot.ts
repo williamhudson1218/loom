@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { LAYOUT_PATH } from './paths.ts';
+import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
 import { listTmuxPanes, claudePaneIds, liveSessions, type TmuxPane } from './placements.ts';
 
 const SEP = '~|LOOM|~';
@@ -94,8 +94,10 @@ function kindOf(pane: TmuxPane, isClaude: boolean): PaneKind {
   return 'other';
 }
 
-export function captureLayout(now: number): Layout {
-  const panes = listTmuxPanes();
+export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Layout {
+  // Only snapshot the workspace sessions (prefix-matched); scratch sessions are
+  // left out so the crash-recovery layout is the curated set restore rebuilds.
+  const panes = listTmuxPanes().filter((p) => p.tmux_session.startsWith(prefix));
   const claudeSet = claudePaneIds(panes);
   const layouts = windowLayouts();
   const fg = foregroundCommands(panes);
@@ -135,8 +137,8 @@ export function captureLayout(now: number): Layout {
 
 // Only overwrite the saved snapshot when tmux actually has sessions — never clobber
 // a good snapshot with an empty one (e.g. right after a crash before restore).
-export function writeLayout(now: number, path: string = LAYOUT_PATH): Layout | null {
-  const layout = captureLayout(now);
+export function writeLayout(now: number, path: string = LAYOUT_PATH, prefix: string = SESSION_PREFIX): Layout | null {
+  const layout = captureLayout(now, prefix);
   if (layout.sessions.length === 0) return null;
   fs.writeFileSync(path, JSON.stringify(layout, null, 2), 'utf-8');
   return layout;
