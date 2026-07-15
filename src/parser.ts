@@ -119,8 +119,10 @@ export function cleanText(raw: string): string {
   return raw
     // Boilerplate Claude prepends to slash-command turns. Drop the whole block —
     // unlike the stray-tag strip below, its *content* is noise too, and it would
-    // otherwise become the visible heading of an archive card.
-    .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
+    // otherwise become the visible heading of an archive card. The `|$` arm catches
+    // a block cut short by truncation (an FTS snippet window can end mid-tag), which
+    // would otherwise lose only the tag and leave the disclaimer prose behind.
+    .replace(/<local-command-caveat>[\s\S]*?(?:<\/local-command-caveat>|$)/g, '')
     .replace(/<command-message>[\s\S]*?<\/command-message>/g, '')
     .replace(/<command-args>[\s\S]*?<\/command-args>/g, '')
     .replace(/<command-name>([\s\S]*?)<\/command-name>/g, '$1')
