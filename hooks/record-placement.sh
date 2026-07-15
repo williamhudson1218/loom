@@ -23,6 +23,8 @@ IFS=$'\t' read -r TS WI PI CWD <<< "$INFO"
 if [ -n "$LOOM_HOME" ]; then
   LOOM_DIR="$LOOM_HOME"
 elif [ -d "$HOME/.claude/tools/chat-manager" ]; then
+  # Legacy single-machine install, where the repo was also the data dir. Kept as a
+  # back-compat fallback only; this repo now lives at ~/dev/loom and its data in ~/.loom.
   LOOM_DIR="$HOME/.claude/tools/chat-manager"
 else
   LOOM_DIR="$HOME/.loom"

@@ -14,7 +14,8 @@ If you run a lot of Claude Code sessions, the built-in resume list is too shallo
 - **Live detection** — knows which sessions are *actually running* right now (process-tree based) and in which tmux pane, with a ⚡ *working* indicator (actively generating) vs *your turn* (idle, waiting on you).
 - **Jump / resume / branch / close** — open a live chat's tmux pane in Ghostty, resume a stale one into an empty pane (picks the pane by session·window·position), **branch** any chat (`claude --resume … --fork-session`) into an empty pane to fork its context into a new session while leaving the original untouched, or close one to free its pane.
 - **Built-in chat panel** — click a card to read the transcript and send messages straight into the running session.
-- **Crash recovery** — captures a full tmux layout snapshot every 15s; `restore` rebuilds every session with exact pane geometry and re-resumes the right chats after a tmux crash.
+- **Archive search** — the board only covers the last `ACTIVE_WINDOW_DAYS`. Type in the filter box and hit <kbd>Enter</kbd> (or click *Search all history*) to search **every** transcript on disk via [find-chat](https://github.com/williamhudson1218/find-chat), then resume or branch any hit into a pane, or read it in the panel — the same actions as a board card. Chats already on the board are excluded from the results.
+- **Crash recovery** — captures a full tmux layout snapshot every 15s; `restore` rebuilds every session with exact pane geometry and re-resumes the right chats after a tmux crash. Only sessions matching `LOOM_SESSION_PREFIX` (default `loom-`) are part of the saved workspace.
 - **PR links, activity heatmap, triage filters, auto-refresh** — and a menu-bar app with live counts.
 
 ## Architecture
@@ -26,9 +27,10 @@ src/            shared TypeScript backend
   analyzer      headless `claude -p --safe-mode` -> {title, overview, state, key_moments}
   placements    live-session detection (placement hook + tmux process tree)
   goto          jump / resume / close / send-keys into panes
+  findchat      archive search — shells out to the find-chat CLI, parses its JSON
   snapshot      full tmux-layout capture for crash recovery
   restore       rebuild sessions + geometry after a crash
-  server        localhost HTTP server: dashboard + JSON API (/api/data, /goto, /resume, /close, /send, ...)
+  server        localhost HTTP server: dashboard + JSON API (/api/data, /api/search, /goto, /resume, /close, /send, ...)
   dashboard     self-contained HTML/JS dashboard (served by the server)
 app/            Electron app — bundles the backend, embeds the server, tray + window, daemon intervals
 hooks/          SessionStart/UserPromptSubmit hook that records each chat's tmux pane
@@ -41,6 +43,11 @@ The backend runs as a daemon (the app), serves the dashboard at `localhost:4317`
 - macOS (Apple Silicon **or** Intel), [tmux](https://github.com/tmux/tmux), and Claude Code (the `claude` CLI, logged in)
 - Node 20+ (the CLI uses a native `better-sqlite3`; the app rebuilds it for Electron)
 - Optional: [Ghostty](https://ghostty.org) for click-to-jump tab focus (any terminal works for the rest)
+- Optional: [find-chat](https://github.com/williamhudson1218/find-chat) for archive search. Expected at
+  `~/.claude/tools/find-chat/bin/find-chat`; override with `$FIND_CHAT_BIN`. Without it, the board works
+  as normal and *Search all history* reports that find-chat isn't installed. Its `better-sqlite3` must be
+  built for the same Node that runs it — if search reports a `NODE_MODULE_VERSION` mismatch, run
+  `npm rebuild better-sqlite3` in the find-chat directory using the Node on your `PATH`.
 
 **Full setup guide (fresh machine, one script, permissions, gotchas): [SETUP.md](./SETUP.md).**
 Quick version: clone anywhere, then `./setup.sh --install`.

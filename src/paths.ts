@@ -6,8 +6,9 @@ export const CLAUDE_HOME = path.join(os.homedir(), '.claude');
 export const CLAUDE_PROJECTS_DIR = path.join(CLAUDE_HOME, 'projects');
 
 // Legacy data dir from the original single-machine install, where the repo *was*
-// the data dir. Kept only as a back-compat fallback so existing installs don't
-// lose their DB/layout/placements on upgrade.
+// the data dir (the repo now lives at ~/dev/loom and its data in ~/.loom). Kept
+// only as a back-compat fallback so other installs don't lose their
+// DB/layout/placements on upgrade.
 const LEGACY_TOOL_DIR = path.join(CLAUDE_HOME, 'tools', 'chat-manager');
 
 // Loom's runtime/data dir: holds manager.db, dashboard.html, layout.json, and
@@ -48,6 +49,15 @@ export const TRANSCRIPT_CHAR_CAP = 60_000;
 // Only chats active within this many days are indexed, summarized, and shown.
 // Older sessions are pruned from the DB (deep archive search lives in find-chat).
 export const ACTIVE_WINDOW_DAYS = 7;
+
+// The find-chat CLI backs Loom's archive search — everything older than the
+// ACTIVE_WINDOW_DAYS board. We shell out to its `bin` wrapper rather than import
+// it: the wrapper resolves its own real dir and exec's find-chat's *local* tsx,
+// so Loom needs no global tsx and no knowledge of find-chat's internals.
+// Override with $FIND_CHAT_BIN if find-chat moves.
+export const FIND_CHAT_BIN =
+  process.env.FIND_CHAT_BIN?.trim() ||
+  path.join(CLAUDE_HOME, 'tools', 'find-chat', 'bin', 'find-chat');
 
 // First line of the analyzer prompt. Used both to build the prompt AND to detect
 // (and exclude) chat-manager's own headless `claude -p` summarization sessions,

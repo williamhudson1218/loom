@@ -39,4 +39,17 @@ describe('dashboard', () => {
     expect(views[0].summary_pending).toBe(true);
     db.close();
   });
+
+  // Archive hits are fetched from /api/search and turned into cards entirely in the
+  // browser, so their rendering can't be asserted here — only that the shell ships
+  // the scaffolding those client functions need. Behaviour is covered by
+  // scripts/check-dashboard.sh (syntax of the served JS) and end-to-end use.
+  it('ships the archive-search scaffolding in the static shell', () => {
+    const html = renderDashboard([], 9999);
+    expect(html).toContain('id="archive"'); // results container
+    expect(html).toContain('id="deep"'); // the "search all history" affordance
+    expect(html).toContain('/api/search?q='); // client calls the archive endpoint
+    expect(html).toContain('function acard('); // archive card builder
+    expect(html).toContain('function renderArchive('); // archive section renderer
+  });
 });

@@ -201,6 +201,20 @@ export function renderDashboard(
   button.paneopt { text-align:left; background:#1b1f2a; border:1px solid #2b3040; display:flex; justify-content:space-between; gap:12px; }
   button.paneopt:hover { background:#222a3d; border-color:#3a4a63; }
   .pcwd { color:#6b7280; font-size:11px; }
+  /* Archive search — chats older than the board window, surfaced via find-chat */
+  .deeplink { display:none; margin-top:9px; color:#79b1ff; font-size:12.5px; cursor:pointer;
+    border-bottom:1px dashed #3a4a63; width:fit-content; }
+  .deeplink:hover { color:#a8ccff; border-bottom-color:#79b1ff; }
+  #archive { padding:0 20px 26px; max-width:1100px; display:grid; gap:11px; }
+  #archive:empty { display:none; }
+  .ahead { display:flex; align-items:center; gap:10px; margin-top:4px;
+    color:#8b93a7; font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+  .ahead::after { content:''; flex:1; height:1px; background:#232634; }
+  /* Dashed + dimmer than a board card: no live pane, no AI summary — a different class of thing */
+  .card.arch { border-left-style:dashed; border-left-color:#3a4258; background:#141720; }
+  .card.arch:hover { background:#181c27; }
+  .pill.arch { background:#23262f; color:#9aa3b2; }
+  .snip { color:#c4ccdc; font-size:12.5px; }
 </style></head>
 <body>
 <header>
@@ -218,8 +232,10 @@ export function renderDashboard(
     <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore workspace</button>
     <div class="chips" id="chips"></div>
   </div>
+  <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
 <main id="list"></main>
+<section id="archive"></section>
 <div id="overlay"></div>
 <aside id="panel">
   <div class="phead">
@@ -249,12 +265,16 @@ function liveToggle(){const n=Object.keys(DATA.live).length;const b=$('#livetogg
 function isWorking(c){const L=DATA.live[c.session_id];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[a.session_id]?1:0,lb=DATA.live[b.session_id]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):(b.last_active_at-a.last_active_at);});const list=$('#list');const empty=liveOnly&&scoped().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>';list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(el=>{el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,el,'resume');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,el,'branch');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,el);});}
+function render(){const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[a.session_id]?1:0,lb=DATA.live[b.session_id]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):(b.last_active_at-a.last_active_at);});const list=$('#list');const empty=liveOnly&&scoped().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>';list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
+// Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
+// (they have no DB row, so the server needs those passed back to it).
+function wireCard(el){el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,el,'resume',rb.dataset.proj||'');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,el,'branch',bb.dataset.proj||'');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,el);}
 function confirmClose(b,el){if(b.dataset.armed){doClose(b.dataset.sid,el);}else{b.dataset.armed='1';b.textContent='✕ confirm?';b.classList.add('arm');setTimeout(()=>{if(b){b.dataset.armed='';b.textContent='✕ close';b.classList.remove('arm');}},2500);}}
-function doClose(sid,el){flash(el,'closing…','#7a4a1a');fetch('/close?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>{flash(el,j.ok?'closed — pane freed ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(poll,1500);setTimeout(poll,3500);}).catch(()=>flash(el,'server off','#8a2b2e'));}
+function doClose(sid,el){flash(el,'closing…','#7a4a1a');fetch('/close?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>{flash(el,j.ok?'closed — pane freed ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function jump(sid,el){flash(el,'opening…','#3b5bdb');fetch('/goto?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>flash(el,j.ok?'opened ✓':'no live pane',j.ok?'#1f6f3f':'#8a2b2e')).catch(()=>flash(el,'server off','#8a2b2e'));}
-function openPicker(sid,el,action){const p=el.querySelector('.picker');if(p.dataset.open===action){p.dataset.open='';p.innerHTML='';return;}p.dataset.open=action;const verb=action==='branch'?'Branch':'Resume';p.innerHTML='<span class="muted">finding empty panes…</span>';fetch('/api/idle-panes').then(r=>r.json()).then(panes=>{if(!panes.length){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+verb+' again.</span>';return;}p.innerHTML='<div class="pickhdr">'+verb+' into which pane?</div>'+panes.map(pn=>'<button class="paneopt" data-pane="'+pn.pane_id+'">'+esc(pn.label)+(pn.cwd?'<span class="pcwd">…/'+esc(pn.cwd.split('/').filter(Boolean).pop()||'')+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,b.dataset.pane,el,p,action));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
-function doLaunch(sid,pane,el,p,action){const busy=action==='branch'?'branching…':'resuming…';const okmsg=action==='branch'?'branched ✓':'resumed ✓';p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&pane='+encodeURIComponent(pane)).then(r=>r.json()).then(j=>{flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(poll,1500);setTimeout(poll,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
+function openPicker(sid,el,action,proj){const p=el.querySelector('.picker');if(p.dataset.open===action){p.dataset.open='';p.innerHTML='';return;}p.dataset.open=action;const verb=action==='branch'?'Branch':'Resume';p.innerHTML='<span class="muted">finding empty panes…</span>';fetch('/api/idle-panes').then(r=>r.json()).then(panes=>{if(!panes.length){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+verb+' again.</span>';return;}p.innerHTML='<div class="pickhdr">'+verb+' into which pane?</div>'+panes.map(pn=>'<button class="paneopt" data-pane="'+pn.pane_id+'">'+esc(pn.label)+(pn.cwd?'<span class="pcwd">…/'+esc(pn.cwd.split('/').filter(Boolean).pop()||'')+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,b.dataset.pane,el,p,action,proj));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
+// proj is sent only for archive chats — the server resolves board chats from its DB.
+function doLaunch(sid,pane,el,p,action,proj){const busy=action==='branch'?'branching…':'resuming…';const okmsg=action==='branch'?'branched ✓':'resumed ✓';p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&pane='+encodeURIComponent(pane)+(proj?'&proj='+encodeURIComponent(proj):'')).then(r=>r.json()).then(j=>{flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
 function flash(el,msg,bg){let f=el.querySelector('.flash');if(!f){f=document.createElement('span');f.className='flash';el.appendChild(f);}f.textContent=msg;f.style.background=bg;clearTimeout(f._t);f._t=setTimeout(()=>f.remove(),1400);}
 function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o=b.textContent;b.textContent='copied ✓';b.classList.add('ok');setTimeout(()=>{b.textContent=o;b.classList.remove('ok');},1200);}).catch(()=>{b.textContent='copy failed';setTimeout(()=>{b.textContent='copy id';},1200);});}
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
@@ -272,10 +292,13 @@ function card(c){const s=st(c);const L=DATA.live[c.session_id];const W=!!(L&&L.w
 '</div>'+
 '<div class="picker"></div></div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
-var panelSid=null, ptimer=null;
-function openChat(sid){panelSid=sid;$('#panel').classList.add('on');$('#overlay').classList.add('on');$('#ptranscript').innerHTML='<p class="muted">loading…</p>';$('#pfoot').innerHTML='';loadTranscript(true);clearInterval(ptimer);ptimer=setInterval(()=>loadTranscript(false),1500);}
-function closeChat(){panelSid=null;$('#panel').classList.remove('on');$('#overlay').classList.remove('on');clearInterval(ptimer);}
-function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;fetch('/api/transcript?session='+encodeURIComponent(req)).then(r=>r.json()).then(d=>{if(panelSid!==req||!d.ok)return;$('#ptitle').textContent=d.title||'(untitled)';$('#pmeta').innerHTML=esc(d.project)+' · '+(d.live?'<span class="live">● live</span>':'<span class="stale">○ stale</span>');const body=$('#ptranscript');const atBottom=body.scrollTop+body.clientHeight>=body.scrollHeight-50;body.innerHTML=d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':'Claude')+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';if(toBottom||atBottom)body.scrollTop=body.scrollHeight;renderFoot(d);}).catch(()=>{});}
+var panelSid=null, ptimer=null, panelArch=null;
+// arch = {jsonl,proj,title} for archive chats (no DB row, so the server needs them).
+function openChat(sid,arch){panelSid=sid;panelArch=arch||null;$('#panel').classList.add('on');$('#overlay').classList.add('on');$('#ptranscript').innerHTML='<p class="muted">loading…</p>';$('#pfoot').innerHTML='';loadTranscript(true);clearInterval(ptimer);
+// An archive chat isn't running, so its transcript can't change — don't poll it.
+if(!panelArch)ptimer=setInterval(()=>loadTranscript(false),1500);}
+function closeChat(){panelSid=null;panelArch=null;$('#panel').classList.remove('on');$('#overlay').classList.remove('on');clearInterval(ptimer);}
+function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;var u='/api/transcript?session='+encodeURIComponent(req);if(panelArch)u+='&jsonl='+encodeURIComponent(panelArch.jsonl)+'&proj='+encodeURIComponent(panelArch.proj)+'&title='+encodeURIComponent(panelArch.title);fetch(u).then(r=>r.json()).then(d=>{if(panelSid!==req||!d.ok)return;$('#ptitle').textContent=d.title||'(untitled)';$('#pmeta').innerHTML=esc(d.project)+' · '+(d.live?'<span class="live">● live</span>':'<span class="stale">○ stale</span>');const body=$('#ptranscript');const atBottom=body.scrollTop+body.clientHeight>=body.scrollHeight-50;body.innerHTML=d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':'Claude')+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';if(toBottom||atBottom)body.scrollTop=body.scrollHeight;renderFoot(d);}).catch(()=>{});}
 function renderFoot(d){const f=$('#pfoot');if(d.live){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live Claude pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else{f.innerHTML='<div class="stalefoot">This chat isn\\'t running — <b>Resume</b> it from its card to send messages.</div>';}}
 function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.value.trim();if(!t)return;ta.value='';fetch('/send?session='+encodeURIComponent(panelSid)+'&text='+encodeURIComponent(t)).then(r=>r.json()).then(()=>{setTimeout(()=>loadTranscript(true),500);setTimeout(()=>loadTranscript(true),2500);}).catch(()=>{});}
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
@@ -285,7 +308,33 @@ function dataSig(){return DATA.chats.map(c=>c.session_id+':'+(c.state||'')+':'+(
 function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
-heat();projects();liveToggle();chips();render();
+// ── Archive search ────────────────────────────────────────────────────────────
+// #q filters the board client-side. This searches every chat on disk via find-chat
+// (/api/search) and renders what the 7-day board can't show. Click/Enter only —
+// never per-keystroke, since each search spawns a subprocess.
+var archHits=[], archQuery='', archState='idle', archErr='';
+function updateDeep(){const q=$('#q').value.trim();const d=$('#deep');if(!q){d.style.display='none';return;}d.style.display='block';d.textContent='⤷ Search all history for "'+q+'"';}
+function runArchive(){const q=$('#q').value.trim();if(!q)return;archQuery=q;archState='searching';archErr='';renderArchive();fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(j=>{if(archQuery!==q)return;if(j.ok){archHits=j.results||[];archState='results';}else{archErr=j.detail||'search failed';archState='error';}renderArchive();}).catch(()=>{if(archQuery!==q)return;archErr='server off?';archState='error';renderArchive();});}
+function adisp(h){const t=(h.title||h.snippet||'Untitled').trim();return t.length>90?t.slice(0,90)+'…':t;}
+function acard(h){const id=esc(h.session_id);const proj=esc(h.project_dir);const pname=h.project_dir.split('/').filter(Boolean).pop()||'unknown';
+// Most chats have no custom title, so the heading already IS the snippet — don't print it twice.
+const hasTitle=!!(h.title&&h.title.trim());
+// Resuming needs the original cwd; a few old rows were indexed without one.
+const canLaunch=!!(h.project_dir&&h.project_dir.trim());
+return '<div class="card arch" data-sid="'+id+'" data-jsonl="'+esc(h.jsonl_path)+'" data-proj="'+proj+'" data-title="'+esc(h.title||'')+'">'+
+'<div class="chead"><h2>'+esc(adisp(h))+'</h2><span class="pill arch">archive</span></div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(pname)+'">'+esc(pname)+'</span>'+h.message_count+' msgs · '+rel(h.ended_at)+'</div>'+
+(hasTitle?'<div class="ov snip">'+esc(h.snippet)+'</div>':'')+
+'<div class="resume"><code class="sid" title="session id">'+id+'</code><button class="copy" data-id="'+id+'">copy id</button><span class="spacer"></span>'+
+(canLaunch?'<button class="resumebtn" data-sid="'+id+'" data-proj="'+proj+'">⏵ resume…</button>'+
+'<button class="branchbtn" data-sid="'+id+'" data-proj="'+proj+'" title="fork this conversation into a new pane (original left untouched)">⑃ branch…</button>'
+:'<span class="muted">no project dir recorded — can\\'t resume</span>')+
+'</div><div class="picker"></div></div>';}
+function renderArchive(){const box=$('#archive');if(archState==='idle'){box.innerHTML='';return;}const hd='<div class="ahead">From your archive</div>';if(archState==='searching'){box.innerHTML=hd+'<p class="muted">searching all history…</p>';return;}if(archState==='error'){box.innerHTML=hd+'<p class="muted">'+esc(archErr)+'</p>';return;}if(!archHits.length){box.innerHTML=hd+'<p class="muted">no archive matches for "'+esc(archQuery)+'" — chats already on the board above are excluded</p>';return;}box.innerHTML=hd+archHits.map(acard).join('');box.querySelectorAll('.card').forEach(wireCard);}
+$('#deep').onclick=runArchive;
+$('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
+$('#q').addEventListener('input',updateDeep);
+heat();projects();liveToggle();chips();render();updateDeep();
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(refresh,5000);
 </script>

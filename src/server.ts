@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import { openDb } from './db.ts';
 import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './dashboard.ts';
 import { liveSessions, listTmuxPanes, idlePanes } from './placements.ts';
@@ -8,6 +9,7 @@ import { readTranscript } from './transcript.ts';
 import { writeLayout } from './snapshot.ts';
 import { restore } from './restore.ts';
 import { openGhosttyTabs } from './ghostty.ts';
+import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findchat.ts';
 import { SESSION_PREFIX } from './paths.ts';
 
 export const SERVER_PORT = 4317;
@@ -66,6 +68,23 @@ function send(res: http.ServerResponse, code: number, type: string, body: string
   res.end(body);
 }
 
+function json(res: http.ServerResponse, code: number, body: unknown) {
+  send(res, code, 'application/json', JSON.stringify(body));
+}
+
+type DirLookup = { ok: true; dir: string } | { ok: false; code: number; detail: string };
+
+// Resolve a session's project dir. Board chats resolve from the DB exactly as
+// before; archive chats (older than the board window, so absent from the DB) carry
+// theirs on the query string, where it's validated before reaching tmux.
+function resolveProjectDir(views: ChatView[], sid: string, proj: string | null): DirLookup {
+  const v = views.find((x) => x.session_id === sid);
+  if (v) return { ok: true, dir: v.project_dir };
+  if (!proj) return { ok: false, code: 404, detail: 'unknown session' };
+  if (!isValidProjectDir(proj)) return { ok: false, code: 400, detail: 'invalid project dir' };
+  return { ok: true, dir: proj };
+}
+
 export function createServer(): http.Server {
   return http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://localhost');
@@ -93,6 +112,21 @@ export function createServer(): http.Server {
       return send(res, 200, 'application/json', JSON.stringify(idlePanes()));
     }
 
+    // Deep search across the whole archive (everything the 7-day board prunes),
+    // powered by find-chat. Board chats are excluded so the archive section only
+    // surfaces what isn't already visible above.
+    if (url.pathname === '/api/search') {
+      const q = url.searchParams.get('q') || '';
+      const { views } = snapshot();
+      searchArchive(
+        q,
+        views.map((v) => v.session_id),
+      )
+        .then((r) => json(res, 200, r))
+        .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
     if (url.pathname === '/restore') {
       // Rebuild any workspace (loom-*) session not already running, then open a
       // Ghostty tab attached to each newly-restored session.
@@ -112,12 +146,28 @@ export function createServer(): http.Server {
       const sid = url.searchParams.get('session') || '';
       const { views, live } = snapshot();
       const v = views.find((x) => x.session_id === sid);
-      if (!v) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'unknown session' }));
-      const messages = readTranscript(v.jsonl_path);
-      return send(res, 200, 'application/json', JSON.stringify({
-        ok: true, title: v.title || v.first_message, project: v.project,
-        live: !!live[sid], messages,
-      }));
+      if (v) {
+        const messages = readTranscript(v.jsonl_path);
+        return json(res, 200, {
+          ok: true, title: v.title || v.first_message, project: v.project,
+          live: !!live[sid], messages,
+        });
+      }
+      // Archive chat: no DB row, so the caller passes the transcript path (which
+      // find-chat returns) plus the labels it already has for the panel header.
+      const jsonl = url.searchParams.get('jsonl') || '';
+      if (!jsonl) return json(res, 404, { ok: false, detail: 'unknown session' });
+      if (!isValidTranscriptPath(jsonl)) {
+        return json(res, 400, { ok: false, detail: 'invalid transcript path' });
+      }
+      const proj = url.searchParams.get('proj') || '';
+      return json(res, 200, {
+        ok: true,
+        title: url.searchParams.get('title') || '(archived chat)',
+        project: proj ? path.basename(proj) : '',
+        live: !!live[sid], // an archive chat has no live pane, but stay truthful
+        messages: readTranscript(jsonl),
+      });
     }
 
     if (url.pathname === '/send') {
@@ -139,26 +189,16 @@ export function createServer(): http.Server {
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
     }
 
-    if (url.pathname === '/resume') {
+    if (url.pathname === '/resume' || url.pathname === '/branch') {
       const sid = url.searchParams.get('session') || '';
       const pane = url.searchParams.get('pane') || '';
-      if (!pane) return send(res, 400, 'application/json', JSON.stringify({ ok: false, detail: 'no pane' }));
+      if (!pane) return json(res, 400, { ok: false, detail: 'no pane' });
       const { views } = snapshot();
-      const v = views.find((x) => x.session_id === sid);
-      if (!v) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'unknown session' }));
-      const r = resumeInPane(pane, v.project_dir, sid);
-      return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
-    }
-
-    if (url.pathname === '/branch') {
-      const sid = url.searchParams.get('session') || '';
-      const pane = url.searchParams.get('pane') || '';
-      if (!pane) return send(res, 400, 'application/json', JSON.stringify({ ok: false, detail: 'no pane' }));
-      const { views } = snapshot();
-      const v = views.find((x) => x.session_id === sid);
-      if (!v) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'unknown session' }));
-      const r = branchInPane(pane, v.project_dir, sid);
-      return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
+      const dir = resolveProjectDir(views, sid, url.searchParams.get('proj'));
+      if (!dir.ok) return json(res, dir.code, { ok: false, detail: dir.detail });
+      const launch = url.pathname === '/branch' ? branchInPane : resumeInPane;
+      const r = launch(pane, dir.dir, sid);
+      return json(res, r.ok ? 200 : 500, r);
     }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {

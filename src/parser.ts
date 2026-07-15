@@ -117,6 +117,10 @@ function extractUserText(content: unknown): string {
 // command name, drop the noise tags, so a "/clear" chat reads "/clear" not tag soup.
 export function cleanText(raw: string): string {
   return raw
+    // Boilerplate Claude prepends to slash-command turns. Drop the whole block —
+    // unlike the stray-tag strip below, its *content* is noise too, and it would
+    // otherwise become the visible heading of an archive card.
+    .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
     .replace(/<command-message>[\s\S]*?<\/command-message>/g, '')
     .replace(/<command-args>[\s\S]*?<\/command-args>/g, '')
     .replace(/<command-name>([\s\S]*?)<\/command-name>/g, '$1')
