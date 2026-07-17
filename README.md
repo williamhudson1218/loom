@@ -14,6 +14,7 @@ If you run a lot of Claude Code sessions, the built-in resume list is too shallo
 - **Live detection** — knows which sessions are *actually running* right now (process-tree based) and in which tmux pane, with a ⚡ *working* indicator (actively generating) vs *your turn* (idle, waiting on you).
 - **Jump / resume / branch / close** — open a live chat's tmux pane in Ghostty, resume a stale one into an empty pane (picks the pane by session·window·position), **branch** any chat (`claude --resume … --fork-session`) into an empty pane to fork its context into a new session while leaving the original untouched, or close one to free its pane.
 - **Built-in chat panel** — click a card to read the transcript and send messages straight into the running session.
+- **Save for later** — hit **☆ save** on any card to bookmark a chat you want to come back to. It's pinned in a **Saved for later** section at the top of the board and made exempt from the `ACTIVE_WINDOW_DAYS` prune, so it stays put no matter how long it's been idle — until you **★ unsave** it. Saving a *live* chat also closes its pane in the same click, so you can clear a tmux pane now and pick the work back up later without hunting the archive for it.
 - **Archive search** — the board only covers the last `ACTIVE_WINDOW_DAYS`. Type in the filter box and hit <kbd>Enter</kbd> (or click *Search all history*) to search **every** transcript on disk via [find-chat](https://github.com/williamhudson1218/find-chat), then resume or branch any hit into a pane, or read it in the panel — the same actions as a board card. Chats already on the board are excluded from the results.
 - **Crash recovery** — captures a full tmux layout snapshot every 15s; `restore` rebuilds every session with exact pane geometry and re-resumes the right chats after a tmux crash. Only sessions matching `LOOM_SESSION_PREFIX` (default `loom-`) are part of the saved workspace.
 - **PR links, activity heatmap, triage filters, auto-refresh** — and a menu-bar app with live counts.
@@ -30,7 +31,7 @@ src/            shared TypeScript backend
   findchat      archive search — shells out to the find-chat CLI, parses its JSON
   snapshot      full tmux-layout capture for crash recovery
   restore       rebuild sessions + geometry after a crash
-  server        localhost HTTP server: dashboard + JSON API (/api/data, /api/search, /goto, /resume, /close, /send, ...)
+  server        localhost HTTP server: dashboard + JSON API (/api/data, /api/search, /goto, /resume, /close, /send, /save, /unsave, ...)
   dashboard     self-contained HTML/JS dashboard (served by the server)
 app/            Electron app — bundles the backend, embeds the server, tray + window, daemon intervals
 hooks/          SessionStart/UserPromptSubmit hook that records each chat's tmux pane

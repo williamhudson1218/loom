@@ -189,6 +189,33 @@ export function createServer(): http.Server {
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
     }
 
+    // Save a chat for later: flag it as a durable bookmark (exempt from the window
+    // prune, pinned in the dashboard's Saved section). If the chat is still live,
+    // also close its pane in the same call — one click clears the workspace.
+    if (url.pathname === '/save') {
+      const sid = url.searchParams.get('session') || '';
+      const db = openDb();
+      const changed = db
+        .prepare(`UPDATE chats SET saved = 1, saved_at = ? WHERE session_id = ?`)
+        .run(Date.now(), sid).changes;
+      db.close();
+      if (!changed) return json(res, 404, { ok: false, detail: 'unknown session' });
+      const info = snapshot().live[sid];
+      const closed = info ? closeSession(info.pane_id).ok : false;
+      return json(res, 200, { ok: true, closed });
+    }
+
+    if (url.pathname === '/unsave') {
+      const sid = url.searchParams.get('session') || '';
+      const db = openDb();
+      const changed = db
+        .prepare(`UPDATE chats SET saved = 0, saved_at = 0 WHERE session_id = ?`)
+        .run(sid).changes;
+      db.close();
+      if (!changed) return json(res, 404, { ok: false, detail: 'unknown session' });
+      return json(res, 200, { ok: true });
+    }
+
     if (url.pathname === '/resume' || url.pathname === '/branch') {
       const sid = url.searchParams.get('session') || '';
       const pane = url.searchParams.get('pane') || '';

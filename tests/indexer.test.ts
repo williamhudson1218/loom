@@ -71,6 +71,27 @@ describe('windowCutoff / pruneOld', () => {
     expect(db.prepare(`SELECT COUNT(*) n FROM chats`).get()).toEqual({ n: 1 });
     db.close();
   });
+
+  it('exempts saved chats from the window prune', async () => {
+    const db = openDb(':memory:');
+    const parsed = await parseJsonlFile(FIX);
+    upsertChat(db, parsed, 1000, 5000);
+
+    const now = 100 * 86_400_000;
+    const cutoff = windowCutoff(now, 7);
+
+    // Far past the cutoff, but saved -> must survive.
+    db.prepare(`UPDATE chats SET last_active_at=?, saved=1, saved_at=? WHERE session_id=?`)
+      .run(50 * 86_400_000, now, 'sess-abc');
+    expect(pruneOld(db, cutoff)).toBe(0);
+    expect(db.prepare(`SELECT COUNT(*) n FROM chats`).get()).toEqual({ n: 1 });
+
+    // Unsaving lets it prune again.
+    db.prepare(`UPDATE chats SET saved=0, saved_at=0 WHERE session_id=?`).run('sess-abc');
+    expect(pruneOld(db, cutoff)).toBe(1);
+    expect(db.prepare(`SELECT COUNT(*) n FROM chats`).get()).toEqual({ n: 0 });
+    db.close();
+  });
 });
 
 describe('listProjectJsonls', () => {

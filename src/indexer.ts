@@ -31,9 +31,13 @@ export function windowCutoff(now: number, days: number = ACTIVE_WINDOW_DAYS): nu
   return now - days * DAY_MS;
 }
 
-/** Drop rows for chats last active before the cutoff. Returns rows removed. */
+/**
+ * Drop rows for chats last active before the cutoff. Returns rows removed.
+ * Saved chats are durable bookmarks — exempt from the window prune so they stay
+ * on the board until explicitly unsaved (see the Saved section on the dashboard).
+ */
 export function pruneOld(db: Database.Database, cutoff: number): number {
-  return db.prepare(`DELETE FROM chats WHERE last_active_at < ?`).run(cutoff).changes;
+  return db.prepare(`DELETE FROM chats WHERE last_active_at < ? AND saved = 0`).run(cutoff).changes;
 }
 
 export function listProjectJsonls(projectsDir: string): string[] {

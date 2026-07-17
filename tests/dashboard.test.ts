@@ -40,6 +40,30 @@ describe('dashboard', () => {
     db.close();
   });
 
+  it('surfaces saved / saved_at on the view', async () => {
+    const db = openDb(':memory:');
+    const parsed = await parseJsonlFile(FIX);
+    upsertChat(db, parsed, 1000, 5000);
+
+    // Default: not saved.
+    expect(toChatViews(db)[0].saved).toBe(false);
+    expect(toChatViews(db)[0].saved_at).toBe(0);
+
+    db.prepare(`UPDATE chats SET saved=1, saved_at=4242 WHERE session_id=?`).run('sess-abc');
+    const v = toChatViews(db)[0];
+    expect(v.saved).toBe(true);
+    expect(v.saved_at).toBe(4242);
+    db.close();
+  });
+
+  it('ships the Saved-for-later scaffolding in the static shell', () => {
+    const html = renderDashboard([], 9999);
+    expect(html).toContain('id="saved"'); // pinned Saved section container
+    expect(html).toContain('function renderSaved('); // Saved section renderer
+    expect(html).toContain('/save?session='); // client save endpoint
+    expect(html).toContain('/unsave?session='); // client unsave endpoint
+  });
+
   // Archive hits are fetched from /api/search and turned into cards entirely in the
   // browser, so their rendering can't be asserted here — only that the shell ships
   // the scaffolding those client functions need. Behaviour is covered by

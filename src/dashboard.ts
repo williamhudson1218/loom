@@ -20,6 +20,8 @@ export interface ChatView {
   last_active_at: number;
   activity: Record<string, number>;
   summary_pending: boolean;
+  saved: boolean;
+  saved_at: number;
 }
 
 export function toChatViews(db: Database.Database): ChatView[] {
@@ -42,6 +44,8 @@ export function toChatViews(db: Database.Database): ChatView[] {
     last_active_at: r.last_active_at,
     activity: safeObj(r.activity_json),
     summary_pending: r.summary_dirty === 1 && !r.title,
+    saved: r.saved === 1,
+    saved_at: r.saved_at,
   }));
 }
 
@@ -173,6 +177,10 @@ export function renderDashboard(
   button.closebtn.arm { background:#7a1f2b; color:#fff; }
   a.prbtn { background:#2d2348; color:#c9b6ff; border:0; border-radius:6px; padding:5px 9px; font-size:12px; font-weight:600; text-decoration:none; display:inline-block; }
   a.prbtn:hover { background:#3b2e63; }
+  button.savebtn { background:#2a2a1c; color:#e3d08a; font-weight:600; }
+  button.savebtn:hover { background:#3a3826; }
+  button.unsavebtn { background:#3a3826; color:#f0dfa0; font-weight:600; }
+  button.unsavebtn:hover { background:#4a462f; }
   .card { cursor:pointer; }
   #overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); opacity:0; pointer-events:none; transition:opacity .2s; z-index:8; }
   #overlay.on { opacity:1; pointer-events:auto; }
@@ -201,6 +209,14 @@ export function renderDashboard(
   button.paneopt { text-align:left; background:#1b1f2a; border:1px solid #2b3040; display:flex; justify-content:space-between; gap:12px; }
   button.paneopt:hover { background:#222a3d; border-color:#3a4a63; }
   .pcwd { color:#6b7280; font-size:11px; }
+  /* Saved for later — durable bookmarks pinned above the live board */
+  #saved { padding:16px 20px 0; max-width:1100px; display:grid; gap:11px; }
+  #saved:empty { display:none; }
+  .shead { display:flex; align-items:center; gap:10px; margin:0;
+    color:#e3d08a; font-size:11px; text-transform:uppercase; letter-spacing:.6px; font-weight:700; }
+  .shead::after { content:''; flex:1; height:1px; background:#3a3826; }
+  .card.saved { border-left-color:#e3d08a; background:#191712; }
+  .card.saved:hover { background:#1e1b14; }
   /* Archive search — chats older than the board window, surfaced via find-chat */
   .deeplink { display:none; margin-top:9px; color:#79b1ff; font-size:12.5px; cursor:pointer;
     border-bottom:1px dashed #3a4a63; width:fit-content; }
@@ -234,6 +250,7 @@ export function renderDashboard(
   </div>
   <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
+<section id="saved"></section>
 <main id="list"></main>
 <section id="archive"></section>
 <div id="overlay"></div>
@@ -259,16 +276,24 @@ var liveOnly=true;
 const SLABEL={done:'Done',waiting_on_user:'Your turn',warning:'Caveats',error:'Error',pending:'Summarizing…'};
 function st(c){return c.summary_pending?'pending':(c.state||'done');}
 function isLive(c){return !!DATA.live[c.session_id];}
-function scoped(){return liveOnly?DATA.chats.filter(isLive):DATA.chats;}
+function isSaved(c){return !!c.saved;}
+// The main board excludes saved chats — they live in the pinned Saved section above.
+function scoped(){return (liveOnly?DATA.chats.filter(isLive):DATA.chats).filter(c=>!isSaved(c));}
 function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%360;return 'background:hsl('+h+',42%,20%);color:hsl('+h+',72%,76%)';}
 function liveToggle(){const n=Object.keys(DATA.live).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?n:DATA.chats.length);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
 function isWorking(c){const L=DATA.live[c.session_id];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[a.session_id]?1:0,lb=DATA.live[b.session_id]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):(b.last_active_at-a.last_active_at);});const list=$('#list');const empty=liveOnly&&scoped().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>';list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
+function render(){const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[a.session_id]?1:0,lb=DATA.live[b.session_id]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):(b.last_active_at-a.last_active_at);});const list=$('#list');const empty=liveOnly&&scoped().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>';list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);renderSaved();}
+// The Saved section is a curated pin list — always shows every saved chat (newest
+// save first), ignoring the Live-only toggle and triage filters so a chat you
+// closed is always findable here.
+function renderSaved(){const box=$('#saved');const rows=DATA.chats.filter(isSaved).sort((a,b)=>b.saved_at-a.saved_at);if(!rows.length){box.innerHTML='';return;}box.innerHTML='<div class="shead">★ Saved for later '+rows.length+'</div>'+rows.map(card).join('');box.querySelectorAll('.card').forEach(wireCard);}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
-function wireCard(el){el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,el,'resume',rb.dataset.proj||'');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,el,'branch',bb.dataset.proj||'');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,el);}
+function wireCard(el){el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,el,'resume',rb.dataset.proj||'');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,el,'branch',bb.dataset.proj||'');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,el);}
+function doSave(sid,el){flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved — pane freed ✓':'saved ✓'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
+function doUnsave(sid,el){flash(el,'removing…','#7a6a1a');fetch('/unsave?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>{flash(el,j.ok?'unsaved ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function confirmClose(b,el){if(b.dataset.armed){doClose(b.dataset.sid,el);}else{b.dataset.armed='1';b.textContent='✕ confirm?';b.classList.add('arm');setTimeout(()=>{if(b){b.dataset.armed='';b.textContent='✕ close';b.classList.remove('arm');}},2500);}}
 function doClose(sid,el){flash(el,'closing…','#7a4a1a');fetch('/close?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>{flash(el,j.ok?'closed — pane freed ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function jump(sid,el){flash(el,'opening…','#3b5bdb');fetch('/goto?session='+encodeURIComponent(sid)).then(r=>r.json()).then(j=>flash(el,j.ok?'opened ✓':'no live pane',j.ok?'#1f6f3f':'#8a2b2e')).catch(()=>flash(el,'server off','#8a2b2e'));}
@@ -280,7 +305,7 @@ function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[c.session_id];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
-function card(c){const s=st(c);const L=DATA.live[c.session_id];const W=!!(L&&L.working);const id=esc(c.session_id);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';return '<div class="card s-'+s+(W?' work':'')+'" data-sid="'+id+'">'+(W?'<div class="sweep"></div>':'')+
+function card(c){const s=st(c);const L=DATA.live[c.session_id];const W=!!(L&&L.working);const id=esc(c.session_id);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';const sav=c.saved?'<button class="unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★ saved</button>':'<button class="savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆ save</button>';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+'" data-sid="'+id+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill '+s+'">'+SLABEL[s]+'</span></div>'+
 '<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
@@ -288,6 +313,7 @@ function card(c){const s=st(c);const L=DATA.live[c.session_id];const W=!!(L&&L.w
 '<div class="resume"><code class="sid" title="session id">'+id+'</code><button class="copy" data-id="'+id+'">copy id</button>'+(km?'<button class="expand">▸ moments</button>':'')+pr+
 '<span class="spacer"></span>'+
 (L?'<button class="open" data-jump="'+id+'">↗ open in Ghostty</button><button class="closebtn" data-sid="'+id+'" title="exit Claude in this pane (chat stays resumable)">✕ close</button>':'<button class="resumebtn" data-sid="'+id+'">⏵ resume…</button>')+
+sav+
 '<button class="branchbtn" data-sid="'+id+'" title="fork this conversation into a new pane (original left untouched)">⑃ branch…</button>'+
 '</div>'+
 '<div class="picker"></div></div>';}
@@ -304,7 +330,7 @@ function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.val
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeChat();});
 var lastRenderAt=0;
-function dataSig(){return DATA.chats.map(c=>c.session_id+':'+(c.state||'')+':'+(c.summary_pending?'p':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
+function dataSig(){return DATA.chats.map(c=>c.session_id+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
 function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;

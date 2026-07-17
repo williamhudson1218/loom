@@ -23,12 +23,15 @@ CREATE TABLE IF NOT EXISTS chats (
   summary_at        INTEGER NOT NULL DEFAULT 0,
   last_tmux_session TEXT NOT NULL DEFAULT '',
   last_pane_id      TEXT NOT NULL DEFAULT '',
+  saved             INTEGER NOT NULL DEFAULT 0,
+  saved_at          INTEGER NOT NULL DEFAULT 0,
   jsonl_mtime       INTEGER NOT NULL,
   last_indexed_at   INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS chats_last_active_idx ON chats(last_active_at);
 CREATE INDEX IF NOT EXISTS chats_dirty_idx ON chats(summary_dirty);
+CREATE INDEX IF NOT EXISTS chats_saved_idx ON chats(saved);
 `;
 
 export function applySchema(db: Database.Database): void {
@@ -42,5 +45,11 @@ export function applySchema(db: Database.Database): void {
   }
   if (!have.has('pr_url')) {
     db.exec(`ALTER TABLE chats ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!have.has('saved')) {
+    db.exec(`ALTER TABLE chats ADD COLUMN saved INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!have.has('saved_at')) {
+    db.exec(`ALTER TABLE chats ADD COLUMN saved_at INTEGER NOT NULL DEFAULT 0`);
   }
 }
