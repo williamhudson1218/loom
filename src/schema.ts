@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS chats (
 
 CREATE INDEX IF NOT EXISTS chats_last_active_idx ON chats(last_active_at);
 CREATE INDEX IF NOT EXISTS chats_dirty_idx ON chats(summary_dirty);
-CREATE INDEX IF NOT EXISTS chats_saved_idx ON chats(saved);
 `;
 
 export function applySchema(db: Database.Database): void {
@@ -52,4 +51,8 @@ export function applySchema(db: Database.Database): void {
   if (!have.has('saved_at')) {
     db.exec(`ALTER TABLE chats ADD COLUMN saved_at INTEGER NOT NULL DEFAULT 0`);
   }
+  // Created after the ALTERs above: on a pre-existing DB the `saved` column only
+  // exists once the migration has added it, so this index can't live in the
+  // CREATE-TABLE block (which is a no-op when the table already exists).
+  db.exec(`CREATE INDEX IF NOT EXISTS chats_saved_idx ON chats(saved)`);
 }
