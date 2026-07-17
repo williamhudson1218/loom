@@ -113,7 +113,7 @@ export function renderDashboard(
   .brand h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.3px;
     background:linear-gradient(90deg,#79b1ff,#7ee0a0); -webkit-background-clip:text; background-clip:text; color:transparent; }
   .brand .sub { color:#8b93a7; font-size:12px; }
-  #heatmap { display:flex; gap:2px; flex-wrap:wrap; margin-top:10px; }
+  #heatmap { display:flex; gap:3px; flex-wrap:wrap; margin-top:10px; }
   /* Primary view switch — a segmented control, kept distinct from the filters below */
   .tabs { display:inline-flex; background:#141826; border:1px solid #2b3040; border-radius:9px; padding:3px; gap:3px; margin-top:13px; }
   .tab { background:transparent; border:0; color:#8b93a7; border-radius:6px; padding:6px 15px; cursor:pointer; font-size:13px; font-weight:600; transition:background .15s, color .15s; }
@@ -123,7 +123,7 @@ export function renderDashboard(
   .tab .cnt { opacity:.6; margin-left:6px; }
   .tab.savedtab.on { background:#3a3826; color:#f0dfa0; }
   .tab.savedtab.on:hover { background:#46432e; }
-  .hcell { width:11px; height:11px; border-radius:2px; background:#1b1f2a; }
+  .hcell { width:22px; height:15px; border-radius:3px; background:#1b1f2a; }
   .controls { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   input,select { background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; }
   .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
@@ -278,7 +278,11 @@ const DATA = ${data};
 const $ = (s,r=document)=>r.querySelector(s);
 function rel(ms){const s=(Date.now()-ms)/1000;if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
 function spark(act){const days=[];const now=new Date();for(let i=13;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');days.push(act[k]||0);}const max=Math.max(1,...days);const bars='▁▂▃▄▅▆▇█';return days.map(v=>bars[Math.min(7,Math.round(v/max*7))]).join('');}
-function heat(){const map={};DATA.chats.forEach(c=>{for(const k in c.activity)map[k]=(map[k]||0)+c.activity[k];});const el=$('#heatmap');const now=new Date();const max=Math.max(1,...Object.values(map));for(let i=83;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');const v=map[k]||0;const cell=document.createElement('div');cell.className='hcell';cell.title=k+': '+v;if(v){const a=0.25+0.75*Math.min(1,v/max);cell.style.background='rgba(88,166,255,'+a+')';}el.appendChild(cell);}}
+// 14-day activity strip — matches the board's ~1-week data window (plus a few
+// days of in-chat history) so the cells are actually populated, and mirrors the
+// per-card spark-line's span. Shading scales to the busiest visible day.
+const HEAT_DAYS=14;
+function heat(){const map={};DATA.chats.forEach(c=>{for(const k in c.activity)map[k]=(map[k]||0)+c.activity[k];});const el=$('#heatmap');const now=new Date();const cells=[];for(let i=HEAT_DAYS-1;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');cells.push({k,v:map[k]||0});}const max=Math.max(1,...cells.map(c=>c.v));el.innerHTML='';for(const {k,v} of cells){const cell=document.createElement('div');cell.className='hcell';cell.title=k+': '+v;if(v){const a=0.25+0.75*Math.min(1,v/max);cell.style.background='rgba(88,166,255,'+a+')';}el.appendChild(cell);}}
 function projects(){const set=[...new Set(DATA.chats.map(c=>c.project))].sort();const sel=$('#proj');sel.innerHTML='<option value="">all projects</option>'+set.map(p=>'<option>'+p+'</option>').join('');}
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 var stateFilter='all';
