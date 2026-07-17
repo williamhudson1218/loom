@@ -56,10 +56,12 @@ describe('dashboard', () => {
     db.close();
   });
 
-  it('ships the Saved-for-later scaffolding in the static shell', () => {
+  it('ships the Board/Saved tab + save scaffolding in the static shell', () => {
     const html = renderDashboard([], 9999);
-    expect(html).toContain('id="saved"'); // pinned Saved section container
-    expect(html).toContain('function renderSaved('); // Saved section renderer
+    expect(html).toContain('id="tabs"'); // segmented Board/Saved switch container
+    expect(html).toContain('function renderTabs('); // tab renderer
+    expect(html).toContain("tab='board'"); // default view state
+    expect(html).toContain('id="restorebtn"'); // Restore workspace (moved to header actions)
     expect(html).toContain('/save?session='); // client save endpoint
     expect(html).toContain('/unsave?session='); // client unsave endpoint
   });

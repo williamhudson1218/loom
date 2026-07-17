@@ -107,15 +107,26 @@ export function renderDashboard(
   body { margin:0; background:#0d0f15; color:#e6e6e6; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
   header { padding:14px 20px; border-bottom:1px solid #232634; position:sticky; top:0; z-index:5;
     background:linear-gradient(180deg,#141826,#0d0f15); }
+  .topbar { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .actions { display:flex; gap:8px; align-items:center; }
   .brand { display:flex; align-items:center; gap:10px; }
   .brand h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.3px;
     background:linear-gradient(90deg,#79b1ff,#7ee0a0); -webkit-background-clip:text; background-clip:text; color:transparent; }
   .brand .sub { color:#8b93a7; font-size:12px; }
   #heatmap { display:flex; gap:2px; flex-wrap:wrap; margin-top:10px; }
+  /* Primary view switch — a segmented control, kept distinct from the filters below */
+  .tabs { display:inline-flex; background:#141826; border:1px solid #2b3040; border-radius:9px; padding:3px; gap:3px; margin-top:13px; }
+  .tab { background:transparent; border:0; color:#8b93a7; border-radius:6px; padding:6px 15px; cursor:pointer; font-size:13px; font-weight:600; transition:background .15s, color .15s; }
+  .tab:hover { color:#c4ccdc; background:#1b2233; }
+  .tab.on { background:#26304a; color:#fff; }
+  .tab.on:hover { background:#2b3654; }
+  .tab .cnt { opacity:.6; margin-left:6px; }
+  .tab.savedtab.on { background:#3a3826; color:#f0dfa0; }
+  .tab.savedtab.on:hover { background:#46432e; }
   .hcell { width:11px; height:11px; border-radius:2px; background:#1b1f2a; }
   .controls { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   input,select { background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; }
-  .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
   .chip { background:#1b1f2a; border:1px solid #2b3040; color:#c4ccdc; border-radius:999px; padding:4px 11px; cursor:pointer; font-size:12.5px; }
   .chip:hover { border-color:#3a4258; }
   .chip.on { background:#222a3d; border-color:#4d5b80; color:#fff; }
@@ -209,12 +220,7 @@ export function renderDashboard(
   button.paneopt { text-align:left; background:#1b1f2a; border:1px solid #2b3040; display:flex; justify-content:space-between; gap:12px; }
   button.paneopt:hover { background:#222a3d; border-color:#3a4a63; }
   .pcwd { color:#6b7280; font-size:11px; }
-  /* Saved for later — durable bookmarks pinned above the live board */
-  #saved { padding:16px 20px 0; max-width:1100px; display:grid; gap:11px; }
-  #saved:empty { display:none; }
-  .shead { display:flex; align-items:center; gap:10px; margin:0;
-    color:#e3d08a; font-size:11px; text-transform:uppercase; letter-spacing:.6px; font-weight:700; }
-  .shead::after { content:''; flex:1; height:1px; background:#3a3826; }
+  /* Saved-for-later cards carry a warm tint wherever they render (the Saved tab) */
   .card.saved { border-left-color:#e3d08a; background:#191712; }
   .card.saved:hover { background:#1e1b14; }
   /* Archive search — chats older than the board window, surfaced via find-chat */
@@ -234,8 +240,14 @@ export function renderDashboard(
 </style></head>
 <body>
 <header>
-  <div class="brand">${LOGO_SVG}<h1>${APP_NAME}</h1><span class="sub" id="gen"></span></div>
+  <div class="topbar">
+    <div class="brand">${LOGO_SVG}<h1>${APP_NAME}</h1><span class="sub" id="gen"></span></div>
+    <div class="actions">
+      <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore workspace</button>
+    </div>
+  </div>
   <div id="heatmap"></div>
+  <div class="tabs" id="tabs"></div>
   <div class="controls">
     <input id="q" placeholder="filter title/overview/first message…" style="min-width:240px"/>
     <select id="proj"></select>
@@ -245,12 +257,10 @@ export function renderDashboard(
       <option value="long">Longest</option>
     </select>
     <button id="livetoggle" class="chip on"></button>
-    <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore workspace</button>
-    <div class="chips" id="chips"></div>
   </div>
+  <div class="chips" id="chips"></div>
   <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
-<section id="saved"></section>
 <main id="list"></main>
 <section id="archive"></section>
 <div id="overlay"></div>
@@ -273,22 +283,32 @@ function projects(){const set=[...new Set(DATA.chats.map(c=>c.project))].sort();
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 var stateFilter='all';
 var liveOnly=true;
+var tab='board'; // 'board' | 'saved'
 const SLABEL={done:'Done',waiting_on_user:'Your turn',warning:'Caveats',error:'Error',pending:'Summarizing…'};
 function st(c){return c.summary_pending?'pending':(c.state||'done');}
 function isLive(c){return !!DATA.live[c.session_id];}
 function isSaved(c){return !!c.saved;}
-// The main board excludes saved chats — they live in the pinned Saved section above.
-function scoped(){return (liveOnly?DATA.chats.filter(isLive):DATA.chats).filter(c=>!isSaved(c));}
+// Two views: the Board (unsaved chats, optionally live-only) and the Saved tab
+// (the bookmark list). scoped() returns whichever the active tab is showing, so
+// the filters/chips below operate on the right set.
+function boardBase(){return (liveOnly?DATA.chats.filter(isLive):DATA.chats).filter(c=>!isSaved(c));}
+function savedBase(){return DATA.chats.filter(isSaved);}
+function scoped(){return tab==='saved'?savedBase():boardBase();}
 function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%360;return 'background:hsl('+h+',42%,20%);color:hsl('+h+',72%,76%)';}
-function liveToggle(){const n=Object.keys(DATA.live).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?n:DATA.chats.length);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
+// Segmented Board / Saved switch. Counts are totals (independent of the live
+// filter) so they don't jump around as you toggle Live-only.
+function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
+// Live-only toggle is a Board concept; hide it on the Saved tab (saved chats are
+// usually closed, so filtering them by "live" is meaningless).
+function syncControls(){$('#livetoggle').style.display=tab==='saved'?'none':'';}
+function liveToggle(){const nLive=Object.keys(DATA.live).length;const nAll=DATA.chats.filter(c=>!isSaved(c)).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?nLive:nAll);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
 function isWorking(c){const L=DATA.live[c.session_id];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[a.session_id]?1:0,lb=DATA.live[b.session_id]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):(b.last_active_at-a.last_active_at);});const list=$('#list');const empty=liveOnly&&scoped().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>';list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);renderSaved();}
-// The Saved section is a curated pin list — always shows every saved chat (newest
-// save first), ignoring the Live-only toggle and triage filters so a chat you
-// closed is always findable here.
-function renderSaved(){const box=$('#saved');const rows=DATA.chats.filter(isSaved).sort((a,b)=>b.saved_at-a.saved_at);if(!rows.length){box.innerHTML='';return;}box.innerHTML='<div class="shead">★ Saved for later '+rows.length+'</div>'+rows.map(card).join('');box.querySelectorAll('.card').forEach(wireCard);}
+function render(){renderTabs();syncControls();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
+// On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
+const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
+let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[a.session_id]?1:0,lb=DATA.live[b.session_id]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
 function wireCard(el){el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,el,'resume',rb.dataset.proj||'');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,el,'branch',bb.dataset.proj||'');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,el);}
