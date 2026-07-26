@@ -46,4 +46,18 @@ describe('agent-selection routes', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ ok: false, detail: 'invalid agent' });
   });
+
+  it('rejects Codex sends before reaching the Claude pane helper', async () => {
+    const response = await request(createServer(), 'POST', '/send?agent=codex&session=codex-session&text=hello');
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ ok: false, detail: 'in-panel send is only supported for Claude' });
+  });
+
+  it('rejects Codex closes before reaching the Claude pane helper', async () => {
+    const response = await request(createServer(), 'POST', '/close?agent=codex&session=codex-session');
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ ok: false, detail: 'in-panel close is only supported for Claude' });
+  });
 });

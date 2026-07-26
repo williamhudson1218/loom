@@ -220,7 +220,9 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/send') {
       const sid = url.searchParams.get('session') || '';
-      const agent = requestAgent(url);
+      const agent = selectedAgent(url);
+      if (!agent) return json(res, 400, { ok: false, detail: 'invalid agent' });
+      if (agent !== 'claude') return json(res, 409, { ok: false, detail: 'in-panel send is only supported for Claude' });
       const text = url.searchParams.get('text') || '';
       const { live } = snapshot();
       const info = live[agentSessionKey(agent, sid)];
@@ -231,7 +233,9 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/close') {
       const sid = url.searchParams.get('session') || '';
-      const agent = requestAgent(url);
+      const agent = selectedAgent(url);
+      if (!agent) return json(res, 400, { ok: false, detail: 'invalid agent' });
+      if (agent !== 'claude') return json(res, 409, { ok: false, detail: 'in-panel close is only supported for Claude' });
       const { live } = snapshot();
       const info = live[agentSessionKey(agent, sid)];
       if (!info) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'no live pane' }));
