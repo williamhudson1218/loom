@@ -1,4 +1,7 @@
+export type Agent = 'claude' | 'codex';
+
 export interface ParsedChat {
+  agent: Agent;
   session_id: string;
   project_dir: string;
   jsonl_path: string;
@@ -31,6 +34,7 @@ export interface Summary {
 
 // Stored row shape (as read back from SQLite).
 export interface ChatRow {
+  agent: Agent;
   session_id: string;
   project_dir: string;
   jsonl_path: string;
@@ -57,3 +61,5 @@ export interface ChatRow {
   jsonl_mtime: number;
   last_indexed_at: number;
 }
+
+export type ChatKey = Pick<ParsedChat, 'agent' | 'session_id'>;

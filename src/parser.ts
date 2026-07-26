@@ -87,6 +87,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
   }
 
   return {
+    agent: 'claude',
     session_id,
     project_dir,
     jsonl_path: jsonlPath,

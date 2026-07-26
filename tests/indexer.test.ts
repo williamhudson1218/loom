@@ -32,6 +32,7 @@ describe('upsertChat', () => {
 
 describe('isAnalyzerSession', () => {
   const base: ParsedChat = {
+    agent: 'claude',
     session_id: 's', project_dir: '/Users/me/dev/proj', jsonl_path: '/x.jsonl',
     started_at: 0, ended_at: 0, last_active_at: 0, message_count: 2,
     activity: {}, files_touched: [], first_message: 'fix the bug', claude_auto_title: '', pr_url: '',
