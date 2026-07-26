@@ -92,6 +92,12 @@ function requestAgent(url: URL): Agent {
   return url.searchParams.get('agent') === 'codex' ? 'codex' : 'claude';
 }
 
+// The archive search indexes Claude transcripts only, so a same-id Codex board
+// row must not suppress a Claude archive result.
+export function archiveExcludeSessionIds(views: Pick<ChatView, 'agent' | 'session_id'>[]): string[] {
+  return views.filter((view) => view.agent === 'claude').map((view) => view.session_id);
+}
+
 export function createServer(): http.Server {
   return http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://localhost');
@@ -128,7 +134,7 @@ export function createServer(): http.Server {
       const { views } = snapshot();
       searchArchive(
         q,
-        views.map((v) => v.session_id),
+        archiveExcludeSessionIds(views),
       )
         .then((r) => json(res, 200, r))
         .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
