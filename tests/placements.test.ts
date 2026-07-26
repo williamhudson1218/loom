@@ -3,7 +3,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { agentPaneIds, readPlacements, cleanPaneTitle, readingOrder, type TmuxPane } from '../src/placements.ts';
+import { agentPaneIds, agentSessionKey, liveSessionsFrom, readPlacements, cleanPaneTitle, readingOrder, type TmuxPane } from '../src/placements.ts';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 
@@ -31,14 +31,32 @@ describe('readPlacements', () => {
     );
     const map = readPlacements(file);
     expect(map.size).toBe(2);
-    expect(map.get('s1')?.pane_id).toBe('%9'); // last wins
-    expect(map.get('s2')?.pane_id).toBe('%2');
-    expect(map.get('s1')?.agent).toBe('claude'); // legacy hook records default safely
-    expect(map.get('s2')?.agent).toBe('claude');
+    expect(map.get(agentSessionKey('claude', 's1'))?.pane_id).toBe('%9'); // last wins
+    expect(map.get(agentSessionKey('claude', 's2'))?.pane_id).toBe('%2');
+    expect(map.get(agentSessionKey('claude', 's1'))?.agent).toBe('claude'); // legacy hook records default safely
+    expect(map.get(agentSessionKey('claude', 's2'))?.agent).toBe('claude');
   });
 
   it('returns an empty map when the file is missing', () => {
     expect(readPlacements('/no/such/placements.jsonl').size).toBe(0);
+  });
+});
+
+describe('liveSessionsFrom', () => {
+  it('keeps same session ids from Claude and Codex in separate live entries', () => {
+    const panes: TmuxPane[] = [
+      { pane_id: '%1', tmux_session: 'loom-a', window_index: '0', pane_index: '0', pane_pid: '1', command: 'claude', cwd: '/a', left: 0, top: 0, title: '' },
+      { pane_id: '%2', tmux_session: 'loom-b', window_index: '0', pane_index: '0', pane_pid: '2', command: 'codex', cwd: '/b', left: 0, top: 0, title: '' },
+    ];
+    const placements = new Map([
+      [agentSessionKey('claude', 'same-id'), { agent: 'claude' as const, session_id: 'same-id', pane_id: '%1', tmux_session: 'loom-a', window_index: '0', pane_index: '0', cwd: '/a', ts: 1 }],
+      [agentSessionKey('codex', 'same-id'), { agent: 'codex' as const, session_id: 'same-id', pane_id: '%2', tmux_session: 'loom-b', window_index: '0', pane_index: '0', cwd: '/b', ts: 2 }],
+    ]);
+
+    const live = liveSessionsFrom(panes, new Map([['%1', 'claude'], ['%2', 'codex']]), placements);
+
+    expect(live.get(agentSessionKey('claude', 'same-id'))?.pane_id).toBe('%1');
+    expect(live.get(agentSessionKey('codex', 'same-id'))?.pane_id).toBe('%2');
   });
 });
 

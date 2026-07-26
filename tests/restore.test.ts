@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { restore } from '../src/restore.ts';
-import type { Layout } from '../src/snapshot.ts';
+import { captureLayoutFrom, type Layout } from '../src/snapshot.ts';
+import { agentSessionKey, liveSessionsFrom, type TmuxPane } from '../src/placements.ts';
 
 const layout: Layout = {
   taken_at: 0,
@@ -57,6 +58,18 @@ describe('restore (dry-run)', () => {
 
   it('restores Codex panes with codex resume', () => {
     expect(restore({ dryRun: true, layout: codexLayout, existing: new Set() }).log.join('\n')).toContain('codex resume');
+  });
+
+  it('snapshots a recorded Codex launch and restores its native session', () => {
+    const pane: TmuxPane = { pane_id: '%9', tmux_session: 'loom-work', window_index: '0', pane_index: '0', pane_pid: '9', command: 'codex', cwd: '/work', left: 0, top: 0, title: '' };
+    const placements = new Map([
+      [agentSessionKey('codex', 'codex-session'), { agent: 'codex' as const, session_id: 'codex-session', pane_id: '%9', tmux_session: 'loom-work', window_index: '0', pane_index: '0', cwd: '/work', ts: 1 }],
+    ]);
+    const live = liveSessionsFrom([pane], new Map([['%9', 'codex']]), placements);
+    const snap = captureLayoutFrom({ now: 0, panes: [pane], agentPanes: new Map([['%9', 'codex']]), live });
+
+    expect(snap.sessions[0].windows[0].panes[0]).toMatchObject({ agent: 'codex', session_id: 'codex-session' });
+    expect(restore({ dryRun: true, layout: snap, existing: new Set() }).log.join('\n')).toContain('codex resume');
   });
 
   it('restores every session when no prefix is given', () => {

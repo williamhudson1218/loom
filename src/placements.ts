@@ -6,6 +6,10 @@ import type { Agent } from './types.ts';
 
 export const PLACEMENTS_PATH = path.join(TOOL_DIR, 'placements.jsonl');
 
+export function agentSessionKey(agent: Agent, sessionId: string): string {
+  return `${agent}:${sessionId}`;
+}
+
 export interface Placement {
   agent: Agent;
   session_id: string;
@@ -17,7 +21,7 @@ export interface Placement {
   ts: number;
 }
 
-// Read the append-only placements log; last line per session_id wins.
+// Read the append-only placements log; last line per (agent, session_id) wins.
 export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Placement> {
   const map = new Map<string, Placement>();
   let text: string;
@@ -33,13 +37,18 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
       if (p.session_id && p.pane_id) {
         // Older hooks only recorded Claude sessions, so an omitted agent is
         // safely interpreted as Claude without changing the native file.
-        map.set(p.session_id, { ...p, agent: p.agent === 'codex' ? 'codex' : 'claude' } as Placement);
+        const placement = { ...p, agent: p.agent === 'codex' ? 'codex' : 'claude' } as Placement;
+        map.set(agentSessionKey(placement.agent, placement.session_id), placement);
       }
     } catch {
       /* skip malformed */
     }
   }
   return map;
+}
+
+export function recordPlacement(placement: Placement, file: string = PLACEMENTS_PATH): void {
+  fs.appendFileSync(file, JSON.stringify(placement) + '\n', 'utf-8');
 }
 
 export interface TmuxPane {
@@ -177,6 +186,7 @@ export function idlePanes(): IdlePane[] {
 
 export interface LiveInfo {
   agent: Agent;
+  session_id: string;
   pane_id: string;
   tmux_session: string;
   window_index: string;
@@ -192,18 +202,20 @@ export function cleanPaneTitle(t: string): string {
 // session_id -> live location. Primary source: recorded placements joined to the
 // live agent-pane set. Secondary (bootstrap before the hook has recorded anything):
 // match a running agent pane's title to a known chat title.
-export function liveSessions(opts?: {
-  titleToSession?: Map<string, string>;
-}): Map<string, LiveInfo> {
-  const panes = listTmuxPanes();
-  const agentPanes = agentPaneIds(panes);
+export function liveSessionsFrom(
+  panes: TmuxPane[],
+  agentPanes: Map<string, Agent>,
+  placements: Map<string, Placement>,
+  titleToSession?: Map<string, string>,
+): Map<string, LiveInfo> {
   const byId = new Map(panes.map((p) => [p.pane_id, p]));
   const live = new Map<string, LiveInfo>();
   const claimedPanes = new Set<string>();
   const set = (sid: string, pane: TmuxPane, agent: Agent) => {
     claimedPanes.add(pane.pane_id);
-    live.set(sid, {
+    live.set(agentSessionKey(agent, sid), {
       agent,
+      session_id: sid,
       pane_id: pane.pane_id,
       tmux_session: pane.tmux_session,
       window_index: pane.window_index,
@@ -215,23 +227,23 @@ export function liveSessions(opts?: {
   // 1. Exact: recorded placements joined to panes that are ACTUALLY running an agent
   // (one chat per pane). Newest placement wins a reused pane. A closed session's
   // pane is now a shell (not in claudeSet) -> excluded -> the chat reads as stale.
-  const placements = [...readPlacements().values()].sort((a, b) => b.ts - a.ts);
-  for (const pl of placements) {
+  const latestPlacements = [...placements.values()].sort((a, b) => b.ts - a.ts);
+  for (const pl of latestPlacements) {
     const pane = byId.get(pl.pane_id);
     const agent = pane && agentPanes.get(pane.pane_id);
-    if (pane && agent && !claimedPanes.has(pane.pane_id)) set(pl.session_id, pane, agent);
+    if (pane && agent === pl.agent && !claimedPanes.has(pane.pane_id)) set(pl.session_id, pane, agent);
   }
 
   const activeAgentPanes = panes.filter((p) => agentPanes.has(p.pane_id));
 
   // 2. Title bootstrap: pane title === a chat's auto-title (exact, per pane).
-  const t2s = opts?.titleToSession;
-  if (t2s) {
+  if (titleToSession) {
     for (const pane of activeAgentPanes) {
       if (claimedPanes.has(pane.pane_id)) continue;
-      const sid = t2s.get(cleanPaneTitle(pane.title));
       const agent = agentPanes.get(pane.pane_id);
-      if (sid && agent && !live.has(sid)) set(sid, pane, agent);
+      if (!agent) continue;
+      const sid = titleToSession.get(`${agent}:${cleanPaneTitle(pane.title)}`);
+      if (sid && !live.has(agentSessionKey(agent, sid))) set(sid, pane, agent);
     }
   }
 
@@ -239,4 +251,11 @@ export function liveSessions(opts?: {
   // (no placement, no title match) is left out rather than mis-attributed to a
   // recently-active chat — the placement hook fills it in on the next prompt.
   return live;
+}
+
+export function liveSessions(opts?: {
+  titleToSession?: Map<string, string>;
+}): Map<string, LiveInfo> {
+  const panes = listTmuxPanes();
+  return liveSessionsFrom(panes, agentPaneIds(panes), readPlacements(), opts?.titleToSession);
 }

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import type { Agent } from './types.ts';
+import { recordPlacement } from './placements.ts';
 
 export interface GotoResult {
   ok: boolean;
@@ -99,7 +100,10 @@ export interface LaunchInput {
 
 export interface LaunchInPaneInput extends LaunchInput {
   paneId: string;
+  placementFile?: string;
 }
+
+const PANE_INFO_SEP = '~|LOOM|~';
 
 export function buildLaunchCommand(input: LaunchInput): string {
   const cd = `cd ${shq(input.projectDir)} && `;
@@ -119,10 +123,13 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
     return { ok: false, detail: 'branching is only supported for Claude sessions' };
   }
   let tmuxSession = '';
+  let paneInfo: string[] = [];
   try {
-    tmuxSession = execFileSync('tmux', ['display-message', '-p', '-t', input.paneId, '#{session_name}'], {
+    paneInfo = execFileSync('tmux', ['display-message', '-p', '-t', input.paneId,
+      `#{session_name}${PANE_INFO_SEP}#{window_index}${PANE_INFO_SEP}#{pane_index}${PANE_INFO_SEP}#{pane_current_path}`], {
       encoding: 'utf-8',
-    }).trim();
+    }).trim().split(PANE_INFO_SEP);
+    tmuxSession = paneInfo[0] ?? '';
   } catch {
     /* focus will be skipped */
   }
@@ -132,18 +139,29 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
+  if (input.sourceAgent === 'codex' && input.selectedAgent === 'codex' && !input.fork) {
+    try {
+      recordPlacement({
+        agent: 'codex', session_id: input.sessionId, pane_id: input.paneId,
+        tmux_session: tmuxSession, window_index: paneInfo[1] ?? '', pane_index: paneInfo[2] ?? '',
+        cwd: paneInfo[3] || input.projectDir, ts: Date.now(),
+      }, input.placementFile);
+    } catch {
+      // Launch succeeded; placement registration is best-effort like the Claude hook.
+    }
+  }
   const focus = tmuxSession ? gotoPane(input.paneId, tmuxSession) : { ok: true, detail: 'no focus' };
   const action = input.sourceAgent !== input.selectedAgent ? 'started fresh' : input.fork ? 'branched' : 'resumed';
   return { ok: true, detail: action + '; ' + focus.detail };
 }
 
 // Resume a stale chat into an idle (shell) pane: continue the original session.
-export function resumeInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
-  return launchInPane({ paneId, projectDir, sessionId, sourceAgent: 'claude', selectedAgent: 'claude', fork: false });
+export function resumeInPane(paneId: string, projectDir: string, sessionId: string, agent: Agent = 'claude'): GotoResult {
+  return launchInPane({ paneId, projectDir, sessionId, sourceAgent: agent, selectedAgent: agent, fork: false });
 }
 
 // Branch a chat into an idle (shell) pane: fork the existing context into a new
 // session (original left running/resumable) and drop it into the chosen pane.
-export function branchInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
-  return launchInPane({ paneId, projectDir, sessionId, sourceAgent: 'claude', selectedAgent: 'claude', fork: true });
+export function branchInPane(paneId: string, projectDir: string, sessionId: string, agent: Agent = 'claude'): GotoResult {
+  return launchInPane({ paneId, projectDir, sessionId, sourceAgent: agent, selectedAgent: agent, fork: true });
 }

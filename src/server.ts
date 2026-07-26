@@ -11,6 +11,8 @@ import { restore } from './restore.ts';
 import { openGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findchat.ts';
 import { SESSION_PREFIX } from './paths.ts';
+import { agentSessionKey } from './placements.ts';
+import type { Agent } from './types.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -22,7 +24,8 @@ function titleToSession(views: ChatView[]): Map<string, string> {
   // also index Loom's title as a fallback. Skip the ambiguous default.
   for (const v of views) {
     for (const t of [v.claude_auto_title, v.title]) {
-      if (t && t !== 'Claude Code' && !m.has(t)) m.set(t, v.session_id);
+      const key = `${v.agent}:${t}`;
+      if (t && t !== 'Claude Code' && !m.has(key)) m.set(key, v.session_id);
     }
   }
   return m;
@@ -44,7 +47,7 @@ function snapshot(): { views: ChatView[]; live: Record<string, LiveLoc> } {
   for (const v of views) {
     try {
       const mt = fs.statSync(v.jsonl_path).mtimeMs;
-      mtime.set(v.session_id, mt);
+      mtime.set(agentSessionKey(v.agent, v.session_id), mt);
       if (mt > v.last_active_at) v.last_active_at = mt;
     } catch {
       /* file gone */
@@ -52,9 +55,9 @@ function snapshot(): { views: ChatView[]; live: Record<string, LiveLoc> } {
   }
   const liveMap = liveSessions({ titleToSession: titleToSession(views) });
   const live: Record<string, LiveLoc> = {};
-  for (const [sid, info] of liveMap) {
-    const mt = mtime.get(sid) ?? 0;
-    live[sid] = { ...info, working: now - mt < WORKING_MS };
+  for (const [key, info] of liveMap) {
+    const mt = mtime.get(key) ?? 0;
+    live[key] = { ...info, working: now - mt < WORKING_MS };
   }
   if (process.env.LOOM_DEBUG) {
     const panes = listTmuxPanes();
@@ -77,12 +80,16 @@ type DirLookup = { ok: true; dir: string } | { ok: false; code: number; detail: 
 // Resolve a session's project dir. Board chats resolve from the DB exactly as
 // before; archive chats (older than the board window, so absent from the DB) carry
 // theirs on the query string, where it's validated before reaching tmux.
-function resolveProjectDir(views: ChatView[], sid: string, proj: string | null): DirLookup {
-  const v = views.find((x) => x.session_id === sid);
+function resolveProjectDir(views: ChatView[], agent: Agent, sid: string, proj: string | null): DirLookup {
+  const v = views.find((x) => x.agent === agent && x.session_id === sid);
   if (v) return { ok: true, dir: v.project_dir };
   if (!proj) return { ok: false, code: 404, detail: 'unknown session' };
   if (!isValidProjectDir(proj)) return { ok: false, code: 400, detail: 'invalid project dir' };
   return { ok: true, dir: proj };
+}
+
+function requestAgent(url: URL): Agent {
+  return url.searchParams.get('agent') === 'codex' ? 'codex' : 'claude';
 }
 
 export function createServer(): http.Server {
@@ -91,8 +98,9 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/goto') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const { live } = snapshot();
-      const info = live[sid];
+      const info = live[agentSessionKey(agent, sid)];
       if (!info) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'no live pane' }));
       const r = gotoPane(info.pane_id, info.tmux_session);
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
@@ -144,13 +152,14 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/transcript') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const { views, live } = snapshot();
-      const v = views.find((x) => x.session_id === sid);
+      const v = views.find((x) => x.agent === agent && x.session_id === sid);
       if (v) {
-        const messages = readTranscript(v.jsonl_path);
+        const messages = readTranscript(v.agent, v.jsonl_path);
         return json(res, 200, {
           ok: true, title: v.title || v.first_message, project: v.project,
-          live: !!live[sid], messages,
+          live: !!live[agentSessionKey(agent, sid)], messages,
         });
       }
       // Archive chat: no DB row, so the caller passes the transcript path (which
@@ -165,16 +174,17 @@ export function createServer(): http.Server {
         ok: true,
         title: url.searchParams.get('title') || '(archived chat)',
         project: proj ? path.basename(proj) : '',
-        live: !!live[sid], // an archive chat has no live pane, but stay truthful
+        live: !!live[agentSessionKey(agent, sid)], // an archive chat has no live pane, but stay truthful
         messages: readTranscript(jsonl),
       });
     }
 
     if (url.pathname === '/send') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const text = url.searchParams.get('text') || '';
       const { live } = snapshot();
-      const info = live[sid];
+      const info = live[agentSessionKey(agent, sid)];
       if (!info) return send(res, 409, 'application/json', JSON.stringify({ ok: false, detail: 'chat is not live — resume it first' }));
       const r = sendToPane(info.pane_id, text);
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
@@ -182,8 +192,9 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/close') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const { live } = snapshot();
-      const info = live[sid];
+      const info = live[agentSessionKey(agent, sid)];
       if (!info) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'no live pane' }));
       const r = closeSession(info.pane_id);
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
@@ -194,23 +205,25 @@ export function createServer(): http.Server {
     // also close its pane in the same call — one click clears the workspace.
     if (url.pathname === '/save') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const db = openDb();
       const changed = db
-        .prepare(`UPDATE chats SET saved = 1, saved_at = ? WHERE session_id = ?`)
-        .run(Date.now(), sid).changes;
+        .prepare(`UPDATE chats SET saved = 1, saved_at = ? WHERE agent = ? AND session_id = ?`)
+        .run(Date.now(), agent, sid).changes;
       db.close();
       if (!changed) return json(res, 404, { ok: false, detail: 'unknown session' });
-      const info = snapshot().live[sid];
+      const info = snapshot().live[agentSessionKey(agent, sid)];
       const closed = info ? closeSession(info.pane_id).ok : false;
       return json(res, 200, { ok: true, closed });
     }
 
     if (url.pathname === '/unsave') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const db = openDb();
       const changed = db
-        .prepare(`UPDATE chats SET saved = 0, saved_at = 0 WHERE session_id = ?`)
-        .run(sid).changes;
+        .prepare(`UPDATE chats SET saved = 0, saved_at = 0 WHERE agent = ? AND session_id = ?`)
+        .run(agent, sid).changes;
       db.close();
       if (!changed) return json(res, 404, { ok: false, detail: 'unknown session' });
       return json(res, 200, { ok: true });
@@ -218,13 +231,14 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/resume' || url.pathname === '/branch') {
       const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
       const pane = url.searchParams.get('pane') || '';
       if (!pane) return json(res, 400, { ok: false, detail: 'no pane' });
       const { views } = snapshot();
-      const dir = resolveProjectDir(views, sid, url.searchParams.get('proj'));
+      const dir = resolveProjectDir(views, agent, sid, url.searchParams.get('proj'));
       if (!dir.ok) return json(res, dir.code, { ok: false, detail: dir.detail });
       const launch = url.pathname === '/branch' ? branchInPane : resumeInPane;
-      const r = launch(pane, dir.dir, sid);
+      const r = launch(pane, dir.dir, sid, agent);
       return json(res, r.ok ? 200 : 500, r);
     }
 

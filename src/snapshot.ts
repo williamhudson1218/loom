@@ -35,6 +35,15 @@ export interface Layout {
   sessions: SessionSnap[];
 }
 
+export interface CaptureLayoutInput {
+  now: number;
+  panes: TmuxPane[];
+  agentPanes: Map<string, Agent>;
+  live: Map<string, { agent: Agent; session_id: string; pane_id: string }>;
+  layouts?: Map<string, string>;
+  foreground?: Map<string, string>;
+}
+
 // session:window -> window_layout (exact pane geometry)
 function windowLayouts(): Map<string, string> {
   const m = new Map<string, string>();
@@ -96,19 +105,18 @@ function kindOf(pane: TmuxPane, isAgent: boolean): PaneKind {
   return 'other';
 }
 
-export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Layout {
-  // Only snapshot the workspace sessions (prefix-matched); scratch sessions are
-  // left out so the crash-recovery layout is the curated set restore rebuilds.
-  const panes = listTmuxPanes().filter((p) => p.tmux_session.startsWith(prefix));
-  const agentPanes = agentPaneIds(panes);
-  const layouts = windowLayouts();
-  const fg = foregroundCommands(panes);
-  const paneToSession = new Map<string, string>();
-  for (const [sid, info] of liveSessions({ titleToSession: undefined })) paneToSession.set(info.pane_id, sid);
+export function captureLayoutFrom(input: CaptureLayoutInput): Layout {
+  const layouts = input.layouts ?? new Map<string, string>();
+  const fg = input.foreground ?? new Map<string, string>();
+  const paneToLive = new Map<string, { agent: Agent; session_id: string }>();
+  for (const info of input.live.values()) {
+    if (input.agentPanes.get(info.pane_id) === info.agent) paneToLive.set(info.pane_id, info);
+  }
 
   const sessions = new Map<string, Map<string, WindowSnap>>();
-  for (const p of panes) {
-    const agent = agentPanes.get(p.pane_id);
+  for (const p of input.panes) {
+    const agent = input.agentPanes.get(p.pane_id);
+    const live = paneToLive.get(p.pane_id);
     const snap: PaneSnap = {
       pane_index: p.pane_index,
       cwd: p.cwd,
@@ -116,7 +124,7 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
       full_command: fg.get(p.pane_id) ?? '',
       title: p.title,
       kind: kindOf(p, !!agent),
-      session_id: agent ? paneToSession.get(p.pane_id) : undefined,
+      session_id: agent && live && agent === live.agent ? live.session_id : undefined,
       agent,
     };
     const winMap = sessions.get(p.tmux_session) ?? sessions.set(p.tmux_session, new Map()).get(p.tmux_session)!;
@@ -135,7 +143,21 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
     out.push({ name, windows });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return { taken_at: now, sessions: out };
+  return { taken_at: input.now, sessions: out };
+}
+
+export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Layout {
+  // Only snapshot the workspace sessions (prefix-matched); scratch sessions are
+  // left out so the crash-recovery layout is the curated set restore rebuilds.
+  const panes = listTmuxPanes().filter((p) => p.tmux_session.startsWith(prefix));
+  return captureLayoutFrom({
+    now,
+    panes,
+    agentPanes: agentPaneIds(panes),
+    live: liveSessions({ titleToSession: undefined }),
+    layouts: windowLayouts(),
+    foreground: foregroundCommands(panes),
+  });
 }
 
 // Only overwrite the saved snapshot when tmux actually has sessions — never clobber
