@@ -24,9 +24,9 @@ function row(db: any, agent: 'claude' | 'codex', sessionId: string) {
 
 describe('summarizeDirty', () => {
   it('normalizes Codex user and assistant prose for a summary', async () => {
-    await expect(transcriptToText('codex', CODEX_FIX)).resolves.toBe(
-      'USER: fix the deployment\nASSISTANT: I will inspect the deployment configuration.',
-    );
+    const text = await transcriptToText('codex', CODEX_FIX);
+    expect(text).toBe('USER: fix the deployment\nASSISTANT: I will inspect the deployment configuration.');
+    expect(text).not.toMatch(/failed deployment|deploy status|health check failed/);
   });
 
   it('writes a summary from the stubbed runner and clears dirty', async () => {

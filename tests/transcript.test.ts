@@ -8,6 +8,7 @@ const CODEX_FIX = path.join(__dirname, 'fixtures', 'codex-chat.jsonl');
 describe('readTranscript', () => {
   it('returns only real prompts + prose, dropping tool-only turns', () => {
     const msgs = readTranscript('claude', FIX);
+    expect(readTranscript(FIX)).toEqual(msgs);
     // fixture has 3 user text messages; both assistant turns are tool_use only.
     expect(msgs.length).toBe(3);
     expect(msgs.every((m) => m.role === 'user')).toBe(true);
@@ -16,10 +17,12 @@ describe('readTranscript', () => {
   });
 
   it('reads Codex user and assistant prose', () => {
-    expect(readTranscript('codex', CODEX_FIX)).toEqual([
+    const msgs = readTranscript('codex', CODEX_FIX);
+    expect(msgs).toEqual([
       { role: 'user', text: 'fix the deployment' },
       { role: 'assistant', text: 'I will inspect the deployment configuration.' },
     ]);
+    expect(msgs.some((m) => /failed deployment|deploy status|health check failed/.test(m.text))).toBe(false);
   });
 
   it('returns empty for a missing file', () => {

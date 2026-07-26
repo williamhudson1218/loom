@@ -1,3 +1,6 @@
 {"timestamp":"2026-07-25T12:00:00.000Z","type":"session_meta","payload":{"session_id":"019f-test","cwd":"/Users/me/dev/proj"}}
 {"timestamp":"2026-07-25T12:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"fix the deployment"}}
+{"timestamp":"2026-07-25T12:00:01.500Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"I should inspect the failed deployment."}}
+{"timestamp":"2026-07-25T12:00:01.750Z","type":"event_msg","payload":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{\"command\":\"deploy status\"}"}}
+{"timestamp":"2026-07-25T12:00:01.900Z","type":"event_msg","payload":{"type":"function_call_output","call_id":"call-1","output":"health check failed"}}
 {"timestamp":"2026-07-25T12:00:02.000Z","type":"event_msg","payload":{"type":"agent_message","message":"I will inspect the deployment configuration."}}
