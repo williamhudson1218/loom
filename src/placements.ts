@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { TOOL_DIR } from './paths.ts';
+import type { Agent } from './types.ts';
 
 export const PLACEMENTS_PATH = path.join(TOOL_DIR, 'placements.jsonl');
 
 export interface Placement {
+  agent: Agent;
   session_id: string;
   pane_id: string;
   tmux_session: string;
@@ -27,8 +29,12 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const p = JSON.parse(line) as Placement;
-      if (p.session_id && p.pane_id) map.set(p.session_id, p);
+      const p = JSON.parse(line) as Partial<Placement>;
+      if (p.session_id && p.pane_id) {
+        // Older hooks only recorded Claude sessions, so an omitted agent is
+        // safely interpreted as Claude without changing the native file.
+        map.set(p.session_id, { ...p, agent: p.agent === 'codex' ? 'codex' : 'claude' } as Placement);
+      }
     } catch {
       /* skip malformed */
     }
@@ -85,38 +91,45 @@ export function listTmuxPanes(): TmuxPane[] {
     });
 }
 
-// pane_ids whose process tree contains a running Claude process. Robust to the
-// momentary foreground command being a tool subprocess (bash/node/git): Claude is
-// still an ancestor. A closed pane (reverted to a shell) has no Claude -> excluded.
-export function claudePaneIds(panes: TmuxPane[]): Set<string> {
+// pane_id -> agent for panes whose process tree contains a supported agent.
+// The foreground command can momentarily be a tool subprocess (bash/node/git),
+// so its agent remains identifiable as an ancestor. A closed pane has no agent.
+export function agentPaneIds(panes: TmuxPane[]): Map<string, Agent> {
   let out: string;
   try {
     out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
   } catch {
-    return new Set();
+    return new Map();
   }
   const children = new Map<number, number[]>();
-  const claudePids = new Set<number>();
+  const agentPids = new Map<number, Agent>();
   for (const line of out.split('\n')) {
     const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
     if (!m) continue;
     const pid = +m[1], ppid = +m[2], cmd = m[3];
     (children.get(ppid) ?? children.set(ppid, []).get(ppid)!).push(pid);
-    if (/(^|\/)claude( |$)/.test(cmd)) claudePids.add(pid);
+    const executable = cmd.match(/(^|\/)(claude|codex)(?=\s|$)/)?.[2];
+    if (executable === 'claude' || executable === 'codex') agentPids.set(pid, executable);
   }
-  const result = new Set<string>();
+  const result = new Map<string, Agent>();
   for (const pane of panes) {
     const root = Number(pane.pane_pid);
     if (!root) continue;
     const stack = [root];
     while (stack.length) {
       const pid = stack.pop()!;
-      if (claudePids.has(pid)) { result.add(pane.pane_id); break; }
+      const agent = agentPids.get(pid);
+      if (agent) { result.set(pane.pane_id, agent); break; }
       const ch = children.get(pid);
       if (ch) for (const c of ch) stack.push(c);
     }
   }
   return result;
+}
+
+// Backward-compatible helper for callers that only care about Claude panes.
+export function claudePaneIds(panes: TmuxPane[]): Set<string> {
+  return new Set([...agentPaneIds(panes)].filter(([, agent]) => agent === 'claude').map(([paneId]) => paneId));
 }
 
 // Reading-order position (1-based) within each tmux window: top-to-bottom,
@@ -135,7 +148,7 @@ export function readingOrder(panes: TmuxPane[]): Map<string, number> {
   return pos;
 }
 
-// Panes sitting at a shell (no Claude running) — candidates to resume a chat into.
+// Panes sitting at a shell (no agent running) — candidates to resume a chat into.
 export interface IdlePane {
   pane_id: string;
   tmux_session: string;
@@ -147,10 +160,10 @@ export interface IdlePane {
 
 export function idlePanes(): IdlePane[] {
   const panes = listTmuxPanes();
-  const claudeSet = claudePaneIds(panes);
+  const agentPanes = agentPaneIds(panes);
   const pos = readingOrder(panes);
   return panes
-    .filter((p) => /^(zsh|bash|fish|sh)$/.test(p.command) && !claudeSet.has(p.pane_id))
+    .filter((p) => /^(zsh|bash|fish|sh)$/.test(p.command) && !agentPanes.has(p.pane_id))
     .map((p) => ({
       pane_id: p.pane_id,
       tmux_session: p.tmux_session,
@@ -163,11 +176,12 @@ export function idlePanes(): IdlePane[] {
 }
 
 export interface LiveInfo {
+  agent: Agent;
   pane_id: string;
   tmux_session: string;
   window_index: string;
   pane_index: string;
-  running: boolean; // pane exists AND Claude is the foreground command
+  running: boolean; // pane exists AND an agent is running
 }
 
 // Strip leading spinner/status glyphs Claude prepends to the pane title.
@@ -176,49 +190,52 @@ export function cleanPaneTitle(t: string): string {
 }
 
 // session_id -> live location. Primary source: recorded placements joined to the
-// live pane set. Secondary (bootstrap before the hook has recorded anything):
-// match a running Claude pane's title to a known chat title.
+// live agent-pane set. Secondary (bootstrap before the hook has recorded anything):
+// match a running agent pane's title to a known chat title.
 export function liveSessions(opts?: {
   titleToSession?: Map<string, string>;
 }): Map<string, LiveInfo> {
   const panes = listTmuxPanes();
-  const claudeSet = claudePaneIds(panes);
+  const agentPanes = agentPaneIds(panes);
   const byId = new Map(panes.map((p) => [p.pane_id, p]));
   const live = new Map<string, LiveInfo>();
   const claimedPanes = new Set<string>();
-  const set = (sid: string, pane: TmuxPane) => {
+  const set = (sid: string, pane: TmuxPane, agent: Agent) => {
     claimedPanes.add(pane.pane_id);
     live.set(sid, {
+      agent,
       pane_id: pane.pane_id,
       tmux_session: pane.tmux_session,
       window_index: pane.window_index,
       pane_index: pane.pane_index,
-      running: true, // only claude-running panes are marked live
+      running: true,
     });
   };
 
-  // 1. Exact: recorded placements joined to panes that are ACTUALLY running Claude
+  // 1. Exact: recorded placements joined to panes that are ACTUALLY running an agent
   // (one chat per pane). Newest placement wins a reused pane. A closed session's
   // pane is now a shell (not in claudeSet) -> excluded -> the chat reads as stale.
   const placements = [...readPlacements().values()].sort((a, b) => b.ts - a.ts);
   for (const pl of placements) {
     const pane = byId.get(pl.pane_id);
-    if (pane && claudeSet.has(pane.pane_id) && !claimedPanes.has(pane.pane_id)) set(pl.session_id, pane);
+    const agent = pane && agentPanes.get(pane.pane_id);
+    if (pane && agent && !claimedPanes.has(pane.pane_id)) set(pl.session_id, pane, agent);
   }
 
-  const claudePanes = panes.filter((p) => claudeSet.has(p.pane_id));
+  const activeAgentPanes = panes.filter((p) => agentPanes.has(p.pane_id));
 
   // 2. Title bootstrap: pane title === a chat's auto-title (exact, per pane).
   const t2s = opts?.titleToSession;
   if (t2s) {
-    for (const pane of claudePanes) {
+    for (const pane of activeAgentPanes) {
       if (claimedPanes.has(pane.pane_id)) continue;
       const sid = t2s.get(cleanPaneTitle(pane.title));
-      if (sid && !live.has(sid)) set(sid, pane);
+      const agent = agentPanes.get(pane.pane_id);
+      if (sid && agent && !live.has(sid)) set(sid, pane, agent);
     }
   }
 
-  // No recency guessing: an unclaimed Claude pane whose session we can't identify
+  // No recency guessing: an unclaimed agent pane whose session we can't identify
   // (no placement, no title match) is left out rather than mis-attributed to a
   // recently-active chat — the placement hook fills it in on the next prompt.
   return live;

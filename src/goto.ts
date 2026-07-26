@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import type { Agent } from './types.ts';
 
 export interface GotoResult {
   ok: boolean;
@@ -88,43 +89,61 @@ const BRANCH_SEED =
   'session id — nothing you do here affects the original session, and there is no need to redo ' +
   'prior work. Briefly acknowledge that you understand this is a fork, then wait for my next instruction.';
 
-// Launch Claude into an idle (shell) pane: type the command into that pane, run
-// it, then focus the pane. With `fork`, --fork-session branches the resumed
-// context into a NEW session id, leaving the original session untouched, and a
-// seed prompt is passed positionally so the new session knows it was forked.
-function launchInPane(
-  paneId: string,
-  projectDir: string,
-  sessionId: string,
-  fork: boolean,
-): GotoResult {
+export interface LaunchInput {
+  projectDir: string;
+  sessionId: string;
+  sourceAgent: Agent;
+  selectedAgent: Agent;
+  fork?: boolean;
+}
+
+export interface LaunchInPaneInput extends LaunchInput {
+  paneId: string;
+}
+
+export function buildLaunchCommand(input: LaunchInput): string {
+  const cd = `cd ${shq(input.projectDir)} && `;
+  // Native session ids are agent-specific. Cross-agent handoff starts a clean
+  // session, so an id from the source agent can never be passed accidentally.
+  if (input.sourceAgent !== input.selectedAgent) return cd + input.selectedAgent;
+  if (input.selectedAgent === 'codex') return cd + `codex resume ${shq(input.sessionId)}`;
+  const forkFlag = input.fork ? ' --fork-session' : '';
+  const seedArg = input.fork ? ' ' + shq(BRANCH_SEED) : '';
+  return cd + `claude --resume ${shq(input.sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
+}
+
+// Launch an agent into an idle (shell) pane, then focus it. Claude-only forks
+// resume into a new session id and receive a seed prompt explaining the branch.
+export function launchInPane(input: LaunchInPaneInput): GotoResult {
+  if (input.fork && !(input.sourceAgent === 'claude' && input.selectedAgent === 'claude')) {
+    return { ok: false, detail: 'branching is only supported for Claude sessions' };
+  }
   let tmuxSession = '';
   try {
-    tmuxSession = execFileSync('tmux', ['display-message', '-p', '-t', paneId, '#{session_name}'], {
+    tmuxSession = execFileSync('tmux', ['display-message', '-p', '-t', input.paneId, '#{session_name}'], {
       encoding: 'utf-8',
     }).trim();
   } catch {
     /* focus will be skipped */
   }
-  const forkFlag = fork ? ' --fork-session' : '';
-  const seedArg = fork ? ' ' + shq(BRANCH_SEED) : '';
-  const cmd = `cd ${shq(projectDir)} && claude --resume ${shq(sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
+  const cmd = buildLaunchCommand(input);
   try {
-    execFileSync('tmux', ['send-keys', '-t', paneId, cmd, 'Enter']);
+    execFileSync('tmux', ['send-keys', '-t', input.paneId, cmd, 'Enter']);
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
-  const focus = tmuxSession ? gotoPane(paneId, tmuxSession) : { ok: true, detail: 'no focus' };
-  return { ok: true, detail: (fork ? 'branched; ' : 'resumed; ') + focus.detail };
+  const focus = tmuxSession ? gotoPane(input.paneId, tmuxSession) : { ok: true, detail: 'no focus' };
+  const action = input.sourceAgent !== input.selectedAgent ? 'started fresh' : input.fork ? 'branched' : 'resumed';
+  return { ok: true, detail: action + '; ' + focus.detail };
 }
 
 // Resume a stale chat into an idle (shell) pane: continue the original session.
 export function resumeInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
-  return launchInPane(paneId, projectDir, sessionId, false);
+  return launchInPane({ paneId, projectDir, sessionId, sourceAgent: 'claude', selectedAgent: 'claude', fork: false });
 }
 
 // Branch a chat into an idle (shell) pane: fork the existing context into a new
 // session (original left running/resumable) and drop it into the chosen pane.
 export function branchInPane(paneId: string, projectDir: string, sessionId: string): GotoResult {
-  return launchInPane(paneId, projectDir, sessionId, true);
+  return launchInPane({ paneId, projectDir, sessionId, sourceAgent: 'claude', selectedAgent: 'claude', fork: true });
 }

@@ -22,6 +22,18 @@ const layout: Layout = {
   ],
 };
 
+const codexLayout: Layout = {
+  taken_at: 0,
+  sessions: [{
+    name: 'codex-work',
+    windows: [{
+      window_index: '1',
+      window_layout: '',
+      panes: [{ pane_index: '0', cwd: '/work', command: 'zsh', full_command: '', title: '', kind: 'claude', agent: 'codex', session_id: 'codex-session' }],
+    }],
+  }],
+};
+
 describe('restore (dry-run)', () => {
   it('emits new-session, geometry, and per-kind launch commands', () => {
     const r = restore({ dryRun: true, layout, existing: new Set() });
@@ -41,6 +53,10 @@ describe('restore (dry-run)', () => {
     const r = restore({ dryRun: true, layout, existing: new Set(['taxpilot']) });
     expect(r.restored).toEqual([]);
     expect(r.skipped).toEqual(['taxpilot']);
+  });
+
+  it('restores Codex panes with codex resume', () => {
+    expect(restore({ dryRun: true, layout: codexLayout, existing: new Set() }).log.join('\n')).toContain('codex resume');
   });
 
   it('restores every session when no prefix is given', () => {

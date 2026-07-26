@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
-import { listTmuxPanes, claudePaneIds, liveSessions, type TmuxPane } from './placements.ts';
+import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
+import type { Agent } from './types.ts';
 
 const SEP = '~|LOOM|~';
 
@@ -11,10 +12,11 @@ export interface PaneSnap {
   pane_index: string;
   cwd: string;
   command: string; // foreground command (basename, from tmux)
-  full_command: string; // best-effort full command line for non-claude/non-nvim
+  full_command: string; // best-effort full command line for non-agent/non-nvim
   title: string;
   kind: PaneKind;
-  session_id?: string; // for claude panes
+  session_id?: string; // for agent panes
+  agent?: Agent; // omitted by legacy snapshots, which means Claude
 }
 
 export interface WindowSnap {
@@ -87,8 +89,8 @@ function foregroundCommands(panes: TmuxPane[]): Map<string, string> {
   return m;
 }
 
-function kindOf(pane: TmuxPane, isClaude: boolean): PaneKind {
-  if (isClaude) return 'claude';
+function kindOf(pane: TmuxPane, isAgent: boolean): PaneKind {
+  if (isAgent) return 'claude';
   if (/(^|\/)(nvim|vim)( |$)|^n?vim$/.test(pane.command)) return 'nvim';
   if (/^(zsh|bash|fish|sh)$/.test(pane.command)) return 'shell';
   return 'other';
@@ -98,7 +100,7 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
   // Only snapshot the workspace sessions (prefix-matched); scratch sessions are
   // left out so the crash-recovery layout is the curated set restore rebuilds.
   const panes = listTmuxPanes().filter((p) => p.tmux_session.startsWith(prefix));
-  const claudeSet = claudePaneIds(panes);
+  const agentPanes = agentPaneIds(panes);
   const layouts = windowLayouts();
   const fg = foregroundCommands(panes);
   const paneToSession = new Map<string, string>();
@@ -106,15 +108,16 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
 
   const sessions = new Map<string, Map<string, WindowSnap>>();
   for (const p of panes) {
-    const isClaude = claudeSet.has(p.pane_id);
+    const agent = agentPanes.get(p.pane_id);
     const snap: PaneSnap = {
       pane_index: p.pane_index,
       cwd: p.cwd,
       command: p.command,
       full_command: fg.get(p.pane_id) ?? '',
       title: p.title,
-      kind: kindOf(p, isClaude),
-      session_id: isClaude ? paneToSession.get(p.pane_id) : undefined,
+      kind: kindOf(p, !!agent),
+      session_id: agent ? paneToSession.get(p.pane_id) : undefined,
+      agent,
     };
     const winMap = sessions.get(p.tmux_session) ?? sessions.set(p.tmux_session, new Map()).get(p.tmux_session)!;
     const win = winMap.get(p.window_index) ?? winMap.set(p.window_index, {

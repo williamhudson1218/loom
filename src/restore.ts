@@ -7,11 +7,12 @@ function shq(s: string): string {
 }
 
 // What to type into a restored pane, and whether to auto-run it.
-// Claude chats and nvim auto-launch; arbitrary "other" commands (dev servers,
+// Agent chats and nvim auto-launch; arbitrary "other" commands (dev servers,
 // tunnels) are pre-typed but NOT run, so nothing fires unexpectedly.
 function paneCommand(p: PaneSnap): { text: string; run: boolean } | null {
   if (p.kind === 'claude') {
-    if (!p.session_id) return null; // claude pane but unknown chat -> leave a shell
+    if (!p.session_id) return null; // agent pane but unknown chat -> leave a shell
+    if (p.agent === 'codex') return { text: `codex resume ${shq(p.session_id)}`, run: true };
     return { text: `claude --resume ${shq(p.session_id)} --dangerously-skip-permissions`, run: true };
   }
   if (p.kind === 'nvim') return { text: 'nvim', run: true };
