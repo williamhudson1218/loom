@@ -1,10 +1,10 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { openDb } from './db.ts';
+import { getDefaultAgent, openDb, setDefaultAgent } from './db.ts';
 import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './dashboard.ts';
 import { liveSessions, listTmuxPanes, idlePanes } from './placements.ts';
-import { gotoPane, resumeInPane, branchInPane, closeSession, sendToPane } from './goto.ts';
+import { gotoPane, launchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
 import { writeLayout } from './snapshot.ts';
 import { restore } from './restore.ts';
@@ -35,9 +35,10 @@ function titleToSession(views: ChatView[]): Map<string, string> {
 // actively generating / running tools) vs. idle and waiting for the user.
 const WORKING_MS = 10_000;
 
-function snapshot(): { views: ChatView[]; live: Record<string, LiveLoc> } {
+function snapshot(): { defaultAgent: Agent; views: ChatView[]; live: Record<string, LiveLoc> } {
   const db = openDb();
   const views = toChatViews(db);
+  const defaultAgent = getDefaultAgent(db);
   db.close();
   const now = Date.now();
   // The DB's last_active_at only refreshes on a summarizer pass (minutes of lag).
@@ -63,7 +64,7 @@ function snapshot(): { views: ChatView[]; live: Record<string, LiveLoc> } {
     const panes = listTmuxPanes();
     console.error(`[loom-debug] views=${views.length} panes=${panes.length} live=${Object.keys(live).length}`);
   }
-  return { views, live };
+  return { defaultAgent, views, live };
 }
 
 function send(res: http.ServerResponse, code: number, type: string, body: string) {
@@ -75,21 +76,32 @@ function json(res: http.ServerResponse, code: number, body: unknown) {
   send(res, code, 'application/json', JSON.stringify(body));
 }
 
-type DirLookup = { ok: true; dir: string } | { ok: false; code: number; detail: string };
+type LaunchTarget = { ok: true; dir: string; sourceAgent: Agent } | { ok: false; code: number; detail: string };
 
 // Resolve a session's project dir. Board chats resolve from the DB exactly as
 // before; archive chats (older than the board window, so absent from the DB) carry
 // theirs on the query string, where it's validated before reaching tmux.
-function resolveProjectDir(views: ChatView[], agent: Agent, sid: string, proj: string | null): DirLookup {
-  const v = views.find((x) => x.agent === agent && x.session_id === sid);
-  if (v) return { ok: true, dir: v.project_dir };
+function resolveLaunchTarget(views: ChatView[], sid: string, proj: string | null): LaunchTarget {
+  const matches = views.filter((x) => x.session_id === sid);
+  if (matches.length === 1) return { ok: true, dir: matches[0].project_dir, sourceAgent: matches[0].agent };
+  if (matches.length > 1) return { ok: false, code: 409, detail: 'ambiguous session' };
   if (!proj) return { ok: false, code: 404, detail: 'unknown session' };
   if (!isValidProjectDir(proj)) return { ok: false, code: 400, detail: 'invalid project dir' };
-  return { ok: true, dir: proj };
+  // Archive search currently returns Claude transcripts only.
+  return { ok: true, dir: proj, sourceAgent: 'claude' };
 }
 
 function requestAgent(url: URL): Agent {
   return url.searchParams.get('agent') === 'codex' ? 'codex' : 'claude';
+}
+
+function isAgent(value: unknown): value is Agent {
+  return value === 'claude' || value === 'codex';
+}
+
+function selectedAgent(url: URL): Agent | null {
+  const agent = url.searchParams.get('agent');
+  return isAgent(agent) ? agent : null;
 }
 
 // The archive search indexes Claude transcripts only, so a same-id Codex board
@@ -118,8 +130,28 @@ export function createServer(): http.Server {
     }
 
     if (url.pathname === '/api/data') {
-      const { views, live } = snapshot();
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), chats: views, live }));
+      const { defaultAgent, views, live } = snapshot();
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live }));
+    }
+
+    if (url.pathname === '/api/settings/default-agent' && req.method === 'PUT') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => { raw += chunk; });
+      req.on('end', () => {
+        let body: unknown;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid agent' });
+        }
+        const agent = body && typeof body === 'object' ? (body as { agent?: unknown }).agent : undefined;
+        if (!isAgent(agent)) return json(res, 400, { ok: false, detail: 'invalid agent' });
+        const db = openDb();
+        setDefaultAgent(db, agent);
+        db.close();
+        return json(res, 200, { ok: true, defaultAgent: agent });
+      });
+      return;
     }
 
     if (url.pathname === '/api/idle-panes') {
@@ -165,7 +197,7 @@ export function createServer(): http.Server {
         const messages = readTranscript(v.agent, v.jsonl_path);
         return json(res, 200, {
           ok: true, title: v.title || v.first_message, project: v.project,
-          live: !!live[agentSessionKey(agent, sid)], messages,
+          agent: v.agent, live: !!live[agentSessionKey(agent, sid)], messages,
         });
       }
       // Archive chat: no DB row, so the caller passes the transcript path (which
@@ -180,6 +212,7 @@ export function createServer(): http.Server {
         ok: true,
         title: url.searchParams.get('title') || '(archived chat)',
         project: proj ? path.basename(proj) : '',
+        agent: 'claude',
         live: !!live[agentSessionKey(agent, sid)], // an archive chat has no live pane, but stay truthful
         messages: readTranscript(jsonl),
       });
@@ -235,22 +268,33 @@ export function createServer(): http.Server {
       return json(res, 200, { ok: true });
     }
 
-    if (url.pathname === '/resume' || url.pathname === '/branch') {
+    if ((url.pathname === '/resume' || url.pathname === '/branch') && req.method === 'POST') {
       const sid = url.searchParams.get('session') || '';
-      const agent = requestAgent(url);
+      const agent = selectedAgent(url);
+      if (!agent) return json(res, 400, { ok: false, detail: 'invalid agent' });
       const pane = url.searchParams.get('pane') || '';
       if (!pane) return json(res, 400, { ok: false, detail: 'no pane' });
       const { views } = snapshot();
-      const dir = resolveProjectDir(views, agent, sid, url.searchParams.get('proj'));
-      if (!dir.ok) return json(res, dir.code, { ok: false, detail: dir.detail });
-      const launch = url.pathname === '/branch' ? branchInPane : resumeInPane;
-      const r = launch(pane, dir.dir, sid, agent);
+      const target = resolveLaunchTarget(views, sid, url.searchParams.get('proj'));
+      if (!target.ok) return json(res, target.code, { ok: false, detail: target.detail });
+      const fork = url.pathname === '/branch';
+      if (fork && !(target.sourceAgent === 'claude' && agent === 'claude')) {
+        return json(res, 400, { ok: false, detail: 'branching is only supported for Claude sessions' });
+      }
+      const r = launchInPane({
+        paneId: pane,
+        projectDir: target.dir,
+        sessionId: sid,
+        sourceAgent: target.sourceAgent,
+        selectedAgent: agent,
+        fork,
+      });
       return json(res, r.ok ? 200 : 500, r);
     }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
-      const { views, live } = snapshot();
-      return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live));
+      const { defaultAgent, views, live } = snapshot();
+      return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live, defaultAgent));
     }
 
     send(res, 404, 'text/plain', 'not found');

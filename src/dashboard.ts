@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
+import { getDefaultAgent } from './db.ts';
 import { DASHBOARD_PATH } from './paths.ts';
 import type { Agent, ChatRow } from './types.ts';
 
@@ -96,8 +97,9 @@ export function renderDashboard(
   views: ChatView[],
   generatedAt: number,
   live: Record<string, LiveLoc> = {},
+  defaultAgent: Agent = 'claude',
 ): string {
-  const data = JSON.stringify({ generatedAt, chats: views, live });
+  const data = JSON.stringify({ generatedAt, defaultAgent, chats: views, live });
   const favicon = 'data:image/svg+xml,' + encodeURIComponent(LOGO_SVG);
   // All rendering is client-side from DATA; HTML below is a static shell.
   return `<!doctype html>
@@ -164,6 +166,7 @@ export function renderDashboard(
   .pill.warning { background:rgba(212,167,44,.18); color:#e3c050; }
   .pill.error { background:rgba(229,72,77,.18); color:#ff8086; }
   .pill.pending { background:#23262f; color:#9aa3b2; }
+  .pill.source { background:#243044; color:#a7c7ff; }
   .meta { color:#8b93a7; font-size:12px; margin-top:3px; }
   .ptag { display:inline-block; padding:1px 7px; border-radius:5px; font-weight:600; font-size:11px; margin-right:6px; }
   .spark { font-family:monospace; letter-spacing:1px; color:#7db0ff; }
@@ -247,6 +250,11 @@ export function renderDashboard(
   <div class="topbar">
     <div class="brand">${LOGO_SVG}<h1>${APP_NAME}</h1><span class="sub" id="gen"></span></div>
     <div class="actions">
+      <label for="default-agent" class="muted">Launch with</label>
+      <select id="default-agent" aria-label="Default launch agent">
+        <option value="claude">Claude Code</option>
+        <option value="codex">Codex</option>
+      </select>
       <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore workspace</button>
     </div>
   </div>
@@ -294,6 +302,8 @@ var liveOnly=true;
 var tab='board'; // 'board' | 'saved'
 const SLABEL={done:'Done',waiting_on_user:'Your turn',warning:'Caveats',error:'Error',pending:'Summarizing…'};
 function st(c){return c.summary_pending?'pending':(c.state||'done');}
+function agentLabel(agent){return agent==='codex'?'Codex':'Claude Code';}
+function launchLabel(sourceAgent){const native=sourceAgent===DATA.defaultAgent;return native?'Resume '+agentLabel(DATA.defaultAgent)+' context':'Start new '+agentLabel(DATA.defaultAgent)+' here';}
 function chatKey(c){return c.agent+':'+c.session_id;}
 function isLive(c){return !!DATA.live[chatKey(c)];}
 function isSaved(c){return !!c.saved;}
@@ -320,30 +330,30 @@ const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_
 let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
-function wireCard(el){const agent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,agent,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,agent,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,agent,el,'resume',rb.dataset.proj||'');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,agent,el,'branch',bb.dataset.proj||'');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,agent,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,agent,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,agent,el);}
+function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,sourceAgent,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,sourceAgent,el);const rb=el.querySelector('.resumebtn');if(rb)rb.onclick=()=>openPicker(rb.dataset.sid,sourceAgent,el,'resume',rb.dataset.proj||'');const bb=el.querySelector('.branchbtn');if(bb)bb.onclick=()=>openPicker(bb.dataset.sid,sourceAgent,el,'branch',bb.dataset.proj||'');const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,sourceAgent,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,sourceAgent,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,sourceAgent,el);}
 function doSave(sid,agent,el){flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved — pane freed ✓':'saved ✓'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function doUnsave(sid,agent,el){flash(el,'removing…','#7a6a1a');fetch('/unsave?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?'unsaved ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function confirmClose(b,agent,el){if(b.dataset.armed){doClose(b.dataset.sid,agent,el);}else{b.dataset.armed='1';b.textContent='✕ confirm?';b.classList.add('arm');setTimeout(()=>{if(b){b.dataset.armed='';b.textContent='✕ close';b.classList.remove('arm');}},2500);}}
 function doClose(sid,agent,el){flash(el,'closing…','#7a4a1a');fetch('/close?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?'closed — pane freed ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function jump(sid,agent,el){flash(el,'opening…','#3b5bdb');fetch('/goto?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>flash(el,j.ok?'opened ✓':'no live pane',j.ok?'#1f6f3f':'#8a2b2e')).catch(()=>flash(el,'server off','#8a2b2e'));}
-function openPicker(sid,agent,el,action,proj){const p=el.querySelector('.picker');if(p.dataset.open===action){p.dataset.open='';p.innerHTML='';return;}p.dataset.open=action;const verb=action==='branch'?'Branch':'Resume';p.innerHTML='<span class="muted">finding empty panes…</span>';fetch('/api/idle-panes').then(r=>r.json()).then(panes=>{if(!panes.length){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+verb+' again.</span>';return;}p.innerHTML='<div class="pickhdr">'+verb+' into which pane?</div>'+panes.map(pn=>'<button class="paneopt" data-pane="'+pn.pane_id+'">'+esc(pn.label)+(pn.cwd?'<span class="pcwd">…/'+esc(pn.cwd.split('/').filter(Boolean).pop()||'')+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,agent,b.dataset.pane,el,p,action,proj));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
+function openPicker(sid,sourceAgent,el,action,proj){const p=el.querySelector('.picker');if(p.dataset.open===action){p.dataset.open='';p.innerHTML='';return;}p.dataset.open=action;const verb=action==='branch'?'Branch':launchLabel(sourceAgent);p.innerHTML='<span class="muted">finding empty panes…</span>';fetch('/api/idle-panes').then(r=>r.json()).then(panes=>{if(!panes.length){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+verb+' again.</span>';return;}p.innerHTML='<div class="pickhdr">'+verb+' into which pane?</div>'+panes.map(pn=>'<button class="paneopt" data-pane="'+pn.pane_id+'">'+esc(pn.label)+(pn.cwd?'<span class="pcwd">…/'+esc(pn.cwd.split('/').filter(Boolean).pop()||'')+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,sourceAgent,b.dataset.pane,el,p,action,proj));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
 // proj is sent only for archive chats — the server resolves board chats from its DB.
-function doLaunch(sid,agent,pane,el,p,action,proj){const busy=action==='branch'?'branching…':'resuming…';const okmsg=action==='branch'?'branched ✓':'resumed ✓';p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)+'&pane='+encodeURIComponent(pane)+(proj?'&proj='+encodeURIComponent(proj):'')).then(r=>r.json()).then(j=>{flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
+function doLaunch(sid,sourceAgent,pane,el,p,action,proj){const selectedAgent=DATA.defaultAgent;const busy=action==='branch'?'branching…':(sourceAgent===selectedAgent?'resuming…':'starting new…');const okmsg=action==='branch'?'branched ✓':(sourceAgent===selectedAgent?'resumed ✓':'started fresh ✓');p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(selectedAgent)+'&pane='+encodeURIComponent(pane)+(proj?'&proj='+encodeURIComponent(proj):''),{method:'POST'}).then(r=>r.json()).then(j=>{flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
 function flash(el,msg,bg){let f=el.querySelector('.flash');if(!f){f=document.createElement('span');f.className='flash';el.appendChild(f);}f.textContent=msg;f.style.background=bg;clearTimeout(f._t);f._t=setTimeout(()=>f.remove(),1400);}
 function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o=b.textContent;b.textContent='copied ✓';b.classList.add('ok');setTimeout(()=>{b.textContent=o;b.classList.remove('ok');},1200);}).catch(()=>{b.textContent='copy failed';setTimeout(()=>{b.textContent='copy id';},1200);});}
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[chatKey(c)];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
-function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';const sav=c.saved?'<button class="unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★ saved</button>':'<button class="savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆ save</button>';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
-'<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill '+s+'">'+SLABEL[s]+'</span></div>'+
+function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';const sav=c.saved?'<button class="unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★ saved</button>':'<button class="savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆ save</button>';const canBranch=c.agent==='claude'&&DATA.defaultAgent==='claude';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
+'<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span></div>'+
 '<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
 (km?'<div class="km"><h3>Key moments</h3><ul>'+km+'</ul></div>':'')+
 '<div class="resume"><code class="sid" title="session id">'+id+'</code><button class="copy" data-id="'+id+'">copy id</button>'+(km?'<button class="expand">▸ moments</button>':'')+pr+
 '<span class="spacer"></span>'+
-(L?'<button class="open" data-jump="'+id+'">↗ open in Ghostty</button><button class="closebtn" data-sid="'+id+'" title="exit Claude in this pane (chat stays resumable)">✕ close</button>':'<button class="resumebtn" data-sid="'+id+'">⏵ resume…</button>')+
-sav+
-'<button class="branchbtn" data-sid="'+id+'" title="fork this conversation into a new pane (original left untouched)">⑃ branch…</button>'+
+ (L?'<button class="open" data-jump="'+id+'">↗ open in Ghostty</button>'+(c.agent==='claude'?'<button class="closebtn" data-sid="'+id+'" title="exit Claude in this pane (chat stays resumable)">✕ close</button>':''):'<button class="resumebtn" data-sid="'+id+'">⏵ '+launchLabel(c.agent)+'</button>')+
+ sav+
+ (canBranch?'<button class="branchbtn" data-sid="'+id+'" title="fork this conversation into a new pane (original left untouched)">⑃ branch…</button>':'')+
 '</div>'+
 '<div class="picker"></div></div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
@@ -353,14 +363,16 @@ function openChat(sid,agent,arch){panelSid=sid;panelAgent=agent;panelArch=arch||
 // An archive chat isn't running, so its transcript can't change — don't poll it.
 if(!panelArch)ptimer=setInterval(()=>loadTranscript(false),1500);}
 function closeChat(){panelSid=null;panelAgent='claude';panelArch=null;$('#panel').classList.remove('on');$('#overlay').classList.remove('on');clearInterval(ptimer);}
-function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;var u='/api/transcript?session='+encodeURIComponent(req)+'&agent='+encodeURIComponent(panelAgent);if(panelArch)u+='&jsonl='+encodeURIComponent(panelArch.jsonl)+'&proj='+encodeURIComponent(panelArch.proj)+'&title='+encodeURIComponent(panelArch.title);fetch(u).then(r=>r.json()).then(d=>{if(panelSid!==req||!d.ok)return;$('#ptitle').textContent=d.title||'(untitled)';$('#pmeta').innerHTML=esc(d.project)+' · '+(d.live?'<span class="live">● live</span>':'<span class="stale">○ stale</span>');const body=$('#ptranscript');const atBottom=body.scrollTop+body.clientHeight>=body.scrollHeight-50;body.innerHTML=d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':'Claude')+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';if(toBottom||atBottom)body.scrollTop=body.scrollHeight;renderFoot(d);}).catch(()=>{});}
-function renderFoot(d){const f=$('#pfoot');if(d.live){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live Claude pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else{f.innerHTML='<div class="stalefoot">This chat isn\\'t running — <b>Resume</b> it from its card to send messages.</div>';}}
+function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;var u='/api/transcript?session='+encodeURIComponent(req)+'&agent='+encodeURIComponent(panelAgent);if(panelArch)u+='&jsonl='+encodeURIComponent(panelArch.jsonl)+'&proj='+encodeURIComponent(panelArch.proj)+'&title='+encodeURIComponent(panelArch.title);fetch(u).then(r=>r.json()).then(d=>{if(panelSid!==req||!d.ok)return;$('#ptitle').textContent=d.title||'(untitled)';$('#pmeta').innerHTML=esc(d.project)+' · <span class="pill source">'+agentLabel(d.agent)+'</span> · '+(d.live?'<span class="live">● live</span>':'<span class="stale">○ stale</span>');const body=$('#ptranscript');const atBottom=body.scrollTop+body.clientHeight>=body.scrollHeight-50;body.innerHTML=d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':agentLabel(d.agent))+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';if(toBottom||atBottom)body.scrollTop=body.scrollHeight;renderFoot(d);}).catch(()=>{});}
+function renderFoot(d){const f=$('#pfoot');if(d.live&&d.agent==='claude'){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live Claude pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else if(d.live){f.innerHTML='<div class="stalefoot">In-panel interaction is not available for Codex yet — use Ghostty.</div>';}else{f.innerHTML='<div class="stalefoot">This chat isn\\'t running — <b>'+launchLabel(d.agent)+'</b> from its card to send messages.</div>';}}
 function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.value.trim();if(!t)return;ta.value='';fetch('/send?session='+encodeURIComponent(panelSid)+'&agent='+encodeURIComponent(panelAgent)+'&text='+encodeURIComponent(t)).then(r=>r.json()).then(()=>{setTimeout(()=>loadTranscript(true),500);setTimeout(()=>loadTranscript(true),2500);}).catch(()=>{});}
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeChat();});
 var lastRenderAt=0;
-function dataSig(){return DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
+function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
 // ── Archive search ────────────────────────────────────────────────────────────
@@ -377,19 +389,20 @@ const hasTitle=!!(h.title&&h.title.trim());
 // Resuming needs the original cwd; a few old rows were indexed without one.
 const canLaunch=!!(h.project_dir&&h.project_dir.trim());
 return '<div class="card arch" data-sid="'+id+'" data-agent="claude" data-jsonl="'+esc(h.jsonl_path)+'" data-proj="'+proj+'" data-title="'+esc(h.title||'')+'">'+
-'<div class="chead"><h2>'+esc(adisp(h))+'</h2><span class="pill arch">archive</span></div>'+
+'<div class="chead"><h2>'+esc(adisp(h))+'</h2><span class="pill source">Claude Code</span><span class="pill arch">archive</span></div>'+
 '<div class="meta"><span class="ptag" style="'+pcolor(pname)+'">'+esc(pname)+'</span>'+h.message_count+' msgs · '+rel(h.ended_at)+'</div>'+
 (hasTitle?'<div class="ov snip">'+esc(h.snippet)+'</div>':'')+
 '<div class="resume"><code class="sid" title="session id">'+id+'</code><button class="copy" data-id="'+id+'">copy id</button><span class="spacer"></span>'+
-(canLaunch?'<button class="resumebtn" data-sid="'+id+'" data-proj="'+proj+'">⏵ resume…</button>'+
-'<button class="branchbtn" data-sid="'+id+'" data-proj="'+proj+'" title="fork this conversation into a new pane (original left untouched)">⑃ branch…</button>'
+(canLaunch?'<button class="resumebtn" data-sid="'+id+'" data-proj="'+proj+'">⏵ '+launchLabel('claude')+'</button>'+
+(DATA.defaultAgent==='claude'?'<button class="branchbtn" data-sid="'+id+'" data-proj="'+proj+'" title="fork this conversation into a new pane (original left untouched)">⑃ branch…</button>':'')
 :'<span class="muted">no project dir recorded — can\\'t resume</span>')+
 '</div><div class="picker"></div></div>';}
 function renderArchive(){const box=$('#archive');if(archState==='idle'){box.innerHTML='';return;}const hd='<div class="ahead">From your archive</div>';if(archState==='searching'){box.innerHTML=hd+'<p class="muted">searching all history…</p>';return;}if(archState==='error'){box.innerHTML=hd+'<p class="muted">'+esc(archErr)+'</p>';return;}if(!archHits.length){box.innerHTML=hd+'<p class="muted">no archive matches for "'+esc(archQuery)+'" — chats already on the board above are excluded</p>';return;}box.innerHTML=hd+archHits.map(acard).join('');box.querySelectorAll('.card').forEach(wireCard);}
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);
-heat();projects();liveToggle();chips();render();updateDeep();
+heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();
+$('#default-agent').onchange=updateDefaultAgent;
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(refresh,5000);
 </script>
@@ -402,7 +415,7 @@ export function writeDashboard(
   now: number = Date.now(),
 ): { count: number; path: string } {
   const views = toChatViews(db);
-  const html = renderDashboard(views, now);
+  const html = renderDashboard(views, now, {}, getDefaultAgent(db));
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, html, 'utf-8');
   return { count: views.length, path: outPath };

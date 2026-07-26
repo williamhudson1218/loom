@@ -78,4 +78,33 @@ describe('dashboard', () => {
     expect(html).toContain('function acard('); // archive card builder
     expect(html).toContain('function renderArchive('); // archive section renderer
   });
+
+  it('includes each chat source and the chosen default agent in dashboard data', () => {
+    const view = {
+      agent: 'codex' as const,
+      session_id: 'codex-session',
+      project: 'project',
+      project_dir: '/project',
+      jsonl_path: '/tmp/codex.jsonl',
+      title: '',
+      claude_auto_title: '',
+      pr_url: '',
+      overview: '',
+      state: '',
+      breakdown: [],
+      first_message: '',
+      message_count: 0,
+      last_active_at: 0,
+      activity: {},
+      summary_pending: false,
+      saved: false,
+      saved_at: 0,
+    };
+
+    const html = renderDashboard([view], 9999, {}, 'codex');
+
+    expect(html).toContain('"agent":"codex"');
+    expect(html).toContain('"defaultAgent":"codex"');
+    expect(html).toContain('id="default-agent"');
+  });
 });
