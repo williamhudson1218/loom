@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import type { Agent } from './types.ts';
 
 export interface Msg {
   role: 'user' | 'assistant';
@@ -20,9 +21,25 @@ function textOnly(content: unknown): string {
   return '';
 }
 
+export interface TranscriptOptions {
+  bytes?: number;
+  limit?: number;
+}
+
+// Preserve the original Claude-only call shape for existing callers while
+// allowing indexed chats to select their transcript format explicitly.
+export function readTranscript(agent: Agent, jsonlPath: string, opts?: TranscriptOptions): Msg[];
+export function readTranscript(jsonlPath: string, opts?: TranscriptOptions): Msg[];
 // Read the tail of a session JSONL and return the recent user/assistant messages.
 // Tail-reading bounds the work regardless of how large the transcript is.
-export function readTranscript(jsonlPath: string, opts: { bytes?: number; limit?: number } = {}): Msg[] {
+export function readTranscript(
+  agentOrPath: Agent | string,
+  pathOrOpts: string | TranscriptOptions = {},
+  maybeOpts: TranscriptOptions = {},
+): Msg[] {
+  const [agent, jsonlPath, opts] = typeof pathOrOpts === 'string'
+    ? [agentOrPath as Agent, pathOrOpts, maybeOpts]
+    : ['claude' as const, agentOrPath, pathOrOpts];
   const bytes = opts.bytes ?? 400_000;
   const limit = opts.limit ?? 200;
   let stat: fs.Stats;
@@ -53,10 +70,16 @@ export function readTranscript(jsonlPath: string, opts: { bytes?: number; limit?
     } catch {
       continue;
     }
-    if (o?.type === 'user' && o.message?.role === 'user' && !o.isMeta) {
+    if (agent === 'codex' && o?.type === 'event_msg' && o.payload?.type === 'user_message') {
+      const t = typeof o.payload.message === 'string' ? o.payload.message.trim() : '';
+      if (t) msgs.push({ role: 'user', text: t });
+    } else if (agent === 'codex' && o?.type === 'event_msg' && o.payload?.type === 'agent_message') {
+      const t = typeof o.payload.message === 'string' ? o.payload.message.trim() : '';
+      if (t) msgs.push({ role: 'assistant', text: t });
+    } else if (agent === 'claude' && o?.type === 'user' && o.message?.role === 'user' && !o.isMeta) {
       const t = textOnly(o.message.content);
       if (t) msgs.push({ role: 'user', text: t });
-    } else if (o?.type === 'assistant' && o.message?.role === 'assistant') {
+    } else if (agent === 'claude' && o?.type === 'assistant' && o.message?.role === 'assistant') {
       const t = textOnly(o.message.content);
       if (t) msgs.push({ role: 'assistant', text: t });
     }

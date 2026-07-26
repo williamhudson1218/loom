@@ -10,12 +10,13 @@ import {
   SUMMARY_PROMPT_PREAMBLE,
   TOOL_DIR,
 } from './paths.ts';
-import type { Summary, ChatRow, ChatState } from './types.ts';
+import type { Agent, Summary, ChatRow, ChatState } from './types.ts';
 import { CHAT_STATES } from './types.ts';
 
 export type ClaudeRunner = (prompt: string) => Promise<string>;
 
 export async function transcriptToText(
+  agent: Agent,
   jsonlPath: string,
   cap: number = TRANSCRIPT_CHAR_CAP,
 ): Promise<string> {
@@ -30,10 +31,16 @@ export async function transcriptToText(
     } catch {
       continue;
     }
-    if (obj?.type === 'user' && obj.message?.role === 'user' && !obj.isMeta) {
+    if (agent === 'codex' && obj?.type === 'event_msg' && obj.payload?.type === 'user_message') {
+      const t = typeof obj.payload.message === 'string' ? obj.payload.message.trim() : '';
+      if (t) lines.push(`USER: ${t}`);
+    } else if (agent === 'codex' && obj?.type === 'event_msg' && obj.payload?.type === 'agent_message') {
+      const t = typeof obj.payload.message === 'string' ? obj.payload.message.trim() : '';
+      if (t) lines.push(`ASSISTANT: ${t}`);
+    } else if (agent === 'claude' && obj?.type === 'user' && obj.message?.role === 'user' && !obj.isMeta) {
       const t = flatten(obj.message.content);
       if (t) lines.push(`USER: ${t}`);
-    } else if (obj?.type === 'assistant' && obj.message?.role === 'assistant') {
+    } else if (agent === 'claude' && obj?.type === 'assistant' && obj.message?.role === 'assistant') {
       const t = flatten(obj.message.content);
       if (t) lines.push(`ASSISTANT: ${t}`);
     }
@@ -59,7 +66,7 @@ function flatten(content: unknown): string {
 
 export function buildPrompt(transcriptText: string): string {
   return [
-    SUMMARY_PROMPT_PREAMBLE,
+    SUMMARY_PROMPT_PREAMBLE.replace('Claude Code coding session', 'coding session'),
     'Read the transcript and respond with ONLY a JSON object — no prose, no markdown fences.',
     'Schema:',
     '{',
@@ -171,7 +178,7 @@ export async function summarizeDirty(
   const writeSummary = db.prepare(
     `UPDATE chats SET title=@title, overview=@overview, state=@state, breakdown_json=@breakdown_json,
        summary_dirty=0, summary_model=@summary_model, summary_at=@summary_at
-     WHERE session_id=@session_id`,
+     WHERE agent=@agent AND session_id=@session_id`,
   );
 
   let succeeded = 0;
@@ -188,13 +195,14 @@ export async function summarizeDirty(
         breakdown_json: '[]',
         summary_model: 'heuristic',
         summary_at: now,
+        agent: row.agent,
         session_id: row.session_id,
       });
       heuristic++;
       return;
     }
     try {
-      const text = await transcriptToText(row.jsonl_path);
+      const text = await transcriptToText(row.agent, row.jsonl_path);
       const raw = await runner(buildPrompt(text));
       const summary = parseSummary(raw);
       writeSummary.run({
@@ -204,6 +212,7 @@ export async function summarizeDirty(
         breakdown_json: JSON.stringify(summary.breakdown),
         summary_model: model,
         summary_at: now,
+        agent: row.agent,
         session_id: row.session_id,
       });
       succeeded++;
