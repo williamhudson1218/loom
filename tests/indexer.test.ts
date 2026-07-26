@@ -2,13 +2,23 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { openDb } from '../src/db.ts';
 import { parseJsonlFile } from '../src/parser.ts';
+import { parseCodexJsonlFile } from '../src/codexParser.ts';
 import { upsertChat, listProjectJsonls, pruneOld, windowCutoff, isAnalyzerSession } from '../src/indexer.ts';
 import { SUMMARY_PROMPT_PREAMBLE, TOOL_DIR } from '../src/paths.ts';
 import type { ParsedChat } from '../src/types.ts';
 
 const FIX = path.join(__dirname, 'fixtures', 'sample-chat.jsonl');
+const CODEX_FIX = path.join(__dirname, 'fixtures', 'codex-chat.jsonl');
 
 describe('upsertChat', () => {
+  it('keeps same-id Claude and Codex chats separate', async () => {
+    const db = openDb(':memory:');
+    upsertChat(db, { ...(await parseJsonlFile(FIX)), session_id: 'same-id' }, 1, 1);
+    upsertChat(db, { ...(await parseCodexJsonlFile(CODEX_FIX)), session_id: 'same-id' }, 1, 1);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM chats').get()).toEqual({ n: 2 });
+    db.close();
+  });
+
   it('inserts dirty, then is unchanged at same mtime, then dirty again when mtime grows', async () => {
     const db = openDb(':memory:');
     const parsed = await parseJsonlFile(FIX);

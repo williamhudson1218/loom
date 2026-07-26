@@ -3,8 +3,10 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { parseJsonlFile, localDay, cleanText } from '../src/parser.ts';
+import { parseCodexJsonlFile } from '../src/codexParser.ts';
 
 const FIX = path.join(__dirname, 'fixtures', 'sample-chat.jsonl');
+const CODEX_FIX = path.join(__dirname, 'fixtures', 'codex-chat.jsonl');
 
 describe('parseJsonlFile', () => {
   it('extracts core fields', async () => {
@@ -43,6 +45,19 @@ describe('parseJsonlFile', () => {
     );
     const c = await parseJsonlFile(f);
     expect(c.pr_url).toBe('https://github.com/tax-pilot-org/tax-pilot-app/pull/787');
+  });
+});
+
+describe('parseCodexJsonlFile', () => {
+  it('parses Codex metadata and conversation events', async () => {
+    const c = await parseCodexJsonlFile(CODEX_FIX);
+    expect(c).toMatchObject({
+      agent: 'codex',
+      session_id: '019f-test',
+      project_dir: '/Users/me/dev/proj',
+      first_message: 'fix the deployment',
+      message_count: 2,
+    });
   });
 });
 

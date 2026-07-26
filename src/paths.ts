@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 export const CLAUDE_HOME = path.join(os.homedir(), '.claude');
 export const CLAUDE_PROJECTS_DIR = path.join(CLAUDE_HOME, 'projects');
+export const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 
 // Legacy data dir from the original single-machine install, where the repo *was*
 // the data dir (the repo now lives at ~/dev/loom and its data in ~/.loom). Kept

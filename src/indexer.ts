@@ -3,12 +3,14 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import {
   CLAUDE_PROJECTS_DIR,
+  CODEX_SESSIONS_DIR,
   ACTIVE_WINDOW_DAYS,
   SUMMARY_PROMPT_PREAMBLE,
   TOOL_DIR,
   encodeProjectDir,
 } from './paths.ts';
 import { parseJsonlFile } from './parser.ts';
+import { parseCodexJsonlFile } from './codexParser.ts';
 import type { ParsedChat } from './types.ts';
 
 const DAY_MS = 86_400_000;
@@ -77,6 +79,31 @@ export function listProjectJsonls(projectsDir: string): string[] {
   return out;
 }
 
+/** Recursively list Codex's native session JSONL files without modifying them. */
+export function listCodexSessionJsonls(sessionsDir: string = CODEX_SESSIONS_DIR): string[] {
+  const out: string[] = [];
+
+  function walk(dir: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        out.push(full);
+      }
+    }
+  }
+
+  walk(sessionsDir);
+  return out.sort();
+}
+
 export function upsertChat(
   db: Database.Database,
   parsed: ParsedChat,
@@ -84,12 +111,13 @@ export function upsertChat(
   now: number,
 ): 'inserted' | 'updated' | 'unchanged' {
   const existing = db
-    .prepare(`SELECT jsonl_mtime FROM chats WHERE session_id = ?`)
-    .get(parsed.session_id) as { jsonl_mtime: number } | undefined;
+    .prepare(`SELECT jsonl_mtime FROM chats WHERE agent = ? AND session_id = ?`)
+    .get(parsed.agent, parsed.session_id) as { jsonl_mtime: number } | undefined;
 
   if (existing && existing.jsonl_mtime === mtime) return 'unchanged';
 
   const common = {
+    agent: parsed.agent,
     project_dir: parsed.project_dir,
     jsonl_path: parsed.jsonl_path,
     started_at: parsed.started_at,
@@ -109,11 +137,11 @@ export function upsertChat(
   if (!existing) {
     db.prepare(
       `INSERT INTO chats (
-        session_id, project_dir, jsonl_path, started_at, ended_at, last_active_at,
+        agent, session_id, project_dir, jsonl_path, started_at, ended_at, last_active_at,
         message_count, activity_json, files_touched, first_message, claude_auto_title, pr_url,
         summary_dirty, jsonl_mtime, last_indexed_at
       ) VALUES (
-        @session_id, @project_dir, @jsonl_path, @started_at, @ended_at, @last_active_at,
+        @agent, @session_id, @project_dir, @jsonl_path, @started_at, @ended_at, @last_active_at,
         @message_count, @activity_json, @files_touched, @first_message, @claude_auto_title, @pr_url,
         1, @jsonl_mtime, @last_indexed_at
       )`,
@@ -130,47 +158,54 @@ export function upsertChat(
        activity_json=@activity_json, files_touched=@files_touched,
        first_message=@first_message, claude_auto_title=@claude_auto_title, pr_url=@pr_url,
        summary_dirty=1, jsonl_mtime=@jsonl_mtime, last_indexed_at=@last_indexed_at
-     WHERE session_id=@session_id`,
+     WHERE agent=@agent AND session_id=@session_id`,
   ).run(common);
   return 'updated';
 }
 
 export async function refresh(
   db: Database.Database,
-  opts: { projectsDir?: string; now?: number; windowDays?: number } = {},
+  opts: { projectsDir?: string; codexSessionsDir?: string; now?: number; windowDays?: number } = {},
 ): Promise<{ scanned: number; changed: number; pruned: number }> {
   const projectsDir = opts.projectsDir ?? CLAUDE_PROJECTS_DIR;
+  const codexSessionsDir = opts.codexSessionsDir ?? CODEX_SESSIONS_DIR;
   const now = opts.now ?? Date.now();
   const cutoff = windowCutoff(now, opts.windowDays);
-  const files = listProjectJsonls(projectsDir);
+  const sources = [
+    { files: listProjectJsonls(projectsDir), parse: parseJsonlFile },
+    { files: listCodexSessionJsonls(codexSessionsDir), parse: parseCodexJsonlFile },
+  ];
+  const scanned = sources.reduce((total, source) => total + source.files.length, 0);
   let changed = 0;
-  for (const file of files) {
-    let mtime: number;
-    try {
-      mtime = Math.floor(fs.statSync(file).mtimeMs);
-    } catch {
-      continue;
-    }
-    // Out-of-window: don't parse or index chats older than the active window.
-    if (mtime < cutoff) continue;
-    // Cheap skip before parsing: if mtime unchanged, don't read the file.
-    const existing = db
-      .prepare(`SELECT jsonl_mtime FROM chats WHERE jsonl_path = ?`)
-      .get(file) as { jsonl_mtime: number } | undefined;
-    if (existing && existing.jsonl_mtime === mtime) continue;
+  for (const source of sources) {
+    for (const file of source.files) {
+      let mtime: number;
+      try {
+        mtime = Math.floor(fs.statSync(file).mtimeMs);
+      } catch {
+        continue;
+      }
+      // Out-of-window: don't parse or index chats older than the active window.
+      if (mtime < cutoff) continue;
+      // Cheap skip before parsing: if mtime unchanged, don't read the file.
+      const existing = db
+        .prepare(`SELECT jsonl_mtime FROM chats WHERE jsonl_path = ?`)
+        .get(file) as { jsonl_mtime: number } | undefined;
+      if (existing && existing.jsonl_mtime === mtime) continue;
 
-    let parsed: ParsedChat;
-    try {
-      parsed = await parseJsonlFile(file);
-    } catch {
-      continue; // one bad file never aborts the pass
+      let parsed: ParsedChat;
+      try {
+        parsed = await source.parse(file);
+      } catch {
+        continue; // one bad file never aborts the pass
+      }
+      if (!parsed.session_id) continue;
+      if (isAnalyzerSession(parsed)) continue; // backstop for sessions created elsewhere
+      const result = upsertChat(db, parsed, mtime, now);
+      if (result !== 'unchanged') changed++;
     }
-    if (!parsed.session_id) continue;
-    if (isAnalyzerSession(parsed)) continue; // backstop for sessions created elsewhere
-    const result = upsertChat(db, parsed, mtime, now);
-    if (result !== 'unchanged') changed++;
   }
   // Remove rows that have aged out of the window (incl. ones indexed earlier).
   const pruned = pruneOld(db, cutoff);
-  return { scanned: files.length, changed, pruned };
+  return { scanned, changed, pruned };
 }
