@@ -107,4 +107,34 @@ describe('dashboard', () => {
     expect(html).toContain('"defaultAgent":"codex"');
     expect(html).toContain('id="default-agent"');
   });
+
+  it('offers "ask every time" alongside the two agents', () => {
+    const html = renderDashboard([], 9999, {}, 'ask');
+
+    expect(html).toContain('"defaultAgent":"ask"');
+    expect(html).toContain('<option value="ask">Ask every time</option>');
+  });
+
+  it('gives every card both a same-agent resume and a cross-agent start', () => {
+    const html = renderDashboard([], 9999, {}, 'claude');
+
+    // Each launch button carries the agent it runs, so the action never depends on
+    // the header preference to be unambiguous.
+    expect(html).toContain('function launchButtons(');
+    expect(html).toContain("'⏵ Resume '+agentLabel(sourceAgent)");
+    expect(html).toContain("'⊕ Start with '+agentLabel(otherAgent(sourceAgent))");
+    // The preference only decorates; it is never read to decide which agent launches.
+    expect(html).toContain('function prefClass(agent){return DATA.defaultAgent===agent');
+    expect(html).not.toContain('const selectedAgent=DATA.defaultAgent');
+  });
+
+  it('offers close and branch for both agents, not Claude alone', () => {
+    const html = renderDashboard([], 9999, {}, 'claude');
+
+    expect(html).toContain("title=\"exit '+agentLabel(c.agent)+' in this pane");
+    expect(html).toContain('data-action="branch"');
+    // The Claude-only gates these replaced.
+    expect(html).not.toContain("c.agent==='claude'?'<button class=\"closebtn\"");
+    expect(html).not.toContain('canBranch');
+  });
 });

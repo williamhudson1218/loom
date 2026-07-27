@@ -64,11 +64,18 @@ yarn test
 ./bin/chat-manager restore --dry-run
 ```
 
-The placement hook (records which pane each chat is in) goes in your Claude `settings.json` under `SessionStart` and `UserPromptSubmit`:
+The placement hook records which pane each chat is in — it's what makes a chat read
+as live. Register it for **both** agents, under `SessionStart` and `UserPromptSubmit`:
+Claude reads it from `~/.claude/settings.json`, Codex from `~/.codex/hooks.json`
+(same schema, same payload keys).
 
 ```json
 { "type": "command", "command": "<repo>/hooks/record-placement.sh", "timeout": 5 }
 ```
+
+The script tags each row with the agent it came from. Without that tag a session id
+is ambiguous across the two agents, and the affected agent's chats all read as stale
+while their panes sit right there.
 
 ## Build the macOS app
 

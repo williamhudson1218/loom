@@ -6,8 +6,8 @@ import { applySchema } from '../src/schema.ts';
 
 const { openDb } = dbModule;
 const { getDefaultAgent, setDefaultAgent } = dbModule as typeof dbModule & {
-  getDefaultAgent(db: Database.Database): Agent;
-  setDefaultAgent(db: Database.Database, agent: Agent): void;
+  getDefaultAgent(db: Database.Database): Agent | 'ask';
+  setDefaultAgent(db: Database.Database, agent: Agent | 'ask'): void;
 };
 
 function openLegacyDbWithChat({ session_id }: { session_id: string }): Database.Database {
@@ -107,6 +107,16 @@ describe('openDb', () => {
     expect(getDefaultAgent(db)).toBe('claude');
     setDefaultAgent(db, 'codex');
     expect(getDefaultAgent(db)).toBe('codex');
+    db.close();
+  });
+
+  it('persists "ask" and falls back to Claude for an unrecognised stored value', () => {
+    const db = openDb(':memory:');
+    setDefaultAgent(db, 'ask');
+    expect(getDefaultAgent(db)).toBe('ask');
+
+    db.prepare(`UPDATE settings SET value = 'gemini' WHERE key = 'default_agent'`).run();
+    expect(getDefaultAgent(db)).toBe('claude');
     db.close();
   });
 });

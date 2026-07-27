@@ -47,17 +47,26 @@ describe('agent-selection routes', () => {
     expect(response.body).toEqual({ ok: false, detail: 'invalid agent' });
   });
 
-  it('rejects Codex sends before reaching the Claude pane helper', async () => {
+  it('accepts "ask every time" as a launch preference', async () => {
+    const response = await request(createServer(), 'PUT', '/api/settings/default-agent', { agent: 'ask' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true, defaultAgent: 'ask' });
+  });
+
+  // Send/close reach the pane helper for BOTH agents now; with no live Codex pane
+  // in this environment they fail on the lookup, not on an agent gate.
+  it('routes Codex sends to the pane helper instead of rejecting the agent', async () => {
     const response = await request(createServer(), 'POST', '/send?agent=codex&session=codex-session&text=hello');
 
     expect(response.status).toBe(409);
-    expect(response.body).toEqual({ ok: false, detail: 'in-panel send is only supported for Claude' });
+    expect(response.body).toEqual({ ok: false, detail: 'chat is not live — resume it first' });
   });
 
-  it('rejects Codex closes before reaching the Claude pane helper', async () => {
+  it('routes Codex closes to the pane helper instead of rejecting the agent', async () => {
     const response = await request(createServer(), 'POST', '/close?agent=codex&session=codex-session');
 
-    expect(response.status).toBe(409);
-    expect(response.body).toEqual({ ok: false, detail: 'in-panel close is only supported for Claude' });
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ ok: false, detail: 'no live pane' });
   });
 });

@@ -31,10 +31,29 @@ describe('readPlacements', () => {
     );
     const map = readPlacements(file);
     expect(map.size).toBe(2);
-    expect(map.get(agentSessionKey('claude', 's1'))?.pane_id).toBe('%9'); // last wins
-    expect(map.get(agentSessionKey('claude', 's2'))?.pane_id).toBe('%2');
-    expect(map.get(agentSessionKey('claude', 's1'))?.agent).toBe('claude'); // legacy hook records default safely
-    expect(map.get(agentSessionKey('claude', 's2'))?.agent).toBe('claude');
+    expect(map.get('?:s1')?.pane_id).toBe('%9'); // last wins
+    expect(map.get('?:s2')?.pane_id).toBe('%2');
+    // The pre-multi-agent hook wrote no agent; such a row stays unattributed rather
+    // than being assumed to be Claude (it fired for Codex sessions too).
+    expect(map.get('?:s1')?.agent).toBeNull();
+    expect(map.get('?:s2')?.agent).toBeNull();
+  });
+
+  it('keeps an agent-tagged row separate from a legacy row for the same id', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-pl-'));
+    const file = path.join(dir, 'placements.jsonl');
+    fs.writeFileSync(
+      file,
+      [
+        JSON.stringify({ session_id: 's1', pane_id: '%1', tmux_session: 'a', window_index: '1', pane_index: '0', cwd: '/x', ts: 1 }),
+        JSON.stringify({ agent: 'codex', session_id: 's1', pane_id: '%2', tmux_session: 'a', window_index: '1', pane_index: '1', cwd: '/x', ts: 2 }),
+      ].join('\n'),
+    );
+    const map = readPlacements(file);
+
+    expect(map.size).toBe(2);
+    expect(map.get('?:s1')?.pane_id).toBe('%1');
+    expect(map.get(agentSessionKey('codex', 's1'))?.pane_id).toBe('%2');
   });
 
   it('returns an empty map when the file is missing', () => {
@@ -57,6 +76,35 @@ describe('liveSessionsFrom', () => {
 
     expect(live.get(agentSessionKey('claude', 'same-id'))?.pane_id).toBe('%1');
     expect(live.get(agentSessionKey('codex', 'same-id'))?.pane_id).toBe('%2');
+  });
+
+  // The bug this fixes: the shared hook recorded Codex sessions with no agent field,
+  // those rows read back as Claude, and every Codex chat therefore showed as stale
+  // even though its pane was right there. A row with no agent must take the agent
+  // the pane is actually running.
+  it('binds an agent-less legacy row to the agent running in its pane', () => {
+    const panes: TmuxPane[] = [
+      { pane_id: '%10', tmux_session: 'loom-tp-2', window_index: '1', pane_index: '1', pane_pid: '10', command: 'codex', cwd: '/tp', left: 0, top: 0, title: 'tax-pilot-app' },
+    ];
+    const placements = new Map([
+      ['?:019f9db7-6176', { agent: null, session_id: '019f9db7-6176', pane_id: '%10', tmux_session: 'loom-tp-2', window_index: '1', pane_index: '1', cwd: '/tp', ts: 1 }],
+    ]);
+
+    const live = liveSessionsFrom(panes, new Map([['%10', 'codex']]), placements);
+
+    expect(live.get(agentSessionKey('codex', '019f9db7-6176'))?.pane_id).toBe('%10');
+    expect(live.has(agentSessionKey('claude', '019f9db7-6176'))).toBe(false);
+  });
+
+  it('leaves a pane unclaimed when its newest row belongs to the other agent', () => {
+    const panes: TmuxPane[] = [
+      { pane_id: '%3', tmux_session: 'loom-a', window_index: '0', pane_index: '0', pane_pid: '3', command: 'codex', cwd: '/a', left: 0, top: 0, title: '' },
+    ];
+    const placements = new Map([
+      [agentSessionKey('claude', 'claude-id'), { agent: 'claude' as const, session_id: 'claude-id', pane_id: '%3', tmux_session: 'loom-a', window_index: '0', pane_index: '0', cwd: '/a', ts: 1 }],
+    ]);
+
+    expect(liveSessionsFrom(panes, new Map([['%3', 'codex']]), placements).size).toBe(0);
   });
 });
 

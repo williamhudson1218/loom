@@ -11,7 +11,11 @@ export function agentSessionKey(agent: Agent, sessionId: string): string {
 }
 
 export interface Placement {
-  agent: Agent;
+  // null on rows written by the pre-multi-agent hook, which recorded a session id
+  // with no agent. Such a row is genuinely ambiguous on its own — it is resolved
+  // against the agent actually running in its pane rather than assumed to be Claude
+  // (the hook fired for Codex sessions too, so assuming Claude silently lost them).
+  agent: Agent | null;
   session_id: string;
   pane_id: string;
   tmux_session: string;
@@ -19,6 +23,12 @@ export interface Placement {
   pane_index: string;
   cwd: string;
   ts: number;
+}
+
+// Key for an agent-less legacy row: distinct from either agent's key so a legacy
+// and a current row for the same session id both survive and compete by recency.
+function placementKey(agent: Agent | null, sessionId: string): string {
+  return agent ? agentSessionKey(agent, sessionId) : `?:${sessionId}`;
 }
 
 // Read the append-only placements log; last line per (agent, session_id) wins.
@@ -35,10 +45,9 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
     try {
       const p = JSON.parse(line) as Partial<Placement>;
       if (p.session_id && p.pane_id) {
-        // Older hooks only recorded Claude sessions, so an omitted agent is
-        // safely interpreted as Claude without changing the native file.
-        const placement = { ...p, agent: p.agent === 'codex' ? 'codex' : 'claude' } as Placement;
-        map.set(agentSessionKey(placement.agent, placement.session_id), placement);
+        const agent: Agent | null = p.agent === 'codex' || p.agent === 'claude' ? p.agent : null;
+        const placement = { ...p, agent } as Placement;
+        map.set(placementKey(agent, placement.session_id), placement);
       }
     } catch {
       /* skip malformed */
@@ -227,11 +236,14 @@ export function liveSessionsFrom(
   // 1. Exact: recorded placements joined to panes that are ACTUALLY running an agent
   // (one chat per pane). Newest placement wins a reused pane. A closed session's
   // pane is now a shell (not in claudeSet) -> excluded -> the chat reads as stale.
+  // A legacy row (agent === null) takes the pane's running agent: the pane is the
+  // authority on which agent is there, and the row's own id came from that agent.
   const latestPlacements = [...placements.values()].sort((a, b) => b.ts - a.ts);
   for (const pl of latestPlacements) {
     const pane = byId.get(pl.pane_id);
     const agent = pane && agentPanes.get(pane.pane_id);
-    if (pane && agent === pl.agent && !claimedPanes.has(pane.pane_id)) set(pl.session_id, pane, agent);
+    if (!pane || !agent || claimedPanes.has(pane.pane_id)) continue;
+    if (pl.agent === null || pl.agent === agent) set(pl.session_id, pane, agent);
   }
 
   const activeAgentPanes = panes.filter((p) => agentPanes.has(p.pane_id));

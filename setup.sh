@@ -64,10 +64,14 @@ fi
 # ── Next steps ─────────────────────────────────────────────────────────
 say "Done. Remaining manual steps (see SETUP.md):"
 cat <<EOF
-  1. Register the placement hook in ~/.claude/settings.json under BOTH
-     SessionStart and UserPromptSubmit:
+  1. Register the placement hook under BOTH SessionStart and UserPromptSubmit,
+     for every agent you use — Claude in ~/.claude/settings.json, Codex in
+     ~/.codex/hooks.json (same hook schema):
 
        { "type": "command", "command": "$ROOT/hooks/record-placement.sh", "timeout": 5 }
+
+     An agent without this hook still gets indexed, but its chats never show
+     as live.
 
   2. Launch Loom.app. On first run, grant macOS permissions when prompted
      (System Settings › Privacy & Security):

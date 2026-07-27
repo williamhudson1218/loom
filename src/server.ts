@@ -12,7 +12,7 @@ import { openGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findchat.ts';
 import { SESSION_PREFIX } from './paths.ts';
 import { agentSessionKey } from './placements.ts';
-import type { Agent } from './types.ts';
+import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -35,7 +35,7 @@ function titleToSession(views: ChatView[]): Map<string, string> {
 // actively generating / running tools) vs. idle and waiting for the user.
 const WORKING_MS = 10_000;
 
-function snapshot(): { defaultAgent: Agent; views: ChatView[]; live: Record<string, LiveLoc> } {
+function snapshot(): { defaultAgent: LaunchPreference; views: ChatView[]; live: Record<string, LiveLoc> } {
   const db = openDb();
   const views = toChatViews(db);
   const defaultAgent = getDefaultAgent(db);
@@ -145,7 +145,7 @@ export function createServer(): http.Server {
           return json(res, 400, { ok: false, detail: 'invalid agent' });
         }
         const agent = body && typeof body === 'object' ? (body as { agent?: unknown }).agent : undefined;
-        if (!isAgent(agent)) return json(res, 400, { ok: false, detail: 'invalid agent' });
+        if (!isLaunchPreference(agent)) return json(res, 400, { ok: false, detail: 'invalid agent' });
         const db = openDb();
         setDefaultAgent(db, agent);
         db.close();
@@ -222,12 +222,11 @@ export function createServer(): http.Server {
       const sid = url.searchParams.get('session') || '';
       const agent = selectedAgent(url);
       if (!agent) return json(res, 400, { ok: false, detail: 'invalid agent' });
-      if (agent !== 'claude') return json(res, 409, { ok: false, detail: 'in-panel send is only supported for Claude' });
       const text = url.searchParams.get('text') || '';
       const { live } = snapshot();
       const info = live[agentSessionKey(agent, sid)];
       if (!info) return send(res, 409, 'application/json', JSON.stringify({ ok: false, detail: 'chat is not live — resume it first' }));
-      const r = sendToPane(info.pane_id, text);
+      const r = sendToPane(info.pane_id, text, agent);
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
     }
 
@@ -235,11 +234,10 @@ export function createServer(): http.Server {
       const sid = url.searchParams.get('session') || '';
       const agent = selectedAgent(url);
       if (!agent) return json(res, 400, { ok: false, detail: 'invalid agent' });
-      if (agent !== 'claude') return json(res, 409, { ok: false, detail: 'in-panel close is only supported for Claude' });
       const { live } = snapshot();
       const info = live[agentSessionKey(agent, sid)];
       if (!info) return send(res, 404, 'application/json', JSON.stringify({ ok: false, detail: 'no live pane' }));
-      const r = closeSession(info.pane_id);
+      const r = closeSession(info.pane_id, agent);
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
     }
 
@@ -256,7 +254,7 @@ export function createServer(): http.Server {
       db.close();
       if (!changed) return json(res, 404, { ok: false, detail: 'unknown session' });
       const info = snapshot().live[agentSessionKey(agent, sid)];
-      const closed = info ? closeSession(info.pane_id).ok : false;
+      const closed = info ? closeSession(info.pane_id, agent).ok : false;
       return json(res, 200, { ok: true, closed });
     }
 
@@ -282,8 +280,8 @@ export function createServer(): http.Server {
       const target = resolveLaunchTarget(views, sid, url.searchParams.get('proj'));
       if (!target.ok) return json(res, target.code, { ok: false, detail: target.detail });
       const fork = url.pathname === '/branch';
-      if (fork && !(target.sourceAgent === 'claude' && agent === 'claude')) {
-        return json(res, 400, { ok: false, detail: 'branching is only supported for Claude sessions' });
+      if (fork && target.sourceAgent !== agent) {
+        return json(res, 400, { ok: false, detail: 'a session can only be branched with its own agent' });
       }
       const r = launchInPane({
         paneId: pane,

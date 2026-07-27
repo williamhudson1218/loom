@@ -53,13 +53,24 @@ function shq(s: string): string {
   return "'" + s.replace(/'/g, `'\\''`) + "'";
 }
 
-// Type a message into the Claude session running in a pane and submit it.
+// Codex's composer needs a beat between receiving typed text and the Enter that
+// submits it: an Enter sent in the same burst arrives before the text is processed
+// and is swallowed, leaving the line sitting unsent. Claude submits either way.
+// Synchronous by design — these helpers run inside a single request handler.
+const COMPOSER_SETTLE_MS = 350;
+
+function settle(ms: number = COMPOSER_SETTLE_MS): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Type a message into the agent session running in a pane and submit it.
 // -l sends the text literally; a separate Enter submits.
-export function sendToPane(paneId: string, text: string): GotoResult {
-  const clean = text.replace(/\r?\n/g, ' ').trim(); // Claude submits on Enter; keep one line
+export function sendToPane(paneId: string, text: string, agent: Agent = 'claude'): GotoResult {
+  const clean = text.replace(/\r?\n/g, ' ').trim(); // both agents submit on Enter; keep one line
   if (!clean) return { ok: false, detail: 'empty message' };
   try {
     execFileSync('tmux', ['send-keys', '-t', paneId, '-l', clean]);
+    if (agent === 'codex') settle();
     execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
@@ -67,28 +78,49 @@ export function sendToPane(paneId: string, text: string): GotoResult {
   return { ok: true, detail: 'sent' };
 }
 
-// Close (exit) the Claude session running in a pane, freeing the pane back to a
-// shell. Sends Ctrl-C twice (the second confirms the "press again to exit"),
-// exactly like quitting Claude by hand. The session is persisted on disk, so it
-// stays resumable from Loom. A typed "/exit" does NOT work via send-keys.
-export function closeSession(paneId: string): GotoResult {
+// Close (exit) the agent session running in a pane, freeing the pane back to a
+// shell. The session is persisted on disk either way, so it stays resumable.
+//
+// The two agents quit differently, and each only responds to its own sequence:
+//   Claude — Ctrl-C twice (the second confirms "press again to exit"). A typed
+//            "/exit" does NOT work via send-keys.
+//   Codex  — "/quit" + Enter. Ctrl-C only interrupts the current turn; sending it
+//            twice leaves Codex running at its composer, and Ctrl-D does nothing.
+//
+// The Codex path sends Enter twice: typing "/quit" pops up its slash-command
+// completion list, and whether the first Enter accepts the completion or submits
+// outright depends on whether that popup has rendered yet. The second Enter covers
+// the accept case, and lands harmlessly on the freed shell otherwise.
+export function closeSession(paneId: string, agent: Agent = 'claude'): GotoResult {
   try {
-    execFileSync('tmux', ['send-keys', '-t', paneId, 'C-c']);
-    execFileSync('tmux', ['send-keys', '-t', paneId, 'C-c']);
+    if (agent === 'codex') {
+      execFileSync('tmux', ['send-keys', '-t', paneId, '-l', '/quit']);
+      settle();
+      execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+      settle();
+      execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+    } else {
+      execFileSync('tmux', ['send-keys', '-t', paneId, 'C-c']);
+      execFileSync('tmux', ['send-keys', '-t', paneId, 'C-c']);
+    }
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
-  return { ok: true, detail: 'sent Ctrl-C x2' };
+  return { ok: true, detail: agent === 'codex' ? 'sent /quit' : 'sent Ctrl-C x2' };
 }
 
 // Seed prompt submitted as the first turn of a branched session. A fork carries
 // the original's full transcript, so the model can't otherwise tell it was
 // forked (it looks identical to a resume from the inside) — this tells it.
-const BRANCH_SEED =
-  'Heads up from Loom: this is a forked branch of a previous Claude Code session. ' +
-  "You carry that session's full context, but this is now an independent branch with a new " +
-  'session id — nothing you do here affects the original session, and there is no need to redo ' +
-  'prior work. Briefly acknowledge that you understand this is a fork, then wait for my next instruction.';
+function branchSeed(agent: Agent): string {
+  const name = agent === 'codex' ? 'Codex' : 'Claude Code';
+  return (
+    `Heads up from Loom: this is a forked branch of a previous ${name} session. ` +
+    "You carry that session's full context, but this is now an independent branch with a new " +
+    'session id — nothing you do here affects the original session, and there is no need to redo ' +
+    'prior work. Briefly acknowledge that you understand this is a fork, then wait for my next instruction.'
+  );
+}
 
 export interface LaunchInput {
   projectDir: string;
@@ -110,17 +142,24 @@ export function buildLaunchCommand(input: LaunchInput): string {
   // Native session ids are agent-specific. Cross-agent handoff starts a clean
   // session, so an id from the source agent can never be passed accidentally.
   if (input.sourceAgent !== input.selectedAgent) return cd + input.selectedAgent;
-  if (input.selectedAgent === 'codex') return cd + `codex resume ${shq(input.sessionId)}`;
+  const seedArg = input.fork ? ' ' + shq(branchSeed(input.selectedAgent)) : '';
+  if (input.selectedAgent === 'codex') {
+    // Codex forks through its own subcommand rather than a resume flag, and both
+    // `resume` and `fork` take an optional prompt as their second positional arg.
+    const verb = input.fork ? 'fork' : 'resume';
+    return cd + `codex ${verb} ${shq(input.sessionId)}${seedArg}`;
+  }
   const forkFlag = input.fork ? ' --fork-session' : '';
-  const seedArg = input.fork ? ' ' + shq(BRANCH_SEED) : '';
   return cd + `claude --resume ${shq(input.sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
 }
 
-// Launch an agent into an idle (shell) pane, then focus it. Claude-only forks
-// resume into a new session id and receive a seed prompt explaining the branch.
+// Launch an agent into an idle (shell) pane, then focus it. A fork starts a new
+// session id carrying the original's context and receives a seed prompt explaining
+// the branch. Both agents fork natively; forking ACROSS agents is impossible —
+// neither can read the other's transcript — so that combination is rejected.
 export function launchInPane(input: LaunchInPaneInput): GotoResult {
-  if (input.fork && !(input.sourceAgent === 'claude' && input.selectedAgent === 'claude')) {
-    return { ok: false, detail: 'branching is only supported for Claude sessions' };
+  if (input.fork && input.sourceAgent !== input.selectedAgent) {
+    return { ok: false, detail: 'a session can only be branched with its own agent' };
   }
   let tmuxSession = '';
   let paneInfo: string[] = [];

@@ -1,5 +1,17 @@
 export type Agent = 'claude' | 'codex';
 
+// Header "Launch with" preference. An agent value marks that agent's action as the
+// highlighted default on every card; 'ask' highlights neither, leaving the card's
+// two explicit choices (resume with its own agent / start fresh with the other)
+// equally weighted so the pick is made per launch.
+export type LaunchPreference = Agent | 'ask';
+
+export const LAUNCH_PREFERENCES: readonly LaunchPreference[] = ['claude', 'codex', 'ask'];
+
+export function isLaunchPreference(value: unknown): value is LaunchPreference {
+  return LAUNCH_PREFERENCES.includes(value as LaunchPreference);
+}
+
 export interface ParsedChat {
   agent: Agent;
   session_id: string;
