@@ -140,6 +140,21 @@ export function renderDashboard(
   main { padding:16px 20px; display:grid; gap:11px; max-width:1100px; }
   .card { background:#161a24; border:1px solid #232634; border-left:4px solid var(--pending); border-radius:10px; padding:11px 14px; transition:border-color .15s, background .15s; }
   .card:hover { background:#1a1f2c; }
+  /* EM activity feed — shadow entries read muted so a week of "would" is
+     scannable and any stray "did" stands out while calibrating. */
+  #em-section { padding:0 20px 24px; }
+  .emtitle { font-size:14px; color:#8b93a7; font-weight:600; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.6px; }
+  .emmode { font-size:11px; color:#0d0f15; background:var(--warning); padding:1px 7px; border-radius:9px; text-transform:none; letter-spacing:0; }
+  .emfeed { display:flex; flex-direction:column; gap:6px; }
+  .emrow { border:1px solid #232634; border-left:3px solid var(--pending); border-radius:6px; padding:8px 10px; background:#11141d; }
+  .emrow.em-escalated { border-left-color:var(--waiting_on_user); }
+  .emrow.em-acted { border-left-color:var(--done); }
+  .emrow.em-expired { opacity:.55; }
+  .emhead { font-size:12px; color:#8b93a7; }
+  .emact { font-size:12px; margin-top:5px; color:#e6e6e6; word-break:break-word; }
+  .emact.shadow { color:#8b93a7; font-style:italic; }
+  .emtag { font-size:10px; padding:1px 5px; border-radius:4px; background:#232634; color:#8b93a7; margin-right:5px; }
+  .emact:not(.shadow) .emtag { background:var(--done); color:#0d0f15; }
   .card.s-done { border-left-color:var(--done); }
   .card.s-waiting_on_user { border-left-color:var(--waiting_on_user); }
   .card.s-warning { border-left-color:var(--warning); }
@@ -282,6 +297,10 @@ export function renderDashboard(
 </header>
 <main id="list"></main>
 <section id="archive"></section>
+<section id="em-section">
+  <h2 class="emtitle">EM <span id="em-mode" class="emmode"></span></h2>
+  <div id="em-feed" class="emfeed"></div>
+</section>
 <div id="overlay"></div>
 <aside id="panel">
   <div class="phead">
@@ -420,13 +439,27 @@ return '<div class="card arch" data-sid="'+id+'" data-agent="claude" data-jsonl=
 :'<span class="muted">no project dir recorded — can\\'t resume</span>')+
 '</div><div class="picker"></div></div>';}
 function renderArchive(){const box=$('#archive');if(archState==='idle'){box.innerHTML='';return;}const hd='<div class="ahead">From your archive</div>';if(archState==='searching'){box.innerHTML=hd+'<p class="muted">searching all history…</p>';return;}if(archState==='error'){box.innerHTML=hd+'<p class="muted">'+esc(archErr)+'</p>';return;}if(!archHits.length){box.innerHTML=hd+'<p class="muted">no archive matches for "'+esc(archQuery)+'" — chats already on the board above are excluded</p>';return;}box.innerHTML=hd+archHits.map(acard).join('');box.querySelectorAll('.card').forEach(wireCard);}
+// EM activity feed. Every action the EM took OR would have taken, grouped under
+// the finding that triggered it. In shadow mode every row reads "would".
+function emRow(f,acts){return '<div class="emrow em-'+esc(f.status)+'"><div class="emhead"><b>'+esc(f.kind)+'</b> · '+esc(f.status)+' · '+rel(f.detected_at)+'</div>'+
+  acts.map(a=>'<div class="emact'+(a.shadow?' shadow':'')+'"><span class="emtag">'+(a.shadow?'would':'did')+'</span> '+esc(a.kind)+': '+esc(a.payload)+'</div>').join('')+'</div>';}
+// Findings read newest-first, but the actions WITHIN one read oldest-first: a
+// wrap-up files its issue before it closes anything, and the feed has to show
+// that order or it misrepresents what the EM did.
+function renderEm(d){const byF={};(d.actions||[]).forEach(a=>{(byF[a.finding_id]=byF[a.finding_id]||[]).push(a);});
+  Object.keys(byF).forEach(k=>byF[k].sort((x,y)=>(x.taken_at-y.taken_at)||(x.id-y.id)));
+  $('#em-mode').textContent=d.mode||'';
+  const rows=(d.findings||[]).map(f=>emRow(f,byF[f.id]||[]));
+  $('#em-feed').innerHTML=rows.length?rows.join(''):'<p class="muted">nothing yet</p>';}
+function refreshEm(){fetch('/api/em').then(r=>r.json()).then(renderEm).catch(()=>{});}
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);
-heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();
+heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshEm();
 $('#default-agent').onchange=updateDefaultAgent;
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(refresh,5000);
+setInterval(refreshEm,15000);
 </script>
 </body></html>`;
 }

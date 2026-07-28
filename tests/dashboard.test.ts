@@ -31,6 +31,13 @@ describe('dashboard', () => {
     db.close();
   });
 
+  it('renders the EM feed container and its fetch wiring', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).toContain('id="em-feed"');
+    expect(html).toContain('id="em-mode"');
+    expect(html).toContain('/api/em');
+  });
+
   it('marks summary_pending for un-summarized chats', async () => {
     const db = openDb(':memory:');
     const parsed = await parseJsonlFile(FIX);
