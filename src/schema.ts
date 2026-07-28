@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { EM_SCHEMA_SQL } from './em/ledger.ts';
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS chats (
@@ -160,4 +161,7 @@ export function applySchema(db: Database.Database): void {
   // exists once the migration has added it, so this index can't live in the
   // CREATE-TABLE block (which is a no-op when the table already exists).
   db.exec(`CREATE INDEX IF NOT EXISTS chats_saved_idx ON chats(saved)`);
+  // EM tables live alongside the chat index in the same DB — a finding is
+  // meaningless without the chat row it points at.
+  db.exec(EM_SCHEMA_SQL);
 }
