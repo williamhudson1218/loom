@@ -10,6 +10,7 @@ import { restore } from '../src/restore.ts';
 import { liveSessions } from '../src/placements.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { defaultRunner } from '../src/analyzer.ts';
+import { scanTick, triageTick } from '../src/em/index.ts';
 
 // Finder-launched apps inherit a minimal PATH; restore the dirs we shell out to
 // (claude, tmux, osascript). Both Homebrew prefixes are included so this works on
@@ -163,4 +164,36 @@ app.whenReady().then(() => {
     }
   }, 15 * 1000);
   setInterval(updateTray, 4 * 1000);
+
+  // EM ticks. These must live HERE, not in src/server.ts's `import.meta.url`
+  // block — that guard is deliberately false in the bundle, so anything inside
+  // it never runs in the packaged app, which is the actual always-on daemon.
+  //
+  // Fast tick: signals + detectors only, no model calls. A tick with nothing
+  // wrong costs nothing, so it is free to run often.
+  setInterval(() => {
+    const db = openDb();
+    try {
+      scanTick(db, Object.fromEntries(liveSessions()), Date.now());
+    } catch (e) {
+      console.error('[loom] em scan failed:', (e as Error).message);
+    } finally {
+      db.close();
+    }
+  }, 30 * 1000);
+
+  // Slow tick: one model call per NEW finding. Serialized against itself so a
+  // slow pass cannot overlap the next one and double-handle a finding.
+  let triaging = false;
+  setInterval(() => {
+    if (triaging) return;
+    triaging = true;
+    const db = openDb();
+    void triageTick(db, Date.now(), { live: Object.fromEntries(liveSessions()) })
+      .catch((e: Error) => console.error('[loom] em triage failed:', e.message))
+      .finally(() => {
+        db.close();
+        triaging = false;
+      });
+  }, 5 * 60 * 1000);
 });

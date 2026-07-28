@@ -24,10 +24,35 @@ export interface EmSignals {
   context: ContextUsage | null;
 }
 
-// src/em/signals.ts -> repo root.
-const LOOM_REPO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Stamped in at bundle time by app/build.mjs. The packaged app lives in
+// /Applications and has no module path pointing back at the source tree.
+declare const __LOOM_REPO_DIR__: string | undefined;
+
+// Where Loom's own source lives, so its sessions can be excluded from EM
+// management. Resolution order mirrors resolveLoomHome() in paths.ts.
+//
+// The try/catch is load-bearing, not defensive noise: app/build.mjs defines
+// import.meta.url to the sentinel "loom-bundled", and fileURLToPath throws
+// "Invalid URL" on it. Unguarded, that throw happens at module load and takes
+// the entire Electron app down before it ever binds a port — and no unit test
+// catches it, because vitest supplies a real import.meta.url.
+function resolveLoomRepoDir(): string {
+  const env = process.env.LOOM_REPO_DIR?.trim();
+  if (env) return path.resolve(env);
+  if (typeof __LOOM_REPO_DIR__ === 'string' && __LOOM_REPO_DIR__) return __LOOM_REPO_DIR__;
+  try {
+    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  } catch {
+    return '';
+  }
+}
+
+const LOOM_REPO_DIR = resolveLoomRepoDir();
 
 function isInside(child: string, parent: string): boolean {
+  // An unknown repo dir must not turn into "every path is inside it" —
+  // path.relative('', '/x') resolves against cwd and would exclude real chats.
+  if (!parent) return false;
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }

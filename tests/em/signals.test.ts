@@ -75,4 +75,13 @@ describe('computeSignals', () => {
     const rows = [chatRow({ session_id: 'wt', project_dir: '/loom/.worktrees/x' })];
     expect(computeSignals(rows, {}, NOW, { selfDir: '/loom' }).length).toBe(0);
   });
+
+  it('excludes nothing when the repo dir is unknown, rather than everything', () => {
+    // The packaged app has no module path pointing at the source tree, so
+    // selfDir can legitimately be ''. path.relative('', '/x') resolves against
+    // cwd, which would silently exclude real chats — the EM would go blind
+    // instead of merely losing its self-guard.
+    const rows = [chatRow({ session_id: 'a', project_dir: '/repo' }), chatRow({ session_id: 'b', project_dir: '/other' })];
+    expect(computeSignals(rows, {}, NOW, { selfDir: '' }).map((s) => s.session_id)).toEqual(['a', 'b']);
+  });
 });
