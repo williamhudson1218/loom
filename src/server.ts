@@ -13,6 +13,8 @@ import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findc
 import { SESSION_PREFIX } from './paths.ts';
 import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
+import { recentLedger, getEmMode } from './em/ledger.ts';
+import { scanTick, triageTick } from './em/index.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -294,6 +296,15 @@ export function createServer(): http.Server {
       return json(res, r.ok ? 200 : 500, r);
     }
 
+    if (url.pathname === '/api/em') {
+      const since = Date.now() - 24 * 3_600_000;
+      const db = openDb();
+      const led = recentLedger(db, since);
+      const mode = getEmMode(db);
+      db.close();
+      return json(res, 200, { ok: true, mode, ...led });
+    }
+
     if (url.pathname === '/' || url.pathname === '/index.html') {
       const { defaultAgent, views, live } = snapshot();
       return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live, defaultAgent));
@@ -318,4 +329,33 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   };
   snap();
   setInterval(snap, 15_000);
+
+  // EM fast tick: signals + detectors only. No model calls, so this is free to
+  // run often — a tick with nothing wrong costs nothing.
+  setInterval(() => {
+    try {
+      const db = openDb();
+      scanTick(db, snapshot().live, Date.now());
+      db.close();
+    } catch (e) {
+      console.error('[loom] em scan failed:', (e as Error).message);
+    }
+  }, 30_000);
+
+  // EM slow tick: one model call per NEW finding. Serialized against itself so a
+  // slow triage pass cannot overlap the next one and double-handle a finding.
+  let triaging = false;
+  setInterval(async () => {
+    if (triaging) return;
+    triaging = true;
+    const db = openDb();
+    try {
+      await triageTick(db, Date.now(), { live: snapshot().live });
+    } catch (e) {
+      console.error('[loom] em triage failed:', (e as Error).message);
+    } finally {
+      db.close();
+      triaging = false;
+    }
+  }, 300_000);
 }
