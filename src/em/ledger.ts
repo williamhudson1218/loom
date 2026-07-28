@@ -55,6 +55,14 @@ export interface FindingRow {
   status: FindingStatus;
 }
 
+// The feed joins on the chat so a row can name the session it is about. A
+// finding that says only "BLOCKED · new" is unreadable — you cannot tell which
+// of a dozen sessions it means, or why it fired.
+export interface FeedFindingRow extends FindingRow {
+  title: string;
+  project: string;
+}
+
 export interface ActionInput {
   finding_id: number;
   kind: string;
@@ -133,11 +141,19 @@ export function paneWritesSince(db: Database.Database, since: number): number {
 export function recentLedger(
   db: Database.Database,
   since: number,
-): { findings: FindingRow[]; actions: ActionRow[] } {
+): { findings: FeedFindingRow[]; actions: ActionRow[] } {
   return {
     findings: db
-      .prepare(`SELECT * FROM em_findings WHERE detected_at >= ? ORDER BY detected_at DESC LIMIT 200`)
-      .all(since) as FindingRow[],
+      .prepare(`
+        SELECT f.*,
+               COALESCE(NULLIF(c.title, ''), c.claude_auto_title, '') AS title,
+               COALESCE(c.project_dir, '')                           AS project
+          FROM em_findings f
+          LEFT JOIN chats c ON c.agent = f.agent AND c.session_id = f.session_id
+         WHERE f.detected_at >= ?
+         ORDER BY f.detected_at DESC
+         LIMIT 200`)
+      .all(since) as FeedFindingRow[],
     actions: db
       .prepare(`SELECT * FROM em_actions WHERE taken_at >= ? ORDER BY taken_at DESC LIMIT 200`)
       .all(since) as ActionRow[],

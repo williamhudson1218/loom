@@ -154,6 +154,9 @@ export function renderDashboard(
   .emrow.em-acted { border-left-color:var(--done); }
   .emrow.em-expired { opacity:.55; }
   .emhead { font-size:12px; color:#8b93a7; }
+  .emwho { font-size:13px; color:#e6e6e6; margin-top:2px; }
+  .emproj { font-size:11px; color:#8b93a7; }
+  .emwhy { font-size:11px; color:#6f778a; margin-top:1px; }
   .emact { font-size:12px; margin-top:5px; color:#e6e6e6; word-break:break-word; }
   .emact.shadow { color:#8b93a7; font-style:italic; }
   .emtag { font-size:10px; padding:1px 5px; border-radius:4px; background:#232634; color:#8b93a7; margin-right:5px; }
@@ -369,7 +372,10 @@ function syncControls(){const em=tab==='em';
   $('#deep').style.display=em?'none':'';
   $('#list').style.display=em?'none':'';
   $('#archive').style.display=em?'none':'';
-  $('#em-section').style.display=em?'':'none';}
+  // 'block', NOT '': the stylesheet defaults #em-section to display:none, and
+  // clearing the inline style just lets that rule win again — the tab renders
+  // its rows into a section that is still hidden.
+  $('#em-section').style.display=em?'block':'none';}
 function liveToggle(){const nLive=Object.keys(DATA.live).length;const nAll=DATA.chats.filter(c=>!isSaved(c)).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?nLive:nAll);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
@@ -453,7 +459,26 @@ return '<div class="card arch" data-sid="'+id+'" data-agent="claude" data-jsonl=
 function renderArchive(){const box=$('#archive');if(archState==='idle'){box.innerHTML='';return;}const hd='<div class="ahead">From your archive</div>';if(archState==='searching'){box.innerHTML=hd+'<p class="muted">searching all history…</p>';return;}if(archState==='error'){box.innerHTML=hd+'<p class="muted">'+esc(archErr)+'</p>';return;}if(!archHits.length){box.innerHTML=hd+'<p class="muted">no archive matches for "'+esc(archQuery)+'" — chats already on the board above are excluded</p>';return;}box.innerHTML=hd+archHits.map(acard).join('');box.querySelectorAll('.card').forEach(wireCard);}
 // EM activity feed. Every action the EM took OR would have taken, grouped under
 // the finding that triggered it. In shadow mode every row reads "would".
-function emRow(f,acts){return '<div class="emrow em-'+esc(f.status)+'"><div class="emhead"><b>'+esc(f.kind)+'</b> · '+esc(f.status)+' · '+rel(f.detected_at)+'</div>'+
+// Plain-English gloss per detector, so the feed does not require knowing the
+// codebase to read.
+const EM_WHY={BLOCKED:'waiting on an answer',WRAPPABLE:'finished, pane still held',BLOATED:'near its context limit',
+  STALLED:'idle mid-task',SPINNING:'lots of talk, no artifacts',DRIFTING:'off the original ask',CONVERGING:'colliding with another session'};
+// What the EM is waiting for, when it has not acted yet.
+const EM_STATUS={new:'awaiting triage (runs every 5m)',triaged:'triaged',acted:'acted',escalated:'needs you',expired:'no longer applicable'};
+// Render the numbers that actually fired the detector — a finding you cannot
+// second-guess is not calibration data.
+function emWhy(f){let s={};try{s=JSON.parse(f.signals_json)||{};}catch(e){}
+  const bits=[];
+  if(s.idleMs!=null)bits.push('idle '+Math.round(s.idleMs/60000)+'m');
+  if(s.contextFraction!=null)bits.push('ctx '+Math.round(s.contextFraction*100)+'% of '+Math.round((s.contextLimit||0)/1000)+'k');
+  if(s.messageCount!=null)bits.push(s.messageCount+' msgs');
+  return bits.join(' · ');}
+function emRow(f,acts){const who=f.title||f.session_id.slice(0,8);
+  const proj=f.project?f.project.split('/').filter(Boolean).pop():'';
+  return '<div class="emrow em-'+esc(f.status)+'">'+
+  '<div class="emhead"><b>'+esc(f.kind)+'</b> · '+esc(EM_WHY[f.kind]||'')+' · '+rel(f.detected_at)+'</div>'+
+  '<div class="emwho">'+esc(who)+(proj?' <span class="emproj">'+esc(proj)+'</span>':'')+'</div>'+
+  '<div class="emwhy">'+esc(emWhy(f))+(acts.length?'':' — <i>'+esc(EM_STATUS[f.status]||f.status)+'</i>')+'</div>'+
   acts.map(a=>'<div class="emact'+(a.shadow?' shadow':'')+'"><span class="emtag">'+(a.shadow?'would':'did')+'</span> '+esc(a.kind)+': '+esc(a.payload)+'</div>').join('')+'</div>';}
 // Findings read newest-first, but the actions WITHIN one read oldest-first: a
 // wrap-up files its issue before it closes anything, and the feed has to show
