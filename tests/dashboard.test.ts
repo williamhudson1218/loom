@@ -31,11 +31,15 @@ describe('dashboard', () => {
     db.close();
   });
 
-  it('renders the EM feed container and its fetch wiring', () => {
+  it('renders the EM feed container, mode switcher, and its fetch wiring', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     expect(html).toContain('id="em-feed"');
-    expect(html).toContain('id="em-mode"');
+    expect(html).toContain('id="em-modes"');
     expect(html).toContain('/api/em');
+    expect(html).toContain('/api/em/mode');
+    // The section defaults to hidden and is revealed with an explicit 'block' —
+    // clearing the inline style would let the stylesheet re-hide it.
+    expect(html).toContain("$('#em-section').style.display=em?'block':'none'");
   });
 
   it('marks summary_pending for un-summarized chats', async () => {

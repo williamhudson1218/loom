@@ -146,8 +146,16 @@ export function renderDashboard(
   .tab.emtab.on:hover { background:#354056; }
   /* Hidden until its tab is selected; syncControls() owns the toggle. */
   #em-section { display:none; padding:0 20px 24px; }
-  .emtitle { font-size:14px; color:#8b93a7; font-weight:600; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.6px; }
-  .emmode { font-size:11px; color:#0d0f15; background:var(--warning); padding:1px 7px; border-radius:9px; text-transform:none; letter-spacing:0; }
+  .emtop { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:18px 0 4px; }
+  .emtitle { font-size:14px; color:#8b93a7; font-weight:600; margin:0; text-transform:uppercase; letter-spacing:.6px; }
+  .emmodes { display:flex; gap:2px; background:#161a26; border:1px solid #232634; border-radius:8px; padding:2px; }
+  .emmodes button { font:inherit; font-size:12px; padding:3px 12px; border:0; border-radius:6px; background:transparent; color:#8b93a7; cursor:pointer; }
+  .emmodes button:hover { color:#e6e6e6; }
+  .emmodes button.on { background:#2b3446; color:#e6e6e6; }
+  .emmodes button.on[data-m="shadow"] { background:#4a4322; color:#f0dfa0; }
+  .emmodes button.on[data-m="live"] { background:#1f5f38; color:#a8e6c0; }
+  .emmodes button.arm { background:var(--error); color:#fff; }
+  .emhint { font-size:11px; color:#6f778a; margin:0 0 10px; }
   .emfeed { display:flex; flex-direction:column; gap:6px; }
   .emrow { border:1px solid #232634; border-left:3px solid var(--pending); border-radius:6px; padding:8px 10px; background:#11141d; }
   .emrow.em-escalated { border-left-color:var(--waiting_on_user); }
@@ -304,7 +312,11 @@ export function renderDashboard(
 <main id="list"></main>
 <section id="archive"></section>
 <section id="em-section">
-  <h2 class="emtitle">Recent activity <span id="em-mode" class="emmode"></span></h2>
+  <div class="emtop">
+    <h2 class="emtitle">Recent activity</h2>
+    <div class="emmodes" id="em-modes"></div>
+  </div>
+  <p class="emhint" id="em-hint"></p>
   <div id="em-feed" class="emfeed"></div>
 </section>
 <div id="overlay"></div>
@@ -484,9 +496,30 @@ function emRow(f,acts){const who=f.title||f.session_id.slice(0,8);
 // wrap-up files its issue before it closes anything, and the feed has to show
 // that order or it misrepresents what the EM did.
 let EM={mode:'',findings:[],actions:[]};
+const EM_MODE_HINT={
+  off:'Off — no scanning, no findings, no cost.',
+  shadow:'Shadow — scans and triages, and records what it WOULD do. Never touches a pane or files an issue.',
+  live:'Live — the EM acts on its own: answers blocked sessions, files fast-follows, and closes finished panes.'};
+function renderEmModes(){const cur=EM.mode||'shadow';
+  // The 15s poll must not rebuild these buttons while one is armed — it would
+  // wipe the confirm mid-click, and the second click would land on a fresh
+  // button and merely re-arm it, so 'live' could never actually be reached.
+  if($('#em-modes').querySelector('.arm'))return;
+  $('#em-modes').innerHTML=['off','shadow','live'].map(m=>'<button data-m="'+m+'"'+(cur===m?' class="on"':'')+'>'+m+'</button>').join('');
+  $('#em-hint').textContent=EM_MODE_HINT[cur]||'';
+  $('#em-modes').querySelectorAll('button').forEach(b=>b.onclick=()=>armMode(b));}
+// Going live is the moment the EM starts writing to panes and filing issues, so
+// it takes a second click — same arm-then-confirm as the card close button.
+// off and shadow are harmless and switch immediately.
+function armMode(b){const m=b.dataset.m;
+  if(m!=='live'||b.dataset.armed)return setMode(m);
+  b.dataset.armed='1';b.textContent='act for real?';b.classList.add('arm');
+  setTimeout(()=>{if(b){b.dataset.armed='';b.textContent='live';b.classList.remove('arm');}},5000);}
+function setMode(m){fetch('/api/em/mode',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({mode:m})})
+  .then(r=>r.json()).then(j=>{if(j.ok){EM.mode=j.mode;renderEmModes();}}).catch(()=>{});}
 function renderEm(d){const byF={};(d.actions||[]).forEach(a=>{(byF[a.finding_id]=byF[a.finding_id]||[]).push(a);});
   Object.keys(byF).forEach(k=>byF[k].sort((x,y)=>(x.taken_at-y.taken_at)||(x.id-y.id)));
-  $('#em-mode').textContent=d.mode||'';
+  renderEmModes();
   const rows=(d.findings||[]).map(f=>emRow(f,byF[f.id]||[]));
   $('#em-feed').innerHTML=rows.length?rows.join(''):'<p class="meta">Nothing yet. The EM scans every 30s and triages every 5m; in <b>shadow</b> mode it records what it would have done without touching a pane or filing anything.</p>';}
 function refreshEm(){fetch('/api/em').then(r=>r.json()).then(d=>{EM=d;renderTabs();if(tab==='em')renderEm(EM);}).catch(()=>{});}

@@ -76,7 +76,11 @@ export interface ActionRow extends ActionInput {
   id: number;
 }
 
-const EM_MODES: readonly EmMode[] = ['off', 'shadow', 'live'];
+export const EM_MODES: readonly EmMode[] = ['off', 'shadow', 'live'];
+
+export function isEmMode(value: unknown): value is EmMode {
+  return EM_MODES.includes(value as EmMode);
+}
 
 // Unrecognised or unset reads as… different things in each direction, on purpose:
 // unset means a fresh install, which should observe (shadow); a stored value we

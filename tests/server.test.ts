@@ -40,6 +40,22 @@ describe('agent-selection routes', () => {
     expect(response.body).toEqual({ ok: false, detail: 'invalid agent' });
   });
 
+  it('sets a valid EM mode', async () => {
+    const response = await request(createServer(), 'PUT', '/api/em/mode', { mode: 'off' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true, mode: 'off' });
+  });
+
+  it('rejects an unknown EM mode rather than storing it', async () => {
+    // getEmMode reads an unparseable stored value as 'off', so a bad write here
+    // would silently disable the EM instead of erroring.
+    const response = await request(createServer(), 'PUT', '/api/em/mode', { mode: 'on' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ ok: false, detail: 'invalid mode' });
+  });
+
   it('rejects an invalid selected agent for resume instead of treating it as Claude', async () => {
     const response = await request(createServer(), 'POST', '/resume?agent=other&session=nope&pane=%1');
 

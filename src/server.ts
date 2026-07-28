@@ -13,7 +13,7 @@ import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findc
 import { SESSION_PREFIX } from './paths.ts';
 import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
-import { recentLedger, getEmMode } from './em/ledger.ts';
+import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
 import { scanTick, triageTick } from './em/index.ts';
 
 export const SERVER_PORT = 4317;
@@ -294,6 +294,26 @@ export function createServer(): http.Server {
         fork,
       });
       return json(res, r.ok ? 200 : 500, r);
+    }
+
+    if (url.pathname === '/api/em/mode' && req.method === 'PUT') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => { raw += chunk; });
+      req.on('end', () => {
+        let body: unknown;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid mode' });
+        }
+        const mode = body && typeof body === 'object' ? (body as { mode?: unknown }).mode : undefined;
+        if (!isEmMode(mode)) return json(res, 400, { ok: false, detail: 'invalid mode' });
+        const db = openDb();
+        setEmMode(db, mode);
+        db.close();
+        return json(res, 200, { ok: true, mode });
+      });
+      return;
     }
 
     if (url.pathname === '/api/em') {
