@@ -142,7 +142,10 @@ export function renderDashboard(
   .card:hover { background:#1a1f2c; }
   /* EM activity feed — shadow entries read muted so a week of "would" is
      scannable and any stray "did" stands out while calibrating. */
-  #em-section { padding:0 20px 24px; }
+  .tab.emtab.on { background:#2b3446; color:#bcd2f5; }
+  .tab.emtab.on:hover { background:#354056; }
+  /* Hidden until its tab is selected; syncControls() owns the toggle. */
+  #em-section { display:none; padding:0 20px 24px; }
   .emtitle { font-size:14px; color:#8b93a7; font-weight:600; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.6px; }
   .emmode { font-size:11px; color:#0d0f15; background:var(--warning); padding:1px 7px; border-radius:9px; text-transform:none; letter-spacing:0; }
   .emfeed { display:flex; flex-direction:column; gap:6px; }
@@ -298,7 +301,7 @@ export function renderDashboard(
 <main id="list"></main>
 <section id="archive"></section>
 <section id="em-section">
-  <h2 class="emtitle">EM <span id="em-mode" class="emmode"></span></h2>
+  <h2 class="emtitle">Recent activity <span id="em-mode" class="emmode"></span></h2>
   <div id="em-feed" class="emfeed"></div>
 </section>
 <div id="overlay"></div>
@@ -354,15 +357,24 @@ function scoped(){return tab==='saved'?savedBase():boardBase();}
 function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%360;return 'background:hsl('+h+',42%,20%);color:hsl('+h+',72%,76%)';}
 // Segmented Board / Saved switch. Counts are totals (independent of the live
 // filter) so they don't jump around as you toggle Live-only.
-function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
+function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['em','⚙ EM',EM.findings.length,' emtab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
 // Live-only toggle is a Board concept; hide it on the Saved tab (saved chats are
 // usually closed, so filtering them by "live" is meaningless).
-function syncControls(){$('#livetoggle').style.display=tab==='saved'?'none':'';}
+// The EM tab shows the ledger, not chats, so every chat-scoped control goes away
+// with it — leaving the project/sort pickers visible would imply they filter it.
+function syncControls(){const em=tab==='em';
+  $('#livetoggle').style.display=(tab==='saved'||em)?'none':'';
+  $('.controls').style.display=em?'none':'';
+  $('#chips').style.display=em?'none':'';
+  $('#deep').style.display=em?'none':'';
+  $('#list').style.display=em?'none':'';
+  $('#archive').style.display=em?'none':'';
+  $('#em-section').style.display=em?'':'none';}
 function liveToggle(){const nLive=Object.keys(DATA.live).length;const nAll=DATA.chats.filter(c=>!isSaved(c)).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?nLive:nAll);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){renderTabs();syncControls();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
+function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
 let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
@@ -446,12 +458,13 @@ function emRow(f,acts){return '<div class="emrow em-'+esc(f.status)+'"><div clas
 // Findings read newest-first, but the actions WITHIN one read oldest-first: a
 // wrap-up files its issue before it closes anything, and the feed has to show
 // that order or it misrepresents what the EM did.
+let EM={mode:'',findings:[],actions:[]};
 function renderEm(d){const byF={};(d.actions||[]).forEach(a=>{(byF[a.finding_id]=byF[a.finding_id]||[]).push(a);});
   Object.keys(byF).forEach(k=>byF[k].sort((x,y)=>(x.taken_at-y.taken_at)||(x.id-y.id)));
   $('#em-mode').textContent=d.mode||'';
   const rows=(d.findings||[]).map(f=>emRow(f,byF[f.id]||[]));
-  $('#em-feed').innerHTML=rows.length?rows.join(''):'<p class="muted">nothing yet</p>';}
-function refreshEm(){fetch('/api/em').then(r=>r.json()).then(renderEm).catch(()=>{});}
+  $('#em-feed').innerHTML=rows.length?rows.join(''):'<p class="meta">Nothing yet. The EM scans every 30s and triages every 5m; in <b>shadow</b> mode it records what it would have done without touching a pane or filing anything.</p>';}
+function refreshEm(){fetch('/api/em').then(r=>r.json()).then(d=>{EM=d;renderTabs();if(tab==='em')renderEm(EM);}).catch(()=>{});}
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);
