@@ -23,6 +23,11 @@ export interface ParsedChat {
   message_count: number;
   activity: Record<string, number>; // localDay -> user-message count
   files_touched: string[];
+  // Files the session actually CHANGED (Edit/Write/NotebookEdit). files_touched
+  // also counts Read, so it cannot tell "both sessions edited this file" from
+  // "both sessions read AGENTS.md" — the EM's collision and write-ratio signals
+  // need writes only.
+  files_written: string[];
   first_message: string;
   claude_auto_title: string;
   pr_url: string;
@@ -56,6 +61,7 @@ export interface ChatRow {
   message_count: number;
   activity_json: string;
   files_touched: string;
+  files_written: string;
   first_message: string;
   claude_auto_title: string;
   pr_url: string;

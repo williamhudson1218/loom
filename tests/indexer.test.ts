@@ -38,6 +38,35 @@ describe('upsertChat', () => {
     expect(row.summary_dirty).toBe(1);
     db.close();
   });
+
+  it('persists files_written across insert and update', () => {
+    const db = openDb(':memory:');
+    const base = {
+      agent: 'claude' as const,
+      session_id: 'em-1',
+      project_dir: '/x',
+      jsonl_path: '/x/em-1.jsonl',
+      started_at: 1,
+      ended_at: 2,
+      last_active_at: 2,
+      message_count: 2,
+      activity: {},
+      files_touched: ['/x/AGENTS.md', '/x/a.ts'],
+      files_written: ['/x/a.ts'],
+      first_message: 'go',
+      claude_auto_title: '',
+      pr_url: '',
+    };
+    expect(upsertChat(db, base, 100, 100)).toBe('inserted');
+    let row = db.prepare(`SELECT files_written FROM chats WHERE session_id = 'em-1'`).get() as { files_written: string };
+    expect(row.files_written).toBe('/x/a.ts');
+
+    // A changed transcript (new mtime) must refresh the column, not keep the old value.
+    expect(upsertChat(db, { ...base, files_written: ['/x/a.ts', '/x/b.ts'] }, 200, 200)).toBe('updated');
+    row = db.prepare(`SELECT files_written FROM chats WHERE session_id = 'em-1'`).get() as { files_written: string };
+    expect(row.files_written).toBe('/x/a.ts\n/x/b.ts');
+    db.close();
+  });
 });
 
 describe('isAnalyzerSession', () => {
@@ -45,7 +74,7 @@ describe('isAnalyzerSession', () => {
     agent: 'claude',
     session_id: 's', project_dir: '/Users/me/dev/proj', jsonl_path: '/x.jsonl',
     started_at: 0, ended_at: 0, last_active_at: 0, message_count: 2,
-    activity: {}, files_touched: [], first_message: 'fix the bug', claude_auto_title: '', pr_url: '',
+    activity: {}, files_touched: [], files_written: [], first_message: 'fix the bug', claude_auto_title: '', pr_url: '',
   };
 
   it('flags sessions whose first message is the analyzer prompt', () => {

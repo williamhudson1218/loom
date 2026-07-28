@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS chats (
   message_count     INTEGER NOT NULL,
   activity_json     TEXT NOT NULL DEFAULT '{}',
   files_touched     TEXT NOT NULL DEFAULT '',
+  files_written     TEXT NOT NULL DEFAULT '',
   first_message     TEXT NOT NULL DEFAULT '',
   claude_auto_title TEXT NOT NULL DEFAULT '',
   pr_url            TEXT NOT NULL DEFAULT '',
@@ -66,6 +67,9 @@ export function applySchema(db: Database.Database): void {
   if (!have.has('files_touched')) {
     db.exec(`ALTER TABLE chats ADD COLUMN files_touched TEXT NOT NULL DEFAULT ''`);
   }
+  if (!have.has('files_written')) {
+    db.exec(`ALTER TABLE chats ADD COLUMN files_written TEXT NOT NULL DEFAULT ''`);
+  }
   if (!have.has('first_message')) {
     db.exec(`ALTER TABLE chats ADD COLUMN first_message TEXT NOT NULL DEFAULT ''`);
   }
@@ -107,6 +111,7 @@ export function applySchema(db: Database.Database): void {
           message_count     INTEGER NOT NULL,
           activity_json     TEXT NOT NULL DEFAULT '{}',
           files_touched     TEXT NOT NULL DEFAULT '',
+          files_written     TEXT NOT NULL DEFAULT '',
           first_message     TEXT NOT NULL DEFAULT '',
           claude_auto_title TEXT NOT NULL DEFAULT '',
           pr_url            TEXT NOT NULL DEFAULT '',
@@ -128,7 +133,7 @@ export function applySchema(db: Database.Database): void {
 
         INSERT INTO chats_v2 (
           agent, session_id, project_dir, jsonl_path, started_at, ended_at,
-          last_active_at, message_count, activity_json, files_touched,
+          last_active_at, message_count, activity_json, files_touched, files_written,
           first_message, claude_auto_title, pr_url, title, overview, state,
           breakdown_json, summary_dirty, summary_model, summary_at,
           last_tmux_session, last_pane_id, saved, saved_at, jsonl_mtime,
@@ -136,7 +141,7 @@ export function applySchema(db: Database.Database): void {
         )
         SELECT
           'claude', session_id, project_dir, jsonl_path, started_at, ended_at,
-          last_active_at, message_count, activity_json, files_touched,
+          last_active_at, message_count, activity_json, files_touched, files_written,
           first_message, claude_auto_title, pr_url, title, overview, state,
           breakdown_json, summary_dirty, summary_model, summary_at,
           last_tmux_session, last_pane_id, saved, saved_at, jsonl_mtime,

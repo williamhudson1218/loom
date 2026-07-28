@@ -126,6 +126,7 @@ export function upsertChat(
     message_count: parsed.message_count,
     activity_json: JSON.stringify(parsed.activity),
     files_touched: parsed.files_touched.join('\n'),
+    files_written: parsed.files_written.join('\n'),
     first_message: parsed.first_message,
     claude_auto_title: parsed.claude_auto_title,
     pr_url: parsed.pr_url,
@@ -138,11 +139,11 @@ export function upsertChat(
     db.prepare(
       `INSERT INTO chats (
         agent, session_id, project_dir, jsonl_path, started_at, ended_at, last_active_at,
-        message_count, activity_json, files_touched, first_message, claude_auto_title, pr_url,
+        message_count, activity_json, files_touched, files_written, first_message, claude_auto_title, pr_url,
         summary_dirty, jsonl_mtime, last_indexed_at
       ) VALUES (
         @agent, @session_id, @project_dir, @jsonl_path, @started_at, @ended_at, @last_active_at,
-        @message_count, @activity_json, @files_touched, @first_message, @claude_auto_title, @pr_url,
+        @message_count, @activity_json, @files_touched, @files_written, @first_message, @claude_auto_title, @pr_url,
         1, @jsonl_mtime, @last_indexed_at
       )`,
     ).run(common);
@@ -155,7 +156,7 @@ export function upsertChat(
     `UPDATE chats SET
        project_dir=@project_dir, jsonl_path=@jsonl_path, started_at=@started_at,
        ended_at=@ended_at, last_active_at=@last_active_at, message_count=@message_count,
-       activity_json=@activity_json, files_touched=@files_touched,
+       activity_json=@activity_json, files_touched=@files_touched, files_written=@files_written,
        first_message=@first_message, claude_auto_title=@claude_auto_title, pr_url=@pr_url,
        summary_dirty=1, jsonl_mtime=@jsonl_mtime, last_indexed_at=@last_indexed_at
      WHERE agent=@agent AND session_id=@session_id`,

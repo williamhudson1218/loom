@@ -46,6 +46,33 @@ describe('parseJsonlFile', () => {
     const c = await parseJsonlFile(f);
     expect(c.pr_url).toBe('https://github.com/tax-pilot-org/tax-pilot-app/pull/787');
   });
+
+  it('separates written files from merely-read files', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-written-'));
+    const f = path.join(dir, 'c.jsonl');
+    fs.writeFileSync(
+      f,
+      [
+        JSON.stringify({ type: 'user', sessionId: 's', cwd: '/x', timestamp: '2026-07-27T12:00:00.000Z', message: { role: 'user', content: 'go' } }),
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-07-27T12:01:00.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', name: 'Read', input: { file_path: '/x/AGENTS.md' } },
+              { type: 'tool_use', name: 'Edit', input: { file_path: '/x/a.ts' } },
+              { type: 'tool_use', name: 'Write', input: { file_path: '/x/b.ts' } },
+            ],
+          },
+        }),
+      ].join('\n'),
+    );
+    const c = await parseJsonlFile(f);
+    expect(c.files_written).toEqual(['/x/a.ts', '/x/b.ts']);
+    // files_touched keeps its existing meaning: reads included.
+    expect(c.files_touched).toEqual(['/x/AGENTS.md', '/x/a.ts', '/x/b.ts']);
+  });
 });
 
 describe('parseCodexJsonlFile', () => {

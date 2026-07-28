@@ -67,6 +67,7 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
     message_count,
     activity,
     files_touched: [],
+    files_written: [],
     first_message,
     claude_auto_title: '',
     pr_url,

@@ -11,6 +11,7 @@ export function localDay(ts: number): string {
 }
 
 const FILE_TOOLS = new Set(['Read', 'Edit', 'Write', 'NotebookEdit']);
+const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 
 export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
   let session_id = '';
@@ -23,6 +24,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
   let pr_url = '';
   const activity: Record<string, number> = {};
   const files = new Set<string>();
+  const written = new Set<string>();
 
   const stream = fs.createReadStream(jsonlPath, { encoding: 'utf-8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
@@ -77,10 +79,11 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block?.type !== 'tool_use') continue;
-          if (FILE_TOOLS.has(block.name)) {
-            const fp = block.input?.file_path;
-            if (typeof fp === 'string') files.add(fp);
-          }
+          if (!FILE_TOOLS.has(block.name)) continue;
+          const fp = block.input?.file_path;
+          if (typeof fp !== 'string') continue;
+          files.add(fp);
+          if (WRITE_TOOLS.has(block.name)) written.add(fp);
         }
       }
     }
@@ -97,6 +100,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
     message_count,
     activity,
     files_touched: Array.from(files),
+    files_written: Array.from(written),
     first_message,
     claude_auto_title,
     pr_url,
