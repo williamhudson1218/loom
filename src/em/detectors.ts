@@ -6,6 +6,7 @@ import type { Finding } from './ledger.ts';
 // tuned values.
 export interface Thresholds {
   blockedIdleMs: number;
+  blockedMaxIdleMs: number;
   wrappableIdleMs: number;
   bloatedFraction: number;
 }
@@ -13,6 +14,12 @@ export interface Thresholds {
 export const THRESHOLDS: Thresholds = {
   // Long enough that Will simply reading the question does not trip it.
   blockedIdleMs: 90_000,
+  // ...and an UPPER bound, found from real data: a live pane sitting in
+  // waiting_on_user for 95 hours is abandoned, not blocked. Answering a
+  // four-day-old question does not keep work moving — Will moved on days ago.
+  // Reviving those is STALLED's job (Phase 2), whose remedy is to wrap up or
+  // close, not to answer.
+  blockedMaxIdleMs: 24 * 3_600_000,
   // Grace period so a just-finished session is not yanked out from under him.
   wrappableIdleMs: 10 * 60_000,
   // NOTE: context.ts's tier promotion makes `fraction` an UPPER bound on real
@@ -40,7 +47,10 @@ export function detect(signals: EmSignals[], now: number, t: Thresholds = THRESH
     // summarizer pass recorded.
     const idleAndLive = s.live && !s.working;
 
-    if (idleAndLive && s.state === 'waiting_on_user' && s.idleMs > t.blockedIdleMs) {
+    if (
+      idleAndLive && s.state === 'waiting_on_user'
+      && s.idleMs > t.blockedIdleMs && s.idleMs < t.blockedMaxIdleMs
+    ) {
       out.push(finding(s, 'BLOCKED', now, {}));
     }
 

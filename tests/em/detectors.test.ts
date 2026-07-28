@@ -32,6 +32,16 @@ describe('BLOCKED', () => {
   it('does not fire on a dead pane — there is nobody to answer', () => {
     expect(kinds([sig({ state: 'waiting_on_user', idleMs: 120_000, live: false, pane: null })])).toEqual([]);
   });
+
+  it('does not fire on an abandoned session, however blocked it looks', () => {
+    // Found in real data: a live pane sat in waiting_on_user for 95 hours.
+    // Answering a four-day-old question does not keep work moving.
+    expect(kinds([sig({ state: 'waiting_on_user', idleMs: 95 * 3_600_000 })])).toEqual([]);
+  });
+
+  it('still fires just inside the upper bound', () => {
+    expect(kinds([sig({ state: 'waiting_on_user', idleMs: 23 * 3_600_000 })])).toEqual(['BLOCKED']);
+  });
 });
 
 describe('WRAPPABLE', () => {
