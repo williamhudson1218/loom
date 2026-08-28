@@ -78,6 +78,38 @@ describe('restore (dry-run)', () => {
     expect(r.restored).toEqual(['scratch', 'loom-work']);
   });
 
+  // The tab, not the session, is what dies in the common case: a session that
+  // survived detached still needs one, and the ones that already have a client
+  // must be left alone or restore doubles the workspace.
+  it('asks for a tab for every session without a client, restored or not', () => {
+    const mixed: Layout = {
+      taken_at: 0,
+      sessions: [{ name: 'loom-a', windows: [] }, { name: 'loom-b', windows: [] }, { name: 'loom-c', windows: [] }],
+    };
+    const r = restore({
+      dryRun: true, layout: mixed, prefix: 'loom-',
+      existing: new Set(['loom-b', 'loom-c']),
+      attached: new Set(['loom-c']),
+    });
+    expect(r.restored).toEqual(['loom-a']);
+    expect(r.attach).toEqual(['loom-a', 'loom-b']); // loom-c already has its tab
+  });
+
+  it('replays the workspace in its remembered tab order, not alphabetically', () => {
+    const mixed: Layout = {
+      taken_at: 0,
+      ghostty_tabs: ['loom-c', 'loom-a', 'loom-b'],
+      sessions: [{ name: 'loom-a', windows: [] }, { name: 'loom-b', windows: [] }, { name: 'loom-c', windows: [] }],
+    };
+    const r = restore({ dryRun: true, layout: mixed, prefix: 'loom-', existing: new Set(), attached: new Set() });
+    expect(r.attach).toEqual(['loom-c', 'loom-a', 'loom-b']);
+  });
+
+  it('suppresses the resume-from-summary prompt on restored Claude panes', () => {
+    const log = restore({ dryRun: true, layout, existing: new Set(), attached: new Set() }).log.join('\n');
+    expect(log).toContain('CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=99999999');
+  });
+
   it('restores only prefix-matched sessions when a prefix is given', () => {
     const mixed: Layout = { taken_at: 0, sessions: [{ name: 'scratch', windows: [] }, { name: 'loom-work', windows: [] }] };
     const r = restore({ dryRun: true, layout: mixed, existing: new Set(), prefix: 'loom-' });

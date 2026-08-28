@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { readLayout, type PaneSnap, type Layout } from './snapshot.ts';
 import { LAYOUT_PATH } from './paths.ts';
+import { attachedSessions } from './placements.ts';
+import { orderSessionsByTabs } from './ghostty.ts';
+import { RESUME_FULL_ENV } from './goto.ts';
 
 function shq(s: string): string {
   return "'" + s.replace(/'/g, `'\\''`) + "'";
@@ -13,7 +16,10 @@ function paneCommand(p: PaneSnap): { text: string; run: boolean } | null {
   if (p.kind === 'claude') {
     if (!p.session_id) return null; // agent pane but unknown chat -> leave a shell
     if (p.agent === 'codex') return { text: `codex resume ${shq(p.session_id)}`, run: true };
-    return { text: `claude --resume ${shq(p.session_id)} --dangerously-skip-permissions`, run: true };
+    return {
+      text: `${RESUME_FULL_ENV} claude --resume ${shq(p.session_id)} --dangerously-skip-permissions`,
+      run: true,
+    };
   }
   if (p.kind === 'nvim') return { text: 'nvim', run: true };
   if (p.kind === 'other' && p.full_command) return { text: p.full_command, run: false };
@@ -40,7 +46,13 @@ export interface RestoreResult {
 }
 
 export function restore(
-  opts: { dryRun?: boolean; layout?: Layout | null; existing?: Set<string>; prefix?: string } = {},
+  opts: {
+    dryRun?: boolean;
+    layout?: Layout | null;
+    existing?: Set<string>;
+    attached?: Set<string>;
+    prefix?: string;
+  } = {},
 ): RestoreResult {
   const layout = opts.layout ?? readLayout();
   if (!layout) {
@@ -48,6 +60,7 @@ export function restore(
   }
   const dry = !!opts.dryRun;
   const existing = opts.existing ?? existingSessions();
+  const attached = opts.attached ?? attachedSessions();
   // Belt-and-suspenders: snapshots are already prefix-filtered, but an entry
   // point can pass a prefix so a stale/unfiltered layout still only restores the
   // workspace set. Omitted -> restore every session in the layout.
@@ -97,5 +110,9 @@ export function restore(
       }
     }
   }
-  return { restored, skipped, attach: restored, log };
+  // A session needs a tab when nothing is attached to it — that covers the ones
+  // just recreated and, just as importantly, ones that survived detached (their
+  // tab died, not the session). Replay them in the order their tabs sat in.
+  const needsTab = sessions.map((s) => s.name).filter((n) => restored.includes(n) || !attached.has(n));
+  return { restored, skipped, attach: orderSessionsByTabs(needsTab, layout.ghostty_tabs), log };
 }

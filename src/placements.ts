@@ -109,6 +109,22 @@ export function listTmuxPanes(): TmuxPane[] {
     });
 }
 
+// Sessions a tmux client is currently attached to — i.e. sessions that already
+// own a terminal tab. Everything else needs one, whether it was just recreated
+// or survived a crash detached.
+export function attachedSessions(): Set<string> {
+  try {
+    return new Set(
+      execFileSync('tmux', ['list-clients', '-F', '#{client_session}'], { encoding: 'utf-8' })
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+  } catch {
+    return new Set(); // tmux not running -> nothing is attached
+  }
+}
+
 // pane_id -> agent for panes whose process tree contains a supported agent.
 // The foreground command can momentarily be a tool subprocess (bash/node/git),
 // so its agent remains identifiable as an ancestor. A closed pane has no agent.

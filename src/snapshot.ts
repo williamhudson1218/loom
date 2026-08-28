@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
 import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
+import { readGhosttyTabs } from './ghostty.ts';
 import type { Agent } from './types.ts';
 
 const SEP = '~|LOOM|~';
@@ -33,6 +34,12 @@ export interface SessionSnap {
 export interface Layout {
   taken_at: number;
   sessions: SessionSnap[];
+  // Ghostty tab titles in on-screen order. `sessions` is sorted by name (stable
+  // for diffing), which is NOT the order the tabs sit in, so restore replays the
+  // workspace in the wrong order without this. An attached tab's title is its
+  // session name (set-titles-string '#S'), so the titles double as the ordering.
+  ghostty_tabs?: string[];
+  ghostty_tabs_at?: number;
 }
 
 export interface CaptureLayoutInput {
@@ -160,11 +167,40 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
   });
 }
 
+// Reading Ghostty's tab bar means an accessibility round-trip, which is far too
+// slow to do on every 15s snapshot. Tab order changes rarely, so refresh it on
+// its own slow cadence and carry the last reading forward in between.
+export const GHOSTTY_TABS_TTL_MS = 120_000;
+
+export interface WriteLayoutOpts {
+  path?: string;
+  prefix?: string;
+  readTabs?: () => string[];
+}
+
 // Only overwrite the saved snapshot when tmux actually has sessions — never clobber
 // a good snapshot with an empty one (e.g. right after a crash before restore).
-export function writeLayout(now: number, path: string = LAYOUT_PATH, prefix: string = SESSION_PREFIX): Layout | null {
+export function writeLayout(now: number, opts: WriteLayoutOpts = {}): Layout | null {
+  const path = opts.path ?? LAYOUT_PATH;
+  const prefix = opts.prefix ?? SESSION_PREFIX;
   const layout = captureLayout(now, prefix);
   if (layout.sessions.length === 0) return null;
+
+  const prev = readLayout(path);
+  const stale = now - (prev?.ghostty_tabs_at ?? 0) >= GHOSTTY_TABS_TTL_MS;
+  if (stale) {
+    const tabs = (opts.readTabs ?? (() => readGhosttyTabs().map((t) => t.title)))();
+    // An empty read means Ghostty is closed or accessibility is denied — keep the
+    // last known order rather than forgetting it.
+    if (tabs.length) {
+      layout.ghostty_tabs = tabs;
+      layout.ghostty_tabs_at = now;
+    }
+  }
+  if (!layout.ghostty_tabs && prev?.ghostty_tabs) {
+    layout.ghostty_tabs = prev.ghostty_tabs;
+    layout.ghostty_tabs_at = prev.ghostty_tabs_at;
+  }
   fs.writeFileSync(path, JSON.stringify(layout, null, 2), 'utf-8');
   return layout;
 }

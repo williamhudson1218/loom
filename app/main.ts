@@ -7,7 +7,10 @@ import { openDb } from '../src/db.ts';
 import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
-import { liveSessions } from '../src/placements.ts';
+import { attachGhosttyTabs } from '../src/ghostty.ts';
+import { SESSION_PREFIX } from '../src/paths.ts';
+import { liveSessions, attachedSessions } from '../src/placements.ts';
+import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 import { scanTick, triageTick } from '../src/em/index.ts';
@@ -96,11 +99,14 @@ function updateTray(): void {
 
 function doRestore(): void {
   try {
-    const r = restore({});
-    const detail = r.restored.length
-      ? `Recreated ${r.restored.length} session(s): ${r.restored.join(', ')}\n\n` +
-        `Open a Ghostty tab per session and attach:\n${r.attach.map((s) => '  ta ' + s).join('\n')}`
-      : `Nothing to restore (already running: ${r.skipped.join(', ') || 'none'}).`;
+    const r = restore({ prefix: SESSION_PREFIX });
+    const g = r.attach.length
+      ? attachGhosttyTabs(r.attach, { attached: attachedSessions() })
+      : { ok: true, detail: 'every session already has a tab' };
+    const detail =
+      `Recreated ${r.restored.length} session(s)${r.restored.length ? ': ' + r.restored.join(', ') : ''}\n` +
+      (r.skipped.length ? `Already running: ${r.skipped.join(', ')}\n` : '') +
+      `\nTabs: ${g.detail}`;
     dialog.showMessageBox({ type: 'info', title: 'Loom', message: 'Workspace restore', detail });
   } catch (e) {
     dialog.showErrorBox('Loom — restore failed', String((e as Error).message));
@@ -144,6 +150,9 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => {
   quitting = true;
+  // Bracket the quit: the line written here and the one the watcher writes if
+  // the server disappears are what tell us whether Loom's exit is implicated.
+  noteTmuxState(Date.now(), 'loom-quit');
 });
 
 app.whenReady().then(() => {
@@ -156,7 +165,10 @@ app.whenReady().then(() => {
   // Background work — this app replaces the launchd jobs.
   void runOnce();
   setInterval(() => void runOnce(), 10 * 60 * 1000);
+  noteTmuxState(Date.now(), 'loom-start');
+  const watchTmux = makeTmuxWatcher();
   setInterval(() => {
+    watchTmux(Date.now(), 'tmux-server-changed');
     try {
       writeLayout(Date.now());
     } catch {

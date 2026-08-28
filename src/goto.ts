@@ -122,6 +122,16 @@ function branchSeed(agent: Agent): string {
   );
 }
 
+// Resuming a long-running session pops a "resume from a summary, or the full
+// session as-is?" prompt before the pane is usable. Loom resumes mean "put this
+// chat back exactly as it was", so the two thresholds that trigger that prompt
+// are pushed out of reach on every command Loom launches.
+//
+// It has to be the real environment: Claude Code applies a settings.json `env`
+// block through an allowlist, and these keys are not on it.
+export const RESUME_FULL_ENV =
+  'CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=99999999 CLAUDE_CODE_RESUME_TOKEN_THRESHOLD=999999999';
+
 export interface LaunchInput {
   projectDir: string;
   sessionId: string;
@@ -150,7 +160,7 @@ export function buildLaunchCommand(input: LaunchInput): string {
     return cd + `codex ${verb} ${shq(input.sessionId)}${seedArg}`;
   }
   const forkFlag = input.fork ? ' --fork-session' : '';
-  return cd + `claude --resume ${shq(input.sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
+  return cd + `${RESUME_FULL_ENV} claude --resume ${shq(input.sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
 }
 
 // Launch an agent into an idle (shell) pane, then focus it. A fork starts a new

@@ -3,12 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDefaultAgent, openDb, setDefaultAgent } from './db.ts';
 import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './dashboard.ts';
-import { liveSessions, listTmuxPanes, idlePanes } from './placements.ts';
+import { liveSessions, listTmuxPanes, idlePanes, attachedSessions } from './placements.ts';
 import { gotoPane, launchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
 import { writeLayout } from './snapshot.ts';
 import { restore } from './restore.ts';
-import { openGhosttyTabs } from './ghostty.ts';
+import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findchat.ts';
 import { SESSION_PREFIX } from './paths.ts';
 import { agentSessionKey } from './placements.ts';
@@ -184,9 +184,11 @@ export function createServer(): http.Server {
       } catch (e) {
         return send(res, 200, 'application/json', JSON.stringify({ ok: false, detail: (e as Error).message }));
       }
-      const g = r.attach.length ? openGhosttyTabs(r.attach) : { ok: true, opened: 0, detail: 'nothing to restore' };
+      const g = r.attach.length
+        ? attachGhosttyTabs(r.attach, { attached: attachedSessions() })
+        : { ok: true, opened: 0, reused: 0, detail: 'nothing to restore' };
       return send(res, 200, 'application/json', JSON.stringify({
-        ok: g.ok, restored: r.restored, skipped: r.skipped, opened: g.opened, detail: g.detail,
+        ok: g.ok, restored: r.restored, skipped: r.skipped, opened: g.opened, reused: g.reused, detail: g.detail,
       }));
     }
 

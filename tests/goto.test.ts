@@ -37,6 +37,16 @@ describe('buildLaunchCommand', () => {
     expect(cmd).toContain("claude --resume 's' --fork-session");
     expect(cmd).toContain('forked branch of a previous Claude Code session');
   });
+
+  // A long session otherwise stops at "resume from a summary, or the full session
+  // as-is?" before it is usable. A Loom resume always means the full session.
+  it('suppresses the resume-from-summary prompt on every Claude resume', () => {
+    const cmd = buildLaunchCommand({ sourceAgent: 'claude', selectedAgent: 'claude', sessionId: 's', projectDir: '/p' });
+
+    expect(cmd).toContain('CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=99999999');
+    expect(cmd).toContain('CLAUDE_CODE_RESUME_TOKEN_THRESHOLD=999999999');
+    expect(cmd.indexOf('CLAUDE_CODE_RESUME_THRESHOLD_MINUTES')).toBeLessThan(cmd.indexOf('claude --resume'));
+  });
 });
 
 // Verified against the real TUIs: Codex ignores Ctrl-C as a quit (it only interrupts
