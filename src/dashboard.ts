@@ -169,6 +169,96 @@ export function renderDashboard(
   .emact.shadow { color:#8b93a7; font-style:italic; }
   .emtag { font-size:10px; padding:1px 5px; border-radius:4px; background:#232634; color:#8b93a7; margin-right:5px; }
   .emact:not(.shadow) .emtag { background:var(--done); color:#0d0f15; }
+  /* Trees — worktree inventory, diffs and cleanup. Hidden until its tab is
+     selected; syncControls() owns the toggle, same as #em-section. */
+  .tab.treetab.on { background:#233a34; color:#a8e6c0; }
+  .tab.treetab.on:hover { background:#2b453e; }
+  #trees-section { display:none; padding:0 20px 24px; }
+  .twrap { display:grid; grid-template-columns:340px 1fr; border:1px solid #232634; border-radius:10px; overflow:hidden; margin-top:16px; min-height:540px; }
+  .trail { border-right:1px solid #232634; background:#11141d; overflow-y:auto; max-height:74vh; }
+  /* Cleanup is a triage table, not a browser — it takes the full width and the
+     rail goes away rather than sitting there showing the same rows twice. */
+  .twrap.cleanup { grid-template-columns:1fr; }
+  .twrap.cleanup .trail { display:none; }
+  /* The triage list scrolls inside the panel rather than scrolling the page:
+     .twrap is overflow:hidden (for the rounded corners), which would otherwise
+     be the sticky footer's scrollport and never scroll, stranding the action
+     44 rows below the group it applies to. Sized off the viewport minus Loom's
+     header and tabs so the panel's own bottom edge — and the footer pinned to
+     it — land above the fold. */
+  .twrap.cleanup { min-height:0; }
+  .twrap.cleanup .tdetail { max-height:calc(100vh - 250px); overflow-y:auto; }
+  .tmodes { display:flex; gap:2px; background:#161a26; border:1px solid #232634; border-radius:7px; padding:2px; }
+  .tmodes button { font:inherit; font-size:11px; padding:3px 9px; border:0; border-radius:5px; background:transparent; color:#8b93a7; cursor:pointer; }
+  .tmodes button.on { background:#2b3446; color:#e6e6e6; }
+  .trepo { padding:7px 13px; background:#151a26; border-bottom:1px solid #232634; font-size:11px; color:#8b93a7; letter-spacing:.4px; text-transform:uppercase; font-weight:600; }
+  .twt { padding:8px 13px; border-bottom:1px solid #191d28; border-left:3px solid transparent; cursor:pointer; }
+  .twt:hover { background:#161c28; }
+  .twt.on { background:#1d2433; border-left-color:#79b1ff; }
+  .twtl1 { display:flex; align-items:center; gap:7px; }
+  .twtname { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .twtl2 { display:flex; align-items:center; gap:8px; font-size:11px; color:#6f778a; margin-top:2px; }
+  .twtbr { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; color:#8b93a7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+  .tsp { flex:1; }
+  .tdot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .tdot.v-safe { background:var(--done); } .tdot.v-active { background:var(--pending); }
+  .tdot.v-uncommitted { background:var(--error); } .tdot.v-untracked-only { background:var(--warning); }
+  .tdot.v-primary { background:#79b1ff; }
+  .tct { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; font-variant-numeric:tabular-nums; }
+  .tct.a { color:#56d364; } .tct.d { color:#ff8086; } .tct.b { color:#6f778a; }
+  .ttag { font-size:9.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; padding:2px 6px; border-radius:4px; white-space:nowrap; }
+  .ttag.safe { background:rgba(46,160,67,.16); color:#56d364; }
+  .ttag.risk { background:rgba(229,72,77,.18); color:#ff8086; }
+  .ttag.warn { background:rgba(212,167,44,.18); color:#e8b84b; }
+  .ttag.live { background:rgba(46,160,67,.14); color:#56d364; cursor:pointer; }
+  .tdetail { display:flex; flex-direction:column; min-width:0; background:#0d0f15; }
+  .tdhead { display:flex; align-items:center; gap:10px; padding:9px 15px; border-bottom:1px solid #232634; background:#12151e; }
+  .tcrumb { font-size:12px; color:#8b93a7; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tcrumb b { color:#e6e6e6; }
+  .tbtns { margin-left:auto; display:flex; gap:6px; flex-shrink:0; }
+  .tbtn { font-size:11.5px; font-weight:600; padding:5px 10px; border-radius:6px; border:1px solid #2b3040; background:#1b1f2a; color:#c4ccdc; cursor:pointer; }
+  .tbtn:hover { border-color:#3a4258; }
+  .tbtn.on { background:#2b3446; color:#fff; border-color:#3a4a63; }
+  .tbtn.danger { background:var(--error); border-color:var(--error); color:#fff; }
+  .tbtn.danger[disabled] { opacity:.4; cursor:default; }
+  .tfiles { border-bottom:1px solid #232634; background:#10131b; max-height:190px; overflow-y:auto; }
+  .tfile { display:flex; align-items:center; gap:9px; padding:6px 15px; font-size:12.5px; border-left:3px solid transparent; cursor:pointer; }
+  .tfile:hover { background:#161c28; }
+  .tfile.on { background:#1d2433; border-left-color:#79b1ff; }
+  .tfname { font-weight:600; white-space:nowrap; }
+  .tfpath { color:#6f778a; font-size:11.5px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tdiff { font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; overflow:auto; flex:1; max-height:52vh; }
+  .thunk { padding:3px 15px; background:#141a26; color:#7f92b8; border-top:1px solid #232634; border-bottom:1px solid #232634; font-size:11.5px; }
+  .dl { display:flex; white-space:pre; }
+  .dl .ln { width:46px; flex-shrink:0; text-align:right; padding-right:10px; color:#545c70; user-select:none; font-variant-numeric:tabular-nums; }
+  .dl .mk { width:13px; flex-shrink:0; user-select:none; }
+  .dl .tx { padding-right:15px; }
+  .dl.add { background:rgba(46,160,67,.14); } .dl.add .mk,.dl.add .tx { color:#a8e6c0; }
+  .dl.del { background:rgba(229,72,77,.13); } .dl.del .mk,.dl.del .tx { color:#ffb3b6; }
+  .dl.ctx .tx { color:#a9b2c6; }
+  .tempty { padding:26px 16px; color:#6f778a; font-size:13px; text-align:center; }
+  .tgroup { border-bottom:1px solid #232634; }
+  .tghead { display:flex; align-items:center; gap:10px; padding:9px 15px; background:#12151e; }
+  .tgtitle { font-size:12px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; }
+  .tgwhy { font-size:11.5px; color:#6f778a; }
+  .tgn { margin-left:auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#8b93a7; }
+  .g-safe .tgtitle { color:#56d364; } .g-untracked-only .tgtitle { color:#e8b84b; }
+  .g-uncommitted .tgtitle { color:#ff8086; } .g-active .tgtitle,.g-primary .tgtitle { color:#8b93a7; }
+  .tcrow { display:flex; align-items:center; gap:11px; padding:8px 15px; border-top:1px solid #191d28; font-size:13px; }
+  .tcbr { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; min-width:210px; }
+  .tcnote { color:#6f778a; font-size:11.5px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .tck { width:13px; height:13px; border-radius:3px; border:1px solid #3a4258; flex-shrink:0; cursor:pointer; position:relative; }
+  .tck.on { background:var(--done); border-color:var(--done); }
+  .tck.on::after { content:'✓'; position:absolute; inset:0; font-size:9px; color:#0d0f15; display:grid; place-items:center; font-weight:700; }
+  /* A protected row gets no checkbox at all, only a placeholder holding the
+     column. A dimmed checkbox still reads as "tick me", which is the one thing
+     these rows must not invite. */
+  .tck.off { border:0; background:transparent; cursor:default; }
+  .tck.off::after { content:'·'; position:absolute; inset:0; display:grid; place-items:center; color:#3a4258; font-size:14px; }
+  /* 44 rows of triage put the action a long scroll below the Safe group. */
+  .tfoot { display:flex; align-items:center; gap:12px; padding:11px 15px; background:#12151e; border-top:1px solid #232634; position:sticky; bottom:0; z-index:2; }
+  .tsum { font-size:12.5px; color:#8b93a7; }
+  .tsum b { color:#e6e6e6; }
   .card.s-done { border-left-color:var(--done); }
   .card.s-waiting_on_user { border-left-color:var(--waiting_on_user); }
   .card.s-warning { border-left-color:var(--warning); }
@@ -319,6 +409,17 @@ export function renderDashboard(
   <p class="emhint" id="em-hint"></p>
   <div id="em-feed" class="emfeed"></div>
 </section>
+<section id="trees-section">
+  <div class="emtop">
+    <h2 class="emtitle">Worktrees</h2>
+    <div class="tmodes" id="tree-modes"></div>
+  </div>
+  <p class="emhint" id="tree-hint"></p>
+  <div class="twrap" id="twrap">
+    <div class="trail" id="tree-rail"></div>
+    <div class="tdetail" id="tree-detail"></div>
+  </div>
+</section>
 <div id="overlay"></div>
 <aside id="panel">
   <div class="phead">
@@ -372,27 +473,31 @@ function scoped(){return tab==='saved'?savedBase():boardBase();}
 function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%360;return 'background:hsl('+h+',42%,20%);color:hsl('+h+',72%,76%)';}
 // Segmented Board / Saved switch. Counts are totals (independent of the live
 // filter) so they don't jump around as you toggle Live-only.
-function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['em','⚙ EM',EM.findings.length,' emtab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
+function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['em','⚙ EM',EM.findings.length,' emtab'],['trees','⑂ Trees',treeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
 // Live-only toggle is a Board concept; hide it on the Saved tab (saved chats are
 // usually closed, so filtering them by "live" is meaningless).
 // The EM tab shows the ledger, not chats, so every chat-scoped control goes away
 // with it — leaving the project/sort pickers visible would imply they filter it.
-function syncControls(){const em=tab==='em';
-  $('#livetoggle').style.display=(tab==='saved'||em)?'none':'';
-  $('.controls').style.display=em?'none':'';
-  $('#chips').style.display=em?'none':'';
-  $('#deep').style.display=em?'none':'';
-  $('#list').style.display=em?'none':'';
-  $('#archive').style.display=em?'none':'';
+// The EM and Trees tabs both show something other than chats, so every
+// chat-scoped control goes away with either — leaving the project/sort pickers
+// visible would imply they filter it.
+function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=em||tr;
+  $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
+  $('.controls').style.display=other?'none':'';
+  $('#chips').style.display=other?'none':'';
+  $('#deep').style.display=other?'none':'';
+  $('#list').style.display=other?'none':'';
+  $('#archive').style.display=other?'none':'';
   // 'block', NOT '': the stylesheet defaults #em-section to display:none, and
   // clearing the inline style just lets that rule win again — the tab renders
   // its rows into a section that is still hidden.
-  $('#em-section').style.display=em?'block':'none';}
+  $('#em-section').style.display=em?'block':'none';
+  $('#trees-section').style.display=tr?'block':'none';}
 function liveToggle(){const nLive=Object.keys(DATA.live).length;const nAll=DATA.chats.filter(c=>!isSaved(c)).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?nLive:nAll);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
+function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
 let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
@@ -523,6 +628,136 @@ function renderEm(d){const byF={};(d.actions||[]).forEach(a=>{(byF[a.finding_id]
   const rows=(d.findings||[]).map(f=>emRow(f,byF[f.id]||[]));
   $('#em-feed').innerHTML=rows.length?rows.join(''):'<p class="meta">Nothing yet. The EM scans every 30s and triages every 5m; in <b>shadow</b> mode it records what it would have done without touching a pane or filing anything.</p>';}
 function refreshEm(){fetch('/api/em').then(r=>r.json()).then(d=>{EM=d;renderTabs();if(tab==='em')renderEm(EM);}).catch(()=>{});}
+// ---- Trees -----------------------------------------------------------------
+// Worktree inventory, diffs and cleanup. A full scan is five git calls per
+// worktree (~2.4s across 44), so this deliberately does NOT join the board's 5s
+// poll: it fetches a 30s server cache on first open, and otherwise only when
+// asked. Everything renders from TREES, exactly as the board renders from DATA.
+var TREES={repos:[],generatedAt:0,scanMs:0};
+var treeLoaded=false,treeBusy=false,treeMode='browse',treeDiffMode='branch',treeArmed=false;
+var treeSel=null,treeFile=null,treeFiles=[],treeDiff='',treePick={},treeMsg='';
+function treeCount(){var n=0;TREES.repos.forEach(function(r){n+=r.worktrees.length;});return n;}
+function allWts(){var a=[];TREES.repos.forEach(function(r){r.worktrees.forEach(function(w){a.push(w);});});return a;}
+function wtByPath(p){var m=allWts().filter(function(w){return w.path===p;});return m.length?m[0]:null;}
+function pickCount(){return Object.keys(treePick).length;}
+function refreshTrees(force){if(treeBusy)return;treeBusy=true;if(tab==='trees')renderTrees();
+  fetch('/api/trees'+(force?'?refresh=1':'')).then(function(r){return r.json();}).then(function(d){
+    TREES=d;treeLoaded=true;treeBusy=false;
+    // A worktree can vanish between polls (another session removed it); drop any
+    // selection or tick that no longer refers to something real.
+    if(treeSel&&!wtByPath(treeSel))treeSel=null;
+    Object.keys(treePick).forEach(function(p){var w=wtByPath(p);if(!w||!w.removable)delete treePick[p];});
+    if(!treeSel){var busy=allWts().filter(function(w){return w.verdict!=='primary'&&(w.trackedModified||w.ahead);});var first=busy.length?busy[0]:allWts()[0];if(first)treeSel=first.path;}
+    renderTabs();if(tab==='trees'){renderTrees();if(treeSel)loadFiles();}
+  }).catch(function(){treeBusy=false;if(tab==='trees')renderTrees();});}
+function loadFiles(){if(!treeSel)return;var p=treeSel;
+  fetch('/api/trees/files?mode='+treeDiffMode+'&wt='+encodeURIComponent(p)).then(function(r){return r.json();}).then(function(d){
+    if(treeSel!==p)return;treeFiles=d.files||[];treeFile=treeFiles.length?treeFiles[0].path:null;treeDiff='';renderTrees();if(treeFile)loadDiff();}).catch(function(){});}
+function loadDiff(){if(!treeSel||!treeFile)return;var p=treeSel,f=treeFile;
+  fetch('/api/trees/diff?mode='+treeDiffMode+'&wt='+encodeURIComponent(p)+'&file='+encodeURIComponent(f)).then(function(r){return r.json();}).then(function(d){
+    if(treeSel!==p||treeFile!==f)return;treeDiff=d.diff||'';renderTrees();}).catch(function(){});}
+// git already emits unified diff, so there is nothing to diff here — only the
+// two line counters to carry forward from each @@ header while colouring rows.
+function dline(k,n,mk,tx){return '<div class="dl '+k+'"><span class="ln">'+(n||'')+'</span><span class="mk">'+mk+'</span><span class="tx">'+esc(tx)+'</span></div>';}
+function renderDiffText(t){if(!t)return '<div class="tempty">No changes in this file.</div>';
+  var out=[],a=0,b=0,started=false,lines=t.split('\\n');
+  for(var i=0;i<lines.length;i++){var L=lines[i];
+    if(L.indexOf('@@')===0){var m=/@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/.exec(L);if(m){a=+m[1];b=+m[2];}started=true;out.push('<div class="thunk">'+esc(L)+'</div>');continue;}
+    // Nothing before the first @@ is content, and the '--- a/x' / '+++ b/x'
+    // header pair would otherwise render as a deletion and an addition.
+    if(!started)continue;
+    var c=L.charAt(0);
+    if(c==='+'){out.push(dline('add',b++,'+',L.slice(1)));}
+    else if(c==='-'){out.push(dline('del',a++,'−',L.slice(1)));}
+    else if(c===' '){out.push(dline('ctx',b++,' ',L.slice(1)));a++;}
+    // Anything else inside a hunk is the no-newline marker, which carries nothing.
+  }
+  return out.length?out.join(''):'<div class="tempty">No textual changes (binary or mode-only).</div>';}
+function renderTreeModes(){var defs=[['browse','Browse'],['cleanup','Cleanup']];
+  $('#tree-modes').innerHTML=defs.map(function(d){return '<button'+(treeMode===d[0]?' class="on"':'')+' data-m="'+d[0]+'">'+d[1]+'</button>';}).join('')
+    +'<button data-m="refresh">'+(treeBusy?'Scanning…':'Refresh')+'</button>';
+  $('#tree-modes').querySelectorAll('button').forEach(function(el){el.onclick=function(){
+    if(el.dataset.m==='refresh')return refreshTrees(true);
+    treeMode=el.dataset.m;treeArmed=false;renderTrees();};});}
+function wtHtml(w){var tag='';
+  if(w.removable)tag='<span class="ttag safe">Safe</span>';
+  else if(w.verdict==='uncommitted')tag='<span class="ttag risk">'+w.trackedModified+' uncommitted</span>';
+  else if(w.verdict==='untracked-only')tag='<span class="ttag warn">'+w.untracked+' untracked</span>';
+  var live=w.liveSessions.length?'<span class="ttag live">● '+esc(w.liveSessions[0].replace(/^loom-/,''))+'</span>':'';
+  var counts=(w.ahead?'<span class="tct a">↑'+w.ahead+'</span>':'')+(w.behind?'<span class="tct b">↓'+w.behind+'</span>':'');
+  return '<div class="twt'+(treeSel===w.path?' on':'')+'" data-p="'+esc(w.path)+'">'
+    +'<div class="twtl1"><span class="tdot v-'+w.verdict+'"></span><span class="twtname">'+esc(w.name)+'</span><span class="tsp"></span>'+live+tag+'</div>'
+    +'<div class="twtl2"><span class="twtbr">⑂ '+esc(w.branch||'detached')+'</span><span class="tsp"></span>'+counts+'</div></div>';}
+function repoHtml(r){return '<div class="trepo">'+esc(r.name)+' <span style="opacity:.55">'+r.worktrees.length+'</span></div>'+r.worktrees.map(wtHtml).join('');}
+function detailHtml(){var w=wtByPath(treeSel);
+  if(!w)return '<div class="tempty">Select a worktree to see what changed in it.</div>';
+  var files=treeFiles.map(function(f){var parts=f.path.split('/');var name=parts.pop();
+    return '<div class="tfile'+(treeFile===f.path?' on':'')+'" data-f="'+esc(f.path)+'"><span class="tfname">'+esc(name)+'</span><span class="tfpath">'+esc(parts.join('/'))+'</span>'
+      +'<span class="tct a">+'+f.added+'</span><span class="tct d">−'+f.deleted+'</span></div>';}).join('');
+  return '<div class="tdhead"><span class="tcrumb"><b>'+esc(w.name)+'</b> · '+esc(w.reason)+'</span>'
+    +'<span class="tbtns"><button class="tbtn'+(treeDiffMode==='branch'?' on':'')+'" data-dm="branch" title="this branch’s own commits, vs the base">vs base</button>'
+    +'<button class="tbtn'+(treeDiffMode==='worktree'?' on':'')+'" data-dm="worktree" title="uncommitted edits only">Uncommitted</button></span></div>'
+    +'<div class="tfiles">'+(files||'<div class="tempty">Nothing changed here.</div>')+'</div>'
+    +'<div class="tdiff">'+renderDiffText(treeDiff)+'</div>';}
+// Group order is the order of consequence, not alphabetical: what you can act on
+// sits above what you must not touch.
+var VGROUPS=[['safe','Safe to remove','no unmerged patches · clean · no live session'],
+  ['untracked-only','Merged, but files would be lost','no unmerged patches · untracked files present'],
+  ['uncommitted','Do not remove','tracked modifications not committed anywhere'],
+  ['active','Active work','unmerged patches present'],
+  ['primary','Repositories','the main worktree, never removable']];
+function cleanupHtml(){var all=allWts(),out='';
+  VGROUPS.forEach(function(g){var rows=all.filter(function(w){return w.verdict===g[0];});if(!rows.length)return;
+    out+='<div class="tgroup g-'+g[0]+'"><div class="tghead"><span class="tgtitle">'+g[1]+'</span><span class="tgwhy">'+g[2]+'</span><span class="tgn">'+rows.length+'</span></div>'
+      +rows.map(function(w){var cls=w.removable?(treePick[w.path]?'tck on':'tck'):'tck off';
+        return '<div class="tcrow"><span class="'+cls+'"'+(w.removable?' data-p="'+esc(w.path)+'"':'')+'></span>'
+          +'<span class="tcbr">'+esc(w.name)+'</span><span class="tcnote">'+esc(w.reason)+'</span></div>';}).join('')+'</div>';});
+  var n=pickCount();
+  out+='<div class="tfoot"><span class="tsum"><b>'+n+' selected</b>'+(n?' · removes the worktree and deletes its local branch':'')+'</span>'
+    +(treeMsg?'<span class="tsum">'+esc(treeMsg)+'</span>':'')
+    +'<span class="tbtns"><button class="tbtn" data-act="copy">Copy commands</button>'
+    +'<button class="tbtn danger" data-act="remove"'+(n?'':' disabled')+'>'+(treeArmed?'Click again to confirm':'Remove '+n+' worktree'+(n===1?'':'s'))+'</button></span></div>';
+  return out;}
+function renderTrees(){renderTreeModes();
+  // Lazy first load: the scan is expensive enough that it should happen when the
+  // tab is opened, not on every dashboard boot. treeBusy guards the re-entry.
+  if(!treeLoaded&&!treeBusy)refreshTrees(false);
+  var rail=$('#tree-rail'),det=$('#tree-detail');
+  $('#twrap').classList.toggle('cleanup',treeMode==='cleanup');
+  $('#tree-hint').textContent=treeLoaded
+    ?(treeCount()+' worktrees across '+TREES.repos.length+' repo'+(TREES.repos.length===1?'':'s')+' · scanned in '+TREES.scanMs+'ms '+rel(TREES.generatedAt))
+    :'';
+  if(!treeLoaded){rail.innerHTML='';det.innerHTML='<div class="tempty">'+(treeBusy?'Scanning every repo Loom has seen a session in…':'Nothing scanned yet.')+'</div>';return;}
+  if(treeMode==='cleanup'){det.innerHTML=cleanupHtml();wireCleanup(det);return;}
+  rail.innerHTML=TREES.repos.map(repoHtml).join('')||'<div class="tempty">No git repositories found.</div>';
+  rail.querySelectorAll('.twt').forEach(function(el){el.onclick=function(){
+    if(treeSel===el.dataset.p)return;treeSel=el.dataset.p;treeFiles=[];treeFile=null;treeDiff='';renderTrees();loadFiles();};});
+  det.innerHTML=detailHtml();
+  det.querySelectorAll('.tbtn[data-dm]').forEach(function(el){el.onclick=function(){
+    if(treeDiffMode===el.dataset.dm)return;treeDiffMode=el.dataset.dm;treeFiles=[];treeFile=null;treeDiff='';renderTrees();loadFiles();};});
+  det.querySelectorAll('.tfile').forEach(function(el){el.onclick=function(){
+    if(treeFile===el.dataset.f)return;treeFile=el.dataset.f;treeDiff='';renderTrees();loadDiff();};});}
+function wireCleanup(det){
+  det.querySelectorAll('.tck[data-p]').forEach(function(el){el.onclick=function(){
+    var p=el.dataset.p;if(treePick[p])delete treePick[p];else treePick[p]=1;treeArmed=false;treeMsg='';renderTrees();};});
+  det.querySelectorAll('.tbtn[data-act="copy"]').forEach(function(el){el.onclick=function(){
+    var cmds=Object.keys(treePick).map(function(p){var w=wtByPath(p);return 'git worktree remove '+p+(w&&w.branch?' && git branch -d '+w.branch:'');}).join('\\n');
+    navigator.clipboard.writeText(cmds).then(function(){treeMsg='Copied '+pickCount()+' command'+(pickCount()===1?'':'s');renderTrees();}).catch(function(){});};});
+  // Arm/confirm, matching the EM tab's live-mode switch. This is the only thing
+  // in Loom that deletes from disk, so it never fires on a single click.
+  det.querySelectorAll('.tbtn[data-act="remove"]').forEach(function(el){el.onclick=function(){
+    if(!pickCount())return;
+    if(!treeArmed){treeArmed=true;treeMsg='';renderTrees();setTimeout(function(){if(treeArmed){treeArmed=false;renderTrees();}},5000);return;}
+    treeArmed=false;treeMsg='Removing…';renderTrees();
+    fetch('/api/trees/remove',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({paths:Object.keys(treePick)})})
+      .then(function(r){return r.json();}).then(function(o){
+        treePick={};
+        var bits=[];
+        if(o.removed&&o.removed.length)bits.push('Removed '+o.removed.length);
+        if(o.refused&&o.refused.length)bits.push('refused '+o.refused.length+' ('+o.refused[0].reason+')');
+        if(o.failed&&o.failed.length)bits.push('failed '+o.failed.length);
+        treeMsg=bits.join(' · ')||'Nothing removed';
+        treeLoaded=false;renderTrees();refreshTrees(true);}).catch(function(){treeMsg='Removal failed';renderTrees();});};});}
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);

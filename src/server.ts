@@ -15,6 +15,8 @@ import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
 import { scanTick, triageTick } from './em/index.ts';
+import { getTrees, filesFor, diffFor, removeWorktrees, liveByPath, type ScanInput } from './trees.ts';
+import type { DiffMode } from './git.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -93,6 +95,28 @@ function resolveLaunchTarget(views: ChatView[], sid: string, proj: string | null
   return { ok: true, dir: proj, sourceAgent: 'claude' };
 }
 
+function diffMode(url: URL): DiffMode {
+  // Branch is the default deliberately: it answers "what did this agent do",
+  // which stays true after the agent commits. Working-tree mode goes blank at
+  // exactly that moment.
+  return url.searchParams.get('mode') === 'worktree' ? 'worktree' : 'branch';
+}
+
+/**
+ * Repos come from the sessions Loom has indexed, and live badges from the panes
+ * currently running, so the Trees tab needs no configuration of its own.
+ */
+function treesInput(): ScanInput {
+  const { views, live } = snapshot();
+  const sessions = views
+    .map((v) => ({
+      project_dir: v.project_dir,
+      tmux_session: live[agentSessionKey(v.agent, v.session_id)]?.tmux_session ?? '',
+    }))
+    .filter((s) => s.tmux_session);
+  return { projectDirs: views.map((v) => v.project_dir), live: liveByPath(sessions) };
+}
+
 function requestAgent(url: URL): Agent {
   return url.searchParams.get('agent') === 'codex' ? 'codex' : 'claude';
 }
@@ -158,6 +182,58 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/idle-panes') {
       return send(res, 200, 'application/json', JSON.stringify(idlePanes()));
+    }
+
+    // ---- Trees: worktree inventory, diffs, and cleanup -------------------
+    //
+    // A scan shells out to git ~5 times per worktree, so these routes read a
+    // 30s cache rather than the dashboard's 5s poll. `?refresh=1` forces it.
+
+    if (url.pathname === '/api/trees') {
+      getTrees(treesInput(), { force: url.searchParams.get('refresh') === '1' })
+        .then((payload) => json(res, 200, payload))
+        .catch((e) => json(res, 200, { generatedAt: Date.now(), scanMs: 0, stale: true, repos: [], detail: (e as Error).message }));
+      return;
+    }
+
+    if (url.pathname === '/api/trees/files') {
+      const wt = url.searchParams.get('wt') || '';
+      filesFor(wt, diffMode(url))
+        .then((files) => (files ? json(res, 200, { ok: true, files }) : json(res, 404, { ok: false, detail: 'unknown worktree' })))
+        .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
+    if (url.pathname === '/api/trees/diff') {
+      const wt = url.searchParams.get('wt') || '';
+      const file = url.searchParams.get('file') || '';
+      diffFor(wt, file, diffMode(url))
+        .then((diff) => (diff === null ? json(res, 404, { ok: false, detail: 'unknown worktree' }) : json(res, 200, { ok: true, diff })))
+        .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
+    // The only route in Loom that deletes anything. It re-scans and re-derives
+    // permission from that fresh state, so the browser's opinion of what is safe
+    // is never the thing that authorises a removal.
+    if (url.pathname === '/api/trees/remove' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => { raw += chunk; });
+      req.on('end', () => {
+        let paths: unknown;
+        try {
+          paths = (JSON.parse(raw) as { paths?: unknown }).paths;
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid body' });
+        }
+        if (!Array.isArray(paths) || paths.some((p) => typeof p !== 'string')) {
+          return json(res, 400, { ok: false, detail: 'paths must be an array of strings' });
+        }
+        removeWorktrees(treesInput(), paths as string[])
+          .then((outcome) => json(res, 200, outcome))
+          .catch((e) => json(res, 200, { ok: false, removed: [], refused: [], failed: [], detail: (e as Error).message }));
+      });
+      return;
     }
 
     // Deep search across the whole archive (everything the 7-day board prunes),
