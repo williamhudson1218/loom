@@ -5,6 +5,7 @@ import {
   parseAheadBehind,
   countUnmergedPatches,
   parseNumstat,
+  assignPanesToWorktrees,
   classify,
   removalPlan,
   type WorktreeState,
@@ -144,6 +145,63 @@ describe('parseNumstat', () => {
   });
 });
 
+describe('assignPanesToWorktrees', () => {
+  const REPO = '/Users/w/dev/tax-pilot-app';
+  const WT = REPO + '/.worktrees/feature-demo-editor';
+  const paths = [REPO, WT, REPO + '/.worktrees/filing-or-132'];
+  const pane = (cwd: string, session = 'loom-tp-4', id = '%7') => ({ tmux_session: session, pane_id: id, cwd });
+
+  it('assigns a pane sitting exactly in a worktree', () => {
+    expect(assignPanesToWorktrees(paths, [pane(WT)])[WT]).toHaveLength(1);
+  });
+
+  it('assigns a pane in a subdirectory to the worktree, not the repo root', () => {
+    // The original bug in miniature: every worktree path also has the repo root
+    // as a prefix, so a first- or shortest-match badges the repository instead.
+    const r = assignPanesToWorktrees(paths, [pane(WT + '/packages/services/demoVideo')]);
+    expect(r[WT]).toHaveLength(1);
+    expect(r[REPO]).toBeUndefined();
+  });
+
+  it('still assigns a pane in the repo root to the repo', () => {
+    const r = assignPanesToWorktrees(paths, [pane(REPO + '/apps/client-app')]);
+    expect(r[REPO]).toHaveLength(1);
+  });
+
+  it('does not let a sibling directory match on a shared prefix', () => {
+    // `/w/.worktrees/filing-or-1320` must not land in `/w/.worktrees/filing-or-132`.
+    const r = assignPanesToWorktrees(paths, [pane(REPO + '/.worktrees/filing-or-1320')]);
+    expect(Object.keys(r)).toEqual([REPO]);
+  });
+
+  it('ignores a pane outside every known worktree', () => {
+    expect(assignPanesToWorktrees(paths, [pane('/Users/w/.superbot2/spaces/x')])).toEqual({});
+  });
+
+  it('ignores a pane with no recorded cwd', () => {
+    expect(assignPanesToWorktrees(paths, [pane('')])).toEqual({});
+  });
+
+  it('falls back to the launch dir when the pane sits at the repo root', () => {
+    // The common real case: a session started inside a worktree, whose pane cwd
+    // still reads as the repository. Every one of Will's 38 panes looks like this.
+    const r = assignPanesToWorktrees(paths, [{ tmux_session: 'loom-tp-4', pane_id: '%7', cwd: REPO, launchDir: WT }]);
+    expect(r[WT]).toHaveLength(1);
+    expect(r[REPO]).toBeUndefined();
+  });
+
+  it('prefers whichever of the two directories is more specific', () => {
+    // Launched at the root, then moved into a worktree — the worktree wins.
+    const r = assignPanesToWorktrees(paths, [{ tmux_session: 'loom-tp-4', pane_id: '%7', cwd: WT + '/apps', launchDir: REPO }]);
+    expect(r[WT]).toHaveLength(1);
+  });
+
+  it('collects multiple panes in the same worktree', () => {
+    const r = assignPanesToWorktrees(paths, [pane(WT, 'loom-tp-4', '%7'), pane(WT + '/apps', 'loom-tp-2', '%9')]);
+    expect(r[WT].map((p) => p.tmux_session)).toEqual(['loom-tp-4', 'loom-tp-2']);
+  });
+});
+
 const base = {
   path: '/w/x',
   name: 'x',
@@ -156,7 +214,7 @@ const base = {
   untracked: 0,
   untrackedPaths: [],
   unmergedPatches: 0,
-  liveSessions: [],
+  livePanes: [],
 };
 
 describe('classify', () => {
@@ -193,7 +251,7 @@ describe('classify', () => {
   });
 
   it('never marks a worktree with a live Loom session removable', () => {
-    const r = classify({ ...base, ahead: 1, liveSessions: ['loom-tp-4'] });
+    const r = classify({ ...base, ahead: 1, livePanes: [{ tmux_session: 'loom-tp-4', pane_id: '%7', cwd: '/w/x' }] });
     expect(r.removable).toBe(false);
     expect(r.reason).toContain('loom-tp-4');
   });

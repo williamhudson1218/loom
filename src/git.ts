@@ -50,11 +50,49 @@ export interface ChangedFile {
 
 export type Verdict = 'primary' | 'safe' | 'untracked-only' | 'uncommitted' | 'active';
 
+/**
+ * A live agent pane, with every directory that ties it to a worktree.
+ *
+ * Two signals, because neither alone is sufficient: `cwd` is where the pane sits
+ * now (catches a session that moved into a worktree), and `launchDir` is the
+ * session's project_dir (catches a session started inside one, whose pane cwd
+ * still reads as the repo root). The most specific match across both wins.
+ */
+export interface LivePane {
+  tmux_session: string;
+  pane_id: string;
+  cwd: string;
+  launchDir?: string;
+}
+
 export interface WorktreeFacts extends Worktree, StatusCounts {
   behind: number;
   ahead: number;
   unmergedPatches: number;
-  liveSessions: string[];
+  livePanes: LivePane[];
+}
+
+/**
+ * Assign each pane to the worktree it is actually in.
+ *
+ * Longest prefix wins, and it must win: every worktree path under
+ * `.worktrees/` also has the repository root as a prefix, so a shortest- or
+ * first-match would badge the repo for every pane in the tree. The boundary
+ * check stops `/a/bc` matching `/a/b`.
+ */
+export function assignPanesToWorktrees(paths: string[], panes: LivePane[]): Record<string, LivePane[]> {
+  const byPath: Record<string, LivePane[]> = {};
+  const sorted = [...paths].sort((a, b) => b.length - a.length);
+  const owns = (wt: string, dir: string) => !!dir && (dir === wt || dir.startsWith(wt + '/'));
+  for (const pane of panes) {
+    // sorted is longest-first, so the first worktree matching either directory
+    // is the most specific one — which is what keeps a pane inside
+    // `.worktrees/foo` off the repository row that also prefixes it.
+    const owner = sorted.find((p) => owns(p, pane.cwd) || owns(p, pane.launchDir ?? ''));
+    if (!owner) continue;
+    (byPath[owner] ??= []).push(pane);
+  }
+  return byPath;
 }
 
 export interface WorktreeState extends WorktreeFacts {
@@ -165,9 +203,8 @@ export function classify(facts: WorktreeFacts): WorktreeState {
   const state = (verdict: Verdict, removable: boolean, reason: string): WorktreeState =>
     ({ ...facts, verdict, removable, reason });
 
-  const live = facts.liveSessions.length
-    ? `live in ${facts.liveSessions.join(', ')}`
-    : null;
+  const sessions = [...new Set(facts.livePanes.map((p) => p.tmux_session))];
+  const live = sessions.length ? `live in ${sessions.join(', ')}` : null;
 
   if (facts.primary) return state('primary', false, 'the repository itself');
 
@@ -251,8 +288,8 @@ export function listWorktrees(repoRoot: string, git: GitRunner = defaultGit): Wo
 export interface InspectOptions {
   git?: GitRunner;
   base?: string;
-  /** worktree path -> tmux session names currently living there */
-  liveByPath?: Record<string, string[]>;
+  /** every live agent pane; each is assigned to the worktree it sits in */
+  panes?: LivePane[];
 }
 
 export function inspectWorktree(
@@ -260,7 +297,7 @@ export function inspectWorktree(
   wt: Worktree,
   base: string,
   git: GitRunner,
-  liveSessions: string[],
+  livePanes: LivePane[],
 ): WorktreeState {
   const status = parseStatus(quiet(git, ['status', '--porcelain'], wt.path));
   const { behind, ahead } = parseAheadBehind(
@@ -272,16 +309,15 @@ export function inspectWorktree(
     ? 0
     : countUnmergedPatches(quiet(git, ['cherry', base, wt.branch ?? wt.head], repoRoot));
 
-  return classify({ ...wt, ...status, behind, ahead, unmergedPatches, liveSessions });
+  return classify({ ...wt, ...status, behind, ahead, unmergedPatches, livePanes });
 }
 
 export function inspectWorktrees(repoRoot: string, opts: InspectOptions = {}): WorktreeState[] {
   const git = opts.git ?? defaultGit;
   const base = opts.base ?? resolveBaseRef(repoRoot, git);
-  const live = opts.liveByPath ?? {};
-  return listWorktrees(repoRoot, git).map((wt) =>
-    inspectWorktree(repoRoot, wt, base, git, live[wt.path] ?? []),
-  );
+  const worktrees = listWorktrees(repoRoot, git);
+  const live = assignPanesToWorktrees(worktrees.map((w) => w.path), opts.panes ?? []);
+  return worktrees.map((wt) => inspectWorktree(repoRoot, wt, base, git, live[wt.path] ?? []));
 }
 
 /* ------------------------------------------------------- parallel inspection */
@@ -327,7 +363,7 @@ const SCAN_CONCURRENCY = 8;
 export interface AsyncInspectOptions {
   git?: AsyncGitRunner;
   base?: string;
-  liveByPath?: Record<string, string[]>;
+  panes?: LivePane[];
 }
 
 export async function resolveBaseRefAsync(repoRoot: string, git: AsyncGitRunner = defaultGitAsync): Promise<string> {
@@ -346,8 +382,8 @@ export async function inspectWorktreesAsync(
 ): Promise<WorktreeState[]> {
   const git = opts.git ?? defaultGitAsync;
   const base = opts.base ?? (await resolveBaseRefAsync(repoRoot, git));
-  const live = opts.liveByPath ?? {};
   const worktrees = parseWorktreeList(await quietAsync(git, ['worktree', 'list', '--porcelain'], repoRoot));
+  const live = assignPanesToWorktrees(worktrees.map((w) => w.path), opts.panes ?? []);
 
   return pool(worktrees, SCAN_CONCURRENCY, async (wt) => {
     const [statusOut, countOut, cherryOut] = await Promise.all([
@@ -360,7 +396,7 @@ export async function inspectWorktreesAsync(
       ...parseStatus(statusOut),
       ...parseAheadBehind(countOut),
       unmergedPatches: countUnmergedPatches(cherryOut),
-      liveSessions: live[wt.path] ?? [],
+      livePanes: live[wt.path] ?? [],
     });
   });
 }

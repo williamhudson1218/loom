@@ -9,6 +9,7 @@ import {
   removeWorktree,
   type ChangedFile,
   type DiffMode,
+  type LivePane,
   type WorktreeState,
 } from './git.ts';
 
@@ -71,17 +72,29 @@ export function discoverRepos(projectDirs: string[]): string[] {
   return [...roots].sort();
 }
 
-/** worktree path -> tmux session names living there, for the rail's live badges. */
-export function liveByPath(
-  sessions: { project_dir: string; tmux_session: string }[],
-): Record<string, string[]> {
-  const map: Record<string, string[]> = {};
+/**
+ * Panes are matched to worktrees by their CURRENT directory, not by the
+ * session's `project_dir`. A session launched at the repo root and then moved
+ * into a worktree keeps its original project_dir forever, which badged the
+ * repository for every running session and no worktree for any of them.
+ */
+export function panesFromLive(
+  sessions: { agent: string; session_id: string; project_dir: string }[],
+  live: Record<string, { tmux_session: string; pane_id: string; cwd?: string } | undefined>,
+  keyFor: (agent: string, sessionId: string) => string,
+): LivePane[] {
+  const panes: LivePane[] = [];
+  const seen = new Set<string>();
   for (const s of sessions) {
-    if (!s.project_dir || !s.tmux_session) continue;
-    const list = (map[s.project_dir] ??= []);
-    if (!list.includes(s.tmux_session)) list.push(s.tmux_session);
+    const l = live[keyFor(s.agent, s.session_id)];
+    if (!l?.pane_id || !l.tmux_session) continue;
+    // One entry per pane: several chats can share a pane over its lifetime, and
+    // the rail should badge it once.
+    if (seen.has(l.pane_id)) continue;
+    seen.add(l.pane_id);
+    panes.push({ tmux_session: l.tmux_session, pane_id: l.pane_id, cwd: l.cwd ?? '', launchDir: s.project_dir });
   }
-  return map;
+  return panes;
 }
 
 /* -------------------------------------------------------------------- cache */
@@ -102,7 +115,7 @@ let inflight: Promise<Entry> | null = null;
 
 export interface ScanInput {
   projectDirs: string[];
-  live: Record<string, string[]>;
+  panes: LivePane[];
 }
 
 async function scan(input: ScanInput): Promise<Entry> {
@@ -111,7 +124,7 @@ async function scan(input: ScanInput): Promise<Entry> {
   const repos: RepoTrees[] = [];
   for (const root of roots) {
     const base = await resolveBaseRefAsync(root);
-    const worktrees = await inspectWorktreesAsync(root, { base, liveByPath: input.live });
+    const worktrees = await inspectWorktreesAsync(root, { base, panes: input.panes });
     if (worktrees.length) repos.push({ root, name: path.basename(root), base, worktrees });
   }
   // Busiest repo first — the one with the most worktrees is the one being asked about.

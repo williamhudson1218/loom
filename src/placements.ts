@@ -217,6 +217,10 @@ export interface LiveInfo {
   window_index: string;
   pane_index: string;
   running: boolean; // pane exists AND an agent is running
+  // The pane's CURRENT directory, which is not chats.project_dir: project_dir is
+  // where the session was launched, so a session that moved into a worktree
+  // still reports the repo root. The Trees tab needs where the pane actually is.
+  cwd: string;
 }
 
 // Strip leading spinner/status glyphs Claude prepends to the pane title.
@@ -246,6 +250,7 @@ export function liveSessionsFrom(
       window_index: pane.window_index,
       pane_index: pane.pane_index,
       running: true,
+      cwd: pane.cwd,
     });
   };
 

@@ -15,7 +15,7 @@ import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
 import { scanTick, triageTick } from './em/index.ts';
-import { getTrees, filesFor, diffFor, removeWorktrees, liveByPath, type ScanInput } from './trees.ts';
+import { getTrees, filesFor, diffFor, removeWorktrees, panesFromLive, knownWorktree, type ScanInput } from './trees.ts';
 import type { DiffMode } from './git.ts';
 
 export const SERVER_PORT = 4317;
@@ -103,18 +103,15 @@ function diffMode(url: URL): DiffMode {
 }
 
 /**
- * Repos come from the sessions Loom has indexed, and live badges from the panes
- * currently running, so the Trees tab needs no configuration of its own.
+ * Repos come from the sessions Loom has indexed, and live badges from where the
+ * running panes actually are, so the Trees tab needs no configuration of its own.
  */
 function treesInput(): ScanInput {
   const { views, live } = snapshot();
-  const sessions = views
-    .map((v) => ({
-      project_dir: v.project_dir,
-      tmux_session: live[agentSessionKey(v.agent, v.session_id)]?.tmux_session ?? '',
-    }))
-    .filter((s) => s.tmux_session);
-  return { projectDirs: views.map((v) => v.project_dir), live: liveByPath(sessions) };
+  return {
+    projectDirs: views.map((v) => v.project_dir),
+    panes: panesFromLive(views, live, (agent, sid) => agentSessionKey(agent as Agent, sid)),
+  };
 }
 
 function requestAgent(url: URL): Agent {
@@ -194,6 +191,17 @@ export function createServer(): http.Server {
         .then((payload) => json(res, 200, payload))
         .catch((e) => json(res, 200, { generatedAt: Date.now(), scanMs: 0, stale: true, repos: [], detail: (e as Error).message }));
       return;
+    }
+
+    // Jump to the pane a worktree is live in, focusing its Ghostty tab. Same
+    // gotoPane the board's cards use; the pane is validated against the scan
+    // rather than trusted from the query string.
+    if (url.pathname === '/api/trees/goto') {
+      const wt = knownWorktree(url.searchParams.get('wt') || '');
+      const paneId = url.searchParams.get('pane') || '';
+      const pane = wt?.livePanes.find((p) => p.pane_id === paneId);
+      if (!pane) return json(res, 404, { ok: false, detail: 'no live pane there' });
+      return json(res, 200, gotoPane(pane.pane_id, pane.tmux_session));
     }
 
     if (url.pathname === '/api/trees/files') {

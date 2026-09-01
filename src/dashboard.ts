@@ -91,6 +91,10 @@ export interface LiveLoc {
   pane_index: string;
   running: boolean;
   working?: boolean;
+  // The pane's current directory. Always set by liveSessionsFrom(); optional here
+  // because consumers of the serialized shape must not assume it, and the Trees
+  // tab filters on its presence rather than defaulting it to something wrong.
+  cwd?: string;
 }
 
 export function renderDashboard(
@@ -192,6 +196,14 @@ export function renderDashboard(
   .tmodes button { font:inherit; font-size:11px; padding:3px 9px; border:0; border-radius:5px; background:transparent; color:#8b93a7; cursor:pointer; }
   .tmodes button.on { background:#2b3446; color:#e6e6e6; }
   .trepo { padding:7px 13px; background:#151a26; border-bottom:1px solid #232634; font-size:11px; color:#8b93a7; letter-spacing:.4px; text-transform:uppercase; font-weight:600; }
+  /* Collapsible rail groups. Grouped by whether a pane is living there, which is
+     a different question from the cleanup verdict: a worktree can be full of
+     unmerged work and long abandoned, or clean and actively occupied. */
+  .tgrp { display:flex; align-items:center; gap:7px; padding:6px 13px; background:#12161f; border-bottom:1px solid #232634; cursor:pointer; font-size:10.5px; font-weight:600; letter-spacing:.5px; text-transform:uppercase; color:#8b93a7; user-select:none; }
+  .tgrp:hover { color:#c4ccdc; background:#161b26; }
+  .tgcar { font-size:8px; transition:transform .12s; display:inline-block; }
+  .tgrp.open .tgcar { transform:rotate(90deg); }
+  .tgcount { margin-left:auto; opacity:.55; font-variant-numeric:tabular-nums; }
   .twt { padding:8px 13px; border-bottom:1px solid #191d28; border-left:3px solid transparent; cursor:pointer; }
   .twt:hover { background:#161c28; }
   .twt.on { background:#1d2433; border-left-color:#79b1ff; }
@@ -236,6 +248,15 @@ export function renderDashboard(
   .dl.add { background:rgba(46,160,67,.14); } .dl.add .mk,.dl.add .tx { color:#a8e6c0; }
   .dl.del { background:rgba(229,72,77,.13); } .dl.del .mk,.dl.del .tx { color:#ffb3b6; }
   .dl.ctx .tx { color:#a9b2c6; }
+  .tbtnsep { width:1px; align-self:stretch; background:#2b3040; margin:0 2px; }
+  /* Side-by-side. Each column scrolls horizontally on its own (monorepo paths
+     are long), while vertical alignment is held by the filler rows pairRows()
+     emits rather than by syncing scroll positions. */
+  .tsplit { display:grid; grid-template-columns:1fr 1fr; }
+  .tsplitcol { min-width:0; overflow-x:auto; }
+  .tsplitcol + .tsplitcol { border-left:1px solid #2b3040; }
+  .dl.pad { background:#0f1219; }
+  .dl.pad .tx { color:transparent; }
   .tempty { padding:26px 16px; color:#6f778a; font-size:13px; text-align:center; }
   .tgroup { border-bottom:1px solid #232634; }
   .tghead { display:flex; align-items:center; gap:10px; padding:9px 15px; background:#12151e; }
@@ -636,6 +657,9 @@ function refreshEm(){fetch('/api/em').then(r=>r.json()).then(d=>{EM=d;renderTabs
 var TREES={repos:[],generatedAt:0,scanMs:0};
 var treeLoaded=false,treeBusy=false,treeMode='browse',treeDiffMode='branch',treeArmed=false;
 var treeSel=null,treeFile=null,treeFiles=[],treeDiff='',treePick={},treeMsg='';
+// Stale is collapsed by default — it is the long tail the tab exists to keep out of the way.
+var treeOpen={main:true,active:true,stale:false};
+var treeView='unified';
 function treeCount(){var n=0;TREES.repos.forEach(function(r){n+=r.worktrees.length;});return n;}
 function allWts(){var a=[];TREES.repos.forEach(function(r){r.worktrees.forEach(function(w){a.push(w);});});return a;}
 function wtByPath(p){var m=allWts().filter(function(w){return w.path===p;});return m.length?m[0]:null;}
@@ -647,7 +671,9 @@ function refreshTrees(force){if(treeBusy)return;treeBusy=true;if(tab==='trees')r
     // selection or tick that no longer refers to something real.
     if(treeSel&&!wtByPath(treeSel))treeSel=null;
     Object.keys(treePick).forEach(function(p){var w=wtByPath(p);if(!w||!w.removable)delete treePick[p];});
-    if(!treeSel){var busy=allWts().filter(function(w){return w.verdict!=='primary'&&(w.trackedModified||w.ahead);});var first=busy.length?busy[0]:allWts()[0];if(first)treeSel=first.path;}
+    if(!treeSel){var occupied=allWts().filter(function(w){return !w.primary&&w.livePanes.length;});
+      var busy=allWts().filter(function(w){return !w.primary&&(w.trackedModified||w.ahead);});
+      var first=occupied.length?occupied[0]:(busy.length?busy[0]:allWts()[0]);if(first)treeSel=first.path;}
     renderTabs();if(tab==='trees'){renderTrees();if(treeSel)loadFiles();}
   }).catch(function(){treeBusy=false;if(tab==='trees')renderTrees();});}
 function loadFiles(){if(!treeSel)return;var p=treeSel;
@@ -659,20 +685,58 @@ function loadDiff(){if(!treeSel||!treeFile)return;var p=treeSel,f=treeFile;
 // git already emits unified diff, so there is nothing to diff here — only the
 // two line counters to carry forward from each @@ header while colouring rows.
 function dline(k,n,mk,tx){return '<div class="dl '+k+'"><span class="ln">'+(n||'')+'</span><span class="mk">'+mk+'</span><span class="tx">'+esc(tx)+'</span></div>';}
-function renderDiffText(t){if(!t)return '<div class="tempty">No changes in this file.</div>';
-  var out=[],a=0,b=0,started=false,lines=t.split('\\n');
+// Parse git's unified output ONCE into hunks of typed rows; unified and split are
+// then two renderings of the same model rather than two parsers.
+function parseDiff(t){var hunks=[],cur=null,a=0,b=0,lines=t.split('\\n');
   for(var i=0;i<lines.length;i++){var L=lines[i];
-    if(L.indexOf('@@')===0){var m=/@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/.exec(L);if(m){a=+m[1];b=+m[2];}started=true;out.push('<div class="thunk">'+esc(L)+'</div>');continue;}
+    if(L.indexOf('@@')===0){var m=/@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/.exec(L);if(m){a=+m[1];b=+m[2];}
+      cur={header:L,rows:[]};hunks.push(cur);continue;}
     // Nothing before the first @@ is content, and the '--- a/x' / '+++ b/x'
-    // header pair would otherwise render as a deletion and an addition.
-    if(!started)continue;
+    // header pair would otherwise read as a deletion and an addition.
+    if(!cur)continue;
     var c=L.charAt(0);
-    if(c==='+'){out.push(dline('add',b++,'+',L.slice(1)));}
-    else if(c==='-'){out.push(dline('del',a++,'−',L.slice(1)));}
-    else if(c===' '){out.push(dline('ctx',b++,' ',L.slice(1)));a++;}
+    if(c==='+'){cur.rows.push({k:'add',b:b++,tx:L.slice(1)});}
+    else if(c==='-'){cur.rows.push({k:'del',a:a++,tx:L.slice(1)});}
+    else if(c===' '){cur.rows.push({k:'ctx',a:a++,b:b++,tx:L.slice(1)});}
     // Anything else inside a hunk is the no-newline marker, which carries nothing.
   }
-  return out.length?out.join(''):'<div class="tempty">No textual changes (binary or mode-only).</div>';}
+  return hunks;}
+function renderUnified(hunks){var out=[];
+  hunks.forEach(function(h){out.push('<div class="thunk">'+esc(h.header)+'</div>');
+    h.rows.forEach(function(r){
+      out.push(r.k==='add'?dline('add',r.b,'+',r.tx):r.k==='del'?dline('del',r.a,'−',r.tx):dline('ctx',r.b,' ',r.tx));});});
+  return out.join('');}
+// Pair a hunk's rows into left/right. git emits a change as a run of deletions
+// followed by a run of additions, so the runs pair by index and whichever side
+// is shorter gets filler rows — that filler is what keeps the two columns
+// vertically aligned without a scroll listener.
+function pairRows(rows){var out=[],i=0;
+  while(i<rows.length){
+    if(rows[i].k==='ctx'){out.push({l:rows[i],r:rows[i]});i++;continue;}
+    var dels=[],adds=[];
+    while(i<rows.length&&rows[i].k==='del'){dels.push(rows[i]);i++;}
+    while(i<rows.length&&rows[i].k==='add'){adds.push(rows[i]);i++;}
+    var n=Math.max(dels.length,adds.length);
+    for(var j=0;j<n;j++)out.push({l:dels[j]||null,r:adds[j]||null});}
+  return out;}
+function splitCell(row,side){
+  if(!row)return '<div class="dl pad"><span class="ln"></span><span class="tx"> </span></div>';
+  var k=row.k==='ctx'?'ctx':(side==='l'?'del':'add');
+  var mk=row.k==='ctx'?' ':(side==='l'?'−':'+');
+  return '<div class="dl '+k+'"><span class="ln">'+((side==='l'?row.a:row.b)||'')+'</span><span class="mk">'+mk+'</span><span class="tx">'+esc(row.tx)+'</span></div>';}
+function renderSplit(hunks){var out=[];
+  hunks.forEach(function(h){var pairs=pairRows(h.rows);
+    out.push('<div class="thunk">'+esc(h.header)+'</div>');
+    out.push('<div class="tsplit"><div class="tsplitcol">'
+      +pairs.map(function(p){return splitCell(p.l,'l');}).join('')
+      +'</div><div class="tsplitcol">'
+      +pairs.map(function(p){return splitCell(p.r,'r');}).join('')
+      +'</div></div>');});
+  return out.join('');}
+function renderDiffText(t){if(!t)return '<div class="tempty">No changes in this file.</div>';
+  var hunks=parseDiff(t);
+  if(!hunks.length)return '<div class="tempty">No textual changes (binary or mode-only).</div>';
+  return treeView==='split'?renderSplit(hunks):renderUnified(hunks);}
 function renderTreeModes(){var defs=[['browse','Browse'],['cleanup','Cleanup']];
   $('#tree-modes').innerHTML=defs.map(function(d){return '<button'+(treeMode===d[0]?' class="on"':'')+' data-m="'+d[0]+'">'+d[1]+'</button>';}).join('')
     +'<button data-m="refresh">'+(treeBusy?'Scanning…':'Refresh')+'</button>';
@@ -683,12 +747,27 @@ function wtHtml(w){var tag='';
   if(w.removable)tag='<span class="ttag safe">Safe</span>';
   else if(w.verdict==='uncommitted')tag='<span class="ttag risk">'+w.trackedModified+' uncommitted</span>';
   else if(w.verdict==='untracked-only')tag='<span class="ttag warn">'+w.untracked+' untracked</span>';
-  var live=w.liveSessions.length?'<span class="ttag live">● '+esc(w.liveSessions[0].replace(/^loom-/,''))+'</span>':'';
+  // Count SESSIONS, not panes: one session holds several panes, so a pane count
+  // reads as far more work happening here than there is.
+  var sess=[];w.livePanes.forEach(function(x){if(sess.indexOf(x.tmux_session)<0)sess.push(x.tmux_session);});
+  var p=w.livePanes[0];
+  var extra=sess.length>1?' +'+(sess.length-1):'';
+  var live=p?'<span class="ttag live" data-wt="'+esc(w.path)+'" data-pane="'+esc(p.pane_id)+'" title="'+esc(sess.join(', '))+' — click to focus in Ghostty">● '+esc(sess[0].replace(/^loom-/,''))+extra+'</span>':'';
   var counts=(w.ahead?'<span class="tct a">↑'+w.ahead+'</span>':'')+(w.behind?'<span class="tct b">↓'+w.behind+'</span>':'');
   return '<div class="twt'+(treeSel===w.path?' on':'')+'" data-p="'+esc(w.path)+'">'
     +'<div class="twtl1"><span class="tdot v-'+w.verdict+'"></span><span class="twtname">'+esc(w.name)+'</span><span class="tsp"></span>'+live+tag+'</div>'
     +'<div class="twtl2"><span class="twtbr">⑂ '+esc(w.branch||'detached')+'</span><span class="tsp"></span>'+counts+'</div></div>';}
-function repoHtml(r){return '<div class="trepo">'+esc(r.name)+' <span style="opacity:.55">'+r.worktrees.length+'</span></div>'+r.worktrees.map(wtHtml).join('');}
+// Rail grouping is by occupancy, not by cleanup verdict: what you want at the
+// top is the worktree an agent is in right now.
+function railGroups(r){var main=[],active=[],stale=[];
+  r.worktrees.forEach(function(w){(w.primary?main:(w.livePanes.length?active:stale)).push(w);});
+  return [['main','Main',main],['active','Active work',active],['stale','Stale',stale]];}
+function repoHtml(r){
+  var out='<div class="trepo">'+esc(r.name)+' <span style="opacity:.55">'+r.worktrees.length+'</span></div>';
+  railGroups(r).forEach(function(g){if(!g[2].length)return;var open=treeOpen[g[0]];
+    out+='<div class="tgrp'+(open?' open':'')+'" data-g="'+g[0]+'"><span class="tgcar">▶</span>'+g[1]+'<span class="tgcount">'+g[2].length+'</span></div>';
+    if(open)out+=g[2].map(wtHtml).join('');});
+  return out;}
 function detailHtml(){var w=wtByPath(treeSel);
   if(!w)return '<div class="tempty">Select a worktree to see what changed in it.</div>';
   var files=treeFiles.map(function(f){var parts=f.path.split('/');var name=parts.pop();
@@ -696,7 +775,10 @@ function detailHtml(){var w=wtByPath(treeSel);
       +'<span class="tct a">+'+f.added+'</span><span class="tct d">−'+f.deleted+'</span></div>';}).join('');
   return '<div class="tdhead"><span class="tcrumb"><b>'+esc(w.name)+'</b> · '+esc(w.reason)+'</span>'
     +'<span class="tbtns"><button class="tbtn'+(treeDiffMode==='branch'?' on':'')+'" data-dm="branch" title="this branch’s own commits, vs the base">vs base</button>'
-    +'<button class="tbtn'+(treeDiffMode==='worktree'?' on':'')+'" data-dm="worktree" title="uncommitted edits only">Uncommitted</button></span></div>'
+    +'<button class="tbtn'+(treeDiffMode==='worktree'?' on':'')+'" data-dm="worktree" title="uncommitted edits only">Uncommitted</button>'
+    +'<span class="tbtnsep"></span>'
+    +'<button class="tbtn'+(treeView==='unified'?' on':'')+'" data-vw="unified">Unified</button>'
+    +'<button class="tbtn'+(treeView==='split'?' on':'')+'" data-vw="split">Split</button></span></div>'
     +'<div class="tfiles">'+(files||'<div class="tempty">Nothing changed here.</div>')+'</div>'
     +'<div class="tdiff">'+renderDiffText(treeDiff)+'</div>';}
 // Group order is the order of consequence, not alphabetical: what you can act on
@@ -730,11 +812,22 @@ function renderTrees(){renderTreeModes();
   if(!treeLoaded){rail.innerHTML='';det.innerHTML='<div class="tempty">'+(treeBusy?'Scanning every repo Loom has seen a session in…':'Nothing scanned yet.')+'</div>';return;}
   if(treeMode==='cleanup'){det.innerHTML=cleanupHtml();wireCleanup(det);return;}
   rail.innerHTML=TREES.repos.map(repoHtml).join('')||'<div class="tempty">No git repositories found.</div>';
+  rail.querySelectorAll('.tgrp').forEach(function(el){el.onclick=function(){
+    treeOpen[el.dataset.g]=!treeOpen[el.dataset.g];renderTrees();};});
   rail.querySelectorAll('.twt').forEach(function(el){el.onclick=function(){
     if(treeSel===el.dataset.p)return;treeSel=el.dataset.p;treeFiles=[];treeFile=null;treeDiff='';renderTrees();loadFiles();};});
+  // Focus the pane's Ghostty tab. stopPropagation so the badge doesn't also
+  // change the rail selection out from under the jump.
+  rail.querySelectorAll('.ttag.live').forEach(function(el){el.onclick=function(e){e.stopPropagation();
+    fetch('/api/trees/goto?wt='+encodeURIComponent(el.dataset.wt)+'&pane='+encodeURIComponent(el.dataset.pane))
+      .then(function(r){return r.json();}).then(function(j){if(!j.ok){el.title=j.detail||'jump failed';}}).catch(function(){});};});
   det.innerHTML=detailHtml();
   det.querySelectorAll('.tbtn[data-dm]').forEach(function(el){el.onclick=function(){
     if(treeDiffMode===el.dataset.dm)return;treeDiffMode=el.dataset.dm;treeFiles=[];treeFile=null;treeDiff='';renderTrees();loadFiles();};});
+  // Purely a re-render: the diff text is already in hand, so switching view
+  // must not refetch.
+  det.querySelectorAll('.tbtn[data-vw]').forEach(function(el){el.onclick=function(){
+    if(treeView===el.dataset.vw)return;treeView=el.dataset.vw;renderTrees();};});
   det.querySelectorAll('.tfile').forEach(function(el){el.onclick=function(){
     if(treeFile===el.dataset.f)return;treeFile=el.dataset.f;treeDiff='';renderTrees();loadDiff();};});}
 function wireCleanup(det){
