@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readLayout, type PaneSnap, type Layout } from './snapshot.ts';
 import { LAYOUT_PATH } from './paths.ts';
 import { attachedSessions } from './placements.ts';
-import { orderSessionsByTabs } from './ghostty.ts';
+import { orderSessionsByTabs, type SavedGhosttyWindow } from './ghostty.ts';
 import { RESUME_FULL_ENV } from './goto.ts';
 
 function shq(s: string): string {
@@ -38,10 +38,19 @@ function existingSessions(): Set<string> {
   }
 }
 
+export function savedWindowsOf(layout: Layout): SavedGhosttyWindow[] {
+  if (layout.ghostty_windows?.length) return layout.ghostty_windows;
+  return layout.ghostty_tabs?.length ? [{ tabs: layout.ghostty_tabs }] : [];
+}
+
 export interface RestoreResult {
   restored: string[];
   skipped: string[];
   attach: string[];
+  // The saved Ghostty windows to rebuild `attach` into (pass to
+  // attachGhosttyTabs as `saved`). A legacy snapshot with only the flat tab list
+  // comes back as one window; no tab record at all comes back empty.
+  windows: SavedGhosttyWindow[];
   log: string[];
 }
 
@@ -114,5 +123,7 @@ export function restore(
   // just recreated and, just as importantly, ones that survived detached (their
   // tab died, not the session). Replay them in the order their tabs sat in.
   const needsTab = sessions.map((s) => s.name).filter((n) => restored.includes(n) || !attached.has(n));
-  return { restored, skipped, attach: orderSessionsByTabs(needsTab, layout.ghostty_tabs), log };
+  const windows = savedWindowsOf(layout);
+  const titles = windows.flatMap((w) => w.tabs);
+  return { restored, skipped, attach: orderSessionsByTabs(needsTab, titles), windows, log };
 }

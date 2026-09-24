@@ -5,7 +5,7 @@ import { summarizeDirty, defaultRunner, type ClaudeRunner } from './analyzer.ts'
 import { writeDashboard } from './dashboard.ts';
 import { restore } from './restore.ts';
 import { writeLayout } from './snapshot.ts';
-import { attachGhosttyTabs, readGhosttyTabs } from './ghostty.ts';
+import { attachGhosttyTabs, readGhosttyWindows } from './ghostty.ts';
 import { attachedSessions } from './placements.ts';
 import { DASHBOARD_PATH, SESSION_PREFIX } from './paths.ts';
 
@@ -33,7 +33,7 @@ async function main() {
       console.log(`\n[dry-run] would restore ${r.restored.length} sessions: ${r.restored.join(', ') || '(none)'}`);
       if (r.skipped.length) console.log(`[dry-run] skipped (already running): ${r.skipped.join(', ')}`);
       if (r.attach.length && !noOpen) {
-        const g = attachGhosttyTabs(r.attach, { dryRun: true, tabs: readGhosttyTabs(), attached: attachedSessions() });
+        const g = attachGhosttyTabs(r.attach, { dryRun: true, windows: readGhosttyWindows(), saved: r.windows, attached: attachedSessions() });
         console.log(`\n[dry-run] would place ${r.attach.length} session(s) into Ghostty tabs ` +
           `(${g.reused} reused, ${g.opened} new, ${g.leftover} spare) via osascript:\n${g.script}`);
       }
@@ -41,7 +41,7 @@ async function main() {
       console.log(`[loom] restored ${r.restored.length} session(s): ${r.restored.join(', ') || '(none)'}`);
       if (r.skipped.length) console.log(`  skipped (already running): ${r.skipped.join(', ')}`);
       if (r.attach.length && !noOpen) {
-        const g = attachGhosttyTabs(r.attach, { attached: attachedSessions() });
+        const g = attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows });
         if (g.ok) {
           console.log(`[loom] ${g.detail}`);
         } else {

@@ -269,7 +269,7 @@ export function createServer(): http.Server {
         return send(res, 200, 'application/json', JSON.stringify({ ok: false, detail: (e as Error).message }));
       }
       const g = r.attach.length
-        ? attachGhosttyTabs(r.attach, { attached: attachedSessions() })
+        ? attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows })
         : { ok: true, opened: 0, reused: 0, detail: 'nothing to restore' };
       return send(res, 200, 'application/json', JSON.stringify({
         ok: g.ok, restored: r.restored, skipped: r.skipped, opened: g.opened, reused: g.reused, detail: g.detail,

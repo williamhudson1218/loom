@@ -116,3 +116,31 @@ describe('restore (dry-run)', () => {
     expect(r.restored).toEqual(['loom-work']);
   });
 });
+
+describe('restore window grouping', () => {
+  const sessions = [{ name: 'loom-a', windows: [] }, { name: 'loom-b', windows: [] }, { name: 'loom-c', windows: [] }];
+
+  it('hands back the saved Ghostty windows alongside the attach order', () => {
+    const l: Layout = {
+      taken_at: 0,
+      ghostty_tabs: ['loom-c', 'loom-a', 'loom-b'],
+      ghostty_windows: [{ tabs: ['loom-c'], bounds: { x: 0, y: 0, w: 10, h: 10 } }, { tabs: ['loom-a', 'loom-b'] }],
+      sessions,
+    };
+    const r = restore({ dryRun: true, layout: l, prefix: 'loom-', existing: new Set(), attached: new Set() });
+    expect(r.attach).toEqual(['loom-c', 'loom-a', 'loom-b']);
+    expect(r.windows).toEqual(l.ghostty_windows);
+  });
+
+  it('treats a legacy flat snapshot as a single window', () => {
+    const l: Layout = { taken_at: 0, ghostty_tabs: ['loom-b', 'loom-a'], sessions };
+    const r = restore({ dryRun: true, layout: l, prefix: 'loom-', existing: new Set(), attached: new Set() });
+    expect(r.windows).toEqual([{ tabs: ['loom-b', 'loom-a'] }]);
+    expect(r.attach).toEqual(['loom-b', 'loom-a', 'loom-c']);
+  });
+
+  it('returns no windows when nothing about Ghostty was remembered', () => {
+    const r = restore({ dryRun: true, layout: { taken_at: 0, sessions }, existing: new Set(), attached: new Set() });
+    expect(r.windows).toEqual([]);
+  });
+});

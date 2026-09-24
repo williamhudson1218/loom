@@ -9,9 +9,18 @@ import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
 import { SESSION_PREFIX } from '../src/paths.ts';
-import { liveSessions, attachedSessions } from '../src/placements.ts';
+import {
+  liveSessions,
+  liveSessionsFrom,
+  listTmuxPanes,
+  agentPaneIds,
+  readPlacements,
+  agentSessionKey,
+  attachedSessions,
+} from '../src/placements.ts';
 import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
+import { PaneTints, desiredTints } from '../src/panetint.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 import { scanTick, triageTick } from '../src/em/index.ts';
 
@@ -61,35 +70,71 @@ function showWindow(): void {
   }
 }
 
-function computeCounts(): { live: number; working: number; yourTurn: number } {
+const paneTints = new PaneTints();
+
+// A chat counts as "working" if its transcript was written in the last few seconds.
+const WORKING_MS = 10_000;
+
+// One pass over the world, feeding both the tray counts and the pane tints. They
+// want the same three things — the chat rows, the live pane join, and each
+// transcript's mtime — so computing them separately would double the DB open, the
+// `list-panes` and the full `ps` walk on every 4s tick.
+function trayTick(): { live: number; working: number; yourTurn: number } {
   try {
     const db = openDb();
     const views = toChatViews(db);
     db.close();
-    const byId = new Map(views.map((v) => [v.session_id, v]));
     const now = Date.now();
-    let working = 0;
-    let yourTurn = 0;
-    const live = liveSessions({});
-    for (const [sid] of live) {
-      const v = byId.get(sid);
+
+    // liveSessions() inlined so the pane list it builds can be reused below for
+    // the tint reconciliation, rather than shelling out to tmux a second time.
+    const panes = listTmuxPanes();
+    const live = liveSessionsFrom(panes, agentPaneIds(panes), readPlacements());
+
+    // Keyed by agent:session_id, which is what liveSessionsFrom emits. Keying this
+    // by the bare session_id silently matched nothing, so working/yourTurn were
+    // pinned at 0 and the tray never showed a count.
+    const byKey = new Map(views.map((v) => [agentSessionKey(v.agent, v.session_id), v]));
+
+    // The transcript's mtime, NOT chats.last_active_at: that column only refreshes
+    // on a summarizer pass, so it lags by minutes and would park a busy chat in a
+    // staler bucket than it deserves for as long as the lag lasts.
+    const lastActive = new Map<string, number>();
+    for (const key of live.keys()) {
+      const v = byKey.get(key);
       if (!v) continue;
       try {
-        if (now - fs.statSync(v.jsonl_path).mtimeMs < 10_000) working++;
+        lastActive.set(key, fs.statSync(v.jsonl_path).mtimeMs);
       } catch {
-        /* gone */
+        /* transcript gone */
       }
+    }
+
+    let working = 0;
+    let yourTurn = 0;
+    for (const key of live.keys()) {
+      const v = byKey.get(key);
+      if (!v) continue;
+      const mt = lastActive.get(key);
+      if (mt !== undefined && now - mt < WORKING_MS) working++;
       if (v.state === 'waiting_on_user') yourTurn++;
     }
+
+    paneTints.apply(
+      desiredTints(live, lastActive, now, SESSION_PREFIX),
+      new Set(panes.map((p) => p.pane_id)),
+    );
+
     return { live: live.size, working, yourTurn };
   } catch {
+    // tmux or the DB is unavailable this tick; leave the tints exactly as they are.
     return { live: 0, working: 0, yourTurn: 0 };
   }
 }
 
 function updateTray(): void {
+  const c = trayTick();
   if (!tray) return;
-  const c = computeCounts();
   const parts: string[] = [];
   if (c.working) parts.push(`⚡${c.working}`);
   if (c.yourTurn) parts.push(`🔵${c.yourTurn}`);
@@ -97,11 +142,16 @@ function updateTray(): void {
   tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn`);
 }
 
+function clearPaneTints(): void {
+  const windows = paneTints.clearAll(SESSION_PREFIX);
+  if (windows) console.log(`[loom] cleared pane tints across ${windows} window(s)`);
+}
+
 function doRestore(): void {
   try {
     const r = restore({ prefix: SESSION_PREFIX });
     const g = r.attach.length
-      ? attachGhosttyTabs(r.attach, { attached: attachedSessions() })
+      ? attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows })
       : { ok: true, detail: 'every session already has a tab' };
     const detail =
       `Recreated ${r.restored.length} session(s)${r.restored.length ? ': ' + r.restored.join(', ') : ''}\n` +
@@ -135,6 +185,7 @@ function buildTray(): void {
       { label: 'Open Loom', click: showWindow },
       { type: 'separator' },
       { label: 'Restore workspace (after tmux crash)', click: doRestore },
+      { label: 'Clear pane tints', click: clearPaneTints },
       { label: 'Refresh now', click: () => void runOnce() },
       { type: 'separator' },
       { label: 'Quit Loom', click: () => { quitting = true; app.quit(); } },
@@ -153,12 +204,22 @@ app.on('before-quit', () => {
   // Bracket the quit: the line written here and the one the watcher writes if
   // the server disappears are what tell us whether Loom's exit is implicated.
   noteTmuxState(Date.now(), 'loom-quit');
+  // Hand the panes back unstyled. tmux owns pane options, so a tint Loom leaves
+  // behind outlives Loom — it sits there until the pane or the server dies.
+  clearPaneTints();
 });
 
 app.whenReady().then(() => {
   createServer().listen(SERVER_PORT, '127.0.0.1', () => {
     createWindow();
   });
+
+  // The real crash recovery. before-quit handles a clean exit, but nothing fires
+  // on SIGKILL, so a killed Loom leaves stale tints on panes it will never see
+  // again. Sweep the whole workspace once, unconditionally, BEFORE the first
+  // paint below — after it, our own fresh tints would be swept too.
+  clearPaneTints();
+
   buildTray();
   app.setLoginItemSettings({ openAtLogin: true });
 

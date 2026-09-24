@@ -26,13 +26,46 @@ function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+// Screen geometry of a Ghostty window, in points (System Events' position/size).
+export interface WindowBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// A live Ghostty window as read from the accessibility tree. `window_index` is
+// its AX index at read time, which is front-to-back z-order — NOT a stable id.
+export interface GhosttyWindow {
+  window_index: number;
+  tabs: GhosttyTab[];
+  bounds?: WindowBounds;
+}
+
+// A window as remembered in the layout snapshot: its tab titles in on-screen
+// order and where it sat on screen.
+export interface SavedGhosttyWindow {
+  tabs: string[];
+  bounds?: WindowBounds;
+}
+
 // Enumerate every Ghostty tab in on-screen order. A window showing a single tab
 // has no tab group in the accessibility tree, so its own name is the tab title.
+// Each window also emits a "b" line with its position and size (blank when the
+// attributes can't be read), which the snapshot keeps so restore can rebuild a
+// missing window where it was.
 const READ_TABS_SCRIPT = `
 tell application "System Events" to tell process "Ghostty"
   set out to ""
   repeat with wi from 1 to (count of windows)
     set w to window wi
+    set b to ""
+    try
+      set p to position of w
+      set s to size of w
+      set b to "" & (item 1 of p) & "," & (item 2 of p) & "," & (item 1 of s) & "," & (item 2 of s)
+    end try
+    set out to out & wi & "${SEP}" & 0 & "${SEP}" & "b" & "${SEP}" & b & linefeed
     if exists tab group 1 of w then
       set tabs_ to radio buttons of tab group 1 of w
       repeat with ti from 1 to (count of tabs_)
@@ -45,30 +78,71 @@ tell application "System Events" to tell process "Ghostty"
   return out
 end tell`;
 
-export function parseTabs(raw: string): GhosttyTab[] {
-  const out: GhosttyTab[] = [];
+function parseBounds(v: string): WindowBounds | undefined {
+  const n = v.split(',').map((x) => Number(x.trim()));
+  if (n.length !== 4 || n.some((x) => !Number.isFinite(x))) return undefined;
+  return { x: n[0], y: n[1], w: n[2], h: n[3] };
+}
+
+// Parse the read script into windows, each carrying its tabs in on-screen order.
+export function parseWindows(raw: string): GhosttyWindow[] {
+  const byIndex = new Map<number, GhosttyWindow>();
+  const win = (i: number) => byIndex.get(i) ?? byIndex.set(i, { window_index: i, tabs: [] }).get(i)!;
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     const p = line.split(SEP);
     if (p.length < 4) continue;
-    out.push({
-      window_index: Number(p[0]),
+    const wi = Number(p[0]);
+    if (p[2] === 'b') {
+      const b = parseBounds(p.slice(3).join(SEP));
+      if (b) win(wi).bounds = b;
+      continue;
+    }
+    win(wi).tabs.push({
+      window_index: wi,
       tab_index: Number(p[1]),
       tabbed: p[2] === 't',
       title: p.slice(3).join(SEP).trim(),
     });
   }
-  return out;
+  return [...byIndex.values()].sort((a, b) => a.window_index - b.window_index);
+}
+
+export function parseTabs(raw: string): GhosttyTab[] {
+  return parseWindows(raw).flatMap((w) => w.tabs);
+}
+
+// Group a flat tab list back into windows (for callers that inject tabs).
+export function windowsFromTabs(tabs: GhosttyTab[]): GhosttyWindow[] {
+  const byIndex = new Map<number, GhosttyWindow>();
+  for (const t of tabs) {
+    const w = byIndex.get(t.window_index) ?? byIndex.set(t.window_index, { window_index: t.window_index, tabs: [] }).get(t.window_index)!;
+    w.tabs.push(t);
+  }
+  for (const w of byIndex.values()) w.tabs.sort((a, b) => a.tab_index - b.tab_index);
+  return [...byIndex.values()].sort((a, b) => a.window_index - b.window_index);
 }
 
 // Best-effort: an unreadable accessibility tree (Ghostty closed, permission not
-// granted) just means "no tabs to reuse", which degrades to the old behaviour.
-export function readGhosttyTabs(): GhosttyTab[] {
+// granted) just means "no windows to reuse", which degrades to opening new ones.
+export function readGhosttyWindows(): GhosttyWindow[] {
   try {
-    return parseTabs(execFileSync('osascript', ['-e', READ_TABS_SCRIPT], { encoding: 'utf-8' }));
+    return parseWindows(execFileSync('osascript', ['-e', READ_TABS_SCRIPT], { encoding: 'utf-8' }));
   } catch {
     return [];
   }
+}
+
+export function readGhosttyTabs(): GhosttyTab[] {
+  return readGhosttyWindows().flatMap((w) => w.tabs);
+}
+
+// The snapshot's shape of the live windows: titles plus geometry. Windows with
+// no tabs (nothing readable) are dropped.
+export function savedWindowsFrom(windows: GhosttyWindow[]): SavedGhosttyWindow[] {
+  return windows
+    .filter((w) => w.tabs.length)
+    .map((w) => (w.bounds ? { tabs: w.tabs.map((t) => t.title), bounds: w.bounds } : { tabs: w.tabs.map((t) => t.title) }));
 }
 
 // A tab belongs to a session when its title is (or ends with) the session name —
@@ -105,48 +179,135 @@ export interface TabAssignment {
   reuse: GhosttyTab | null; // null -> a new tab has to be opened
 }
 
-export interface TabPlan {
+// One target window and the sessions that land in it, in on-screen tab order.
+export interface WindowPlan {
+  window: GhosttyWindow | null; // null -> a new Ghostty window has to be opened
+  bounds?: WindowBounds; // saved geometry, applied when the window is new
   assignments: TabAssignment[];
-  leftover: GhosttyTab[]; // free tabs nothing was assigned to
 }
 
-// Decide which existing tab each session should land in.
+export interface TabPlan {
+  windows: WindowPlan[];
+  assignments: TabAssignment[]; // every window's assignments, flattened in plan order
+  leftover: GhosttyTab[]; // free tabs nothing was assigned to
+  live: number[]; // AX indices of the live windows as read (front-to-back z-order)
+}
+
+interface SessionGroup {
+  saved: SavedGhosttyWindow | null;
+  sessions: string[];
+}
+
+// Split the sessions by the saved window they sat in, each group in its saved
+// tab order. A session no saved window remembers (created since the last
+// snapshot) goes to the end of the LAST window — the flat tab order has always
+// put such sessions at the very end, and the last window is where that is.
+function groupBySavedWindow(sessions: string[], saved: SavedGhosttyWindow[]): SessionGroup[] {
+  const groups: SessionGroup[] = saved.map((w) => ({ saved: w, sessions: [] }));
+  const stray: string[] = [];
+  for (const s of sessions) {
+    const g = groups.find((x) => x.saved!.tabs.some((t) => tabMatchesSession(t, s)));
+    if (g) g.sessions.push(s);
+    else stray.push(s);
+  }
+  for (const g of groups) {
+    const pos = (s: string) => g.saved!.tabs.findIndex((t) => tabMatchesSession(t, s));
+    g.sessions.sort((x, y) => pos(x) - pos(y));
+  }
+  if (stray.length) {
+    const target = [...groups].reverse().find((g) => g.sessions.length) ?? groups[groups.length - 1];
+    if (target) target.sessions.push(...stray);
+    else groups.push({ saved: null, sessions: stray });
+  }
+  return groups.filter((g) => g.sessions.length);
+}
+
+// Decide which window, and which tab within it, each session should land in.
 //
 // After a tmux server dies its Ghostty tabs survive as bare shells, so opening a
 // fresh tab per session leaves the workspace doubled: one empty tab and one live
 // tab per session. A tab is taken to be in use only when its title matches a
-// session that currently has a tmux client attached; everything else is free to
-// be re-homed.
+// session that currently has a tmux client attached; busy tabs are never reused.
 //
-// Sessions claim a same-named tab first, so a workspace whose tabs kept their
-// titles rebuilds exactly where it was. Whatever is left is filled positionally
-// in tab order, which preserves the on-screen order for the common case where
-// every tab is free and the caller passes sessions in the saved tab order.
+// Sessions are grouped by the saved window they sat in, and each group is
+// matched to a live window: first the one with the most tabs matching the
+// group (its sessions, plus its still-attached sessions, which pin down the
+// window a surviving half of it is in); failing that, an unclaimed window whose
+// tabs are all free; failing that, a new window at the saved position. Within a
+// window, sessions claim a same-named tab first, then that window's other free
+// tabs positionally, then new tabs appended after its last tab. Free tabs no
+// session takes are left alone.
 export function planTabAttach(input: {
   sessions: string[];
-  tabs: GhosttyTab[];
+  tabs?: GhosttyTab[];
+  windows?: GhosttyWindow[]; // live windows; derived from `tabs` when omitted
+  saved?: SavedGhosttyWindow[]; // remembered windows; none -> one window
   attached: Iterable<string>;
 }): TabPlan {
   const busy = [...input.attached];
-  const free = input.tabs.filter((t) => !busy.some((s) => tabMatchesSession(t.title, s)));
-  const claimed = new Set<GhosttyTab>();
-  const assignments: TabAssignment[] = input.sessions.map((session) => ({ session, reuse: null }));
+  const live = input.windows ?? windowsFromTabs(input.tabs ?? []);
+  const isFree = (t: GhosttyTab) => !busy.some((s) => tabMatchesSession(t.title, s));
+  const groups = groupBySavedWindow(input.sessions, input.saved ?? []);
 
-  for (const a of assignments) {
-    const exact = free.find((t) => !claimed.has(t) && tabMatchesSession(t.title, a.session));
-    if (exact) {
-      claimed.add(exact);
-      a.reuse = exact;
+  // Score every (group, live window) pair and assign greedily, best first.
+  const score = (g: SessionGroup, w: GhosttyWindow): number => {
+    const keys = [...g.sessions, ...busy.filter((b) => g.saved?.tabs.some((t) => tabMatchesSession(t, b)))];
+    return w.tabs.filter((t) => keys.some((k) => tabMatchesSession(t.title, k))).length;
+  };
+  const pairs: { gi: number; wi: number; n: number }[] = [];
+  groups.forEach((g, gi) =>
+    live.forEach((w, wi) => {
+      const n = score(g, w);
+      if (n > 0) pairs.push({ gi, wi, n });
+    }),
+  );
+  pairs.sort((x, y) => y.n - x.n || x.gi - y.gi || x.wi - y.wi);
+  const target = new Map<number, GhosttyWindow>();
+  const claimedWin = new Set<GhosttyWindow>();
+  for (const p of pairs) {
+    if (target.has(p.gi) || claimedWin.has(live[p.wi])) continue;
+    target.set(p.gi, live[p.wi]);
+    claimedWin.add(live[p.wi]);
+  }
+  groups.forEach((_, gi) => {
+    if (target.has(gi)) return;
+    const w = live.find((x) => !claimedWin.has(x) && x.tabs.length && x.tabs.every(isFree));
+    if (w) {
+      target.set(gi, w);
+      claimedWin.add(w);
     }
-  }
-  for (const a of assignments) {
-    if (a.reuse) continue;
-    const next = free.find((t) => !claimed.has(t));
-    if (!next) break; // out of free tabs; the rest open new ones
-    claimed.add(next);
-    a.reuse = next;
-  }
-  return { assignments, leftover: free.filter((t) => !claimed.has(t)) };
+  });
+
+  const claimed = new Set<GhosttyTab>();
+  const windows: WindowPlan[] = groups.map((g, gi) => {
+    const w = target.get(gi) ?? null;
+    const assignments: TabAssignment[] = g.sessions.map((session) => ({ session, reuse: null }));
+    const free = w ? w.tabs.filter(isFree) : [];
+    for (const a of assignments) {
+      const exact = free.find((t) => !claimed.has(t) && tabMatchesSession(t.title, a.session));
+      if (exact) {
+        claimed.add(exact);
+        a.reuse = exact;
+      }
+    }
+    for (const a of assignments) {
+      if (a.reuse) continue;
+      const next = free.find((t) => !claimed.has(t));
+      if (!next) break; // out of free tabs; the rest open new ones
+      claimed.add(next);
+      a.reuse = next;
+    }
+    const plan: WindowPlan = { window: w, assignments };
+    if (!w && g.saved?.bounds) plan.bounds = g.saved.bounds;
+    return plan;
+  });
+
+  return {
+    windows,
+    assignments: windows.flatMap((w) => w.assignments),
+    leftover: live.flatMap((w) => w.tabs).filter((t) => isFree(t) && !claimed.has(t)),
+    live: live.map((w) => w.window_index),
+  };
 }
 
 function typeAttach(lines: string[], session: string): void {
@@ -156,40 +317,82 @@ function typeAttach(lines: string[], session: string): void {
   lines.push('  delay 0.25');
 }
 
-function selectTab(lines: string[], tab: GhosttyTab): void {
-  lines.push(`  perform action "AXRaise" of window ${tab.window_index}`);
-  lines.push('  delay 0.15');
-  if (tab.tabbed) {
-    lines.push(`  click radio button ${tab.tab_index} of tab group 1 of window ${tab.window_index}`);
-    lines.push('  delay 0.2');
-  }
+function clickTab(lines: string[], tab: GhosttyTab): void {
+  if (!tab.tabbed) return; // a lone tab is already showing once its window is raised
+  lines.push(`  click radio button ${tab.tab_index} of tab group 1 of window 1`);
+  lines.push('  delay 0.2');
 }
 
-// Build the AppleScript that puts each session into its planned tab: reused tabs
-// are clicked and typed into, everything else gets a fresh Cmd-T. New tabs are
-// opened only after selecting the last existing tab, because Ghostty inserts a
-// new tab next to the active one — without that they interleave with the tabs
-// already on screen instead of appending in order.
-export function buildAttachScript(plan: TabPlan, tabs: GhosttyTab[]): string {
+function newTab(lines: string[]): void {
+  lines.push('  keystroke "t" using command down');
+  lines.push('  delay 0.35');
+}
+
+// Build the AppleScript that puts each session into its planned window and tab.
+//
+// Windows are addressed by AX index, and AX indices are front-to-back z-order:
+// AXRaise moves the raised window to index 1 and shifts every window that was in
+// front of it back by one, and Cmd-N pushes a new window in at index 1. Reading
+// the indices once and reusing them (what this used to do) sends later clicks to
+// the wrong window as soon as the first raise lands. So the script is built one
+// window at a time against a simulated z-order: the index it raises is that
+// window's CURRENT position (read-time order, replayed through every raise and
+// Cmd-N emitted so far), and once raised the window is always `window 1` for its
+// tab clicks and Cmd-T. Nothing else reorders windows mid-script — clicking a tab
+// of the front window or opening a tab in it leaves z-order alone.
+//
+// Within a window, reused tabs are filled first (their tab indices are fixed);
+// then, if it needs new tabs, its last tab is selected before Cmd-T because
+// Ghostty inserts a new tab next to the active one — without that they
+// interleave with the tabs already there instead of appending in order.
+export function buildAttachScript(plan: TabPlan): string {
   const lines: string[] = [
     'tell application "Ghostty" to activate',
     'delay 0.4',
     'tell application "System Events" to tell process "Ghostty"',
   ];
-  let openedAny = false;
-  for (const a of plan.assignments) {
-    if (a.reuse) {
-      selectTab(lines, a.reuse);
-    } else {
-      if (!openedAny) {
-        const last = tabs[tabs.length - 1];
-        if (last) selectTab(lines, last);
-        openedAny = true;
+  // Simulated z-order, front first. Live windows are keyed by their read-time
+  // index; a window this script opens gets a fresh negative key.
+  const zorder = [...plan.live];
+  let nextNew = -1;
+  for (const wp of plan.windows) {
+    if (!wp.assignments.length) continue;
+    if (wp.window) {
+      const key = wp.window.window_index;
+      const pos = zorder.indexOf(key);
+      lines.push(`  perform action "AXRaise" of window ${pos + 1}`);
+      lines.push('  delay 0.15');
+      zorder.splice(pos, 1);
+      zorder.unshift(key);
+      const reused = wp.assignments.filter((a) => a.reuse);
+      const fresh = wp.assignments.filter((a) => !a.reuse);
+      for (const a of reused) {
+        clickTab(lines, a.reuse!);
+        typeAttach(lines, a.session);
       }
-      lines.push('  keystroke "t" using command down');
-      lines.push('  delay 0.35');
+      if (fresh.length) {
+        const last = wp.window.tabs[wp.window.tabs.length - 1];
+        if (last) clickTab(lines, last);
+        for (const a of fresh) {
+          newTab(lines);
+          typeAttach(lines, a.session);
+        }
+      }
+    } else {
+      lines.push('  keystroke "n" using command down');
+      lines.push('  delay 0.5');
+      zorder.unshift(nextNew--);
+      if (wp.bounds) {
+        const b = wp.bounds;
+        lines.push(`  set position of window 1 to {${Math.round(b.x)}, ${Math.round(b.y)}}`);
+        lines.push(`  set size of window 1 to {${Math.round(b.w)}, ${Math.round(b.h)}}`);
+        lines.push('  delay 0.2');
+      }
+      wp.assignments.forEach((a, i) => {
+        if (i > 0) newTab(lines);
+        typeAttach(lines, a.session);
+      });
     }
-    typeAttach(lines, a.session);
   }
   lines.push('end tell');
   return lines.join('\n');
@@ -208,14 +411,16 @@ function ghosttyRunning(): boolean {
 export interface AttachOpts {
   dryRun?: boolean;
   attached?: Iterable<string>; // sessions that already have a tmux client
-  tabs?: GhosttyTab[]; // injectable for tests / dry-run
+  saved?: SavedGhosttyWindow[]; // remembered window grouping (restore's `windows`)
+  tabs?: GhosttyTab[]; // injectable for tests / dry-run (grouped by window_index)
+  windows?: GhosttyWindow[]; // injectable live windows; wins over `tabs`
 }
 
-// Attach each session to a Ghostty tab, reusing the tabs already on screen and
-// only opening new ones when there aren't enough. Best-effort keystroke
-// automation (requires Accessibility permission, same as goto.ts). If Ghostty
-// isn't running it's launched first and its initial empty tab is reused like any
-// other free tab.
+// Attach each session to a Ghostty tab in the window it was saved in, reusing
+// the windows and tabs already on screen and only opening new ones when there
+// aren't enough. Best-effort keystroke automation (requires Accessibility
+// permission, same as goto.ts). If Ghostty isn't running it's launched first and
+// its initial empty window is reused like any other free window.
 export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): OpenTabsResult {
   const none = { ok: true, opened: 0, reused: 0, leftover: 0, script: '' };
   if (sessions.length === 0) return { ...none, detail: 'no sessions to attach' };
@@ -230,14 +435,17 @@ export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): Op
     }
   }
 
-  const tabs = opts.tabs ?? (opts.dryRun ? [] : readGhosttyTabs());
-  const plan = planTabAttach({ sessions, tabs, attached: opts.attached ?? [] });
-  const script = buildAttachScript(plan, tabs);
+  const windows =
+    opts.windows ?? (opts.tabs ? windowsFromTabs(opts.tabs) : opts.dryRun ? [] : readGhosttyWindows());
+  const plan = planTabAttach({ sessions, windows, saved: opts.saved, attached: opts.attached ?? [] });
+  const script = buildAttachScript(plan);
   const reused = plan.assignments.filter((a) => a.reuse).length;
   const opened = plan.assignments.length - reused;
+  const newWindows = plan.windows.filter((w) => !w.window).length;
   const counts = { opened, reused, leftover: plan.leftover.length };
   const detail =
     `attached ${sessions.length} session(s): ${reused} tab(s) reused, ${opened} opened` +
+    (newWindows ? ` across ${newWindows} new window(s)` : '') +
     (plan.leftover.length ? `, ${plan.leftover.length} spare tab(s) left alone` : '');
 
   if (opts.dryRun) return { ok: true, ...counts, detail: 'dry-run', script };
