@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { ADJECTIVES, NOUNS, assignNames, nameNewPanes, readPaneNames, type PaneNameRow } from '../src/panenames.ts';
+import { ADJECTIVES, NOUNS, assignNames, similarWords, nameNewPanes, readPaneNames, type PaneNameRow } from '../src/panenames.ts';
 import { restore } from '../src/restore.ts';
 import { captureLayoutFrom, type Layout } from '../src/snapshot.ts';
 import type { TmuxPane } from '../src/placements.ts';
@@ -15,12 +15,40 @@ const seq = (...xs: number[]) => {
 const row = (pane_id: string, session_name: string, name = ''): PaneNameRow => ({ pane_id, session_name, name });
 
 describe('word lists', () => {
-  it('are lowercase single words with no duplicates', () => {
-    for (const w of [...ADJECTIVES, ...NOUNS]) expect(w).toMatch(/^[a-z]+$/);
-    expect(new Set(ADJECTIVES).size).toBe(ADJECTIVES.length);
-    expect(new Set(NOUNS).size).toBe(NOUNS.length);
-    expect(ADJECTIVES.length).toBeGreaterThanOrEqual(50);
-    expect(NOUNS.length).toBeGreaterThanOrEqual(50);
+  const all = [...ADJECTIVES, ...NOUNS];
+
+  it('are short lowercase single words, none repeated across either list', () => {
+    for (const w of all) expect(w).toMatch(/^[a-z]{3,8}$/);
+    expect(new Set(all).size).toBe(all.length);
+    expect(ADJECTIVES.length).toBeGreaterThanOrEqual(200);
+    expect(NOUNS.length).toBeGreaterThanOrEqual(200);
+  });
+
+  // The guard against lookalikes creeping back in: every pair across the union
+  // of both lists must differ in its first three letters AND be more than two
+  // edits apart. Listed in full so a failure names every offending pair.
+  it('contains no two similar words across both lists', () => {
+    const clashes: string[] = [];
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        if (similarWords(all[i], all[j])) clashes.push(`${all[i]}/${all[j]}`);
+      }
+    }
+    expect(clashes).toEqual([]);
+  });
+
+  it('keeps cracker out', () => {
+    expect(all).not.toContain('cracker');
+  });
+});
+
+describe('similarWords', () => {
+  it('flags a shared three-letter prefix or an edit distance of two or less', () => {
+    expect(similarWords('walnut', 'walrus')).toBe(true); // prefix
+    expect(similarWords('fizzy', 'fuzzy')).toBe(true); // one edit
+    expect(similarWords('goose', 'moose')).toBe(true);
+    expect(similarWords('muffin', 'puffin')).toBe(true);
+    expect(similarWords('otter', 'badger')).toBe(false);
   });
 });
 
@@ -59,6 +87,29 @@ describe('assignNames', () => {
       expect(['polar', 'sunny']).not.toContain(adj);
       expect(['badger', 'taco']).not.toContain(noun);
     }
+  });
+
+  it('picks words unlike any word already held', () => {
+    // Pre-curation names, whose words are lookalikes of words still in the lists.
+    const held = [row('%a', 'loom-a', 'fizzy-walrus'), row('%b', 'loom-a', 'plucky-puffin')];
+    for (let t = 0; t < 50; t++) {
+      const [adj, noun] = assignNames([...held, row('%1', 'loom-a')], 'loom-').get('%1')!.split('-');
+      for (const h of ['fizzy', 'walrus', 'plucky', 'puffin']) {
+        expect(similarWords(adj, h), `${adj} vs ${h}`).toBe(false);
+        expect(similarWords(noun, h), `${noun} vs ${h}`).toBe(false);
+      }
+    }
+  });
+
+  it('still names uniquely once no list word is free of similarity or reuse', () => {
+    // Every noun is held (under a non-list adjective), so neither the similarity
+    // step nor the unused-word step can fill a slot: whole-name uniqueness must.
+    const held = NOUNS.map((n, i) => row(`%h${i}`, 'scratch', `zzq-${n}`));
+    const out = assignNames([...held, row('%1', 'loom-a'), row('%2', 'loom-a')], 'loom-');
+    expect(out.size).toBe(2);
+    const names = [...out.values()];
+    expect(new Set(names).size).toBe(2);
+    for (const n of names) expect(held.map((h) => h.name)).not.toContain(n);
   });
 
   it('keeps every word unique across a single call while words last', () => {
