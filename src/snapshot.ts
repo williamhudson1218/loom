@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
 import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
 import { readGhosttyWindows, savedWindowsFrom, type SavedGhosttyWindow } from './ghostty.ts';
+import { paneNameMap } from './panenames.ts';
 import type { Agent } from './types.ts';
 
 const SEP = '~|LOOM|~';
@@ -18,6 +19,7 @@ export interface PaneSnap {
   kind: PaneKind;
   session_id?: string; // for agent panes
   agent?: Agent; // omitted by legacy snapshots, which means Claude
+  name?: string; // the pane's @name; absent in legacy snapshots and on unnamed panes
 }
 
 export interface WindowSnap {
@@ -55,6 +57,7 @@ export interface CaptureLayoutInput {
   live: Map<string, { agent: Agent; session_id: string; pane_id: string }>;
   layouts?: Map<string, string>;
   foreground?: Map<string, string>;
+  names?: Map<string, string>; // pane_id -> @name
 }
 
 // session:window -> window_layout (exact pane geometry)
@@ -121,6 +124,7 @@ function kindOf(pane: TmuxPane, isAgent: boolean): PaneKind {
 export function captureLayoutFrom(input: CaptureLayoutInput): Layout {
   const layouts = input.layouts ?? new Map<string, string>();
   const fg = input.foreground ?? new Map<string, string>();
+  const names = input.names ?? new Map<string, string>();
   const paneToLive = new Map<string, { agent: Agent; session_id: string }>();
   for (const info of input.live.values()) {
     if (input.agentPanes.get(info.pane_id) === info.agent) paneToLive.set(info.pane_id, info);
@@ -140,6 +144,8 @@ export function captureLayoutFrom(input: CaptureLayoutInput): Layout {
       session_id: agent && live && agent === live.agent ? live.session_id : undefined,
       agent,
     };
+    const name = names.get(p.pane_id);
+    if (name) snap.name = name;
     const winMap = sessions.get(p.tmux_session) ?? sessions.set(p.tmux_session, new Map()).get(p.tmux_session)!;
     const win = winMap.get(p.window_index) ?? winMap.set(p.window_index, {
       window_index: p.window_index,
@@ -170,6 +176,7 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
     live: liveSessions({ titleToSession: undefined }),
     layouts: windowLayouts(),
     foreground: foregroundCommands(panes),
+    names: paneNameMap(),
   });
 }
 

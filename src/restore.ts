@@ -4,6 +4,7 @@ import { LAYOUT_PATH } from './paths.ts';
 import { attachedSessions } from './placements.ts';
 import { orderSessionsByTabs, type SavedGhosttyWindow } from './ghostty.ts';
 import { RESUME_FULL_ENV } from './goto.ts';
+import { readPaneNames } from './panenames.ts';
 
 function shq(s: string): string {
   return "'" + s.replace(/'/g, `'\\''`) + "'";
@@ -61,6 +62,9 @@ export function restore(
     existing?: Set<string>;
     attached?: Set<string>;
     prefix?: string;
+    // pane_id -> @name of the panes already live, for the dry-run path. A real
+    // restore reads tmux fresh before every name it sets instead.
+    liveNames?: Map<string, string>;
   } = {},
 ): RestoreResult {
   const layout = opts.layout ?? readLayout();
@@ -84,6 +88,23 @@ export function restore(
       return '';
     }
     return execFileSync('tmux', args, { encoding: 'utf-8' }).trim();
+  };
+
+  // Loom's namer may be ticking while a CLI restore runs, and can hand a
+  // snapshot name to some other pane before restore gets to it. The snapshot
+  // wins: strip the name from whichever other pane holds it, and the next tick
+  // gives that pane a fresh one — never two panes answering to one name.
+  const dryNames = new Map(opts.liveNames ?? []);
+  const holders = (): Map<string, string> =>
+    dry ? dryNames : new Map(readPaneNames().filter((r) => r.name).map((r) => [r.pane_id, r.name]));
+  const giveName = (paneId: string, name: string): void => {
+    for (const [id, held] of holders()) {
+      if (held !== name || id === paneId) continue;
+      tmux(['set-option', '-pu', '-t', id, '@name']);
+      dryNames.delete(id);
+    }
+    tmux(['set-option', '-p', '-t', paneId, '@name', name]);
+    if (dry) dryNames.set(paneId, name);
   };
 
   for (const s of sessions) {
@@ -112,6 +133,11 @@ export function restore(
         ? w.panes.map((_, i) => `%win${wi}p${i}`)
         : tmux(['list-panes', '-t', s.name, '-F', '#{pane_id}']).split('\n').filter(Boolean);
       for (let i = 0; i < w.panes.length && i < paneIds.length; i++) {
+        // Give the pane back its name before anything else, so a name Will has
+        // been using still points at the same work after the crash — and so the
+        // namer tick sees a named pane rather than handing it a fresh one.
+        const name = w.panes[i].name;
+        if (name) giveName(paneIds[i], name);
         const c = paneCommand(w.panes[i]);
         if (!c) continue;
         tmux(['send-keys', '-t', paneIds[i], '-l', c.text]);

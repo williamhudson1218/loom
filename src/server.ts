@@ -11,6 +11,7 @@ import { restore } from './restore.ts';
 import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findchat.ts';
 import { SESSION_PREFIX } from './paths.ts';
+import { paneNameMap } from './panenames.ts';
 import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
@@ -59,10 +60,12 @@ function snapshot(): { defaultAgent: LaunchPreference; views: ChatView[]; live: 
     }
   }
   const liveMap = liveSessions({ titleToSession: titleToSession(views) });
+  const names = liveMap.size ? paneNameMap() : new Map<string, string>();
   const live: Record<string, LiveLoc> = {};
   for (const [key, info] of liveMap) {
     const mt = mtime.get(key) ?? 0;
-    live[key] = { ...info, working: now - mt < WORKING_MS };
+    const name = names.get(info.pane_id);
+    live[key] = { ...info, working: now - mt < WORKING_MS, ...(name ? { name } : {}) };
   }
   if (process.env.LOOM_DEBUG) {
     const panes = listTmuxPanes();

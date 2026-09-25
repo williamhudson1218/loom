@@ -91,6 +91,7 @@ export interface LiveLoc {
   pane_index: string;
   running: boolean;
   working?: boolean;
+  name?: string; // the pane's memorable @name, when it has one
   // The pane's current directory. Always set by liveSessionsFrom(); optional here
   // because consumers of the serialized shape must not assume it, and the Trees
   // tab filters on its presence rather than defaulting it to something wrong.

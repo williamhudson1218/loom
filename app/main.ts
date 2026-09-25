@@ -21,6 +21,7 @@ import {
 import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { PaneTints, desiredTints } from '../src/panetint.ts';
+import { nameNewPanes } from '../src/panenames.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 import { scanTick, triageTick } from '../src/em/index.ts';
 
@@ -236,7 +237,13 @@ app.whenReady().then(() => {
       /* tmux down */
     }
   }, 15 * 1000);
-  setInterval(updateTray, 4 * 1000);
+  // Name new workspace panes on the fast tick, so a pane opened a moment ago is
+  // addressable by name within seconds; once at startup for whatever is open.
+  nameNewPanes(SESSION_PREFIX);
+  setInterval(() => {
+    nameNewPanes(SESSION_PREFIX);
+    updateTray();
+  }, 4 * 1000);
 
   // EM ticks. These must live HERE, not in src/server.ts's `import.meta.url`
   // block — that guard is deliberately false in the bundle, so anything inside
