@@ -128,7 +128,7 @@ export function attachedSessions(): Set<string> {
 // pane_id -> agent for panes whose process tree contains a supported agent.
 // The foreground command can momentarily be a tool subprocess (bash/node/git),
 // so its agent remains identifiable as an ancestor. A closed pane has no agent.
-export function agentPaneIds(panes: TmuxPane[]): Map<string, Agent> {
+export function agentPaneIds(panes: Pick<TmuxPane, 'pane_id' | 'pane_pid'>[]): Map<string, Agent> {
   let out: string;
   try {
     out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
@@ -180,33 +180,6 @@ export function readingOrder(panes: TmuxPane[]): Map<string, number> {
     group.forEach((p, i) => pos.set(p.pane_id, i + 1));
   }
   return pos;
-}
-
-// Panes sitting at a shell (no agent running) — candidates to resume a chat into.
-export interface IdlePane {
-  pane_id: string;
-  tmux_session: string;
-  window_index: string;
-  position: number; // reading-order within its window
-  cwd: string;
-  label: string;
-}
-
-export function idlePanes(): IdlePane[] {
-  const panes = listTmuxPanes();
-  const agentPanes = agentPaneIds(panes);
-  const pos = readingOrder(panes);
-  return panes
-    .filter((p) => /^(zsh|bash|fish|sh)$/.test(p.command) && !agentPanes.has(p.pane_id))
-    .map((p) => ({
-      pane_id: p.pane_id,
-      tmux_session: p.tmux_session,
-      window_index: p.window_index,
-      position: pos.get(p.pane_id) ?? 0,
-      cwd: p.cwd,
-      label: `${p.tmux_session} · win ${p.window_index} · pane ${pos.get(p.pane_id) ?? '?'}`,
-    }))
-    .sort((a, b) => a.tmux_session.localeCompare(b.tmux_session) || a.position - b.position);
 }
 
 export interface LiveInfo {

@@ -22,6 +22,7 @@ import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { PaneTints, desiredTints } from '../src/panetint.ts';
 import { nameNewPanes } from '../src/panenames.ts';
+import { makeCompactor, compactEnabled, setCompactEnabled } from '../src/compact.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 import { scanTick, triageTick } from '../src/em/index.ts';
 
@@ -39,6 +40,7 @@ process.env.TMUX_TMPDIR = process.env.TMUX_TMPDIR || '/tmp';
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let trayMenu: Menu | null = null;
 let quitting = false;
 
 if (!app.requestSingleInstanceLock()) {
@@ -141,6 +143,8 @@ function updateTray(): void {
   if (c.yourTurn) parts.push(`🔵${c.yourTurn}`);
   tray.setTitle(parts.length ? ' ' + parts.join(' ') : ' ◍');
   tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn`);
+  const compactItem = trayMenu?.getMenuItemById('compact');
+  if (compactItem) compactItem.checked = compactEnabled();
 }
 
 function clearPaneTints(): void {
@@ -181,17 +185,25 @@ async function runOnce(): Promise<void> {
 
 function buildTray(): void {
   tray = new Tray(nativeImage.createEmpty());
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Open Loom', click: showWindow },
-      { type: 'separator' },
-      { label: 'Restore workspace (after tmux crash)', click: doRestore },
-      { label: 'Clear pane tints', click: clearPaneTints },
-      { label: 'Refresh now', click: () => void runOnce() },
-      { type: 'separator' },
-      { label: 'Quit Loom', click: () => { quitting = true; app.quit(); } },
-    ]),
-  );
+  trayMenu = Menu.buildFromTemplate([
+    { label: 'Open Loom', click: showWindow },
+    { type: 'separator' },
+    { label: 'Restore workspace (after tmux crash)', click: doRestore },
+    { label: 'Clear pane tints', click: clearPaneTints },
+    {
+      // Backed by ~/.loom/compact.off, so the state survives a restart and can
+      // be flipped from a shell too; updateTray re-syncs the checkmark.
+      id: 'compact',
+      label: 'Compact lanes',
+      type: 'checkbox',
+      checked: compactEnabled(),
+      click: (item) => setCompactEnabled(item.checked),
+    },
+    { label: 'Refresh now', click: () => void runOnce() },
+    { type: 'separator' },
+    { label: 'Quit Loom', click: () => { quitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(trayMenu);
   tray.on('click', showWindow);
   updateTray();
 }
@@ -240,8 +252,13 @@ app.whenReady().then(() => {
   // Name new workspace panes on the fast tick, so a pane opened a moment ago is
   // addressable by name within seconds; once at startup for whatever is open.
   nameNewPanes(SESSION_PREFIX);
+  // Lane compaction rides the same tick: slide live agent panes left into the
+  // holes finished sessions leave behind (see src/compact.ts). Naming first, so
+  // a pane swapped this tick already carries its name into compact.log.
+  const compact = makeCompactor();
   setInterval(() => {
     nameNewPanes(SESSION_PREFIX);
+    compact(Date.now());
     updateTray();
   }, 4 * 1000);
 

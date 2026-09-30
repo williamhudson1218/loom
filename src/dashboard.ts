@@ -118,27 +118,45 @@ export function renderDashboard(
   body { margin:0; background:#0d0f15; color:#e6e6e6; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
   header { padding:14px 20px; border-bottom:1px solid #232634; position:sticky; top:0; z-index:5;
     background:linear-gradient(180deg,#141826,#0d0f15); }
-  .topbar { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-  .actions { display:flex; gap:8px; align-items:center; }
-  .brand { display:flex; align-items:center; gap:10px; }
+  /* Three rows: brand + heatmap + actions / tabs + filters / chips + live toggle.
+     Every control in them is 32px tall with an 8px radius and the same border,
+     except the chips, which are deliberately smaller so the tabs read as primary. */
+  .topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+  .actions { display:flex; gap:8px; align-items:center; flex:none; }
+  .actions button { height:32px; box-sizing:border-box; border-radius:8px; padding:0 12px; }
+  .brand { display:flex; align-items:center; gap:10px; flex:none; }
   .brand h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.3px;
     background:linear-gradient(90deg,#79b1ff,#7ee0a0); -webkit-background-clip:text; background-clip:text; color:transparent; }
   .brand .sub { color:#8b93a7; font-size:12px; }
-  #heatmap { display:flex; gap:3px; flex-wrap:wrap; margin-top:10px; }
+  .heatwrap { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; gap:8px; }
+  .heatlbl { color:#6b7280; font-size:11px; }
+  #heatmap { display:flex; gap:2px; }
+  @media (max-width:900px) { .heatwrap { display:none; } }
   /* Primary view switch — a segmented control, kept distinct from the filters below */
-  .tabs { display:inline-flex; background:#141826; border:1px solid #2b3040; border-radius:9px; padding:3px; gap:3px; margin-top:13px; }
-  .tab { background:transparent; border:0; color:#8b93a7; border-radius:6px; padding:6px 15px; cursor:pointer; font-size:13px; font-weight:600; transition:background .15s, color .15s; }
+  .tabs { display:inline-flex; flex:none; height:32px; box-sizing:border-box; background:#141826; border:1px solid #2b3040; border-radius:8px; padding:2px; gap:2px; }
+  .tab { height:26px; background:transparent; border:0; color:#8b93a7; border-radius:6px; padding:0 14px; cursor:pointer; font-size:13px; font-weight:600; transition:background .15s, color .15s; }
   .tab:hover { color:#c4ccdc; background:#1b2233; }
   .tab.on { background:#26304a; color:#fff; }
   .tab.on:hover { background:#2b3654; }
   .tab .cnt { opacity:.6; margin-left:6px; }
   .tab.savedtab.on { background:#3a3826; color:#f0dfa0; }
   .tab.savedtab.on:hover { background:#46432e; }
-  .hcell { width:22px; height:15px; border-radius:3px; background:#1b1f2a; }
-  .controls { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .hcell { width:10px; height:10px; border-radius:2px; background:#1b1f2a; }
+  .row2 { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  .controls { flex:1; min-width:0; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   input,select { background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; }
-  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
-  .chip { background:#1b1f2a; border:1px solid #2b3040; color:#c4ccdc; border-radius:999px; padding:4px 11px; cursor:pointer; font-size:12.5px; }
+  header input, header select { height:32px; box-sizing:border-box; border-radius:8px; padding:0 10px; }
+  #q { flex:1; min-width:220px; }
+  /* Narrow: the search takes a line of its own, the selects share the next. */
+  @media (max-width:700px) { #q { flex-basis:100%; } }
+  .row3 { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { display:inline-flex; align-items:center; height:26px; box-sizing:border-box; background:#1b1f2a; border:1px solid #2b3040; color:#c4ccdc; border-radius:999px; padding:0 10px; cursor:pointer; font-size:12px; }
+  /* Live/All — a small sibling of .tabs, since it switches the set, not a filter on it. */
+  .seg { display:inline-flex; margin-left:auto; height:32px; box-sizing:border-box; background:#141826; border:1px solid #2b3040; border-radius:8px; padding:2px; gap:2px; }
+  .seg button { height:26px; background:transparent; color:#8b93a7; border-radius:6px; padding:0 12px; font-size:12px; font-weight:600; }
+  .seg button:hover { color:#c4ccdc; background:#1b2233; }
+  .seg button.on { background:#26304a; color:#fff; }
   .chip:hover { border-color:#3a4258; }
   .chip.on { background:#222a3d; border-color:#4d5b80; color:#fff; }
   .chip .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
@@ -396,6 +414,7 @@ export function renderDashboard(
 <header>
   <div class="topbar">
     <div class="brand">${LOGO_SVG}<h1>${APP_NAME}</h1><span class="sub" id="gen"></span></div>
+    <div class="heatwrap"><span class="heatlbl" id="heatlbl">14d</span><div id="heatmap"></div></div>
     <div class="actions">
       <label for="default-agent" class="muted">Launch with</label>
       <select id="default-agent" aria-label="Default launch agent" title="which agent's action is highlighted as the default on every card">
@@ -403,22 +422,25 @@ export function renderDashboard(
         <option value="codex">Codex</option>
         <option value="ask">Ask every time</option>
       </select>
-      <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore workspace</button>
+      <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore</button>
     </div>
   </div>
-  <div id="heatmap"></div>
+  <div class="row2">
   <div class="tabs" id="tabs"></div>
   <div class="controls">
-    <input id="q" placeholder="filter title/overview/first message…" style="min-width:240px"/>
+    <input id="q" placeholder="filter title/overview/first message…"/>
     <select id="proj"></select>
     <select id="sort">
       <option value="recent">Most recent</option>
       <option value="active">Most active</option>
       <option value="long">Longest</option>
     </select>
-    <button id="livetoggle" class="chip on"></button>
   </div>
-  <div class="chips" id="chips"></div>
+  </div>
+  <div class="row3" id="row3">
+    <div class="chips" id="chips"></div>
+    <div class="seg" id="livetoggle" role="group" aria-label="Show live chats or all chats"></div>
+  </div>
   <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
 <main id="list"></main>
@@ -461,7 +483,7 @@ function spark(act){const days=[];const now=new Date();for(let i=13;i>=0;i--){co
 // days of in-chat history) so the cells are actually populated, and mirrors the
 // per-card spark-line's span. Shading scales to the busiest visible day.
 const HEAT_DAYS=14;
-function heat(){const map={};DATA.chats.forEach(c=>{for(const k in c.activity)map[k]=(map[k]||0)+c.activity[k];});const el=$('#heatmap');const now=new Date();const cells=[];for(let i=HEAT_DAYS-1;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');cells.push({k,v:map[k]||0});}const max=Math.max(1,...cells.map(c=>c.v));el.innerHTML='';for(const {k,v} of cells){const cell=document.createElement('div');cell.className='hcell';cell.title=k+': '+v;if(v){const a=0.25+0.75*Math.min(1,v/max);cell.style.background='rgba(88,166,255,'+a+')';}el.appendChild(cell);}}
+function heat(){const map={};DATA.chats.forEach(c=>{for(const k in c.activity)map[k]=(map[k]||0)+c.activity[k];});const el=$('#heatmap');const now=new Date();const cells=[];for(let i=HEAT_DAYS-1;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');cells.push({k,v:map[k]||0});}const max=Math.max(1,...cells.map(c=>c.v));$('#heatlbl').textContent=HEAT_DAYS+'d';el.innerHTML='';for(const {k,v} of cells){const cell=document.createElement('div');cell.className='hcell';cell.title=k+': '+v;if(v){const a=0.25+0.75*Math.min(1,v/max);cell.style.background='rgba(88,166,255,'+a+')';}el.appendChild(cell);}}
 function projects(){const set=[...new Set(DATA.chats.map(c=>c.project))].sort();const sel=$('#proj');sel.innerHTML='<option value="">all projects</option>'+set.map(p=>'<option>'+p+'</option>').join('');}
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 var stateFilter='all';
@@ -506,7 +528,7 @@ function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns
 function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=em||tr;
   $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
   $('.controls').style.display=other?'none':'';
-  $('#chips').style.display=other?'none':'';
+  $('#row3').style.display=other?'none':'';
   $('#deep').style.display=other?'none':'';
   $('#list').style.display=other?'none':'';
   $('#archive').style.display=other?'none':'';
@@ -515,14 +537,14 @@ function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=e
   // its rows into a section that is still hidden.
   $('#em-section').style.display=em?'block':'none';
   $('#trees-section').style.display=tr?'block':'none';}
-function liveToggle(){const nLive=Object.keys(DATA.live).length;const nAll=DATA.chats.filter(c=>!isSaved(c)).length;const b=$('#livetoggle');b.textContent=(liveOnly?'● Live only ':'○ All chats ')+(liveOnly?nLive:nAll);b.classList.toggle('on',liveOnly);b.onclick=()=>{liveOnly=!liveOnly;liveToggle();chips();render();};}
+function liveToggle(){const board=DATA.chats.filter(c=>!isSaved(c));const nLive=board.filter(isLive).length;const nAll=board.length;const t=$('#livetoggle');t.innerHTML='<button data-live="1" class="'+(liveOnly?'on':'')+'" title="only chats running in a pane">● Live '+nLive+'</button><button data-live="0" class="'+(liveOnly?'':'on')+'" title="every chat on the board">All '+nAll+'</button>';t.querySelectorAll('button').forEach(b=>b.onclick=()=>{liveOnly=b.dataset.live==='1';liveToggle();chips();render();});}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
 function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
-let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All chats</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
+let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
 function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,sourceAgent,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,sourceAgent,el);el.querySelectorAll('.launchbtn').forEach(b=>b.onclick=()=>openPicker(b.dataset.sid,sourceAgent,el,b.dataset.action,b.dataset.proj||'',b.dataset.agent));const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,sourceAgent,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,sourceAgent,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,sourceAgent,el);}
@@ -534,9 +556,12 @@ function jump(sid,agent,el){flash(el,'opening…','#3b5bdb');fetch('/goto?sessio
 // One picker per card, so it keys on action+agent: clicking the same button again
 // closes it, clicking the sibling swaps to that button's launch.
 function launchVerb(action,sourceAgent,selectedAgent){return action==='branch'?('Branch '+agentLabel(selectedAgent)):(selectedAgent===sourceAgent?resumeLabel(sourceAgent).slice(2):startLabel(sourceAgent).slice(2));}
-function openPicker(sid,sourceAgent,el,action,proj,selectedAgent){const p=el.querySelector('.picker');const key=action+':'+selectedAgent;if(p.dataset.open===key){p.dataset.open='';p.innerHTML='';return;}p.dataset.open=key;const verb=launchVerb(action,sourceAgent,selectedAgent);p.innerHTML='<span class="muted">finding empty panes…</span>';fetch('/api/idle-panes').then(r=>r.json()).then(panes=>{if(!panes.length){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+esc(verb)+' again.</span>';return;}p.innerHTML='<div class="pickhdr">'+esc(verb)+' into which pane?</div>'+panes.map(pn=>'<button class="paneopt" data-pane="'+pn.pane_id+'">'+esc(pn.label)+(pn.cwd?'<span class="pcwd">…/'+esc(pn.cwd.split('/').filter(Boolean).pop()||'')+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,sourceAgent,b.dataset.pane,el,p,action,proj,selectedAgent));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
+function openPicker(sid,sourceAgent,el,action,proj,selectedAgent){const p=el.querySelector('.picker');const key=action+':'+selectedAgent;if(p.dataset.open===key){p.dataset.open='';p.innerHTML='';return;}p.dataset.open=key;const verb=launchVerb(action,sourceAgent,selectedAgent);p.innerHTML='<span class="muted">finding an open pane…</span>';fetch('/api/lanes').then(r=>r.json()).then(lanes=>{if(!lanes.length){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+esc(verb)+' again.</span>';return;}
+// One lane is the whole choice, so skip the picker. The server re-resolves the
+// lane's next open pane at launch time, so these rows are a menu, not a claim.
+if(lanes.length===1){doLaunch(sid,sourceAgent,lanes[0].lane,el,p,action,proj,selectedAgent);return;}p.innerHTML='<div class="pickhdr">'+esc(verb)+' into which lane?</div>'+lanes.map(ln=>'<button class="paneopt" data-lane="'+esc(ln.lane)+'">'+esc(ln.lane)+' → '+esc(ln.where)+(ln.name?'<span class="pcwd">'+esc(ln.name)+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,sourceAgent,b.dataset.lane,el,p,action,proj,selectedAgent));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
 // proj is sent only for archive chats — the server resolves board chats from its DB.
-function doLaunch(sid,sourceAgent,pane,el,p,action,proj,selectedAgent){const busy=action==='branch'?'branching…':(sourceAgent===selectedAgent?'resuming…':'starting new…');const okmsg=action==='branch'?'branched ✓':(sourceAgent===selectedAgent?'resumed ✓':'started fresh ✓');p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(selectedAgent)+'&pane='+encodeURIComponent(pane)+(proj?'&proj='+encodeURIComponent(proj):''),{method:'POST'}).then(r=>r.json()).then(j=>{flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
+function doLaunch(sid,sourceAgent,lane,el,p,action,proj,selectedAgent){const busy=action==='branch'?'branching…':(sourceAgent===selectedAgent?'resuming…':'starting new…');const okmsg=action==='branch'?'branched ✓':(sourceAgent===selectedAgent?'resumed ✓':'started fresh ✓');p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(selectedAgent)+'&lane='+encodeURIComponent(lane)+(proj?'&proj='+encodeURIComponent(proj):''),{method:'POST'}).then(r=>r.json()).then(j=>{flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
 function flash(el,msg,bg){let f=el.querySelector('.flash');if(!f){f=document.createElement('span');f.className='flash';el.appendChild(f);}f.textContent=msg;f.style.background=bg;clearTimeout(f._t);f._t=setTimeout(()=>f.remove(),1400);}
 function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o=b.textContent;b.textContent='copied ✓';b.classList.add('ok');setTimeout(()=>{b.textContent=o;b.classList.remove('ok');},1200);}).catch(()=>{b.textContent='copy failed';setTimeout(()=>{b.textContent='copy id';},1200);});}
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}

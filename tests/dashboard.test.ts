@@ -77,6 +77,35 @@ describe('dashboard', () => {
     expect(html).toContain('/unsave?session='); // client unsave endpoint
   });
 
+  it('lays the header out in three rows: brand+heatmap+actions, tabs+filters, chips+live toggle', () => {
+    const html = renderDashboard([], 9999);
+    const header = html.slice(html.indexOf('<header>'), html.indexOf('</header>'));
+    const at = (s: string) => header.indexOf(s);
+
+    // Row 1: the heatmap sits in the topbar, between the brand and the actions.
+    expect(at('class="brand"')).toBeLessThan(at('id="heatmap"'));
+    expect(at('id="heatmap"')).toBeLessThan(at('class="actions"'));
+    expect(at('id="heatmap"')).toBeLessThan(at('class="row2"'));
+    // Row 2: tabs then filters. Row 3: chips then the live toggle.
+    expect(at('id="tabs"')).toBeLessThan(at('id="q"'));
+    expect(at('class="row2"')).toBeLessThan(at('id="row3"'));
+    expect(at('id="chips"')).toBeLessThan(at('id="livetoggle"'));
+    expect(at('id="livetoggle"')).toBeGreaterThan(at('id="row3"'));
+    // The live toggle is a segmented control now, not a chip.
+    expect(header).toContain('<div class="seg" id="livetoggle"');
+    expect(header).not.toContain('id="livetoggle" class="chip');
+  });
+
+  it('counts the live toggle over the same board set the chips count', () => {
+    const html = renderDashboard([], 9999);
+    // Live N is board (unsaved) chats that are live, not every live pane.
+    expect(html).toContain('const board=DATA.chats.filter(c=>!isSaved(c));const nLive=board.filter(isLive).length;const nAll=board.length;');
+    expect(html).not.toContain('const nLive=Object.keys(DATA.live).length');
+    // Row 3 hides with the chips on EM/Trees; the toggle alone hides on Saved.
+    expect(html).toContain("$('#row3').style.display=other?'none':'';");
+    expect(html).toContain("$('#livetoggle').style.display=(tab==='saved'||other)?'none':'';");
+  });
+
   // Archive hits are fetched from /api/search and turned into cards entirely in the
   // browser, so their rendering can't be asserted here — only that the shell ships
   // the scaffolding those client functions need. Behaviour is covered by
@@ -137,6 +166,17 @@ describe('dashboard', () => {
     // The preference only decorates; it is never read to decide which agent launches.
     expect(html).toContain('function prefClass(agent){return DATA.defaultAgent===agent');
     expect(html).not.toContain('const selectedAgent=DATA.defaultAgent');
+  });
+
+  it('launches into a lane, skipping the picker when only one lane has room', () => {
+    const html = renderDashboard([], 9999, {}, 'claude');
+
+    expect(html).toContain("fetch('/api/lanes')");
+    expect(html).not.toContain('/api/idle-panes');
+    expect(html).toContain('if(lanes.length===1){doLaunch(sid,sourceAgent,lanes[0].lane,');
+    expect(html).toContain("' into which lane?</div>'");
+    expect(html).toContain("'&lane='+encodeURIComponent(lane)");
+    expect(html).not.toContain("encodeURIComponent(selectedAgent)+'&pane='");
   });
 
   it('offers close and branch for both agents, not Claude alone', () => {

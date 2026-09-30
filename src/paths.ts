@@ -35,6 +35,10 @@ export const TOOL_DIR = resolveLoomHome();
 export const DB_PATH = path.join(TOOL_DIR, 'manager.db');
 export const DASHBOARD_PATH = path.join(TOOL_DIR, 'dashboard.html');
 export const LAYOUT_PATH = path.join(TOOL_DIR, 'layout.json');
+// Lane compaction: every swap/move is appended to the log; while the off file
+// exists, compaction does nothing (the tray toggle creates and removes it).
+export const COMPACT_LOG_PATH = path.join(TOOL_DIR, 'compact.log');
+export const COMPACT_OFF_PATH = path.join(TOOL_DIR, 'compact.off');
 
 // Only tmux sessions whose name starts with this prefix are part of the saved
 // "workspace" — snapshotted for crash recovery and rebuilt by restore. Scratch

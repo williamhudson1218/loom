@@ -7,6 +7,7 @@ import { restore } from './restore.ts';
 import { writeLayout } from './snapshot.ts';
 import { attachGhosttyTabs, readGhosttyWindows } from './ghostty.ts';
 import { attachedSessions } from './placements.ts';
+import { movePane, ungroupPane, defaultGroupDeps } from './compact.ts';
 import { DASHBOARD_PATH, SESSION_PREFIX } from './paths.ts';
 
 export async function runPass(
@@ -63,8 +64,44 @@ async function main() {
     return;
   }
 
+  // Group panes: `move <pane> --to <pane>` pulls the first pane into the
+  // target's session (same lane only) and tags both with a shared @group, which
+  // lane compaction then leaves in place. Panes by @name or %id.
+  if (cmd === 'move') {
+    const pane = process.argv[3];
+    const toAt = process.argv.indexOf('--to');
+    const to = toAt > 0 ? process.argv[toAt + 1] : undefined;
+    if (!pane || pane === '--to' || !to) {
+      console.error('usage: chat-manager move <pane> --to <pane>');
+      process.exit(1);
+    }
+    const r = movePane(pane, to, defaultGroupDeps());
+    if (!r.ok) {
+      console.error(`[loom] move failed: ${r.detail}`);
+      process.exit(1);
+    }
+    console.log(`[loom] moved ${r.pane_id} into ${r.session}` +
+      `${r.swappedWith ? ` (swapped with ${r.swappedWith})` : ''}; group ${r.group}`);
+    return;
+  }
+
+  if (cmd === 'ungroup') {
+    const pane = process.argv[3];
+    if (!pane) {
+      console.error('usage: chat-manager ungroup <pane>');
+      process.exit(1);
+    }
+    const r = ungroupPane(pane, defaultGroupDeps());
+    if (!r.ok) {
+      console.error(`[loom] ungroup failed: ${r.detail}`);
+      process.exit(1);
+    }
+    console.log(`[loom] ungrouped ${r.pane_id}`);
+    return;
+  }
+
   if (cmd !== 'run') {
-    console.error(`unknown command: ${cmd}. Usage: chat-manager run | snapshot | restore [--dry-run]`);
+    console.error(`unknown command: ${cmd}. Usage: chat-manager run | snapshot | restore [--dry-run] | move <pane> --to <pane> | ungroup <pane>`);
     process.exit(1);
   }
   const db = openDb();

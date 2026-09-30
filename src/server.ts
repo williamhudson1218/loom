@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDefaultAgent, openDb, setDefaultAgent } from './db.ts';
 import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './dashboard.ts';
-import { liveSessions, listTmuxPanes, idlePanes, attachedSessions } from './placements.ts';
+import { liveSessions, listTmuxPanes, attachedSessions } from './placements.ts';
 import { gotoPane, launchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
 import { writeLayout } from './snapshot.ts';
@@ -13,6 +13,7 @@ import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findc
 import { SESSION_PREFIX } from './paths.ts';
 import { paneNameMap } from './panenames.ts';
 import { agentSessionKey } from './placements.ts';
+import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
 import { scanTick, triageTick } from './em/index.ts';
@@ -180,8 +181,38 @@ export function createServer(): http.Server {
       return;
     }
 
-    if (url.pathname === '/api/idle-panes') {
-      return send(res, 200, 'application/json', JSON.stringify(idlePanes()));
+    // Where a dashboard Resume/Branch can land: one open pane per lane. The
+    // launch itself re-resolves the lane, so this is a menu, not a reservation.
+    if (url.pathname === '/api/lanes') {
+      return json(res, 200, laneTargets(readWorld()));
+    }
+
+    // ---- Pane groups: the HTTP face of `chat-manager move` / `ungroup` -----
+    //
+    // Panes by @name or %id. Refusals (cross-lane, session full) are 409 so a
+    // caller can tell "no such pane" from "not allowed there".
+
+    if ((url.pathname === '/api/panes/move' || url.pathname === '/api/panes/ungroup') && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => { raw += chunk; });
+      req.on('end', () => {
+        let body: { pane?: unknown; to?: unknown };
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          body = parsed && typeof parsed === 'object' ? parsed : {};
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid body' });
+        }
+        const pane = typeof body.pane === 'string' ? body.pane : '';
+        const to = typeof body.to === 'string' ? body.to : '';
+        const move = url.pathname === '/api/panes/move';
+        if (move && (!pane || !to)) return json(res, 400, { ok: false, detail: 'pane and to are required' });
+        if (!pane) return json(res, 400, { ok: false, detail: 'pane is required' });
+        const r = move ? movePane(pane, to, defaultGroupDeps()) : ungroupPane(pane, defaultGroupDeps());
+        if (r.ok) return json(res, 200, r);
+        return json(res, r.detail.startsWith('unknown pane') ? 404 : 409, r);
+      });
+      return;
     }
 
     // ---- Trees: worktree inventory, diffs, and cleanup -------------------
@@ -365,7 +396,14 @@ export function createServer(): http.Server {
       const sid = url.searchParams.get('session') || '';
       const agent = selectedAgent(url);
       if (!agent) return json(res, 400, { ok: false, detail: 'invalid agent' });
-      const pane = url.searchParams.get('pane') || '';
+      // `lane=` launches into that lane's next open pane, resolved now rather than
+      // when the dashboard listed it; `pane=` names the pane outright.
+      const lane = url.searchParams.get('lane') || '';
+      let pane = url.searchParams.get('pane') || '';
+      if (!pane && lane) {
+        pane = nextOpenPane(lane, readWorld())?.pane_id ?? '';
+        if (!pane) return json(res, 409, { ok: false, detail: `no open pane in lane ${lane}` });
+      }
       if (!pane) return json(res, 400, { ok: false, detail: 'no pane' });
       const { views } = snapshot();
       const target = resolveLaunchTarget(views, sid, url.searchParams.get('proj'));
