@@ -496,6 +496,28 @@ export function renderDashboard(
   .prline { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:12.5px; }
   .prline a { color:#c9b6ff; font-weight:600; text-decoration:none; }
   .prline a:hover { text-decoration:underline; }
+  .pdots { display:inline-flex; gap:2px; vertical-align:middle; margin-left:3px; }
+  .pd { width:7px; height:7px; border-radius:50%; background:#3a3f4b; display:inline-block; }
+  .pd.pass { background:#2ea043; } .pd.fail { background:#e5484d; } .pd.skipped { background:#2a2e38; box-shadow:inset 0 0 0 1px #4a5060; }
+  .pd.running { background:#d4a72c; animation:pdpulse 1.2s ease-in-out infinite; } .pd.waiting { background:#3a3f4b; box-shadow:inset 0 0 0 1px #6b7385; }
+  @keyframes pdpulse { 50% { opacity:.35; } }
+  .pev { font-size:10.5px; font-weight:700; padding:0 6px; border-radius:999px; margin-left:4px; }
+  .pev.good { background:rgba(46,160,67,.18); color:#56d364; } .pev.bad { background:rgba(229,72,77,.2); color:#ff8086; } .pev.info { background:rgba(59,130,246,.18); color:#79b1ff; }
+  .stepper { display:flex; flex-direction:column; gap:0; margin-top:4px; }
+  .step { display:grid; grid-template-columns:18px 1fr auto; gap:2px 8px; align-items:start; position:relative; padding:3px 0; }
+  .step .si { width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; background:#2a2e38; color:#9aa3b2; z-index:1; }
+  .step.pass > .si { background:#1f5130; color:#7ee08f; } .step.fail > .si { background:#5a2226; color:#ff9aa0; }
+  .step.running > .si { background:#5a4716; color:#f2cc60; animation:pdpulse 1.2s ease-in-out infinite; } .step.skipped > .si { background:#20232b; color:#5f6676; }
+  .step.top:not(:last-child)::before { content:''; position:absolute; left:7.5px; top:19px; bottom:-3px; width:1px; background:#2f3442; }
+  .step .sl { font-size:12.5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .step .sl.tog { cursor:pointer; } .step .sl.tog:hover { color:#e6e9ef; }
+  .step .sd { grid-column:2/4; font-size:11.5px; color:#8b93a7; margin-top:-1px; }
+  .step .sr { font-size:11px; color:#8b93a7; white-space:nowrap; display:flex; gap:6px; align-items:center; }
+  .step .sr a { color:#79b1ff; text-decoration:none; } .step .sr a:hover { text-decoration:underline; }
+  .step .kids { grid-column:2/4; display:flex; flex-direction:column; border-left:1px solid #2f3442; padding-left:8px; margin:2px 0 2px; }
+  .step .kids .step { grid-template-columns:14px 1fr auto; padding:1px 0; }
+  .step .kids .si { width:12px; height:12px; font-size:8px; }
+  .step .kids .sl { font-size:11.5px; color:#b8bfcc; }
   .badge { font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:#23262f; color:#9aa3b2; }
   .badge.good { background:rgba(46,160,67,.16); color:#56d364; }
   .badge.bad { background:rgba(229,72,77,.18); color:#ff8086; }
@@ -701,12 +723,42 @@ function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[chatKey(c)];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
 function ownsSlack(c){return (DATA.slackOwners||[]).indexOf(c.session_id)>=0;}
+// ---- PR pipelines -------------------------------------------------------------
+// checks → review → merged → deploy → done. The board gets a dot per step from
+// /api/data (served from the server's cache); the panel gets the full stepper
+// from /api/detail. Transitions (checks red, review back, deployed) become a
+// badge on the card until the chat is selected.
+function pipeSig(){const p=DATA.pipes||{};return Object.keys(p).sort().map(k=>k+':'+p[k].dots.map(d=>d.state.charAt(0)).join('')+':'+p[k].events.length).join(',')+'|'+Object.keys(DATA.chatPr||{}).length+'|'+JSON.stringify(PIPE_ACK);}
+var PIPE_ACK={};try{PIPE_ACK=JSON.parse(localStorage.getItem('loom.pipeAck')||'{}')||{};}catch(e){PIPE_ACK={};}
+function pipeOf(c){const k=(DATA.chatPr||{})[chatKey(c)];return k?(DATA.pipes||{})[k]||null:null;}
+function ackPipe(c){const k=(DATA.chatPr||{})[chatKey(c)];if(!k)return;PIPE_ACK[k]=Date.now();try{localStorage.setItem('loom.pipeAck',JSON.stringify(PIPE_ACK));}catch(e){}}
+const PIPE_EVENT_MS=6*3600000;
+function pipeEvent(c){const p=pipeOf(c);if(!p||!p.events.length)return null;const k=DATA.chatPr[chatKey(c)];const e=p.events[p.events.length-1];if(Date.now()-e.at>PIPE_EVENT_MS||(PIPE_ACK[k]||0)>=e.at)return null;return e;}
+function dotsHtml(p){if(!p)return '';return '<span class="pdots" title="'+esc(p.dots.map(d=>d.label+': '+d.state+(d.detail?' ('+d.detail+')':'')).join(' · '))+'">'+p.dots.map(d=>'<span class="pd '+esc(d.state)+'"></span>').join('')+'</span>';}
+function pipeCard(c){const p=pipeOf(c);const e=pipeEvent(c);return dotsHtml(p)+(e?'<span class="pev '+esc(e.tone)+'">'+esc(e.text)+'</span>':'');}
+const STEP_ICON={pass:'✓',fail:'✕',running:'◐',waiting:'',skipped:'–'};
+var STEP_OPEN={};
+function fmtDur(ms){if(!(ms>0))return '';const s=Math.round(ms/1000);if(s<60)return s+'s';const m=Math.floor(s/60);if(m<60)return m+'m '+(s%60)+'s';return Math.floor(m/60)+'h '+(m%60)+'m';}
+function stepDur(s){if(!s.startedAt)return s.completedAt&&s.key==='merged'?rel(s.completedAt):'';if(s.state==='running'||s.state==='waiting')return s.state==='running'?fmtDur(Date.now()-s.startedAt)+'…':'';return s.completedAt?fmtDur(s.completedAt-s.startedAt):'';}
+function stepHtml(s,top,pkey){const kids=s.children||[];const id=pkey+'|'+s.key;
+  // Open by default: whatever is red or moving, so the panel lands on the interesting part.
+  const open=id in STEP_OPEN?STEP_OPEN[id]:(top&&kids.length>0&&(s.state==='fail'||s.state==='running'));
+  const fails=kids.filter(k=>k.state==='fail').length;
+  return '<div class="step '+esc(s.state)+(top?' top':'')+'"><span class="si">'+(STEP_ICON[s.state]||'')+'</span>'+
+    '<span class="sl'+(kids.length?' tog':'')+'"'+(kids.length?' data-step="'+esc(id)+'"':'')+' title="'+esc(s.label)+'">'+(kids.length?(open?'▾ ':'▸ '):'')+esc(s.label)+(kids.length&&!open?' <span class="dsub">'+kids.length+(fails?' · '+fails+' failed':'')+'</span>':'')+'</span>'+
+    '<span class="sr">'+esc(stepDur(s))+(s.url?'<a href="'+esc(s.url)+'" target="_blank" rel="noopener">↗</a>':'')+'</span>'+
+    (s.detail?'<span class="sd">'+esc(s.detail)+'</span>':'')+
+    (open&&kids.length?'<div class="kids">'+kids.map(k=>stepHtml(k,false,pkey)).join('')+'</div>':'')+'</div>';}
+function pipelineHtml(d){const p=d.pipeline;if(!p)return d.pipelineRef?'<div class="dempty">fetching the pipeline…</div>':'';
+  return '<div class="stepper">'+p.steps.map(s=>stepHtml(s,true,p.repo+'#'+p.number)).join('')+'</div>'+
+    '<div class="dsub">updated '+rel(p.fetchedAt)+(p.inFlight?' · refreshing every 20s while live':'')+'</div>';}
+function wireSteps(box){box.querySelectorAll('[data-step]').forEach(el=>el.onclick=()=>{const id=el.dataset.step;const isOpen=el.textContent.charAt(0)==='▾';STEP_OPEN[id]=!isOpen;renderDetail();});}
 // Cards are deliberately light: title line (with open-in-Ghostty and save as
 // icons), meta line, summary. Everything else — session id, moments, PR detail,
 // resume/branch/close — lives in the detail panel for the selected card.
-function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(c.pr_url)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
+function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const pru=c.pr_url||(((DATA.chatPr||{})[chatKey(c)]||'').split('#')[1]?'https://github.com/'+DATA.chatPr[chatKey(c)].replace('#','/pull/'):'');const prn=pru?(pru.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(pru)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span>'+open+sav+'</div>'+
-'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+pipeCard(c)+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
 '</div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
@@ -722,9 +774,9 @@ function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.val
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',');}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',')+'##'+pipeSig();}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];DATA.launches=d.launches||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
@@ -1019,7 +1071,7 @@ function detailShown(){const d=$('#detail');return !!d&&getComputedStyle(d).disp
 function selKey(){return sel?sel.agent+':'+sel.sid:'';}
 function selChat(){return sel?DATA.chats.find(c=>c.agent===sel.agent&&c.session_id===sel.sid)||null:null;}
 function isTurn(c){return st(c)==='waiting_on_user'&&!isWorking(c);}
-function selectChat(sid,agent){if(sel&&sel.sid===sid&&sel.agent===agent)return;sel={sid,agent};DETAIL=null;lastOpen=false;
+function selectChat(sid,agent){if(sel&&sel.sid===sid&&sel.agent===agent)return;sel={sid,agent};const sc=selChat();if(sc&&pipeEvent(sc)){ackPipe(sc);setTimeout(render,0);}DETAIL=null;lastOpen=false;
   document.querySelectorAll('#list .card').forEach(el=>el.classList.toggle('sel',el.dataset.sid===sid&&el.dataset.agent===agent));
   renderDetail();loadDetail();clearInterval(detailTimer);detailTimer=setInterval(loadDetail,20000);}
 function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);document.querySelectorAll('#list .card.sel').forEach(el=>el.classList.remove('sel'));renderDetail();}
@@ -1069,9 +1121,9 @@ function renderDetail(){const box=$('#detail');if(!box)return;if(!sel){renderWai
     '<div class="dsec"><h3>Where it’s working</h3>'+whereHtml(d.where,d.where.kind==='main'?null:pr)+'</div>'+
     '<div class="dsec"><h3>Files changed <span class="n">'+(d.files||[]).length+' · '+(d.filesMode==='session'?'edited by this session':'branch vs '+esc(d.where.base))+'</span></h3>'+filesHtml(d)+'</div>'+
     last+
-    (d.pr?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+'</div>':'')+
+    (d.pr||d.pipeline?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+pipelineHtml(d)+'</div>':'')+
     draftsHtml(c,d)+slackHtml(d)+km+todoHtml(d)+actionsHtml(c,L);
-  wireDetail(box,c);}
+  wireDetail(box,c);wireSteps(box);}
 const SLACK_STAGE={looking:['info','👀 looking'],blocked:['bad','⛔ blocked'],done:['good','✅ done']};
 function slackHtml(d){const t=d.slack||[];if(!t.length)return '';
   return '<div class="dsec"><h3>Slack <span class="n">'+t.length+'</span></h3>'+t.map(x=>{const sg=SLACK_STAGE[x.stage];

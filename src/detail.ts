@@ -8,6 +8,7 @@ import { runningBackground, scanTranscript, type BackgroundTask, type Todo } fro
 import { readTranscript } from './transcript.ts';
 import type { ChatView, LiveLoc } from './dashboard.ts';
 import { threadsFor, type OwnedThread } from './slack.ts';
+import { nudgePipeline, parsePrRef, wantPipeline, type Pipeline } from './pipeline.ts';
 
 // The board's detail panel: everything about ONE chat that is too expensive for
 // the 4s board poll — git, gh, and a transcript scan. Fetched per selection by
@@ -65,6 +66,9 @@ export interface Detail {
   todos: Todo[];
   background: BackgroundTask[];
   slack: OwnedThread[];
+  // The PR's road to prod. Served from the pipeline store; null until its first fetch lands.
+  pipeline: Pipeline | null;
+  pipelineRef: { repo: string; number: number } | null;
   // Something is still being fetched in the background (gh, Slack); ask again shortly.
   pending: boolean;
 }
@@ -307,6 +311,11 @@ export async function buildDetail(view: ChatView, live: LiveLoc | undefined, git
     last = { html: renderMarkdown(tail), at: lastMsg.at };
   }
 
+  // The pipeline is keyed by repo + number; a branch-resolved PR only learns them from its url.
+  const pipelineRef = fromUrl ?? (pr && !pr.loading && pr.url ? parsePrRef(pr.url) : null);
+  const pipeline = pipelineRef ? wantPipeline(pipelineRef.repo, pipelineRef.number, !!live) : null;
+  if (pipelineRef && !pipeline) nudgePipeline(pipelineRef.repo, pipelineRef.number);
+
   const slack = threadsFor(view.session_id);
   return {
     ok: true,
@@ -321,7 +330,9 @@ export async function buildDetail(view: ChatView, live: LiveLoc | undefined, git
     todos: scan?.todos ?? [],
     background: scan ? runningBackground(scan) : [],
     slack,
-    pending: !!(pr && pr.loading) || slack.some((t) => t.preview === null),
+    pipeline,
+    pipelineRef,
+    pending: !!(pr && pr.loading) || (!!pipelineRef && !pipeline) || slack.some((t) => t.preview === null),
   };
 }
 

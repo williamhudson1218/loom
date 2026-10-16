@@ -25,8 +25,47 @@ import { openThread, threadOwners } from './slack.ts';
 import { discardDraft, pendingDrafts, sendDraft } from './outbox.ts';
 import { indexFreshLaunches, recentLaunches, startThread } from './newthread.ts';
 import { parseLane } from './compact.ts';
+import { dots, parsePrRef, pipelineKey, tickPipelines, wantPipeline, type Pipeline } from './pipeline.ts';
 
 export const SERVER_PORT = 4317;
+
+// ---- PR pipelines on the board ----------------------------------------------
+// The board shows a dot strip per chat with a PR. The poll only ever reads the
+// pipeline store; the background tick below is what talks to GitHub, and only
+// for PRs the board asked about recently.
+const BOARD_PR_WINDOW_MS = 3 * 24 * 3_600_000;
+// A chat whose PR was found from its branch (no pr_url in the index) — learned by the detail panel.
+const branchPrs = new Map<string, string>(); // chat key -> PR url
+let pipelineLiveKeys = new Set<string>();
+
+export interface PipeSummary {
+  number: number;
+  url: string;
+  dots: ReturnType<typeof dots>;
+  events: Pipeline['events'];
+  inFlight: boolean;
+  final: boolean;
+}
+
+function boardPipes(views: ChatView[], live: Record<string, LiveLoc>, now: number = Date.now()): { pipes: Record<string, PipeSummary>; chatPr: Record<string, string> } {
+  const pipes: Record<string, PipeSummary> = {};
+  const chatPr: Record<string, string> = {};
+  const liveKeys = new Set<string>();
+  for (const v of views) {
+    const ck = agentSessionKey(v.agent, v.session_id);
+    const isLive = !!live[ck];
+    if (!isLive && now - v.last_active_at > BOARD_PR_WINDOW_MS) continue;
+    const ref = parsePrRef(v.pr_url || branchPrs.get(ck) || '');
+    if (!ref) continue;
+    const key = pipelineKey(ref.repo, ref.number);
+    chatPr[ck] = key;
+    if (isLive) liveKeys.add(key);
+    const p = wantPipeline(ref.repo, ref.number, isLive, now);
+    if (p && !pipes[key]) pipes[key] = { number: p.number, url: p.url, dots: dots(p), events: p.events, inFlight: p.inFlight, final: p.final };
+  }
+  pipelineLiveKeys = liveKeys;
+  return { pipes, chatPr };
+}
 
 // Map a running pane's (cleaned) title back to a session, for the bootstrap path
 // before the placement hook has recorded anything. Skip the generic default.
@@ -247,7 +286,8 @@ export function createServer(): http.Server {
         const have = new Set(views.map((v) => agentSessionKey(v.agent, v.session_id)));
         indexFreshLaunches(launches, live, (agent, sid) => have.has(`${agent}:${sid}`));
       }
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts(), launches }));
+      const { pipes, chatPr } = boardPipes(views, live);
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts(), launches, pipes, chatPr }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -259,7 +299,10 @@ export function createServer(): http.Server {
       const v = views.find((x) => x.agent === agent && x.session_id === sid);
       if (!v) return json(res, 404, { ok: false, detail: 'unknown session' });
       buildDetail(v, live[agentSessionKey(agent, sid)])
-        .then((d) => json(res, 200, d))
+        .then((d) => {
+          if (d.pipelineRef && !v.pr_url) branchPrs.set(agentSessionKey(agent, sid), `https://github.com/${d.pipelineRef.repo}/pull/${d.pipelineRef.number}`);
+          json(res, 200, d);
+        })
         .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
       return;
     }
@@ -669,6 +712,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   };
   snap();
   setInterval(snap, 15_000);
+
+  // PR pipelines: refresh whatever the board or a panel asked about and is due.
+  // Each entry decides its own pace (20s in flight on a live chat, minutes otherwise).
+  let piping = false;
+  setInterval(() => {
+    if (piping) return;
+    piping = true;
+    tickPipelines(pipelineLiveKeys)
+      .catch((e) => console.error('[loom] pipeline tick failed:', (e as Error).message))
+      .finally(() => { piping = false; });
+  }, 5_000);
 
   // EM fast tick: signals + detectors only. No model calls, so this is free to
   // run often — a tick with nothing wrong costs nothing.
