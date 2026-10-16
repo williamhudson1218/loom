@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,8 +13,8 @@ import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath } from './findchat.ts';
 import { SESSION_PREFIX } from './paths.ts';
 import { paneNameMap } from './panenames.ts';
-import { agentSessionKey } from './placements.ts';
 import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
+import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
 import { scanTick, triageTick } from './em/index.ts';
@@ -39,7 +40,80 @@ function titleToSession(views: ChatView[]): Map<string, string> {
 
 // A live chat is "working" if its transcript was written very recently (Claude is
 // actively generating / running tools) vs. idle and waiting for the user.
+//
+// THIS IS A PROXY AND IT UNDER-REPORTS. See `paneIsMidTurn` below: the transcript
+// is appended between tool calls, not during one, so a session inside a long
+// operation goes quiet for minutes while being very much mid-turn.
 const WORKING_MS = 10_000;
+
+/**
+ * Is this pane's agent mid-turn RIGHT NOW, according to the pane itself.
+ *
+ * The mtime proxy above fails in one specific and very common way, and it is
+ * the way Will noticed: "the animation of the rows when a session is actively
+ * working only works when you first spin up a new thread then it never animates
+ * again."
+ *
+ * That is exactly what the proxy predicts. A session that is starting up writes
+ * a burst of transcript entries a few seconds apart, so it stays inside the 10s
+ * window and reads as working. Once it settles into real work — a build, a big
+ * read, a long search — it writes NOTHING for the duration of the tool call,
+ * the mtime ages past the threshold, and it reads as idle for the rest of its
+ * life. Measured against two panes known to be mid-turn (%36, %44, both showing
+ * the interrupt hint): the proxy said working=false for both, while a session
+ * merely chattering said true.
+ *
+ * Claude Code renders "esc to interrupt" in its status line for precisely the
+ * period we are trying to detect, so the pane is the primary source and the
+ * mtime is the cheap corroborator. Cost measured across 33 panes: 24ms total,
+ * which is nothing against the poll interval.
+ *
+ * Deliberately falls back to FALSE on any error. A tmux that cannot answer
+ * should leave the row steady rather than pulse it on a guess — a lying
+ * animation is worse than a missing one, because it is the thing he uses to
+ * decide whether an agent needs poking.
+ */
+function paneIsMidTurn(paneId: string | undefined): boolean {
+  if (!paneId) return false;
+  try {
+    const out = execFileSync('tmux', ['capture-pane', '-p', '-t', paneId, '-S', '-4'], {
+      encoding: 'utf8',
+      timeout: 1000,
+    });
+    /* THREE SIGNALS, because a pane can be working in two different ways.
+     *
+     * Will: "this page doesn't show that it's being worked on if the main agent
+     * kicks it off to a sub-agent."
+     *
+     * Right, and the interrupt hint alone cannot catch it. While a subagent
+     * runs, the PARENT is genuinely not mid-turn — it is blocked on the Task
+     * tool, its prompt is free, and it writes nothing to its transcript. So it
+     * fails the mtime proxy AND the interrupt test, while real work is going on
+     * in its name.
+     *
+     * What the pane does show is an agent roster:
+     *
+     *     ✻ Waiting for 1 background agent to finish
+     *       ⏺ main
+     *       ◯ Explore  Confirming no CADE9C conversion migration exists   3m 46s
+     *
+     * Measured across 23 panes: 3 showed the interrupt hint, 2 showed a roster
+     * line, and the two sets did not overlap — so this is additive, not a
+     * widening. The 18 idle panes matched none of the three, which is the part
+     * that matters: unlike the `✻` glyph, which persists as a finished-turn
+     * summary, `◯` is present only while a subagent is live.
+     *
+     * Still fails closed. No match means not working, so a tmux hiccup cannot
+     * invent activity. */
+    return (
+      /esc to interrupt/i.test(out) ||
+      /^\s*◯ /m.test(out) ||
+      /Waiting for \d+ background agent/i.test(out)
+    );
+  } catch {
+    return false;
+  }
+}
 
 function snapshot(): { defaultAgent: LaunchPreference; views: ChatView[]; live: Record<string, LiveLoc> } {
   const db = openDb();
@@ -66,7 +140,12 @@ function snapshot(): { defaultAgent: LaunchPreference; views: ChatView[]; live: 
   for (const [key, info] of liveMap) {
     const mt = mtime.get(key) ?? 0;
     const name = names.get(info.pane_id);
-    live[key] = { ...info, working: now - mt < WORKING_MS, ...(name ? { name } : {}) };
+    /* The pane is the authority; mtime is the cheap corroborator. Either one
+       saying yes is enough, because they fail in opposite directions: mtime
+       misses a long tool call, and the pane hint misses the instant between a
+       tool returning and the next one starting. */
+    const working = paneIsMidTurn(info.pane_id) || now - mt < WORKING_MS;
+    live[key] = { ...info, working, ...(name ? { name } : {}) };
   }
   if (process.env.LOOM_DEBUG) {
     const panes = listTmuxPanes();
