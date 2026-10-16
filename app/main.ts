@@ -22,6 +22,7 @@ import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { PaneTints, desiredTints } from '../src/panetint.ts';
 import { nameNewPanes } from '../src/panenames.ts';
+import { PaneTopics } from '../src/panetopics.ts';
 import { makeCompactor, compactEnabled, setCompactEnabled } from '../src/compact.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 import { scanTick, triageTick } from '../src/em/index.ts';
@@ -261,6 +262,18 @@ app.whenReady().then(() => {
     compact(Date.now());
     updateTray();
   }, 4 * 1000);
+
+  // Topic + stage labels for every live chat pane (see src/panetopics.ts). The
+  // tick is a tmux listing and a stat per chat; haiku is only called when a rule
+  // fires, at most MAX_CONCURRENT at once, and never awaited here.
+  const paneTopics = new PaneTopics();
+  setInterval(() => {
+    try {
+      paneTopics.tick(liveSessions());
+    } catch (e) {
+      console.error('[loom] pane topics failed:', (e as Error).message);
+    }
+  }, 5 * 1000);
 
   // EM ticks. These must live HERE, not in src/server.ts's `import.meta.url`
   // block — that guard is deliberately false in the bundle, so anything inside
