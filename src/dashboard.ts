@@ -103,8 +103,9 @@ export function renderDashboard(
   generatedAt: number,
   live: Record<string, LiveLoc> = {},
   defaultAgent: LaunchPreference = 'claude',
+  slackOwners: string[] = [],
 ): string {
-  const data = JSON.stringify({ generatedAt, defaultAgent, chats: views, live });
+  const data = JSON.stringify({ generatedAt, defaultAgent, chats: views, live, slackOwners });
   const favicon = 'data:image/svg+xml,' + encodeURIComponent(LOGO_SVG);
   // All rendering is client-side from DATA; HTML below is a static shell.
   return `<!doctype html>
@@ -416,6 +417,9 @@ export function renderDashboard(
   .chead .ico.savebtn { color:#c8b46a; }
   .chead .ico.unsavebtn { color:#f0dfa0; background:#3a3826; border-color:#4a462f; }
   .prn { color:#c9b6ff; font-weight:600; }
+  .slk { display:inline-block; font-weight:800; color:#e8a6e0; background:#3a2238; border-radius:4px; padding:0 5px; font-size:11px; }
+  .sthread { border:1px solid #232634; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; background:#11141d; }
+  .sprev { font-size:12.5px; color:#c4ccdc; }
   /* Board + detail panel. The panel is a sticky column of its own, so selecting a
      card never reflows the list; --hh is the live header height, set from JS. */
   #boardwrap { display:grid; grid-template-columns:minmax(0,1100px) minmax(0,1fr); align-items:start; }
@@ -463,6 +467,7 @@ export function renderDashboard(
   .dlast pre { background:#0d0f15; border:1px solid #232634; border-radius:6px; padding:6px 8px; overflow-x:auto; font-size:11.5px; margin:0 0 6px; }
   .dlast code { padding:1px 4px; font-size:11.5px; }
   .dlast a { color:#79b1ff; }
+  .dlast blockquote { margin:0 0 6px; padding-left:10px; border-left:3px solid #3a4258; color:#c4ccdc; }
   .turnlbl { color:#79b1ff; font-weight:700; text-transform:none; letter-spacing:0; font-size:11px; }
   .linkbtn { background:none; color:#79b1ff; padding:0; font-size:12px; align-self:flex-start; }
   .linkbtn:hover { background:none; color:#a8ccff; }
@@ -658,12 +663,13 @@ function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[chatKey(c)];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
+function ownsSlack(c){return (DATA.slackOwners||[]).indexOf(c.session_id)>=0;}
 // Cards are deliberately light: title line (with open-in-Ghostty and save as
 // icons), meta line, summary. Everything else — session id, moments, PR detail,
 // resume/branch/close — lives in the detail panel for the selected card.
 function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(c.pr_url)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span>'+open+sav+'</div>'+
-'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+'</div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
 '</div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
@@ -679,9 +685,9 @@ function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.val
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',');}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
@@ -982,7 +988,7 @@ function selectChat(sid,agent){if(sel&&sel.sid===sid&&sel.agent===agent)return;s
 function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);document.querySelectorAll('#list .card.sel').forEach(el=>el.classList.remove('sel'));renderDetail();}
 function loadDetail(){if(!sel)return;const k=selKey();fetch('/api/detail?session='+encodeURIComponent(sel.sid)+'&agent='+encodeURIComponent(sel.agent)).then(r=>r.json()).then(d=>{if(selKey()!==k)return;DETAIL=d;renderDetail();
   // gh runs in the background on the server; ask again shortly rather than wait on it.
-  clearTimeout(detailRetry);if(d.pr&&d.pr.loading)detailRetry=setTimeout(loadDetail,3000);}).catch(()=>{});}
+  clearTimeout(detailRetry);if(d.pending)detailRetry=setTimeout(loadDetail,3000);}).catch(()=>{});}
 function detailBusy(){const d=$('#detail');return !!(d.querySelector('.picker:not(:empty)')||d.querySelector('.closebtn.arm')||d.querySelector('textarea:focus'));}
 function shortPath(p){return (p||'').replace(new RegExp('^/Users/[^/]+'),'~');}
 function stageBadge(s){return s?'<span class="stage s-'+esc(s)+'">'+esc(STAGE_GLYPH[s]||'')+' '+esc(s)+'</span>':'';}
@@ -1027,8 +1033,15 @@ function renderDetail(){const box=$('#detail');if(!box)return;if(!sel){renderWai
     '<div class="dsec"><h3>Files changed <span class="n">'+(d.files||[]).length+' · '+(d.filesMode==='session'?'edited by this session':'branch vs '+esc(d.where.base))+'</span></h3>'+filesHtml(d)+'</div>'+
     last+
     (d.pr?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+'</div>':'')+
-    km+todoHtml(d)+actionsHtml(c,L);
+    slackHtml(d)+km+todoHtml(d)+actionsHtml(c,L);
   wireDetail(box,c);}
+const SLACK_STAGE={looking:['info','👀 looking'],blocked:['bad','⛔ blocked'],done:['good','✅ done']};
+function slackHtml(d){const t=d.slack||[];if(!t.length)return '';
+  return '<div class="dsec"><h3>Slack <span class="n">'+t.length+'</span></h3>'+t.map(x=>{const sg=SLACK_STAGE[x.stage];
+    return '<div class="sthread"><div class="drow"><span class="dmono">'+esc(x.label)+'</span>'+(sg?'<span class="badge '+sg[0]+'">'+sg[1]+'</span>':'')+
+      '<span class="spacer"></span><button class="iconbtn ghost" data-slack="'+esc(x.key)+'" title="'+esc(x.deeplink)+'">Open in Slack</button></div>'+
+      '<div class="sprev">'+(x.preview===null?'<span class="dsub">loading the thread…</span>':(x.author?'<b>'+esc(x.author)+':</b> ':'')+esc(x.preview))+'</div>'+
+      '<a class="dpath" href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url)+'</a></div>';}).join('')+'</div>';}
 function actionsHtml(c,L){const id=esc(c.session_id);const agent=esc(c.agent);
   return '<div class="dactions"><div class="arow">'+
     (L?'':launchButtons(id,c.agent,''))+
@@ -1036,6 +1049,7 @@ function actionsHtml(c,L){const id=esc(c.session_id);const agent=esc(c.agent);
     (L?'<span class="danger-zone"><button class="closebtn" data-sid="'+id+'" title="exit '+agentLabel(c.agent)+' in this pane (chat stays resumable)">✕ close</button></span>':'')+
     '</div><div class="picker"></div></div>';}
 function wireDetail(box,c){const agent=c.agent;const act=box.querySelector('.dactions');
+  box.querySelectorAll('[data-slack]').forEach(b=>b.onclick=()=>{fetch('/api/slack/open?key='+encodeURIComponent(b.dataset.slack),{method:'POST'}).then(r=>r.json()).then(j=>flash(act,j.ok?j.detail+' ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e')).catch(()=>flash(act,'server off','#8a2b2e'));});
   box.querySelectorAll('[data-act="goto"]').forEach(b=>b.onclick=()=>jump(c.session_id,agent,act));
   box.querySelectorAll('[data-act="transcript"]').forEach(b=>b.onclick=()=>openChat(c.session_id,agent,null));
   box.querySelectorAll('code.copyable').forEach(el=>el.onclick=()=>{navigator.clipboard.writeText(el.dataset.id).then(()=>flash(act,'session id copied ✓','#1f6f3f')).catch(()=>{});});

@@ -191,3 +191,9 @@ describe('light cards', () => {
     expect(card).toContain("' · <span class=\"prn\"");
   });
 });
+
+describe('markdown quotes', () => {
+  it('renders a run of > lines as one blockquote', () => {
+    expect(renderMarkdown('> one\n> two\n\nafter')).toBe('<blockquote><p>one<br>two</p></blockquote><p>after</p>');
+  });
+});

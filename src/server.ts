@@ -21,6 +21,7 @@ import { scanTick, triageTick } from './em/index.ts';
 import { getTrees, filesFor, diffFor, removeWorktrees, panesFromLive, knownWorktree, type ScanInput } from './trees.ts';
 import type { DiffMode } from './git.ts';
 import { buildDetail, lastMessageTail } from './detail.ts';
+import { openThread, threadOwners } from './slack.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -238,7 +239,7 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/data') {
       const { defaultAgent, views, live } = snapshot();
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -252,6 +253,15 @@ export function createServer(): http.Server {
       buildDetail(v, live[agentSessionKey(agent, sid)])
         .then((d) => json(res, 200, d))
         .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
+    // Open an owned Slack thread in the Slack app (https permalink as fallback).
+    // By key, validated against the thread state, so this cannot open arbitrary URLs.
+    if (url.pathname === '/api/slack/open' && req.method === 'POST') {
+      openThread(url.searchParams.get('key') || '')
+        .then((r) => json(res, r.ok ? 200 : 404, r))
+        .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       return;
     }
 
@@ -562,7 +572,7 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
       const { defaultAgent, views, live } = snapshot();
-      return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live, defaultAgent));
+      return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live, defaultAgent, threadOwners()));
     }
 
     send(res, 404, 'text/plain', 'not found');

@@ -7,6 +7,7 @@ import { renderMarkdown } from './markdown.ts';
 import { runningBackground, scanTranscript, type BackgroundTask, type Todo } from './sessionscan.ts';
 import { readTranscript } from './transcript.ts';
 import type { ChatView, LiveLoc } from './dashboard.ts';
+import { threadsFor, type OwnedThread } from './slack.ts';
 
 // The board's detail panel: everything about ONE chat that is too expensive for
 // the 4s board poll — git, gh, and a transcript scan. Fetched per selection by
@@ -63,6 +64,9 @@ export interface Detail {
   pr: (PrInfo & { loading?: false }) | { loading: true; ref: string } | null;
   todos: Todo[];
   background: BackgroundTask[];
+  slack: OwnedThread[];
+  // Something is still being fetched in the background (gh, Slack); ask again shortly.
+  pending: boolean;
 }
 
 /* ------------------------------------------------------------------ parsers */
@@ -303,6 +307,7 @@ export async function buildDetail(view: ChatView, live: LiveLoc | undefined, git
     last = { html: renderMarkdown(tail), at: lastMsg.at };
   }
 
+  const slack = threadsFor(view.session_id);
   return {
     ok: true,
     agent: view.agent,
@@ -315,6 +320,8 @@ export async function buildDetail(view: ChatView, live: LiveLoc | undefined, git
     pr,
     todos: scan?.todos ?? [],
     background: scan ? runningBackground(scan) : [],
+    slack,
+    pending: !!(pr && pr.loading) || slack.some((t) => t.preview === null),
   };
 }
 

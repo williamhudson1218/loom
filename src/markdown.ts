@@ -57,6 +57,15 @@ export function renderMarkdown(md: string): string {
       out.push(`<pre class="tbl">${esc(rows.join('\n'))}</pre>`);
       continue;
     }
+    if (/^\s*>/.test(line)) {
+      flushPara();
+      flushList();
+      const quoted: string[] = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) quoted.push(lines[i].replace(/^\s*>\s?/, ''));
+      i--;
+      out.push(`<blockquote>${renderMarkdown(quoted.join('\n'))}</blockquote>`);
+      continue;
+    }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
       flushPara();
