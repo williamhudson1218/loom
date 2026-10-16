@@ -422,6 +422,21 @@ export function renderDashboard(
   .sthread { border:1px solid #232634; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; background:#11141d; }
   .sprev { font-size:12.5px; color:#c4ccdc; }
   .dft { color:#e8a6e0; font-weight:700; }
+  #composer { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.55); display:grid; place-items:start center; padding-top:12vh; }
+  #composer[hidden] { display:none; }
+  .cbox { width:min(760px,92vw); background:#11141d; border:1px solid #2b3040; border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; box-shadow:0 24px 60px rgba(0,0,0,.5); }
+  .cbox.drop { border-color:#79b1ff; box-shadow:0 0 0 2px rgba(121,177,255,.35); }
+  .cbox textarea { width:100%; box-sizing:border-box; min-height:140px; resize:vertical; background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:8px; padding:10px; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  .crow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:12.5px; color:#8b93a7; }
+  .crow label { display:flex; gap:6px; align-items:center; }
+  .crow select { max-width:260px; }
+  .cchk input { margin:0; }
+  #cthumbs { display:flex; gap:8px; flex-wrap:wrap; }
+  #cthumbs:empty { display:none; }
+  .cthumb { position:relative; width:84px; height:64px; border-radius:6px; overflow:hidden; border:1px solid #2b3040; }
+  .cthumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .cthumb button { position:absolute; top:2px; right:2px; padding:0 5px; font-size:11px; background:rgba(0,0,0,.65); }
+  .card.ghost { border-style:dashed; border-left-style:solid; opacity:.8; }
   .draft { border:1px solid #4a2d48; border-left:3px solid #e8a6e0; border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; background:#161220; }
   .draft textarea { width:100%; box-sizing:border-box; resize:vertical; background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; font:13px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; }
   .draft .arow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -516,6 +531,7 @@ export function renderDashboard(
         <option value="codex">Codex</option>
         <option value="ask">Ask every time</option>
       </select>
+      <button id="newbtn" class="open" title="start a new thread in an open pane (n)">＋ New thread</button>
       <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore</button>
     </div>
   </div>
@@ -563,6 +579,20 @@ export function renderDashboard(
     <div class="tdetail" id="tree-detail"></div>
   </div>
 </section>
+<div id="composer" hidden>
+  <div class="cbox" role="dialog" aria-label="New thread">
+    <div class="crow"><b>New thread</b><span class="spacer"></span><span class="dsub">⌘↵ launch · Esc close</span></div>
+    <textarea id="cprompt" placeholder="What should it work on? Paste or drop screenshots here."></textarea>
+    <div id="cthumbs"></div>
+    <div class="crow">
+      <label>Project <select id="cproj"></select></label>
+      <label>Target <select id="ctarget"></select></label>
+      <label>Agent <select id="cagent"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+      <label class="cchk"><input type="checkbox" id="cfocus"/> focus it</label>
+    </div>
+    <div class="crow"><span id="cmsg" class="dsub"></span><span class="spacer"></span><button id="ccancel">Cancel</button><button id="claunch" class="send">Launch ↵</button></div>
+  </div>
+</div>
 <div id="overlay"></div>
 <aside id="panel">
   <div class="phead">
@@ -644,7 +674,7 @@ function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='wor
 function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
-let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);renderDetail();}
+let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=(ghostCards()+rows.map(card).join(''))||empty;list.querySelectorAll('.card').forEach(wireCard);renderDetail();}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
 function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;
@@ -692,9 +722,9 @@ function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.val
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',');}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',');}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];DATA.launches=d.launches||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
@@ -1106,6 +1136,49 @@ function wireDrafts(box,c){box.querySelectorAll('.draft').forEach(el=>{const id=
       renderDetail();setTimeout(refresh,800);}).catch(()=>{draftConfirm=null;draftMsg[id]='server off';renderDetail();});};
   if(b('discard'))b('discard').onclick=()=>{if(draftArmDiscard!==id){draftArmDiscard=id;renderDetail();setTimeout(()=>{if(draftArmDiscard===id){draftArmDiscard=null;renderDetail();}},2500);return;}
     draftArmDiscard=null;fetch('/api/outbox/discard',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{draftMsg[id]=j.ok?'':(j.detail||'failed');delete DRAFT_EDITS[id];setTimeout(refresh,300);renderDetail();}).catch(()=>{});};});}
+// ---- New thread composer ------------------------------------------------------
+// "+ New thread" (or n): a prompt, pasted/dropped images, a project and a target
+// pane. The server saves the images under ~/.loom/inbox/<id>/, appends their
+// paths to the prompt, and launches the agent with the prompt as its CLI
+// argument. Until the new chat is indexed its card shows as a placeholder.
+var CIMAGES=[], composerOpen=false, composerBusy=false;
+function lsGet(k){try{return localStorage.getItem(k)||'';}catch(e){return '';}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+function composerProjects(){const seen={},out=[];DATA.chats.slice().sort((a,b)=>b.last_active_at-a.last_active_at).forEach(c=>{if(c.project_dir&&!seen[c.project_dir]){seen[c.project_dir]=1;out.push(c.project_dir);}});return out;}
+function openComposer(){if(composerOpen)return;composerOpen=true;const m=$('#composer');m.hidden=false;
+  const projs=composerProjects();const last=lsGet('loom.lastProject');const def=projs.indexOf(last)>=0?last:(projs[0]||'');
+  $('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===def?' selected':'')+'>'+esc(shortPath(p))+'</option>').join('');
+  $('#cagent').value=DATA.defaultAgent==='codex'?'codex':'claude';
+  $('#ctarget').innerHTML='<option value="">Next open pane</option>';
+  fetch('/api/lanes?all=1').then(r=>r.json()).then(ls=>{$('#ctarget').innerHTML='<option value="">Next open pane</option>'+ls.map(l=>'<option value="'+esc(l.lane)+'">loom-'+esc(l.lane)+(l.open?' → '+esc(l.open.where):' (full: splits a new pane)')+'</option>').join('');}).catch(()=>{});
+  $('#cmsg').textContent='';renderThumbs();setTimeout(()=>$('#cprompt').focus(),0);}
+function closeComposer(){composerOpen=false;$('#composer').hidden=true;}
+function resetComposer(){$('#cprompt').value='';CIMAGES=[];renderThumbs();}
+function renderThumbs(){const t=$('#cthumbs');t.innerHTML=CIMAGES.map((im,i)=>'<div class="cthumb"><img src="'+im.url+'" alt="'+esc(im.name)+'"/><button data-i="'+i+'" title="remove">✕</button></div>').join('');
+  t.querySelectorAll('button').forEach(b=>b.onclick=()=>{CIMAGES.splice(+b.dataset.i,1);renderThumbs();});}
+function addImageFile(f){if(!f||f.type.indexOf('image/')!==0)return;const r=new FileReader();r.onload=()=>{const url=String(r.result);CIMAGES.push({name:f.name||'pasted',type:f.type,url,data:url.slice(url.indexOf(',')+1)});renderThumbs();};r.readAsDataURL(f);}
+function launchThread(){if(composerBusy)return;const prompt=$('#cprompt').value;if(!prompt.trim()&&!CIMAGES.length){$('#cmsg').textContent='Write a prompt first.';return;}
+  const body={prompt,project:$('#cproj').value,lane:$('#ctarget').value,prefer:lsGet('loom.lastLane'),agent:$('#cagent').value,focus:$('#cfocus').checked,images:CIMAGES.map(i=>({name:i.name,type:i.type,data:i.data}))};
+  composerBusy=true;$('#claunch').disabled=true;$('#cmsg').textContent='launching…';
+  fetch('/api/new-thread',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(j=>{
+    if(!j.ok){$('#cmsg').textContent='✕ '+(j.detail||'failed');return;}
+    lsSet('loom.lastProject',body.project);const m=/^loom-(.+)-\\d+ /.exec(j.where||'');if(m)lsSet('loom.lastLane',m[1]);
+    $('#cmsg').textContent='✓ started in '+(j.where||j.pane_id);resetComposer();refresh();setTimeout(refresh,2000);setTimeout(refresh,5000);setTimeout(closeComposer,1100);
+  }).catch(()=>{$('#cmsg').textContent='✕ server off?';}).finally(()=>{composerBusy=false;$('#claunch').disabled=false;});}
+// Placeholder cards for launches whose chat is not on the board yet.
+function ghostCards(){if(tab!=='board')return '';const L=DATA.launches||[];return L.filter(g=>!DATA.chats.some(c=>{const x=DATA.live[chatKey(c)];return x&&x.pane_id===g.pane_id&&c.last_active_at>=g.at-5000;})).map(g=>
+  '<div class="card ghost"><div class="chead"><h2>'+esc((g.prompt||'').split('\\n')[0].slice(0,90)||'New thread')+'</h2><span class="pill pending">Starting…</span></div>'+
+  '<div class="meta"><span class="ptag" style="'+pcolor(g.project)+'">'+esc(g.project)+'</span>'+esc(g.where)+' · '+rel(g.at)+'</div></div>').join('');}
+$('#newbtn').onclick=openComposer;
+$('#ccancel').onclick=closeComposer;
+$('#claunch').onclick=launchThread;
+$('#composer').addEventListener('mousedown',e=>{if(e.target.id==='composer')closeComposer();});
+$('#cprompt').addEventListener('paste',e=>{const items=(e.clipboardData&&e.clipboardData.items)||[];let took=false;for(const it of items){if(it.kind==='file'&&it.type.indexOf('image/')===0){addImageFile(it.getAsFile());took=true;}}if(took)e.preventDefault();});
+$('.cbox').addEventListener('dragover',e=>{e.preventDefault();$('.cbox').classList.add('drop');});
+$('.cbox').addEventListener('dragleave',()=>$('.cbox').classList.remove('drop'));
+$('.cbox').addEventListener('drop',e=>{e.preventDefault();$('.cbox').classList.remove('drop');for(const f of (e.dataTransfer&&e.dataTransfer.files)||[])addImageFile(f);});
+$('#composer').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeComposer();}else if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();launchThread();}});
+document.addEventListener('keydown',e=>{if(e.key!=='n'||e.metaKey||e.ctrlKey||e.altKey||composerOpen)return;const t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable))return;e.preventDefault();openComposer();});
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);

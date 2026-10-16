@@ -23,6 +23,8 @@ import type { DiffMode } from './git.ts';
 import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, threadOwners } from './slack.ts';
 import { discardDraft, pendingDrafts, sendDraft } from './outbox.ts';
+import { indexFreshLaunches, recentLaunches, startThread } from './newthread.ts';
+import { parseLane } from './compact.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -240,7 +242,12 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/data') {
       const { defaultAgent, views, live } = snapshot();
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts() }));
+      const launches = recentLaunches();
+      if (launches.length) {
+        const have = new Set(views.map((v) => agentSessionKey(v.agent, v.session_id)));
+        indexFreshLaunches(launches, live, (agent, sid) => have.has(`${agent}:${sid}`));
+      }
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts(), launches }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -331,7 +338,46 @@ export function createServer(): http.Server {
     // Where a dashboard Resume/Branch can land: one open pane per lane. The
     // launch itself re-resolves the lane, so this is a menu, not a reservation.
     if (url.pathname === '/api/lanes') {
-      return json(res, 200, laneTargets(readWorld()));
+      const world = readWorld();
+      if (url.searchParams.get('all') !== '1') return json(res, 200, laneTargets(world));
+      // Every lane, room or not: the composer can target a full lane (it splits).
+      const open = new Map(laneTargets(world).map((t) => [t.lane, t]));
+      const lanes = [...new Set(world.panes.map((p) => parseLane(p.tmux_session)?.lane).filter((l): l is string => !!l))]
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        .map((lane) => ({ lane, open: open.get(lane) ?? null }));
+      return json(res, 200, lanes);
+    }
+
+    // New thread from the composer. The body carries the prompt and any images
+    // (base64), so it is size-capped before parsing.
+    if (url.pathname === '/api/new-thread' && req.method === 'POST') {
+      let raw = '';
+      let size = 0;
+      req.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size <= 60 * 1024 * 1024) raw += chunk;
+      });
+      req.on('end', () => {
+        if (size > 60 * 1024 * 1024) return json(res, 413, { ok: false, detail: 'too large' });
+        let b: Record<string, unknown>;
+        try {
+          b = JSON.parse(raw) ?? {};
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid body' });
+        }
+        const images = Array.isArray(b.images) ? b.images.filter((i: any) => i && typeof i.type === 'string' && typeof i.data === 'string') : [];
+        const r = startThread({
+          prompt: typeof b.prompt === 'string' ? b.prompt : '',
+          projectDir: typeof b.project === 'string' ? b.project : '',
+          agent: b.agent === 'codex' ? 'codex' : 'claude',
+          lane: typeof b.lane === 'string' ? b.lane : '',
+          prefer: typeof b.prefer === 'string' ? b.prefer : '',
+          focus: b.focus === true,
+          images,
+        });
+        return json(res, r.ok ? 200 : 409, r);
+      });
+      return;
     }
 
     // ---- Pane groups: the HTTP face of `chat-manager move` / `ungroup` -----

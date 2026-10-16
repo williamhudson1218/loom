@@ -53,6 +53,27 @@ function shq(s: string): string {
   return "'" + s.replace(/'/g, `'\\''`) + "'";
 }
 
+/**
+ * Quote any text as ONE shell word that survives being typed into a pane by
+ * send-keys: `$'…'` (ANSI-C quoting, zsh and bash alike) spells newlines, tabs
+ * and every other control character as escapes, so a multi-line prompt goes in
+ * as a single line and nothing in it can submit early or be read as a key.
+ */
+export function ansiQuote(s: string): string {
+  let out = "$'";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if (ch === '\\') out += '\\\\';
+    else if (ch === "'") out += "\\'";
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\t') out += '\\t';
+    else if (ch === '\r') out += '\\r';
+    else if (c < 0x20 || c === 0x7f) out += '\\x' + c.toString(16).padStart(2, '0');
+    else out += ch;
+  }
+  return out + "'";
+}
+
 // Codex's composer needs a beat between receiving typed text and the Enter that
 // submits it: an Enter sent in the same burst arrives before the text is processed
 // and is swallowed, leaving the line sitting unsent. Claude submits either way.
@@ -138,17 +159,26 @@ export interface LaunchInput {
   sourceAgent: Agent;
   selectedAgent: Agent;
   fork?: boolean;
+  // A brand-new thread: no session to resume, and `prompt` is its first turn,
+  // passed as the agent's CLI argument rather than typed at its composer.
+  fresh?: boolean;
+  prompt?: string;
 }
 
 export interface LaunchInPaneInput extends LaunchInput {
   paneId: string;
   placementFile?: string;
+  focus?: boolean; // jump Ghostty to the pane afterwards (default true)
 }
 
 const PANE_INFO_SEP = '~|LOOM|~';
 
 export function buildLaunchCommand(input: LaunchInput): string {
   const cd = `cd ${shq(input.projectDir)} && `;
+  if (input.fresh) {
+    const promptArg = input.prompt?.trim() ? ' ' + ansiQuote(input.prompt) : '';
+    return cd + (input.selectedAgent === 'codex' ? `codex${promptArg}` : `claude --dangerously-skip-permissions${promptArg}`);
+  }
   // Native session ids are agent-specific. Cross-agent handoff starts a clean
   // session, so an id from the source agent can never be passed accidentally.
   if (input.sourceAgent !== input.selectedAgent) return cd + input.selectedAgent;
@@ -188,7 +218,7 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
-  if (input.sourceAgent === 'codex' && input.selectedAgent === 'codex' && !input.fork) {
+  if (input.sourceAgent === 'codex' && input.selectedAgent === 'codex' && !input.fork && !input.fresh) {
     try {
       recordPlacement({
         agent: 'codex', session_id: input.sessionId, pane_id: input.paneId,
@@ -199,8 +229,8 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
       // Launch succeeded; placement registration is best-effort like the Claude hook.
     }
   }
-  const focus = tmuxSession ? gotoPane(input.paneId, tmuxSession) : { ok: true, detail: 'no focus' };
-  const action = input.sourceAgent !== input.selectedAgent ? 'started fresh' : input.fork ? 'branched' : 'resumed';
+  const focus = tmuxSession && input.focus !== false ? gotoPane(input.paneId, tmuxSession) : { ok: true, detail: 'no focus' };
+  const action = input.fresh ? 'started' : input.sourceAgent !== input.selectedAgent ? 'started fresh' : input.fork ? 'branched' : 'resumed';
   return { ok: true, detail: action + '; ' + focus.detail };
 }
 
