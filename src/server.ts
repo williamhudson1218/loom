@@ -25,7 +25,8 @@ import { openThread, threadOwners } from './slack.ts';
 import { discardDraft, pendingDrafts, sendDraft } from './outbox.ts';
 import { indexFreshLaunches, recentLaunches, startThread } from './newthread.ts';
 import { parseLane } from './compact.ts';
-import { dots, parsePrRef, pipelineKey, tickPipelines, wantPipeline, type Pipeline } from './pipeline.ts';
+import { cachedPipeline, dots, parsePrRef, pipelineKey, tickPipelines, wantPipeline, type Pipeline } from './pipeline.ts';
+import { refreshShipBoards, shipBoards, type ShipBoard } from './ships.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -61,10 +62,42 @@ function boardPipes(views: ChatView[], live: Record<string, LiveLoc>, now: numbe
     chatPr[ck] = key;
     if (isLive) liveKeys.add(key);
     const p = wantPipeline(ref.repo, ref.number, isLive, now);
-    if (p && !pipes[key]) pipes[key] = { number: p.number, url: p.url, dots: dots(p), events: p.events, inFlight: p.inFlight, final: p.final };
+    if (p && !pipes[key]) pipes[key] = summarize(p);
+  }
+  // Every recent ship PR too: its member chats show its pipeline on their cards.
+  for (const b of shipBoards()) {
+    for (const s of b.shipped) {
+      const key = pipelineKey(b.slug, s.number);
+      const isLive = s.members.some((m) => !!live[m]);
+      if (isLive) liveKeys.add(key);
+      const p = wantPipeline(b.slug, s.number, isLive, now);
+      if (p && !pipes[key]) pipes[key] = summarize(p);
+    }
   }
   pipelineLiveKeys = liveKeys;
   return { pipes, chatPr };
+}
+
+const summarize = (p: Pipeline): PipeSummary => ({ number: p.number, url: p.url, dots: dots(p), events: p.events, inFlight: p.inFlight, final: p.final });
+
+/** The Ship section of a chat's panel: the next ship it will ride, and the latest ship it rode with that ship's pipeline. */
+function shipDetail(chatKey: string): unknown {
+  for (const b of shipBoards()) {
+    const role = b.byChat[chatKey];
+    const holds = b.lock && b.lock.holderKey === chatKey;
+    if (!role && !holds) continue;
+    const mine = b.next.chats.find((c) => c.key === chatKey) ?? null;
+    const latest = role?.ships.length ? b.shipped.find((s) => s.number === role.ships[0]) ?? null : null;
+    return {
+      repo: b.repo,
+      slug: b.slug,
+      lock: b.lock,
+      next: mine ? { ...mine, fellows: b.next.chats.filter((c) => c.key !== chatKey).map((c) => ({ key: c.key, staged: c.staged, unstaged: c.unstaged })) } : null,
+      shipped: latest ? { ...latest, pipeline: cachedPipeline(b.slug, latest.number) } : null,
+      others: role?.ships.slice(1) ?? [],
+    };
+  }
+  return null;
 }
 
 // Map a running pane's (cleaned) title back to a session, for the bootstrap path
@@ -287,7 +320,7 @@ export function createServer(): http.Server {
         indexFreshLaunches(launches, live, (agent, sid) => have.has(`${agent}:${sid}`));
       }
       const { pipes, chatPr } = boardPipes(views, live);
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts(), launches, pipes, chatPr }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts(), launches, pipes, chatPr, ships: shipBoards() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -301,10 +334,15 @@ export function createServer(): http.Server {
       buildDetail(v, live[agentSessionKey(agent, sid)])
         .then((d) => {
           if (d.pipelineRef && !v.pr_url) branchPrs.set(agentSessionKey(agent, sid), `https://github.com/${d.pipelineRef.repo}/pull/${d.pipelineRef.number}`);
-          json(res, 200, d);
+          json(res, 200, { ...d, ship: shipDetail(agentSessionKey(agent, sid)) });
         })
         .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
       return;
+    }
+
+    // Ship groups: the next ship on each shared main checkout, the one in flight, and recent ship/ PRs.
+    if (url.pathname === '/api/ships') {
+      return json(res, 200, { ok: true, boards: shipBoards() satisfies ShipBoard[] });
     }
 
     // Open an owned Slack thread in the Slack app (https permalink as fallback).
@@ -697,6 +735,33 @@ export function createServer(): http.Server {
   });
 }
 
+
+/**
+ * The background ticks that talk to GitHub and git for the board: PR pipelines
+ * and ship groups. Exported so a test harness can run them against its own port.
+ */
+export function startGhTicks(): void {
+  // PR pipelines: refresh whatever the board or a panel asked about and is due.
+  // Each entry decides its own pace (20s in flight on a live chat, minutes otherwise).
+  let piping = false;
+  setInterval(() => {
+    if (piping) return;
+    piping = true;
+    tickPipelines(pipelineLiveKeys)
+      .catch((e) => console.error('[loom] pipeline tick failed:', (e as Error).message))
+      .finally(() => { piping = false; });
+  }, 5_000);
+
+  // Ship groups: git status + the ship lock + recent ship/ PRs (gh, 60s cache),
+  // attributed to chats by their transcripts' edits. Off the request path.
+  const ships = () => {
+    const { views, live } = snapshot();
+    refreshShipBoards(views, live).catch((e) => console.error('[loom] ship boards failed:', (e as Error).message));
+  };
+  setTimeout(ships, 2_000);
+  setInterval(ships, 15_000);
+}
+
 // Start only when run directly (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
   createServer().listen(SERVER_PORT, '127.0.0.1', () => {
@@ -713,16 +778,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   snap();
   setInterval(snap, 15_000);
 
-  // PR pipelines: refresh whatever the board or a panel asked about and is due.
-  // Each entry decides its own pace (20s in flight on a live chat, minutes otherwise).
-  let piping = false;
-  setInterval(() => {
-    if (piping) return;
-    piping = true;
-    tickPipelines(pipelineLiveKeys)
-      .catch((e) => console.error('[loom] pipeline tick failed:', (e as Error).message))
-      .finally(() => { piping = false; });
-  }, 5_000);
+  startGhTicks();
 
   // EM fast tick: signals + detectors only. No model calls, so this is free to
   // run often — a tick with nothing wrong costs nothing.

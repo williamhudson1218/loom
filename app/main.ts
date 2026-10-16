@@ -2,7 +2,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, dialog } from 'electron';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createServer, SERVER_PORT } from '../src/server.ts';
+import { createServer, SERVER_PORT, startGhTicks } from '../src/server.ts';
 import { openDb } from '../src/db.ts';
 import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
@@ -227,6 +227,9 @@ app.whenReady().then(() => {
   createServer().listen(SERVER_PORT, '127.0.0.1', () => {
     createWindow();
   });
+  // PR pipelines + ship groups (gh/git). Same reason as the EM ticks below: the
+  // server.ts auto-run block never runs in the bundle, so they start here.
+  startGhTicks();
 
   // The real crash recovery. before-quit handles a clean exit, but nothing fires
   // on SIGKILL, so a killed Loom leaves stale tints on panes it will never see

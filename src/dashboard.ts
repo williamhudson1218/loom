@@ -496,6 +496,19 @@ export function renderDashboard(
   .prline { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:12.5px; }
   .prline a { color:#c9b6ff; font-weight:600; text-decoration:none; }
   .prline a:hover { text-decoration:underline; }
+  .shipstrip { border:1px solid #2f3442; background:#151922; border-radius:10px; padding:9px 12px; margin-bottom:10px; display:flex; flex-direction:column; gap:6px; }
+  .shipstrip .sh { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:#b8bfcc; }
+  .shipstrip .sh b { color:#e6e9ef; }
+  .shipstrip .shc { display:flex; gap:6px; flex-wrap:wrap; }
+  .shipmate { font-size:11.5px; border:1px solid #2f3442; border-radius:999px; padding:1px 8px; cursor:pointer; color:#c9d1dd; background:#1b2029; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .shipmate:hover { border-color:#4a5468; }
+  .shipmate .ok { color:#56d364; } .shipmate .wip { color:#e8b84b; }
+  .shiplock { color:#f2cc60; font-weight:700; } .shiplock.stale { color:#8b93a7; font-weight:400; }
+  .shipchip { font-size:10.5px; font-weight:700; padding:0 7px; border-radius:999px; background:rgba(121,177,255,.14); color:#9cc4ff; cursor:pointer; border:0; margin-left:4px; }
+  .shipchip.next { background:rgba(212,167,44,.16); color:#e8b84b; } .shipchip.next.ready { background:rgba(46,160,67,.16); color:#56d364; }
+  .shipchip.on { outline:1px solid currentColor; }
+  .shipfiles { display:flex; flex-direction:column; gap:1px; font-size:11.5px; }
+  .shipfiles .sf { display:flex; gap:6px; min-width:0; } .shipfiles .sf .fp { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
   .pdots { display:inline-flex; gap:2px; vertical-align:middle; margin-left:3px; }
   .pd { width:7px; height:7px; border-radius:50%; background:#3a3f4b; display:inline-block; }
   .pd.pass { background:#2ea043; } .pd.fail { background:#e5484d; } .pd.skipped { background:#2a2e38; box-shadow:inset 0 0 0 1px #4a5060; }
@@ -696,7 +709,7 @@ function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='wor
 function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
-let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=(ghostCards()+rows.map(card).join(''))||empty;list.querySelectorAll('.card').forEach(wireCard);renderDetail();}
+let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):scoped()).filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=shipStrip()+((ghostCards()+rows.map(card).join(''))||empty);list.querySelectorAll('.card').forEach(wireCard);wireShips(list);renderDetail();}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
 function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;
@@ -723,6 +736,46 @@ function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[chatKey(c)];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
 function ownsSlack(c){return (DATA.slackOwners||[]).indexOf(c.session_id)>=0;}
+// ---- Ship groups ---------------------------------------------------------------
+// Which chats ride the next /ship on a shared main checkout (staged = done and
+// riding, unstaged = still in progress), who holds the ship lock, and which
+// recent ship/ PRs each chat rode. Attribution is by each chat's own edits.
+var shipFilter=null;const NL=String.fromCharCode(10); // null | 'next' | a ship PR number
+function shipSig(){return (DATA.ships||[]).map(b=>b.next.chats.map(c=>c.key+c.staged+'/'+c.unstaged).join(',')+'|'+b.next.unattributed.length+'|'+(b.lock?b.lock.sessionId+b.lock.stale:'')+'|'+b.shipped.map(s=>s.number+s.state+s.members.length).join(',')).join(';')+'|'+shipFilter;}
+function shipRole(c){for(const b of DATA.ships||[]){const r=b.byChat[chatKey(c)];if(r)return {b,r};}return null;}
+function shipPipe(b,n){return (DATA.pipes||{})[b.slug+'#'+n]||null;}
+function inShipFilter(c){const x=shipRole(c);if(shipFilter==='next')return !!(x&&x.r.next)||(DATA.ships||[]).some(b=>b.lock&&b.lock.holderKey===chatKey(c));return !!(x&&x.r.ships.indexOf(shipFilter)>=0);}
+function chatByKey(k){const i=k.indexOf(':');const a=k.slice(0,i),sid=k.slice(i+1);return DATA.chats.find(c=>c.agent===a&&c.session_id===sid)||null;}
+function chatName(k){const c=chatByKey(k);if(!c)return k.slice(k.indexOf(':')+1,k.indexOf(':')+9);const L=DATA.live[k];return (L&&L.name?'@'+L.name+' · ':'')+disp(c);}
+function shipCardChips(c){const x=shipRole(c);if(!x)return '';const {b,r}=x;let h='';
+  if(r.next){const ready=r.next==='staged';h+='<button class="shipchip next'+(ready?' ready':'')+(shipFilter==='next'?' on':'')+'" data-shipf="next" title="'+(ready?'staged: rides the next ship':r.next==='both'?'some staged, some still in progress':'changed on main, not staged yet: won’t ride')+'">next ship'+(ready?' ✓':' …')+'</button>';}
+  if(r.ships.length){const n=r.ships[0];const own=(DATA.chatPr||{})[chatKey(c)]===b.slug+'#'+n;h+='<button class="shipchip'+(shipFilter===n?' on':'')+'" data-shipf="'+n+'" title="rode ship #'+n+(r.ships.length>1?' (and '+(r.ships.length-1)+' earlier)':'')+' — click to show its chats">ship #'+n+'</button>'+(own?'':dotsHtml(shipPipe(b,n)));}
+  return h;}
+function lockHtml(b){const l=b.lock;if(!l)return '';const who=l.holderKey?chatName(l.holderKey):(l.sessionId.slice(0,8)||'unknown');
+  return '<span class="shiplock'+(l.stale?' stale':'')+'" title="ship lock'+(l.stale?' (stale, >5 min old — the next acquire takes it)':'')+'">⚓ '+(l.stale?'stale lock: ':'shipping now: ')+esc(who)+(l.pane?' · '+esc(l.pane):'')+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';}
+function shipStrip(){if(tab!=='board')return '';const bs=(DATA.ships||[]).filter(b=>b.next.chats.length||b.next.unattributed.length||b.lock);
+  let h=bs.map(b=>{const n=b.next;const ready=n.chats.filter(c=>c.staged);const wip=n.chats.filter(c=>c.unstaged);
+    return '<div class="shipstrip"><div class="sh"><b>⛵ Next ship</b><span class="dsub">'+esc(b.repo.split('/').pop())+(b.onMain?'':' (not on main)')+'</span>'+
+      '<span>'+n.staged+' staged</span><span>· '+n.unstaged+' unstaged</span>'+(n.unattributed.length?'<span title="'+esc(n.unattributed.map(f=>f.state+' '+f.path).join(NL))+'">· '+n.unattributed.length+' unattributed</span>':'')+
+      (n.shared.length?'<span class="wip" title="'+esc(n.shared.join(NL))+'">· ⚠ '+n.shared.length+' edited by two chats</span>':'')+
+      lockHtml(b)+'<span class="spacer"></span><button class="shipchip next'+(shipFilter==='next'?' on':'')+'" data-shipf="next">'+(shipFilter==='next'?'showing these ✕':'show these chats')+'</button></div>'+
+      '<div class="shc">'+n.chats.map(c=>'<span class="shipmate" data-key="'+esc(c.key)+'" title="'+esc(c.files.map(f=>f.state+' '+f.path+(f.shared?' (shared)':'')).join(NL))+'">'+esc(chatName(c.key))+' '+(c.staged?'<span class="ok">'+c.staged+'✓</span> ':'')+(c.unstaged?'<span class="wip">'+c.unstaged+'…</span>':'')+'</span>').join('')+'</div></div>';}).join('');
+  if(typeof shipFilter==='number')h='<div class="shipstrip"><div class="sh"><b>Showing ship #'+shipFilter+'</b><span class="dsub">its chats, live or not</span><span class="spacer"></span><button class="shipchip on" data-shipf="'+shipFilter+'">clear ✕</button></div></div>'+h;
+  return h;}
+function setShipFilter(v){shipFilter=(shipFilter===v)?null:v;render();}
+function wireShips(root){root.querySelectorAll('[data-shipf]').forEach(el=>el.onclick=(e)=>{e.stopPropagation();const v=el.dataset.shipf;setShipFilter(v==='next'?'next':Number(v));});
+  root.querySelectorAll('.shipmate[data-key]').forEach(el=>el.onclick=()=>{const k=el.dataset.key;const i=k.indexOf(':');selectChat(k.slice(i+1),k.slice(0,i));});}
+function shipFilesHtml(files){return '<div class="shipfiles">'+files.slice(0,40).map(f=>'<div class="sf"><span class="fst '+(f.state==='staged'?'staged':f.state==='untracked'?'untracked':'uncommitted')+'">'+esc(f.state)+'</span><span class="fp">&lrm;'+esc(f.path)+'</span>'+(f.shared?'<span class="badge warn">shared</span>':'')+'</div>').join('')+(files.length>40?'<div class="dsub">+'+(files.length-40)+' more</div>':'')+'</div>';}
+function shipSectionHtml(d,c){const s=d.ship;if(!s)return '';let h='';
+  if(s.lock&&s.lock.holderKey===chatKey(c))h+='<div class="drow">'+lockHtml({lock:s.lock})+'</div>';
+  if(s.next){const n=s.next;h+='<div class="drow"><b>Next ship</b><span class="badge '+(n.staged&&!n.unstaged?'good':'warn')+'">'+(n.unstaged?(n.staged?n.staged+' staged · '+n.unstaged+' in progress':'in progress — not staged'):'staged — will ride')+'</span></div>'+shipFilesHtml(n.files)+
+    (n.fellows.length?'<div class="dsub">riding with: '+n.fellows.map(f=>esc(chatName(f.key))+' ('+f.staged+'✓'+(f.unstaged?' '+f.unstaged+'…':'')+')').join(', ')+'</div>':'')+(s.lock&&s.lock.holderKey!==chatKey(c)?'<div class="drow">'+lockHtml({lock:s.lock})+'</div>':'');}
+  if(s.shipped){const x=s.shipped;h+='<div class="prline" style="margin-top:6px"><a href="'+esc(x.url)+'" target="_blank" rel="noopener">ship #'+x.number+'</a><span>'+esc(x.title)+'</span></div>'+
+    '<div class="dsub">'+esc(x.branch)+' · '+x.files+' files'+(x.runner?' · shipped by '+esc(x.runner===chatKey(c)?'this chat':chatName(x.runner)):'')+'</div>'+
+    (x.members.length>1?'<div class="dsub">rode with: '+x.members.filter(k=>k!==chatKey(c)).map(k=>esc(chatName(k))).join(', ')+'</div>':'')+
+    (x.pipeline?'<div class="stepper">'+x.pipeline.steps.map(st=>stepHtml(st,true,x.pipeline.repo+'#'+x.pipeline.number)).join('')+'</div>':'<div class="dempty">fetching the ship’s pipeline…</div>')+
+    (s.others.length?'<div class="dsub">also rode: '+s.others.map(n=>'#'+n).join(', ')+'</div>':'');}
+  return '<div class="dsec"><h3>Ship</h3>'+h+'</div>';}
 // ---- PR pipelines -------------------------------------------------------------
 // checks → review → merged → deploy → done. The board gets a dot per step from
 // /api/data (served from the server's cache); the panel gets the full stepper
@@ -758,7 +811,7 @@ function wireSteps(box){box.querySelectorAll('[data-step]').forEach(el=>el.oncli
 // resume/branch/close — lives in the detail panel for the selected card.
 function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const pru=c.pr_url||(((DATA.chatPr||{})[chatKey(c)]||'').split('#')[1]?'https://github.com/'+DATA.chatPr[chatKey(c)].replace('#','/pull/'):'');const prn=pru?(pru.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(pru)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span>'+open+sav+'</div>'+
-'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+pipeCard(c)+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+pipeCard(c)+shipCardChips(c)+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
 '</div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
@@ -774,9 +827,9 @@ function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.val
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',')+'##'+pipeSig();}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',')+'##'+pipeSig()+'##'+shipSig();}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
@@ -1121,9 +1174,9 @@ function renderDetail(){const box=$('#detail');if(!box)return;if(!sel){renderWai
     '<div class="dsec"><h3>Where it’s working</h3>'+whereHtml(d.where,d.where.kind==='main'?null:pr)+'</div>'+
     '<div class="dsec"><h3>Files changed <span class="n">'+(d.files||[]).length+' · '+(d.filesMode==='session'?'edited by this session':'branch vs '+esc(d.where.base))+'</span></h3>'+filesHtml(d)+'</div>'+
     last+
-    (d.pr||d.pipeline?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+pipelineHtml(d)+'</div>':'')+
+    (d.pr||d.pipeline?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+pipelineHtml(d)+'</div>':'')+shipSectionHtml(d,c)+
     draftsHtml(c,d)+slackHtml(d)+km+todoHtml(d)+actionsHtml(c,L);
-  wireDetail(box,c);wireSteps(box);}
+  wireDetail(box,c);wireSteps(box);wireShips(box);}
 const SLACK_STAGE={looking:['info','👀 looking'],blocked:['bad','⛔ blocked'],done:['good','✅ done']};
 function slackHtml(d){const t=d.slack||[];if(!t.length)return '';
   return '<div class="dsec"><h3>Slack <span class="n">'+t.length+'</span></h3>'+t.map(x=>{const sg=SLACK_STAGE[x.stage];

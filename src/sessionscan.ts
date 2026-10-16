@@ -13,6 +13,7 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 // a <task-notification> naming the launching tool_use id.
 const BACKGROUND_ACK = /running in background|Async agent launched|working in the background|Spawned successfully/i;
 const NOTIFY_RE = /<task-notification>[\s\S]*?<tool-use-id>([^<\\]+)<\/tool-use-id>/g;
+const SHIP_CMD = /<command-name>\/?ship<\/command-name>/;
 const BG_TTL_MS = 6 * 3_600_000; // a task that never reported back is not still running
 
 export interface Todo {
@@ -31,6 +32,8 @@ export interface BackgroundTask {
 
 export interface ScanState {
   editedFiles: Record<string, number>; // absolute path -> last edit time (ms)
+  editedFirst: Record<string, number>; // absolute path -> first edit time (ms)
+  shipCmds: number[]; // when this session ran /ship
   todos: Todo[];
   launches: Record<string, BackgroundTask>; // candidate launches, not yet acknowledged
   background: Record<string, BackgroundTask>; // acknowledged as backgrounded, not yet finished
@@ -39,7 +42,7 @@ export interface ScanState {
 }
 
 export function emptyScan(): ScanState {
-  return { editedFiles: {}, todos: [], launches: {}, background: {}, lastAssistant: null, firstAt: 0 };
+  return { editedFiles: {}, editedFirst: {}, shipCmds: [], todos: [], launches: {}, background: {}, lastAssistant: null, firstAt: 0 };
 }
 
 function contentText(content: unknown): string {
@@ -71,7 +74,10 @@ export function scanLines(lines: string[], s: ScanState): ScanState {
         const input = b.input ?? {};
         if (EDIT_TOOLS.has(b.name)) {
           const fp = input.file_path ?? input.notebook_path;
-          if (typeof fp === 'string' && fp) s.editedFiles[fp] = at;
+          if (typeof fp === 'string' && fp) {
+            s.editedFiles[fp] = at;
+            if (!(fp in s.editedFirst)) s.editedFirst[fp] = at;
+          }
         } else if (b.name === 'TodoWrite' && Array.isArray(input.todos)) {
           s.todos = input.todos
             .filter((t: any) => t && typeof t.content === 'string')
@@ -85,6 +91,8 @@ export function scanLines(lines: string[], s: ScanState): ScanState {
         }
       }
     } else if (o?.type === 'user') {
+      // A slash command arrives as the user turn's text; /ship is what makes a ship's runner.
+      if (at && SHIP_CMD.test(typeof content === 'string' ? content : contentText(content))) s.shipCmds.push(at);
       if (Array.isArray(content)) {
         for (const b of content) {
           if (b?.type !== 'tool_result' || !s.launches[b.tool_use_id]) continue;
