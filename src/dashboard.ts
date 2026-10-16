@@ -104,8 +104,9 @@ export function renderDashboard(
   live: Record<string, LiveLoc> = {},
   defaultAgent: LaunchPreference = 'claude',
   slackOwners: string[] = [],
+  drafts: unknown[] = [],
 ): string {
-  const data = JSON.stringify({ generatedAt, defaultAgent, chats: views, live, slackOwners });
+  const data = JSON.stringify({ generatedAt, defaultAgent, chats: views, live, slackOwners, drafts });
   const favicon = 'data:image/svg+xml,' + encodeURIComponent(LOGO_SVG);
   // All rendering is client-side from DATA; HTML below is a static shell.
   return `<!doctype html>
@@ -420,6 +421,12 @@ export function renderDashboard(
   .slk { display:inline-block; font-weight:800; color:#e8a6e0; background:#3a2238; border-radius:4px; padding:0 5px; font-size:11px; }
   .sthread { border:1px solid #232634; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; background:#11141d; }
   .sprev { font-size:12.5px; color:#c4ccdc; }
+  .dft { color:#e8a6e0; font-weight:700; }
+  .draft { border:1px solid #4a2d48; border-left:3px solid #e8a6e0; border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; background:#161220; }
+  .draft textarea { width:100%; box-sizing:border-box; resize:vertical; background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; font:13px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; }
+  .draft .arow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .dconfirm { display:flex; flex-direction:column; gap:6px; }
+  .dfinal { margin:0; white-space:pre-wrap; word-break:break-word; background:#0d0f15; border:1px solid #e8a6e0; border-radius:6px; padding:6px 8px; font:13px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; color:#e6e6e6; }
   /* Board + detail panel. The panel is a sticky column of its own, so selecting a
      card never reflows the list; --hh is the live header height, set from JS. */
   #boardwrap { display:grid; grid-template-columns:minmax(0,1100px) minmax(0,1fr); align-items:start; }
@@ -632,8 +639,8 @@ function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=e
   $('#trees-section').style.display=tr?'block':'none';}
 function liveToggle(){const board=DATA.chats.filter(c=>!isSaved(c));const nLive=board.filter(isLive).length;const nAll=board.length;const t=$('#livetoggle');t.innerHTML='<button data-live="1" class="'+(liveOnly?'on':'')+'" title="only chats running in a pane">● Live '+nLive+'</button><button data-live="0" class="'+(liveOnly?'':'on')+'" title="every chat on the board">All '+nAll+'</button>';t.querySelectorAll('button').forEach(b=>b.onclick=()=>{liveOnly=b.dataset.live==='1';liveToggle();chips();render();});}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
-function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
-function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
+function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,drafts:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;ct.drafts+=draftsFor(c).length;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['drafts','✉ Drafts','#e8a6e0'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
+function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);if(stateFilter==='drafts')return hasDrafts(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
 function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
@@ -669,7 +676,7 @@ function ownsSlack(c){return (DATA.slackOwners||[]).indexOf(c.session_id)>=0;}
 // resume/branch/close — lives in the detail panel for the selected card.
 function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(c.pr_url)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span>'+open+sav+'</div>'+
-'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+'</div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
 '</div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
@@ -685,9 +692,9 @@ function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.val
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',');}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',');}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{const before=dataSig();DATA.chats=d.chats;DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.drafts=d.drafts||[];if(panelSid)loadTranscript(false);if(document.querySelector('.picker:not(:empty)')||document.querySelector('.card.open'))return;if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
@@ -989,7 +996,7 @@ function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout
 function loadDetail(){if(!sel)return;const k=selKey();fetch('/api/detail?session='+encodeURIComponent(sel.sid)+'&agent='+encodeURIComponent(sel.agent)).then(r=>r.json()).then(d=>{if(selKey()!==k)return;DETAIL=d;renderDetail();
   // gh runs in the background on the server; ask again shortly rather than wait on it.
   clearTimeout(detailRetry);if(d.pending)detailRetry=setTimeout(loadDetail,3000);}).catch(()=>{});}
-function detailBusy(){const d=$('#detail');return !!(d.querySelector('.picker:not(:empty)')||d.querySelector('.closebtn.arm')||d.querySelector('textarea:focus'));}
+function detailBusy(){const d=$('#detail');return !!(d.querySelector('.picker:not(:empty)')||d.querySelector('.dactions .closebtn.arm')||d.querySelector('textarea:focus'));}
 function shortPath(p){return (p||'').replace(new RegExp('^/Users/[^/]+'),'~');}
 function stageBadge(s){return s?'<span class="stage s-'+esc(s)+'">'+esc(STAGE_GLYPH[s]||'')+' '+esc(s)+'</span>':'';}
 function whereHtml(w,pr){if(!w)return '<div class="dempty">…</div>';
@@ -1023,7 +1030,7 @@ function renderDetail(){const box=$('#detail');if(!box)return;if(!sel){renderWai
     '<div class="drow">'+stageBadge(lb.stage)+(lb.name?'<span class="dname">@'+esc(lb.name)+'</span>':'')+
       (L?'<span class="dloc">'+esc(L.tmux_session)+' · pane '+esc(L.pane_index)+'</span><button class="iconbtn" data-act="goto" title="open in Ghostty">↗ open</button>':'<span class="stale">○ no active pane</span>')+'</div>'+
     '<div class="drow"><code class="sid copyable" data-id="'+id+'" title="click to copy the session id">'+id+'</code><button class="iconbtn ghost" data-act="transcript" title="read the transcript and message this chat">💬 transcript</button></div></div>';
-  if(!d){box.innerHTML=head+'<div class="dempty">loading…</div>'+actionsHtml(c,L);wireDetail(box,c);return;}
+  if(!d){box.innerHTML=head+draftsHtml(c,null)+'<div class="dempty">loading…</div>'+actionsHtml(c,L);wireDetail(box,c);return;}
   const pr=d.pr&&!d.pr.loading?d.pr:null;
   const last=d.last?'<div class="dsec"><h3>Last message'+(turn?' <span class="turnlbl">● waiting on you</span>':'')+'<span class="n">'+rel(d.last.at)+'</span></h3>'+
     '<div class="dlast'+(turn?' turn':'')+(lastOpen?' open':'')+'">'+d.last.html+'</div><button class="linkbtn" data-act="expand">'+(lastOpen?'collapse':'expand')+'</button></div>':'';
@@ -1033,7 +1040,7 @@ function renderDetail(){const box=$('#detail');if(!box)return;if(!sel){renderWai
     '<div class="dsec"><h3>Files changed <span class="n">'+(d.files||[]).length+' · '+(d.filesMode==='session'?'edited by this session':'branch vs '+esc(d.where.base))+'</span></h3>'+filesHtml(d)+'</div>'+
     last+
     (d.pr?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+'</div>':'')+
-    slackHtml(d)+km+todoHtml(d)+actionsHtml(c,L);
+    draftsHtml(c,d)+slackHtml(d)+km+todoHtml(d)+actionsHtml(c,L);
   wireDetail(box,c);}
 const SLACK_STAGE={looking:['info','👀 looking'],blocked:['bad','⛔ blocked'],done:['good','✅ done']};
 function slackHtml(d){const t=d.slack||[];if(!t.length)return '';
@@ -1055,7 +1062,7 @@ function wireDetail(box,c){const agent=c.agent;const act=box.querySelector('.dac
   box.querySelectorAll('code.copyable').forEach(el=>el.onclick=()=>{navigator.clipboard.writeText(el.dataset.id).then(()=>flash(act,'session id copied ✓','#1f6f3f')).catch(()=>{});});
   box.querySelectorAll('[data-act="expand"]').forEach(b=>b.onclick=()=>{lastOpen=!lastOpen;const l=box.querySelector('.dlast');if(l)l.classList.toggle('open',lastOpen);b.textContent=lastOpen?'collapse':'expand';});
   box.querySelectorAll('.launchbtn').forEach(b=>b.onclick=()=>openPicker(b.dataset.sid,agent,act,b.dataset.action,b.dataset.proj||'',b.dataset.agent));
-  const cb=box.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,agent,act);}
+  const cb=box.querySelector('.dactions .closebtn');if(cb)cb.onclick=()=>confirmClose(cb,agent,act);wireDrafts(box,c);}
 // Empty state: every live chat whose turn it is, longest-waiting first.
 function waitingChats(){return DATA.chats.filter(c=>isLive(c)&&isTurn(c)).sort((a,b)=>a.last_active_at-b.last_active_at);}
 function renderWaiting(){const box=$('#detail');const w=waitingChats();
@@ -1067,6 +1074,38 @@ function renderWaiting(){const box=$('#detail');const w=waitingChats();
       (TAILS[chatKey(c)]?'<div class="wx">'+esc(TAILS[chatKey(c)])+'</div>':'')+'</div>';}).join(''):'<div class="dempty">Nothing is waiting on you. Click a card to see its details.</div>')+'</div>';
   box.querySelectorAll('.wait').forEach(el=>el.onclick=()=>{selectChat(el.dataset.sid,el.dataset.agent);const card=document.querySelector('#list .card.sel');if(card)card.scrollIntoView({block:'nearest'});});}
 function setHeaderHeight(){document.documentElement.style.setProperty('--hh',$('header').offsetHeight+'px');}
+// ---- Slack drafts (outbox) ---------------------------------------------------
+// Drafts a chat showed Will for approval. Editable here; Send opens a confirm
+// that shows the exact destination and text, and only that second click posts
+// (as Will). Edits and the open confirm live in client state, so the board
+// poll re-rendering the panel cannot lose them.
+var DRAFT_EDITS={}, draftConfirm=null, draftArmDiscard=null, draftMsg={};
+function draftsFor(c){return (DATA.drafts||[]).filter(d=>d.session_id===c.session_id);}
+function hasDrafts(c){return (DATA.drafts||[]).some(d=>d.session_id===c.session_id);}
+function draftTexts(d){return DRAFT_EDITS[d.id]||d.messages.slice();}
+function draftDest(d,threads){const t=(threads||[]).find(x=>x.key===d.channel+'/'+d.thread_ts);
+  const lbl=t?t.label:(d.label||d.channel||'');
+  return d.thread_ts?('reply in '+lbl+' thread'+(t&&t.preview?' · “'+t.preview.slice(0,80)+(t.preview.length>80?'…':'')+'”':'')):('new message to '+lbl);}
+function draftsHtml(c,d){const ds=draftsFor(c);if(!ds.length)return '';const threads=d?d.slack:[];
+  return '<div class="dsec"><h3>Drafts <span class="n">'+ds.length+' awaiting your okay</span></h3>'+ds.map(x=>{const texts=draftTexts(x);const dest=draftDest(x,threads);const conf=draftConfirm===x.id;
+    return '<div class="draft" data-id="'+esc(x.id)+'"><div class="drow"><span class="dmono">✉ '+esc(dest)+'</span></div>'+
+      (conf?'<div class="dconfirm"><div class="dsub">Post as Will — '+esc(dest)+'</div>'+texts.map(t=>'<pre class="dfinal">'+esc(t)+'</pre>').join('')+
+        '<div class="arow"><button class="send" data-dact="post">Post now</button><button data-dact="cancel">Cancel</button></div></div>'
+      :texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split('\\n').length+1))+'">'+esc(t)+'</textarea>').join('')+
+        '<div class="arow"><button class="send" data-dact="send">Send…</button><button class="closebtn'+(draftArmDiscard===x.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===x.id?'✕ discard?':'Discard')+'</button>'+
+        (draftMsg[x.id]?'<span class="dsub">'+esc(draftMsg[x.id])+'</span>':'')+'</div>')+'</div>';}).join('')+'</div>';}
+function wireDrafts(box,c){box.querySelectorAll('.draft').forEach(el=>{const id=el.dataset.id;const d=(DATA.drafts||[]).find(x=>x.id===id);if(!d)return;
+  el.querySelectorAll('textarea.dtext').forEach(ta=>ta.oninput=()=>{const t=draftTexts(d);t[+ta.dataset.i]=ta.value;DRAFT_EDITS[id]=t;});
+  const b=(a)=>el.querySelector('[data-dact="'+a+'"]');
+  if(b('send'))b('send').onclick=()=>{if(draftTexts(d).some(t=>!t.trim())){draftMsg[id]='every message needs text';renderDetail();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderDetail();};
+  if(b('cancel'))b('cancel').onclick=()=>{draftConfirm=null;renderDetail();};
+  if(b('post'))b('post').onclick=()=>{const texts=draftTexts(d);const btn=b('post');btn.disabled=true;btn.textContent='posting…';
+    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,messages:texts})}).then(r=>r.json()).then(j=>{
+      draftConfirm=null;draftMsg[id]=j.ok?(j.dry?'dry run — nothing posted':(j.detail==='posted'?'posted ✓':j.detail)):(j.detail||'failed');
+      if(j.ok&&!j.dry){delete DRAFT_EDITS[id];flash(box.querySelector('.dactions'),'posted ✓','#1f6f3f');}
+      renderDetail();setTimeout(refresh,800);}).catch(()=>{draftConfirm=null;draftMsg[id]='server off';renderDetail();});};
+  if(b('discard'))b('discard').onclick=()=>{if(draftArmDiscard!==id){draftArmDiscard=id;renderDetail();setTimeout(()=>{if(draftArmDiscard===id){draftArmDiscard=null;renderDetail();}},2500);return;}
+    draftArmDiscard=null;fetch('/api/outbox/discard',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{draftMsg[id]=j.ok?'':(j.detail||'failed');delete DRAFT_EDITS[id];setTimeout(refresh,300);renderDetail();}).catch(()=>{});};});}
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);

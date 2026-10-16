@@ -22,6 +22,7 @@ import { getTrees, filesFor, diffFor, removeWorktrees, panesFromLive, knownWorkt
 import type { DiffMode } from './git.ts';
 import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, threadOwners } from './slack.ts';
+import { discardDraft, pendingDrafts, sendDraft } from './outbox.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -239,7 +240,7 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/data') {
       const { defaultAgent, views, live } = snapshot();
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners() }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live, slackOwners: threadOwners(), drafts: pendingDrafts() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -262,6 +263,34 @@ export function createServer(): http.Server {
       openThread(url.searchParams.get('key') || '')
         .then((r) => json(res, r.ok ? 200 : 404, r))
         .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
+    // Slack drafts awaiting Will's okay. Send posts AS WILL, so it only ever
+    // fires from the confirm click, and posts exactly the messages in the body
+    // (which the confirm displayed). LOOM_SLACK_DRYRUN=1 or `dry: true` renders
+    // with the CLI's preview instead and leaves the draft pending.
+    if ((url.pathname === '/api/outbox/send' || url.pathname === '/api/outbox/discard') && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => { raw += chunk; });
+      req.on('end', () => {
+        let body: { id?: unknown; messages?: unknown; dry?: unknown };
+        try {
+          body = JSON.parse(raw) ?? {};
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid body' });
+        }
+        const id = typeof body.id === 'string' ? body.id : '';
+        if (!id) return json(res, 400, { ok: false, detail: 'id is required' });
+        if (url.pathname === '/api/outbox/discard') {
+          discardDraft(id).then((r) => json(res, r.ok ? 200 : 409, r));
+          return;
+        }
+        const messages = Array.isArray(body.messages) && body.messages.every((m) => typeof m === 'string') ? (body.messages as string[]) : null;
+        if (!messages) return json(res, 400, { ok: false, detail: 'messages must be an array of strings' });
+        const dry = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
+        sendDraft(id, messages, { dry }).then((r) => json(res, r.ok ? 200 : 409, r));
+      });
       return;
     }
 
@@ -572,7 +601,7 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
       const { defaultAgent, views, live } = snapshot();
-      return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live, defaultAgent, threadOwners()));
+      return send(res, 200, 'text/html; charset=utf-8', renderDashboard(views, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts()));
     }
 
     send(res, 404, 'text/plain', 'not found');
