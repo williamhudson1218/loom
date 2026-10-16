@@ -409,6 +409,13 @@ export function renderDashboard(
   .card.arch:hover { background:#181c27; }
   .pill.arch { background:#23262f; color:#9aa3b2; }
   .snip { color:#c4ccdc; font-size:12.5px; }
+  .chead .ico { flex-shrink:0; width:26px; height:24px; padding:0; display:inline-grid; place-items:center; font-size:13px; line-height:1; background:#1b1f2a; color:#8b93a7; border:1px solid #2b3040; }
+  .chead .ico:hover { background:#222a3d; color:#e6e6e6; }
+  .chead .ico.open { color:#9be8b4; border-color:#1f5f38; }
+  .chead .ico.open:hover { background:#1c4a2e; }
+  .chead .ico.savebtn { color:#c8b46a; }
+  .chead .ico.unsavebtn { color:#f0dfa0; background:#3a3826; border-color:#4a462f; }
+  .prn { color:#c9b6ff; font-weight:600; }
   /* Board + detail panel. The panel is a sticky column of its own, so selecting a
      card never reflows the list; --hh is the live header height, set from JS. */
   #boardwrap { display:grid; grid-template-columns:minmax(0,1100px) minmax(0,1fr); align-items:start; }
@@ -651,18 +658,14 @@ function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[chatKey(c)];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
-function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';const sav=c.saved?'<button class="unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★ saved</button>':'<button class="savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆ save</button>';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
-'<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span></div>'+
-'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+'</div>'+
+// Cards are deliberately light: title line (with open-in-Ghostty and save as
+// icons), meta line, summary. Everything else — session id, moments, PR detail,
+// resume/branch/close — lives in the detail panel for the selected card.
+function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(c.pr_url)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
+'<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span>'+open+sav+'</div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
-(km?'<div class="km"><h3>Key moments</h3><ul>'+km+'</ul></div>':'')+
-'<div class="resume"><code class="sid" title="session id">'+id+'</code><button class="copy" data-id="'+id+'">copy id</button>'+(km?'<button class="expand">▸ moments</button>':'')+pr+
-'<span class="spacer"></span>'+
- (L?'<button class="open" data-jump="'+id+'">↗ open in Ghostty</button><button class="closebtn" data-sid="'+id+'" title="exit '+agentLabel(c.agent)+' in this pane (chat stays resumable)">✕ close</button>':launchButtons(id,c.agent,''))+
- sav+
- '<button class="branchbtn launchbtn" data-sid="'+id+'" data-agent="'+agent+'" data-action="branch" title="fork this conversation into a new '+agentLabel(c.agent)+' pane (original left untouched)">⑃ branch…</button>'+
-'</div>'+
-'<div class="picker"></div></div>';}
+'</div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
 var panelSid=null, panelAgent='claude', ptimer=null, panelArch=null;
 // arch = {jsonl,proj,title} for archive chats (no DB row, so the server needs them).

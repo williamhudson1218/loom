@@ -178,3 +178,16 @@ describe('detail panel shell', () => {
     expect(html).toContain('Waiting on you');
   });
 });
+
+describe('light cards', () => {
+  it('drops the button row from board cards; open and save ride the title line, PR the meta line', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    const card = html.slice(html.indexOf('function card(c){'), html.indexOf("$('#gen').textContent"));
+    expect(card).not.toContain('class="resume"');
+    expect(card).not.toContain('copy id');
+    expect(card).not.toContain('branchbtn');
+    expect(card).toContain('class="ico open"');
+    expect(card).toContain('class="ico savebtn"');
+    expect(card).toContain("' · <span class=\"prn\"");
+  });
+});
