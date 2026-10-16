@@ -409,6 +409,81 @@ export function renderDashboard(
   .card.arch:hover { background:#181c27; }
   .pill.arch { background:#23262f; color:#9aa3b2; }
   .snip { color:#c4ccdc; font-size:12.5px; }
+  /* Board + detail panel. The panel is a sticky column of its own, so selecting a
+     card never reflows the list; --hh is the live header height, set from JS. */
+  #boardwrap { display:grid; grid-template-columns:minmax(0,1100px) minmax(0,1fr); align-items:start; }
+  #col { min-width:0; }
+  #detail { position:sticky; top:var(--hh,150px); height:calc(100vh - var(--hh,150px)); overflow-y:auto; box-sizing:border-box;
+    border-left:1px solid #232634; padding:16px 20px 28px; display:flex; flex-direction:column; gap:14px; }
+  @media (max-width:1300px) { #boardwrap { grid-template-columns:minmax(0,1fr) 420px; } }
+  @media (max-width:900px) { #boardwrap { grid-template-columns:1fr; } #detail { display:none; } }
+  .card.sel { border-color:#5c6b93; background:#1d2433; box-shadow:0 0 0 1px #5c6b93 inset; }
+  .dsec { display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .dsec > h3 { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:#8b93a7; margin:0; font-weight:600; display:flex; align-items:center; gap:8px; }
+  .dsec > h3 .n { opacity:.6; font-weight:400; text-transform:none; letter-spacing:0; }
+  .dtitle { font-size:16px; font-weight:700; line-height:1.3; }
+  .dsub { color:#8b93a7; font-size:12px; }
+  .drow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:#c4ccdc; }
+  .stage { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#1b1f2a; border:1px solid currentColor; }
+  .stage.s-discovery { color:#5fafff; } .stage.s-implementation { color:#87d787; }
+  .stage.s-shipping { color:#d787d7; } .stage.s-thread { color:#ffaf5f; }
+  .dname { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#c4ccdc; }
+  .dloc { color:#8b93a7; font-size:12px; }
+  code.copyable { cursor:pointer; } code.copyable:hover { border-color:#3a4a63; color:#c4ccdc; }
+  .iconbtn { background:#1c4a2e; color:#9be8b4; padding:3px 8px; font-size:12px; font-weight:600; }
+  .iconbtn:hover { background:#246138; }
+  .iconbtn.ghost { background:#1b1f2a; color:#c4ccdc; }
+  .iconbtn.ghost:hover { background:#222a3d; }
+  .dmono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .dpath { color:#6f778a; font-size:11.5px; word-break:break-all; }
+  .dfiles { display:flex; flex-direction:column; border:1px solid #232634; border-radius:8px; overflow:hidden; }
+  .dfile { display:flex; align-items:center; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid #191d28; min-width:0; }
+  .dfile:first-child { border-top:0; }
+  .dfile .fp { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#c4ccdc; }
+  .fst { font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:1px 6px; border-radius:4px; flex-shrink:0; }
+  .fst.uncommitted { background:rgba(229,72,77,.18); color:#ff8086; }
+  .fst.untracked { background:rgba(212,167,44,.18); color:#e8b84b; }
+  .fst.staged { background:rgba(59,130,246,.18); color:#79b1ff; }
+  .fst.committed { background:rgba(46,160,67,.16); color:#56d364; }
+  .fst.unchanged, .fst.outside, .fst.ignored { background:#23262f; color:#8b93a7; }
+  .dlast { position:relative; border:1px solid #232634; border-radius:8px; padding:8px 12px; background:#11141d; font-size:13px; line-height:1.5; color:#dfe4ee; overflow:hidden; max-height:200px; }
+  .dlast.open { max-height:none; }
+  .dlast:not(.open)::after { content:''; position:absolute; left:0; right:0; bottom:0; height:40px; background:linear-gradient(transparent,#11141d); pointer-events:none; }
+  .dlast.turn { border-color:var(--waiting_on_user); background:#121a2b; }
+  .dlast.turn:not(.open)::after { background:linear-gradient(transparent,#121a2b); }
+  .dlast p { margin:0 0 6px; } .dlast h4 { margin:6px 0 4px; font-size:13px; }
+  .dlast ul, .dlast ol { margin:0 0 6px; padding-left:20px; }
+  .dlast pre { background:#0d0f15; border:1px solid #232634; border-radius:6px; padding:6px 8px; overflow-x:auto; font-size:11.5px; margin:0 0 6px; }
+  .dlast code { padding:1px 4px; font-size:11.5px; }
+  .dlast a { color:#79b1ff; }
+  .turnlbl { color:#79b1ff; font-weight:700; text-transform:none; letter-spacing:0; font-size:11px; }
+  .linkbtn { background:none; color:#79b1ff; padding:0; font-size:12px; align-self:flex-start; }
+  .linkbtn:hover { background:none; color:#a8ccff; }
+  .prline { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:12.5px; }
+  .prline a { color:#c9b6ff; font-weight:600; text-decoration:none; }
+  .prline a:hover { text-decoration:underline; }
+  .badge { font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:#23262f; color:#9aa3b2; }
+  .badge.good { background:rgba(46,160,67,.16); color:#56d364; }
+  .badge.bad { background:rgba(229,72,77,.18); color:#ff8086; }
+  .badge.warn { background:rgba(212,167,44,.18); color:#e8b84b; }
+  .badge.info { background:rgba(59,130,246,.18); color:#79b1ff; }
+  .timeline { list-style:none; margin:0; padding:0 0 0 14px; border-left:2px solid #2b3040; display:flex; flex-direction:column; gap:6px; }
+  .timeline li { position:relative; font-size:12.5px; color:#c4ccdc; }
+  .timeline li::before { content:''; position:absolute; left:-20px; top:6px; width:8px; height:8px; border-radius:50%; background:#3a4258; border:2px solid #0d0f15; }
+  .timeline li:last-child::before { background:#79b1ff; }
+  .todo { font-size:12.5px; color:#c4ccdc; display:flex; gap:7px; }
+  .todo .tk { flex-shrink:0; width:14px; text-align:center; }
+  .todo.completed { color:#6f778a; text-decoration:line-through; }
+  .todo.in_progress { color:#e8b84b; }
+  .dactions { position:relative; display:flex; flex-direction:column; gap:8px; margin-top:auto; padding-top:12px; border-top:1px solid #232634; }
+  .dactions .arow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .dactions .danger-zone { margin-left:auto; }
+  .dempty { color:#6f778a; font-size:12.5px; }
+  .wait { border:1px solid #232634; border-left:3px solid var(--waiting_on_user); border-radius:8px; padding:8px 11px; cursor:pointer; background:#141824; }
+  .wait:hover { background:#1a2030; border-color:#3a4a63; }
+  .wait .wt { font-weight:600; font-size:13px; }
+  .wait .wm { color:#8b93a7; font-size:11.5px; margin-top:1px; }
+  .wait .wx { color:#c4ccdc; font-size:12px; margin-top:4px; }
 </style></head>
 <body>
 <header>
@@ -443,8 +518,13 @@ export function renderDashboard(
   </div>
   <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
+<div id="boardwrap">
+<div id="col">
 <main id="list"></main>
 <section id="archive"></section>
+</div>
+<aside id="detail" aria-label="Selected chat"></aside>
+</div>
 <section id="em-section">
   <div class="emtop">
     <h2 class="emtitle">Recent activity</h2>
@@ -532,6 +612,7 @@ function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=e
   $('#deep').style.display=other?'none':'';
   $('#list').style.display=other?'none':'';
   $('#archive').style.display=other?'none':'';
+  $('#boardwrap').style.display=other?'none':'';
   // 'block', NOT '': the stylesheet defaults #em-section to display:none, and
   // clearing the inline style just lets that rule win again — the tab renders
   // its rows into a section that is still hidden.
@@ -544,10 +625,13 @@ function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='wor
 function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
-let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);}
+let rows=scoped().filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=rows.map(card).join('')||empty;list.querySelectorAll('.card').forEach(wireCard);renderDetail();}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
-function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;openChat(el.dataset.sid,sourceAgent,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,sourceAgent,el);el.querySelectorAll('.launchbtn').forEach(b=>b.onclick=()=>openPicker(b.dataset.sid,sourceAgent,el,b.dataset.action,b.dataset.proj||'',b.dataset.agent));const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,sourceAgent,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,sourceAgent,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,sourceAgent,el);}
+function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;
+// Board cards select into the detail panel; archive cards (no DB row) and a
+// window too narrow for the panel keep the transcript drawer.
+if(!el.dataset.jsonl&&detailShown()){selectChat(el.dataset.sid,sourceAgent);return;}openChat(el.dataset.sid,sourceAgent,el.dataset.jsonl?{jsonl:el.dataset.jsonl,proj:el.dataset.proj||'',title:el.dataset.title||''}:null);};const exp=el.querySelector('.expand');if(exp)exp.onclick=()=>el.classList.toggle('open');const cp=el.querySelector('.copy');if(cp)cp.onclick=()=>copyId(cp);const op=el.querySelector('.open');if(op)op.onclick=()=>jump(op.dataset.jump,sourceAgent,el);el.querySelectorAll('.launchbtn').forEach(b=>b.onclick=()=>openPicker(b.dataset.sid,sourceAgent,el,b.dataset.action,b.dataset.proj||'',b.dataset.agent));const cb=el.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,sourceAgent,el);const sv=el.querySelector('.savebtn');if(sv)sv.onclick=()=>doSave(sv.dataset.sid,sourceAgent,el);const us=el.querySelector('.unsavebtn');if(us)us.onclick=()=>doUnsave(us.dataset.sid,sourceAgent,el);}
 function doSave(sid,agent,el){flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved — pane freed ✓':'saved ✓'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function doUnsave(sid,agent,el){flash(el,'removing…','#7a6a1a');fetch('/unsave?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?'unsaved ✓':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function confirmClose(b,agent,el){if(b.dataset.armed){doClose(b.dataset.sid,agent,el);}else{b.dataset.armed='1';b.textContent='✕ confirm?';b.classList.add('arm');setTimeout(()=>{if(b){b.dataset.armed='';b.textContent='✕ close';b.classList.remove('arm');}},2500);}}
@@ -567,7 +651,7 @@ function copyId(b){navigator.clipboard.writeText(b.dataset.id).then(()=>{const o
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
 function liveTag(c){const L=DATA.live[chatKey(c)];if(!L)return '<span class="stale">○ no active pane</span>';const loc=esc(L.tmux_session)+' · pane '+L.pane_index;if(L.working)return '<span class="working"><span class="pin">⚡</span> working · '+loc+'</span>';return '<span class="live"><span class="pin">●</span> live · '+loc+(L.running?'':' (idle)')+'</span>';}
-function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';const sav=c.saved?'<button class="unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★ saved</button>':'<button class="savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆ save</button>';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
+function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const km=c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('');const prn=c.pr_url?(c.pr_url.split('/pull/')[1]||''):'';const pr=c.pr_url?'<a class="prbtn" href="'+esc(c.pr_url)+'" target="_blank" rel="noopener" title="'+esc(c.pr_url)+'">⎇ PR #'+esc(prn)+'</a>':'';const sav=c.saved?'<button class="unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★ saved</button>':'<button class="savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆ save</button>';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span></div>'+
 '<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
@@ -590,7 +674,7 @@ function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;var u='
 function renderFoot(d){const f=$('#pfoot');if(d.live){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live '+agentLabel(d.agent)+' pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else{f.innerHTML='<div class="stalefoot">This chat isn\\'t running — <b>'+esc(resumeLabel(d.agent).slice(2))+'</b> from its card to send messages.</div>';}}
 function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.value.trim();if(!t)return;ta.value='';fetch('/send?session='+encodeURIComponent(panelSid)+'&agent='+encodeURIComponent(panelAgent)+'&text='+encodeURIComponent(t),{method:'POST'}).then(r=>r.json()).then(()=>{setTimeout(()=>loadTranscript(true),500);setTimeout(()=>loadTranscript(true),2500);}).catch(()=>{});}
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeChat();});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
 function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',');}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
@@ -877,9 +961,99 @@ function wireCleanup(det){
         if(o.failed&&o.failed.length)bits.push('failed '+o.failed.length);
         treeMsg=bits.join(' · ')||'Nothing removed';
         treeLoaded=false;renderTrees();refreshTrees(true);}).catch(function(){treeMsg='Removal failed';renderTrees();});};});}
+// ---- Detail panel ------------------------------------------------------------
+// Clicking a card selects it and fills the sticky right column. Everything cheap
+// renders from DATA straight away; the expensive half (git, gh, transcript scan)
+// comes from /api/detail, fetched on selection and every 20s while selected —
+// never on the board poll. With nothing selected the column lists every chat
+// waiting on you.
+var sel=null, DETAIL=null, detailTimer=null, detailRetry=null, lastOpen=false, TAILS={}, tailsAt=0;
+const STAGE_GLYPH={discovery:'?',implementation:'+',shipping:'^',thread:'~'};
+function detailShown(){const d=$('#detail');return !!d&&getComputedStyle(d).display!=='none'&&tab!=='em'&&tab!=='trees';}
+function selKey(){return sel?sel.agent+':'+sel.sid:'';}
+function selChat(){return sel?DATA.chats.find(c=>c.agent===sel.agent&&c.session_id===sel.sid)||null:null;}
+function isTurn(c){return st(c)==='waiting_on_user'&&!isWorking(c);}
+function selectChat(sid,agent){if(sel&&sel.sid===sid&&sel.agent===agent)return;sel={sid,agent};DETAIL=null;lastOpen=false;
+  document.querySelectorAll('#list .card').forEach(el=>el.classList.toggle('sel',el.dataset.sid===sid&&el.dataset.agent===agent));
+  renderDetail();loadDetail();clearInterval(detailTimer);detailTimer=setInterval(loadDetail,20000);}
+function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);document.querySelectorAll('#list .card.sel').forEach(el=>el.classList.remove('sel'));renderDetail();}
+function loadDetail(){if(!sel)return;const k=selKey();fetch('/api/detail?session='+encodeURIComponent(sel.sid)+'&agent='+encodeURIComponent(sel.agent)).then(r=>r.json()).then(d=>{if(selKey()!==k)return;DETAIL=d;renderDetail();
+  // gh runs in the background on the server; ask again shortly rather than wait on it.
+  clearTimeout(detailRetry);if(d.pr&&d.pr.loading)detailRetry=setTimeout(loadDetail,3000);}).catch(()=>{});}
+function detailBusy(){const d=$('#detail');return !!(d.querySelector('.picker:not(:empty)')||d.querySelector('.closebtn.arm')||d.querySelector('textarea:focus'));}
+function shortPath(p){return (p||'').replace(new RegExp('^/Users/[^/]+'),'~');}
+function stageBadge(s){return s?'<span class="stage s-'+esc(s)+'">'+esc(STAGE_GLYPH[s]||'')+' '+esc(s)+'</span>':'';}
+function whereHtml(w,pr){if(!w)return '<div class="dempty">…</div>';
+  if(w.kind==='none')return '<div class="drow">not a git checkout</div><div class="dpath">'+esc(shortPath(w.cwd))+'</div>';
+  if(w.kind==='main')return '<div class="drow"><span class="dmono">⎇ '+esc(w.branch)+'</span><span class="dsub">(shared checkout)</span></div><div class="dpath">'+esc(shortPath(w.top))+'</div>';
+  const ab=(w.ahead?'<span class="tct a">↑'+w.ahead+'</span>':'')+(w.behind?'<span class="tct b">↓'+w.behind+'</span>':'')+'<span class="dsub">vs '+esc(w.base)+'</span>';
+  return '<div class="drow"><span class="dmono">⑂ '+esc(w.branch)+'</span>'+ab+'</div>'+
+    '<div class="dpath">'+(w.kind==='worktree'?'worktree ':'primary checkout ')+esc(shortPath(w.top))+'</div>'+
+    (pr&&pr.number?'<div class="drow"><a class="prbtn" href="'+esc(pr.url)+'" target="_blank" rel="noopener">⎇ PR #'+pr.number+'</a></div>':'');}
+const FILE_CAP=60;
+function filesHtml(d){const fs=d.files||[];if(!fs.length)return '<div class="dempty">'+(d.filesMode==='session'?'This session hasn’t edited any files.':'Nothing changed on this branch.')+'</div>';
+  return '<div class="dfiles">'+fs.slice(0,FILE_CAP).map(f=>'<div class="dfile" title="'+esc(f.path)+'"><span class="fst '+f.state+'">'+esc(f.state)+'</span><span class="fp">&lrm;'+esc(f.path)+'</span></div>').join('')+
+    (fs.length>FILE_CAP?'<div class="dfile dsub">+'+(fs.length-FILE_CAP)+' more</div>':'')+'</div>';}
+function prHtml(pr){if(!pr)return '';if(pr.loading)return '<div class="dempty">checking '+esc(pr.ref)+' on GitHub…</div>';
+  const st=pr.state==='MERGED'?'<span class="badge info">merged</span>':pr.state==='CLOSED'?'<span class="badge">closed</span>':(pr.isDraft?'<span class="badge">draft</span>':'<span class="badge good">ready</span>');
+  const rv={APPROVED:['good','approved'],CHANGES_REQUESTED:['bad','changes requested'],REVIEW_REQUIRED:['warn','review required']}[pr.reviewDecision];
+  const ci={pass:['good','CI ✓'],fail:['bad','CI ✕'],pending:['warn','CI …']}[pr.ci];
+  return '<div class="prline"><a href="'+esc(pr.url)+'" target="_blank" rel="noopener">#'+pr.number+'</a><span>'+esc(pr.title)+'</span></div>'+
+    '<div class="prline">'+st+(rv?'<span class="badge '+rv[0]+'">'+rv[1]+'</span>':'')+(ci?'<span class="badge '+ci[0]+'">'+ci[1]+'</span>':'')+'</div>';}
+function todoHtml(d){const t=d.todos||[],b=d.background||[];if(!t.length&&!b.length)return '';
+  const tk={completed:'☑',in_progress:'◐',pending:'☐'};
+  return '<div class="dsec"><h3>Todo'+(b.length?' · background':'')+'</h3>'+
+    t.map(x=>'<div class="todo '+esc(x.status)+'"><span class="tk">'+(tk[x.status]||'☐')+'</span><span>'+esc(x.status==='in_progress'&&x.activeForm?x.activeForm:x.content)+'</span></div>').join('')+
+    b.map(x=>'<div class="todo in_progress"><span class="tk">⟳</span><span>'+esc(x.kind==='agent'?'agent: ':'bash: ')+esc(x.desc)+(x.startedAt?' <span class="dsub">· '+rel(x.startedAt)+'</span>':'')+'</span></div>').join('')+'</div>';}
+function renderDetail(){const box=$('#detail');if(!box)return;if(!sel){renderWaiting();return;}
+  const c=selChat();if(!c){box.innerHTML='<div class="dempty">That chat is no longer on the board.</div>';return;}
+  if(detailBusy())return;
+  const L=DATA.live[chatKey(c)];const d=DETAIL&&DETAIL.session_id===c.session_id?DETAIL:null;const lb=d?d.labels:{topic:'',stage:'',name:L&&L.name||''};
+  const id=esc(c.session_id);const agent=esc(c.agent);const turn=isTurn(c)&&!!L;
+  const head='<div class="dsec"><div class="dtitle">'+esc(lb.topic||disp(c))+'</div>'+(lb.topic?'<div class="dsub">'+esc(disp(c))+'</div>':'')+
+    '<div class="drow">'+stageBadge(lb.stage)+(lb.name?'<span class="dname">@'+esc(lb.name)+'</span>':'')+
+      (L?'<span class="dloc">'+esc(L.tmux_session)+' · pane '+esc(L.pane_index)+'</span><button class="iconbtn" data-act="goto" title="open in Ghostty">↗ open</button>':'<span class="stale">○ no active pane</span>')+'</div>'+
+    '<div class="drow"><code class="sid copyable" data-id="'+id+'" title="click to copy the session id">'+id+'</code><button class="iconbtn ghost" data-act="transcript" title="read the transcript and message this chat">💬 transcript</button></div></div>';
+  if(!d){box.innerHTML=head+'<div class="dempty">loading…</div>'+actionsHtml(c,L);wireDetail(box,c);return;}
+  const pr=d.pr&&!d.pr.loading?d.pr:null;
+  const last=d.last?'<div class="dsec"><h3>Last message'+(turn?' <span class="turnlbl">● waiting on you</span>':'')+'<span class="n">'+rel(d.last.at)+'</span></h3>'+
+    '<div class="dlast'+(turn?' turn':'')+(lastOpen?' open':'')+'">'+d.last.html+'</div><button class="linkbtn" data-act="expand">'+(lastOpen?'collapse':'expand')+'</button></div>':'';
+  const km=(c.breakdown||[]).length?'<div class="dsec"><h3>Moments</h3><ul class="timeline">'+c.breakdown.map(b=>'<li>'+esc(b)+'</li>').join('')+'</ul></div>':'';
+  box.innerHTML=head+
+    '<div class="dsec"><h3>Where it’s working</h3>'+whereHtml(d.where,d.where.kind==='main'?null:pr)+'</div>'+
+    '<div class="dsec"><h3>Files changed <span class="n">'+(d.files||[]).length+' · '+(d.filesMode==='session'?'edited by this session':'branch vs '+esc(d.where.base))+'</span></h3>'+filesHtml(d)+'</div>'+
+    last+
+    (d.pr?'<div class="dsec"><h3>Pull request</h3>'+prHtml(d.pr)+'</div>':'')+
+    km+todoHtml(d)+actionsHtml(c,L);
+  wireDetail(box,c);}
+function actionsHtml(c,L){const id=esc(c.session_id);const agent=esc(c.agent);
+  return '<div class="dactions"><div class="arow">'+
+    (L?'':launchButtons(id,c.agent,''))+
+    '<button class="branchbtn launchbtn" data-sid="'+id+'" data-agent="'+agent+'" data-action="branch" title="fork this conversation into a new '+agentLabel(c.agent)+' pane (original left untouched)">⑃ Branch from here…</button>'+
+    (L?'<span class="danger-zone"><button class="closebtn" data-sid="'+id+'" title="exit '+agentLabel(c.agent)+' in this pane (chat stays resumable)">✕ close</button></span>':'')+
+    '</div><div class="picker"></div></div>';}
+function wireDetail(box,c){const agent=c.agent;const act=box.querySelector('.dactions');
+  box.querySelectorAll('[data-act="goto"]').forEach(b=>b.onclick=()=>jump(c.session_id,agent,act));
+  box.querySelectorAll('[data-act="transcript"]').forEach(b=>b.onclick=()=>openChat(c.session_id,agent,null));
+  box.querySelectorAll('code.copyable').forEach(el=>el.onclick=()=>{navigator.clipboard.writeText(el.dataset.id).then(()=>flash(act,'session id copied ✓','#1f6f3f')).catch(()=>{});});
+  box.querySelectorAll('[data-act="expand"]').forEach(b=>b.onclick=()=>{lastOpen=!lastOpen;const l=box.querySelector('.dlast');if(l)l.classList.toggle('open',lastOpen);b.textContent=lastOpen?'collapse':'expand';});
+  box.querySelectorAll('.launchbtn').forEach(b=>b.onclick=()=>openPicker(b.dataset.sid,agent,act,b.dataset.action,b.dataset.proj||'',b.dataset.agent));
+  const cb=box.querySelector('.closebtn');if(cb)cb.onclick=()=>confirmClose(cb,agent,act);}
+// Empty state: every live chat whose turn it is, longest-waiting first.
+function waitingChats(){return DATA.chats.filter(c=>isLive(c)&&isTurn(c)).sort((a,b)=>a.last_active_at-b.last_active_at);}
+function renderWaiting(){const box=$('#detail');const w=waitingChats();
+  const keys=w.map(chatKey);
+  if(keys.length&&(Date.now()-tailsAt>15000||keys.some(k=>!(k in TAILS)))){tailsAt=Date.now();fetch('/api/tails?keys='+encodeURIComponent(keys.join(','))).then(r=>r.json()).then(j=>{if(j.ok){Object.assign(TAILS,j.tails);if(!sel)renderWaiting();}}).catch(()=>{});}
+  box.innerHTML='<div class="dsec"><h3>Waiting on you <span class="n">'+w.length+'</span></h3>'+
+    (w.length?w.map(c=>{const L=DATA.live[chatKey(c)];return '<div class="wait" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"><div class="wt">'+esc(disp(c))+'</div>'+
+      '<div class="wm">waiting '+rel(c.last_active_at).replace(' ago','')+' · '+esc(L.tmux_session)+' · pane '+esc(L.pane_index)+(L.name?' · @'+esc(L.name):'')+'</div>'+
+      (TAILS[chatKey(c)]?'<div class="wx">'+esc(TAILS[chatKey(c)])+'</div>':'')+'</div>';}).join(''):'<div class="dempty">Nothing is waiting on you. Click a card to see its details.</div>')+'</div>';
+  box.querySelectorAll('.wait').forEach(el=>el.onclick=()=>{selectChat(el.dataset.sid,el.dataset.agent);const card=document.querySelector('#list .card.sel');if(card)card.scrollIntoView({block:'nearest'});});}
+function setHeaderHeight(){document.documentElement.style.setProperty('--hh',$('header').offsetHeight+'px');}
 $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);
+setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
 heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshEm();
 $('#default-agent').onchange=updateDefaultAgent;
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));

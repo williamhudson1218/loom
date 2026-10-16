@@ -20,6 +20,7 @@ import { recentLedger, getEmMode, setEmMode, isEmMode } from './em/ledger.ts';
 import { scanTick, triageTick } from './em/index.ts';
 import { getTrees, filesFor, diffFor, removeWorktrees, panesFromLive, knownWorktree, type ScanInput } from './trees.ts';
 import type { DiffMode } from './git.ts';
+import { buildDetail, lastMessageTail } from './detail.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -238,6 +239,34 @@ export function createServer(): http.Server {
     if (url.pathname === '/api/data') {
       const { defaultAgent, views, live } = snapshot();
       return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, chats: views, live }));
+    }
+
+    // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
+    // its own route, fetched on selection, so none of it rides the board poll.
+    if (url.pathname === '/api/detail') {
+      const sid = url.searchParams.get('session') || '';
+      const agent = requestAgent(url);
+      const { views, live } = snapshot();
+      const v = views.find((x) => x.agent === agent && x.session_id === sid);
+      if (!v) return json(res, 404, { ok: false, detail: 'unknown session' });
+      buildDetail(v, live[agentSessionKey(agent, sid)])
+        .then((d) => json(res, 200, d))
+        .catch((e) => json(res, 200, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
+    // The panel's empty state: the tail of the last message of every live chat
+    // whose turn it is. The client decides which chats those are (it owns the
+    // state filter) and asks for their tails by key.
+    if (url.pathname === '/api/tails') {
+      const keys = (url.searchParams.get('keys') || '').split(',').filter(Boolean).slice(0, 40);
+      const { views } = snapshot();
+      const out: Record<string, string> = {};
+      for (const k of keys) {
+        const v = views.find((x) => agentSessionKey(x.agent, x.session_id) === k);
+        if (v) out[k] = lastMessageTail(v);
+      }
+      return json(res, 200, { ok: true, tails: out });
     }
 
     if (url.pathname === '/api/settings/default-agent' && req.method === 'PUT') {
