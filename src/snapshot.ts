@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
 import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
@@ -191,15 +192,39 @@ export interface WriteLayoutOpts {
   readWindows?: () => SavedGhosttyWindow[];
 }
 
+// The snapshotter writes every 15s, so a saved layout this much older than now
+// means it stopped — Loom was quit, or tmux died and writeLayout refused the
+// empty server. The next write would overwrite the last pre-crash layout with
+// whatever restore just rebuilt, along with the remembered tab order 120s later,
+// which leaves nothing to compare a bad restore against or retry it from. That
+// happened on 2026-10-02.
+export const SNAPSHOT_GAP_MS = 5 * 60_000;
+export const LAYOUT_ARCHIVE_KEEP = 20;
+
+// Copy `prev` into layouts/ beside `file` when it predates a gap; returns the
+// archive path, or null when there was no gap. Keeps the newest
+// LAYOUT_ARCHIVE_KEEP. Restore from one with `cp` over layout.json.
+export function archiveStaleLayout(prev: Layout | null, now: number, file: string): string | null {
+  if (!prev || now - prev.taken_at < SNAPSHOT_GAP_MS) return null;
+  const dir = path.join(path.dirname(file), 'layouts');
+  fs.mkdirSync(dir, { recursive: true });
+  const out = path.join(dir, `layout-${prev.taken_at}.json`);
+  if (!fs.existsSync(out)) fs.writeFileSync(out, JSON.stringify(prev, null, 2), 'utf-8');
+  const old = fs.readdirSync(dir).filter((f) => /^layout-\d+\.json$/.test(f)).sort();
+  for (const f of old.slice(0, Math.max(0, old.length - LAYOUT_ARCHIVE_KEEP))) fs.rmSync(path.join(dir, f));
+  return out;
+}
+
 // Only overwrite the saved snapshot when tmux actually has sessions — never clobber
 // a good snapshot with an empty one (e.g. right after a crash before restore).
 export function writeLayout(now: number, opts: WriteLayoutOpts = {}): Layout | null {
-  const path = opts.path ?? LAYOUT_PATH;
+  const file = opts.path ?? LAYOUT_PATH;
   const prefix = opts.prefix ?? SESSION_PREFIX;
   const layout = captureLayout(now, prefix);
   if (layout.sessions.length === 0) return null;
 
-  const prev = readLayout(path);
+  const prev = readLayout(file);
+  archiveStaleLayout(prev, now, file);
   const stale = now - (prev?.ghostty_tabs_at ?? 0) >= GHOSTTY_TABS_TTL_MS;
   if (stale) {
     const windows = (opts.readWindows ?? (() => savedWindowsFrom(readGhosttyWindows())))();
@@ -216,7 +241,7 @@ export function writeLayout(now: number, opts: WriteLayoutOpts = {}): Layout | n
     if (prev.ghostty_windows) layout.ghostty_windows = prev.ghostty_windows;
     layout.ghostty_tabs_at = prev.ghostty_tabs_at;
   }
-  fs.writeFileSync(path, JSON.stringify(layout, null, 2), 'utf-8');
+  fs.writeFileSync(file, JSON.stringify(layout, null, 2), 'utf-8');
   return layout;
 }
 
