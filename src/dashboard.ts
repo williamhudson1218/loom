@@ -96,6 +96,7 @@ export interface LiveLoc {
   running: boolean;
   working?: boolean;
   name?: string; // the pane's memorable @name, when it has one
+  stage?: string; // the pane classifier's @stage (discovery | implementation | shipping | thread | blocked)
   // The pane's current directory. Always set by liveSessionsFrom(); optional here
   // because consumers of the serialized shape must not assume it, and the Trees
   // tab filters on its presence rather than defaulting it to something wrong.
@@ -305,25 +306,13 @@ export function renderDashboard(
   .tfoot { display:flex; align-items:center; gap:12px; padding:11px 15px; background:#12151e; border-top:1px solid #232634; position:sticky; bottom:0; z-index:2; }
   .tsum { font-size:12.5px; color:#8b93a7; }
   .tsum b { color:#e6e6e6; }
-  /* Tickets — GitHub issues by stage, with the chats and PRs working them
-     hanging off each card. Hidden until its tab is selected; syncControls()
-     owns the toggle, same as #em-section. Sizes and colours are the approved
-     comp's; the panel sits under the sticky header rather than at the top. */
+  /* Tickets — the board's chats in columns (Needs you, Blocked, then stage),
+     beside the shared detail panel. Hidden until its tab is selected;
+     syncControls() owns the toggle. */
   .tab.tktab.on { background:#2a3a52; color:#cfe0ff; }
   .tab.tktab.on:hover { background:#334664; }
-  #tkbar { display:none; }
-  .tkbar1 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
-  #tkq { flex:1; min-width:220px; }
-  .tkbar2 { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
-  .tkbar2 .chip { font:inherit; font-size:12px; } .tkbar2 .chip:hover { background:#1f2535; }
-  .tkbar2 .seg { margin-left:0; }
   .vh { position:absolute; left:-9999px; }
-  #tickets-section { display:none; padding:16px 20px 24px; }
-  .tkhint { font-size:11px; color:#6f778a; margin:0 0 10px; }
-  .tkmain { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:16px; align-items:start; }
-  @media (max-width:1100px) { .tkmain { grid-template-columns:1fr; } }
-  .tkboard { display:grid; grid-template-columns:44px repeat(6,minmax(200px,1fr)) 44px; gap:10px; align-items:start; overflow-x:auto; }
-  .tkboard.closed { grid-template-columns:minmax(0,1fr); }
+  .tkboard { display:none; gap:10px; align-items:start; overflow-x:auto; padding-bottom:6px; }
   .tkx .col { display:flex; flex-direction:column; gap:8px; min-width:0; }
   .tkx .colhd { display:flex; align-items:baseline; justify-content:space-between; padding:0 2px 2px; border-bottom:1px solid #232634; }
   .tkx .colnm { font-size:12px; font-weight:700; color:#8b93a7; text-transform:uppercase; letter-spacing:.6px; }
@@ -346,7 +335,7 @@ export function renderDashboard(
   .tkx .col.c-needsYou .colnm { color:var(--waiting_on_user); } .tkx .col.c-blocked .colnm { color:#ffaf5f; }
   .tkx .lbl.stg { background:transparent; border:1px solid #2b3040; color:#8b93a7; }
   .tkx .blk { font-size:11px; color:#ffd7a8; background:#3a2a1a; border:1px solid #5a3f22; border-radius:4px; padding:0 6px; line-height:16px; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
-  .tkx .g.b { color:#ffaf5f; }
+  .tkx .g.b { color:#ffaf5f; } .tkx .tk.blkd { border-left-color:#ffaf5f; }
   .tkx .tkh { display:flex; align-items:center; gap:6px; font-size:11px; color:#8b93a7; flex-wrap:wrap; }
   .tkx .num { font-weight:700; color:#c4ccdc; }
   .tkx .lbl { font-size:10px; padding:0 5px; border-radius:4px; background:#232634; color:#aab3c5; line-height:16px; }
@@ -677,19 +666,12 @@ export function renderDashboard(
     <div class="chips" id="chips"></div>
     <div class="seg" id="livetoggle" role="group" aria-label="Show live chats or all chats"></div>
   </div>
-  <div id="tkbar">
-    <div class="tkbar1">
-      <label for="tkq" class="vh">Search tickets</label><input id="tkq" type="search" placeholder="search tickets, chats, PRs…"/>
-      <label for="tkrepo" class="vh">Repository</label><select id="tkrepo"><option value="all">all repos</option></select>
-      <label for="tksort" class="vh">Sort</label><select id="tksort"><option value="needs">sort: needs you first</option><option value="longest">sort: longest in stage</option><option value="moved">sort: recently moved</option></select>
-    </div>
-    <div class="tkbar2"><div class="chips" id="tkchips"></div><div class="seg" id="tkseg" role="group" aria-label="Open tickets or closed this week"></div></div>
-  </div>
   <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
 <div id="boardwrap">
 <div id="col">
 <main id="list"></main>
+<section class="tkx tkboard" id="kanban" aria-label="Chats by stage"></section>
 <section id="archive"></section>
 </div>
 <aside id="detail" aria-label="Selected chat"></aside>
@@ -711,15 +693,6 @@ export function renderDashboard(
   <div class="twrap" id="twrap">
     <div class="trail" id="tree-rail"></div>
     <div class="tdetail" id="tree-detail"></div>
-  </div>
-</section>
-<section id="tickets-section">
-  <div class="tkx">
-    <p class="tkhint" id="tkhint"></p>
-    <div class="tkmain">
-      <section class="tkboard" id="tkboard" aria-label="Tickets by stage"></section>
-      <aside class="panel" id="tkpanel" aria-label="Selected ticket"></aside>
-    </div>
   </div>
 </section>
 <div id="composer" hidden>
@@ -789,7 +762,7 @@ function scoped(){return tab==='saved'?savedBase():boardBase();}
 function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%360;return 'background:hsl('+h+',42%,20%);color:hsl('+h+',72%,76%)';}
 // Segmented Board / Saved switch. Counts are totals (independent of the live
 // filter) so they don't jump around as you toggle Live-only.
-function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['tickets','⊞ Tickets',TK.fetchedAt?ticketCount():'…',' tktab'],['em','⚙ EM',EM.findings.length,' emtab'],['trees','⑂ Trees',treeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
+function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['tickets','⊞ Tickets',kbCount(),' tktab'],['em','⚙ EM',EM.findings.length,' emtab'],['trees','⑂ Trees',treeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
 // Live-only toggle is a Board concept; hide it on the Saved tab (saved chats are
 // usually closed, so filtering them by "live" is meaningless).
 // The EM tab shows the ledger, not chats, so every chat-scoped control goes away
@@ -797,23 +770,22 @@ function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns
 // The EM and Trees tabs both show something other than chats, so every
 // chat-scoped control goes away with either — leaving the project/sort pickers
 // visible would imply they filter it.
-function syncControls(){const em=tab==='em';const tr=tab==='trees';const tk=tab==='tickets';const other=em||tr||tk;
+function syncControls(){const em=tab==='em';const tr=tab==='trees';const tk=tab==='tickets';const other=em||tr;
   $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
   $('.controls').style.display=other?'none':'';
   $('#row3').style.display=other?'none':'';
   $('#deep').style.display=other?'none':'';
-  $('#list').style.display=other?'none':'';
-  $('#archive').style.display=other?'none':'';
+  // Tickets is the Board's own chats and filters, drawn as columns in place of the list.
+  $('#list').style.display=other||tk?'none':'';
+  $('#archive').style.display=other||tk?'none':'';
+  $('#kanban').style.display=tk?'grid':'none';
   $('#boardwrap').style.display=other?'none':'';
   // 'block', NOT '': the stylesheet defaults #em-section to display:none, and
   // clearing the inline style just lets that rule win again — the tab renders
   // its rows into a section that is still hidden.
   $('#em-section').style.display=em?'block':'none';
   $('#trees-section').style.display=tr?'block':'none';
-  // The Tickets tab keeps its own header controls (search / repo / sort / chips)
-  // in the sticky header, where the board's would otherwise be.
-  $('#tickets-section').style.display=tk?'block':'none';
-  $('#tkbar').style.display=tk?'block':'none';}
+}
 function liveToggle(){const board=DATA.chats.filter(c=>!isSaved(c));const nLive=board.filter(isLive).length;const nAll=board.length;const t=$('#livetoggle');t.innerHTML='<button data-live="1" class="'+(liveOnly?'on':'')+'" title="only chats running in a pane">● Live '+nLive+'</button><button data-live="0" class="'+(liveOnly?'':'on')+'" title="every chat on the board">All '+nAll+'</button>';t.querySelectorAll('button').forEach(b=>b.onclick=()=>{liveOnly=b.dataset.live==='1';liveToggle();chips();render();});}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 // When someone last spoke in the chat — a prompt or a reply. last_active_at is
@@ -824,13 +796,13 @@ function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 function fresh(c){return c.last_turn_at||c.last_active_at;}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,drafts:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;ct.drafts+=draftsFor(c).length;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['drafts','✉ Drafts','#e8a6e0'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);if(stateFilter==='drafts')return hasDrafts(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}if(tab==='tickets'){renderTickets();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
+function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(fresh(b)-fresh(a));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):scoped()).filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));// Pure recency: no live-first or working-first tier. A working chat is writing
 // replies now, so it is at the top anyway; a live chat nobody has spoken to in a
 // day belongs below a finished one from an hour ago.
-rows.sort((a,b)=>sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b));const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=shipStrip()+((ghostCards()+rows.map(card).join(''))||empty);list.querySelectorAll('.card').forEach(wireCard);wireShips(list);renderDetail();}
+rows.sort((a,b)=>sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b));const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderDetail();return;}list.innerHTML=shipStrip()+((ghostCards()+rows.map(card).join(''))||empty);list.querySelectorAll('.card').forEach(wireCard);wireShips(list);renderDetail();}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
 function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;
@@ -946,7 +918,7 @@ function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;var u='
 function renderFoot(d){const f=$('#pfoot');if(d.live){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live '+agentLabel(d.agent)+' pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else{f.innerHTML='<div class="stalefoot">This chat isn\\'t running — <b>'+esc(resumeLabel(d.agent).slice(2))+'</b> from its card to send messages.</div>';}}
 function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.value.trim();if(!t)return;ta.value='';fetch('/send?session='+encodeURIComponent(panelSid)+'&agent='+encodeURIComponent(panelAgent)+'&text='+encodeURIComponent(t),{method:'POST'}).then(r=>r.json()).then(()=>{setTimeout(()=>loadTranscript(true),500);setTimeout(()=>loadTranscript(true),2500);}).catch(()=>{});}
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
-document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(tab==='tickets'){if(tkSel){tkSel=null;renderTickets();}}else if(sel)deselect();});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
 var lastRenderAt=0;
 function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',')+'##'+pipeSig()+'##'+shipSig();}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
@@ -1234,182 +1206,50 @@ function wireCleanup(det){
         treeMsg=bits.join(' · ')||'Nothing removed';
         treeLoaded=false;renderTrees();refreshTrees(true);}).catch(function(){treeMsg='Removal failed';renderTrees();});};});}
 // ---- Tickets -----------------------------------------------------------------
-// GitHub issues in stage columns, with the chats and PRs working them hanging
-// off each card. Everything renders from TK, fetched when the tab opens and
-// every 30s while it is the active tab — never on the 5s board poll. The
-// matching (issue ↔ chat ↔ PR) is the server's; the client filters, sorts and draws.
-var TK={repos:[],dirs:{},tickets:[],backlog:{},fetchedAt:0,refreshing:false,error:''};
-var tkLoaded=false,tkBusy=false,tkSyncT=null,tkSel=null,tkChip='',tkSeg='open',tkRail={proposed:false,done:false},tkRepoSig='',tkTailsAt=0;
-var TK_STAGE={proposed:'Proposed',ready:'Ready',progress:'In progress',review:'In review',shipping:'Shipping',done:'Done'};
-// Columns: the two waiting columns lead, then the stages. A card in a waiting column still carries its stage.
-var TK_COL=Object.assign({needsYou:'Needs you',blocked:'Blocked'},TK_STAGE);
-var TK_MID=['needsYou','blocked','ready','progress','review','shipping'];
-function tkColOf(t){return t.column||t.stage;}
-var TK_TONE={failing:'var(--error)',needsYou:'var(--waiting_on_user)',working:'var(--done)',stale:'var(--warning)',none:'var(--pending)'};
-var TK_CLS={failing:' bad',needsYou:' you',working:' work',stale:' stale',none:''};
-// The pane's stage glyph: ~ working, ● your turn, ◦ idle, × ended.
-var TK_GLYPH={working:['w','~'],your_turn:['y','●'],idle:['i','◦'],ended:['r','×']};
-function ticketCount(){return TK.tickets.filter(function(t){return t.stage!=='done';}).length;}
-function tkKey(t){return t.repo+'#'+t.number;}
-function tkByKey(k){return TK.tickets.find(function(t){return tkKey(t)===k;})||null;}
-function tkShort(k){return k.slice(k.indexOf(':')+1,k.indexOf(':')+9);}
-function tkName(c){return c.name||(c.otto?'otto':tkShort(c.key));}
+// The board's own chats in columns: the same filtered set the Board tab lists
+// (search, project, state chips, Live / All), laid out by whose move it is and
+// where the work is. Nothing here fetches; it renders from DATA on every board
+// render, and a click selects the chat into the shared detail panel.
+// Columns: Needs you (the chat is waiting on Will), Blocked (the pane classifier
+// says it is waiting on someone else), then the classifier's stage, and Done
+// for a chat no longer running in a pane (only on All).
+var KB_COLS=['needsYou','blocked','discovery','implementation','shipping','done'];
+var KB_NAME={needsYou:'Needs you',blocked:'Blocked',discovery:'Discovery',implementation:'Implementation',shipping:'Shipping',done:'Done'};
+var KB_EMPTY={needsYou:'Nothing is waiting on you.',blocked:'Nothing is waiting on anyone else.',done:'No ended chats in view.'};
+function kbCol(c){var L=DATA.live[chatKey(c)];if(!L)return 'done';var s=L.stage||'';var stage=(s==='discovery'||s==='implementation'||s==='shipping')?s:'implementation';
+  if(L.working)return stage;
+  if(s==='blocked')return 'blocked';
+  if(st(c)==='waiting_on_user'||s==='thread')return 'needsYou';
+  return stage;}
+function kbCount(){return boardBase().filter(function(c){var k=kbCol(c);return k==='needsYou'||k==='blocked';}).length;}
+function kbCard(c){var k=chatKey(c),L=DATA.live[k],col=kbCol(c),W=isWorking(c);var ago=agoShort(fresh(c));
+  var g=W?['w','~','working '+ago]:col==='needsYou'?['y','●','your turn '+ago]:col==='blocked'?['b','‖','waiting on someone '+ago]:L?['i','◦','idle '+ago]:['r','×','ended '+rel(fresh(c))];
+  var tail=(col==='needsYou'||col==='blocked')?TAILS[k]:'';
+  var asked=tail?'<div><span class="'+(col==='blocked'?'blk':'need')+'" title="'+esc(tail)+'">'+(col==='blocked'?'last: ':'asked: ')+esc(tail.length>90?tail.slice(0,90)+'…':tail)+'</span></div>':'';
+  var p=pipeOf(c);var prk=(DATA.chatPr||{})[k]||'';
+  var pr=prk?'<div class="pr"><span class="n">PR #'+esc(prk.split('#')[1]||'')+'</span>'+(p?dotsHtml(p):'')+'</div>':'';
+  var cls=W?' work':col==='needsYou'?' you':col==='blocked'?' blkd':st(c)==='error'?' bad':'';
+  var on=sel&&sel.sid===c.session_id&&sel.agent===c.agent;
+  return '<button class="tk'+cls+(on?' sel':'')+'" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'">'+
+    '<div class="tkh"><span class="lbl" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+(L&&L.name?'<span class="num">'+esc(L.name)+'</span>':'')+'<span class="age">'+esc(ago)+'</span></div>'+
+    '<div class="ttl">'+esc(disp(c))+'</div>'+
+    '<div class="who"><span class="g '+g[0]+'">'+g[1]+'</span><span class="pn">'+esc(g[2])+(L?' · '+esc(L.tmux_session)+':'+esc(L.pane_index):'')+'</span></div>'+asked+pr+'</button>';}
+function kbTails(rows){var keys=rows.filter(function(c){var k=kbCol(c);return k==='needsYou'||k==='blocked';}).map(chatKey);
+  if(!keys.length)return;if(Date.now()-tailsAt<15000&&!keys.some(function(k){return !(k in TAILS);}))return;tailsAt=Date.now();
+  fetch('/api/tails?keys='+encodeURIComponent(keys.slice(0,40).join(','))).then(function(r){return r.json();}).then(function(j){if(j.ok){Object.assign(TAILS,j.tails);if(tab==='tickets')renderKanban(KB_ROWS);}}).catch(function(){});}
+var KB_ROWS=[];
 function agoShort(ms){if(!ms)return '';var r=rel(ms);return r==='just now'?'now':r.replace(' ago','');}
-function fmtDay(ms){return ms?new Date(ms).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'';}
-// peek=1 while the tab is not up: warms the tab count without telling the server someone is looking.
-// While the server is still syncing with GitHub, poll every 3s so the board fills the moment it lands.
-function refreshTickets(){if(tkBusy)return;tkBusy=true;clearTimeout(tkSyncT);
-  fetch('/api/tickets?repo=all'+(tab==='tickets'?'':'&peek=1')).then(function(r){return r.json();}).then(function(d){
-    TK=d;tkLoaded=true;tkBusy=false;
-    if(tkSel&&!tkByKey(tkSel))tkSel=null;
-    renderTabs();if(tab==='tickets')renderTickets();
-    if(d.refreshing)tkSyncT=setTimeout(refreshTickets,3000);
-  }).catch(function(){tkBusy=false;if(tab==='tickets')renderTickets();});}
-function tkPrimaryChat(t){var order={your_turn:0,working:1,idle:2,ended:3};
-  return t.chats.slice().sort(function(a,b){return (order[a.state]-order[b.state])||(b.lastActive-a.lastActive);})[0]||null;}
-// The PR the card speaks for: the newest open one, else the newest merged one.
-function tkPrimaryPr(t){var open=t.prs.filter(function(p){return p.state==='open';}).sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);});
-  if(open.length)return open[0];var m=t.prs.filter(function(p){return p.state==='merged';}).sort(function(a,b){return (b.mergedAt||0)-(a.mergedAt||0);});return m[0]||t.prs[0]||null;}
-function tkMatch(t){var repo=$('#tkrepo').value;if(repo!=='all'&&t.repo!==repo)return false;
-  if(tkChip==='needsYou'&&!t.needsYou)return false;if(tkChip==='blocked'&&!t.blocked)return false;if(tkChip==='working'&&!t.working)return false;if(tkChip==='failing'&&!t.failing)return false;
-  if(tkChip==='stale'&&!t.stale)return false;if(tkChip==='otto'&&!t.otto)return false;if(tkChip==='nochat'&&t.chats.length)return false;
-  var q=$('#tkq').value.trim().toLowerCase();if(!q)return true;
-  var hay=('#'+t.number+' '+t.title+' '+t.chats.map(function(c){return tkName(c)+' '+(c.title||'');}).join(' ')+' '+t.prs.map(function(p){return '#'+p.number+' '+p.title;}).join(' ')).toLowerCase();
-  return hay.indexOf(q)>=0;}
-// "needs you first" is the server's order; the other two re-sort by time in stage.
-function tkSorted(list){var m=$('#tksort').value;if(m==='needs')return list;
-  return list.slice().sort(function(a,b){return m==='longest'?(a.stageSince-b.stageSince):(b.stageSince-a.stageSince);});}
-function tkLabel(l){var cls=l==='bug'?' bug':(l==='enhancement'||l==='feature')?' feat':l.indexOf('agent:')===0?' otto':l==='auto-triage'?' auto':'';return '<span class="lbl'+cls+'">'+esc(l)+'</span>';}
-function tkLabels(t,cap){var ls=t.labels.slice().sort(function(a,b){return (a.indexOf('agent:')===0?0:1)-(b.indexOf('agent:')===0?0:1);}).slice(0,cap).map(tkLabel).join('');
-  // A repo tint only earns its place when more than one repo is on the board.
-  if(TK.repos.length>1)ls+='<span class="lbl" style="'+pcolor(t.repo.split('/').pop())+'">'+esc(t.repo.split('/').pop())+'</span>';return ls;}
-function tkStep(p,k){var s=p&&p.pipeline?p.pipeline.steps.find(function(x){return x.key===k;}):null;return s||null;}
-function tkDots(p){if(!p||!p.pipeline)return '';return dotsHtml({dots:p.pipeline.steps.map(function(s){return {label:s.label,state:s.state,detail:s.detail};})});}
-// What the PR is waiting on, in a few words — the same reading the board's dots give.
-function tkPrPhrase(p){if(p.state==='closed')return 'closed';if(!p.pipeline)return p.state==='merged'?'merged':p.isDraft?'draft':'fetching…';
-  var st=function(k){var s=tkStep(p,k);return s?s.state:'';};var sd=function(k){var s=tkStep(p,k);return s&&s.detail||'';};
-  if(p.state==='merged'){var d=st('deploy');return d==='pass'?'deployed':d==='running'?'deploying':d==='fail'?'deploy failed':d==='skipped'?'merged, no deploy':'deploy queued';}
-  if(st('checks')==='fail')return sd('checks')||'checks failed';
-  if(st('review')==='fail')return sd('review')||'changes requested';
-  if(st('checks')==='running')return 'checks running';
-  if(st('review')==='running')return 'reviewing';
-  if(st('review')==='pass')return 'approve to merge';
-  return p.isDraft?'draft':(sd('review')||'waiting for review');}
-function tkChatWhen(c){return c.state==='working'?'working '+agoShort(c.since||c.lastActive):c.waitingOnOthers&&c.state!=='ended'?'waiting on someone '+agoShort(c.lastActive):c.state==='your_turn'?'your turn '+agoShort(c.lastActive):c.state==='idle'?'idle '+agoShort(c.lastActive):'ended '+rel(c.lastActive);}
-function tkWho(t){var c=tkPrimaryChat(t),p=tkPrimaryPr(t);
-  if(c){var g=c.waitingOnOthers&&c.state!=='working'&&c.state!=='ended'?['b','‖']:TK_GLYPH[c.state];var when=tkChatWhen(c);
-    if(c.shipping)when='shipping now';else if(c.shipNext==='staged')when='staged, rides next /ship';else if(c.shipNext)when+=' · '+(c.shipNext==='both'?'partly staged':'unstaged');
-    var extra=t.chats.length>1?' +'+(t.chats.length-1):'';
-    return '<div class="who"><span class="g '+g[0]+'">'+g[1]+'</span>'+esc(tkName(c))+extra+' <span class="pn">· '+esc(when)+'</span></div>';}
-  if(p&&p.state!=='closed'){var ph=tkPrPhrase(p);var s=t.needsYou?'your_turn':t.working?'working':'idle';var g2=TK_GLYPH[s];var rv=tkStep(p,'review');
-    var line=p.state==='merged'?'merged · '+ph:(t.needsYou&&rv&&rv.state==='pass'?'review green · needs your approval':t.labels.indexOf('agent:blocked')>=0?'agent:blocked · '+ph:ph);
-    return '<div class="who"><span class="g '+g2[0]+'">'+g2[1]+'</span><span class="pn">'+esc(line)+'</span></div>';}
-  var pn='no chat yet';if(t.labels.indexOf('agent:ready')>=0)pn+=' · Otto eligible';
-  var days=Math.floor((Date.now()-t.stageSince)/86400000);if(days>=2&&t.stage!=='done')pn+=' · '+days+'d in '+TK_STAGE[t.stage];
-  return '<div class="who"><span class="g i">◦</span><span class="pn">'+esc(pn)+'</span></div>';}
-function tkCard(t){var c=tkPrimaryChat(t),p=tkPrimaryPr(t);var k=tkKey(t);var col=tkColOf(t);
-  var tail=c&&c.state==='your_turn'?TAILS[c.key]:'';
-  var asked=tail?'<div><span class="'+(c.waitingOnOthers?'blk':'need')+'" title="'+esc(tail)+'">'+(c.waitingOnOthers?'last: ':'asked: ')+esc(tail.length>90?tail.slice(0,90)+'…':tail)+'</span></div>':'';
-  // Blocked says on whom; a Needs-you card that is ALSO blocked keeps the note, so nothing is hidden by the precedence.
-  var on=t.blockedOn?'<div><span class="blk" title="'+esc(t.blockedOn)+'">waiting on '+esc(t.blockedOn)+'</span></div>':'';
-  // In a waiting column the stage is no longer the column, so it rides on the card.
-  var stg=col!==t.stage?'<span class="lbl stg">'+esc(TK_STAGE[t.stage])+'</span>':'';
-  return '<button class="tk'+TK_CLS[t.tone]+(tkSel===k?' sel':'')+'" data-k="'+esc(k)+'"'+(tkSel===k?' aria-current="true"':'')+'>'+
-    '<div class="tkh"><span class="num">#'+t.number+'</span>'+stg+tkLabels(t,3)+'<span class="age" title="in '+esc(TK_STAGE[t.stage])+' since '+esc(fmtDay(t.stageSince))+'">'+agoShort(t.stageSince)+'</span></div>'+
-    '<div class="ttl">'+esc(t.title)+'</div>'+tkWho(t)+on+asked+
-    (p?'<div class="pr"><span class="n">PR #'+p.number+'</span>'+tkDots(p)+'<span>'+esc(tkPrPhrase(p))+'</span></div>':'')+'</button>';}
-// The "asked: …" strip is the same tail the board's Waiting-on-you list shows, from /api/tails.
-function tkTails(list){var keys=[];list.forEach(function(t){t.chats.forEach(function(c){if(c.state==='your_turn'&&keys.indexOf(c.key)<0)keys.push(c.key);});});
-  if(!keys.length)return;if(Date.now()-tkTailsAt<15000&&!keys.some(function(k){return !(k in TAILS);}))return;tkTailsAt=Date.now();
-  fetch('/api/tails?keys='+encodeURIComponent(keys.slice(0,40).join(','))).then(function(r){return r.json();}).then(function(j){if(j.ok){Object.assign(TAILS,j.tails);if(tab==='tickets')renderTickets();}}).catch(function(){});}
-function tkCol(stage,list,expanded){var nm=TK_COL[stage]+(stage==='done'?' 7d':'');var wait=stage==='needsYou'||stage==='blocked';
-  var hd='<div class="colhd"><span class="colnm">'+nm+'</span><span class="colct">'+list.length+(expanded?'<button data-rail="'+stage+'" aria-label="Collapse '+nm+'">'+(stage==='proposed'?'‹':'›')+'</button>':'')+'</span></div>';
-  var none=stage==='done'?'Nothing closed this week.':stage==='needsYou'?'Nothing is waiting on you.':stage==='blocked'?'Nothing is waiting on anyone else.':'Nothing here.';
-  return '<div class="col c-'+stage+(wait?' wait':'')+'">'+hd+(list.map(tkCard).join('')||'<div class="tkempty">'+none+'</div>')+'</div>';}
-function tkRailHtml(stage,n){var nm=stage==='proposed'?'Proposed':'Done 7d';
-  return '<div class="rail" data-rail="'+stage+'" aria-label="'+nm+', collapsed"><button aria-label="Expand '+nm+'">'+(stage==='proposed'?'›':'‹')+'</button><span class="ct">'+n+'</span><span class="nm">'+nm+'</span></div>';}
-function tkChips(){var ct={needsYou:0,blocked:0,working:0,failing:0,stale:0,otto:0,nochat:0};
-  TK.tickets.forEach(function(t){if(t.stage==='done')return;if(t.needsYou)ct.needsYou++;if(t.blocked)ct.blocked++;if(t.working)ct.working++;if(t.failing)ct.failing++;if(t.stale)ct.stale++;if(t.otto)ct.otto++;if(!t.chats.length)ct.nochat++;});
-  var defs=[['needsYou','Needs you','var(--waiting_on_user)'],['blocked','Blocked','#ffaf5f'],['working','Working','var(--done)'],['failing','Failing','var(--error)'],['stale','Stale 3d+','var(--warning)'],['otto','Otto',''],['nochat','No chat yet','']];
-  $('#tkchips').innerHTML=defs.map(function(d){return '<button class="chip'+(tkChip===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</button>';}).join('');
-  $('#tkchips').querySelectorAll('.chip').forEach(function(el){el.onclick=function(){tkChip=tkChip===el.dataset.f?'':el.dataset.f;renderTickets();};});}
-function tkSegHtml(){var open=ticketCount(),done=TK.tickets.length-open;
-  $('#tkseg').innerHTML='<button data-s="open" class="'+(tkSeg==='open'?'on':'')+'">Open '+open+'</button><button data-s="closed" class="'+(tkSeg==='closed'?'on':'')+'">Closed this week '+done+'</button>';
-  $('#tkseg').querySelectorAll('button').forEach(function(b){b.onclick=function(){tkSeg=b.dataset.s;renderTickets();};});}
-// Rebuilt only when the repo set changes, so the 30s poll never resets the selection.
-function tkRepoOptions(){var sig=TK.repos.join(',');if(sig===tkRepoSig)return;tkRepoSig=sig;var sel=$('#tkrepo');var cur=sel.value;
-  sel.innerHTML='<option value="all">all repos</option>'+TK.repos.map(function(r){return '<option value="'+esc(r)+'">'+esc(r.split('/').pop())+'</option>';}).join('');
-  sel.value=TK.repos.indexOf(cur)>=0?cur:'all';}
-function tkHint(open,done){var repo=$('#tkrepo').value;var back=0;Object.keys(TK.backlog||{}).forEach(function(r){if(repo==='all'||r===repo)back+=TK.backlog[r];});
-  var slug=repo!=='all'?repo:(TK.repos.length===1?TK.repos[0]:'');var more=back?(slug?'<a href="https://github.com/'+esc(slug)+'/issues" target="_blank" rel="noopener">'+back+' more in GitHub</a>':back+' more in GitHub'):'';
-  return open+' open · '+done+' closed this week'+(more?' · '+more:'')+(TK.refreshing?' · syncing…':TK.fetchedAt?' · synced '+rel(TK.fetchedAt):'')+(TK.error?' · <span style="color:#e8b84b">'+esc(TK.error)+'</span>':'');}
-function renderTickets(){var box=$('#tkboard');
-  // Lazy first load, same as Trees: the listings are the server's, fetched when the tab is opened.
-  if(!tkLoaded&&!tkBusy)refreshTickets();
-  tkRepoOptions();tkChips();tkSegHtml();
-  if(!tkLoaded){$('#tkhint').textContent=tkBusy?'Loading tickets…':'';box.innerHTML='';$('#tkpanel').innerHTML='<div class="tkempty">'+(tkBusy?'Loading…':'Nothing loaded yet.')+'</div>';return;}
-  // Nothing has come back from GitHub yet: one syncing line, not six empty columns.
-  if(!TK.fetchedAt){var m=TK.error?esc(TK.error):'Syncing with GitHub…';$('#tkhint').innerHTML=m;box.innerHTML='';$('#tkpanel').innerHTML='<div class="tkempty">'+m+'</div>';return;}
-  var all=TK.tickets.filter(tkMatch);var by={};
-  ['proposed'].concat(TK_MID,['done']).forEach(function(s){by[s]=tkSorted(all.filter(function(t){return tkColOf(t)===s;}));});
-  $('#tkhint').innerHTML=tkHint(all.length-by.done.length,by.done.length);
-  var h='';
-  if(tkSeg==='closed'){box.classList.add('closed');box.style.gridTemplateColumns='';h=tkCol('done',by.done,false);}
-  else{box.classList.remove('closed');
-    box.style.gridTemplateColumns=(tkRail.proposed?'minmax(200px,1fr)':'44px')+' repeat('+TK_MID.length+',minmax(200px,1fr)) '+(tkRail.done?'minmax(200px,1fr)':'44px');
-    h=(tkRail.proposed?tkCol('proposed',by.proposed,true):tkRailHtml('proposed',by.proposed.length))
-      +TK_MID.map(function(s){return tkCol(s,by[s],false);}).join('')
-      +(tkRail.done?tkCol('done',by.done,true):tkRailHtml('done',by.done.length));}
-  box.innerHTML=h;
-  box.querySelectorAll('[data-rail]').forEach(function(el){el.onclick=function(e){e.stopPropagation();tkRail[el.dataset.rail]=!tkRail[el.dataset.rail];renderTickets();};});
-  box.querySelectorAll('.tk[data-k]').forEach(function(el){el.onclick=function(){tkSel=el.dataset.k;renderTickets();};});
-  tkTails(all);renderTicketPanel();}
-function tkChatRow(c){var g=TK_GLYPH[c.state];var i=c.key.indexOf(':');var agent=c.key.slice(0,i),sid=c.key.slice(i+1);
-  var btn=c.state==='ended'
-    ?'<button class="sbtn launchbtn" data-sid="'+esc(sid)+'" data-agent="'+esc(agent)+'" data-action="resume">Resume</button>'
-    :'<button class="sbtn pri" data-goto="'+esc(c.key)+'">Go to pane</button>';
-  var title=c.title?(c.title.length>70?c.title.slice(0,70)+'…':c.title):'';
-  return '<div class="row"><span class="g '+g[0]+'" style="font-weight:700">'+g[1]+'</span><div class="grow"><div class="t">'+esc(tkName(c))+(c.loc?' <span class="m2">· '+esc(c.loc)+'</span>':'')+'</div>'+
-    '<div class="m2">'+esc(tkChatWhen(c))+(title?' · '+esc(title):'')+'</div></div>'+btn+'</div>';}
-// Checks / Review / Merge / Deploy from the pipeline's top-level steps.
-function tkPrRows(p){if(!p)return '';var rv=tkStep(p,'review');
-  var rows=[['checks','Checks'],['review','Review'],['merged','Merge'],['deploy','Deploy']].map(function(r,i){var s=tkStep(p,r[0]);
-    var cls=s?(s.state==='pass'?' ok':s.state==='running'?' run':s.state==='fail'?' no':''):'';
-    var m2=!s?'fetching…':(s.detail||(s.state==='waiting'?(r[0]==='merged'?(rv&&rv.state==='pass'?'waiting on you':'waiting on review'):'not started'):s.state))+(stepDur(s)?' · '+stepDur(s):'');
-    return '<div class="row"><span class="s'+cls+'"></span><div class="grow"><div class="t">'+r[1]+'</div><div class="m2">'+esc(m2)+'</div></div>'+(i===0?'<a class="sbtn" href="'+esc(p.url)+'" target="_blank" rel="noopener">Open PR</a>':'')+'</div>';}).join('');
-  return '<div class="sec"><div class="sech">PR #'+p.number+(p.title?' · '+esc(p.title):'')+'</div>'+rows+'</div>';}
-// Newest first: pipeline transitions, PR open/merge, chat start/stop, the close.
-function tkEvents(t){var ev=[];
-  t.prs.forEach(function(p){(p.pipeline?p.pipeline.events:[]).forEach(function(e){ev.push({at:e.at,text:'PR #'+p.number+': '+e.text,tone:e.tone});});
-    if(p.mergedAt)ev.push({at:p.mergedAt,text:'PR #'+p.number+' merged',tone:'good'});if(p.createdAt)ev.push({at:p.createdAt,text:'PR #'+p.number+' opened',tone:'info'});});
-  t.chats.forEach(function(c){var n=tkName(c);if(c.since)ev.push({at:c.since,text:n+' started',tone:'info'});
-    if(c.state==='ended')ev.push({at:c.lastActive,text:n+' ended',tone:'info'});else if(c.state==='your_turn')ev.push({at:c.lastActive,text:n+' is waiting on you',tone:'info'});});
-  if(t.closedAt)ev.push({at:t.closedAt,text:'issue closed',tone:'good'});
-  return ev.filter(function(e){return e.at;}).sort(function(a,b){return b.at-a.at;}).slice(0,6);}
-function renderTicketPanel(){var box=$('#tkpanel');var t=tkSel?tkByKey(tkSel):null;
-  if(box.querySelector('.picker:not(:empty)'))return; // a lane picker is open: don't wipe it under the click
-  if(!t){var need=TK.tickets.filter(function(x){return tkColOf(x)==='needsYou';}),blk=TK.tickets.filter(function(x){return tkColOf(x)==='blocked';});
-    var pick=function(x,g,cls,sub){return '<div class="row pick" data-k="'+esc(tkKey(x))+'"><span class="g '+cls+'" style="font-weight:700">'+g+'</span><div class="grow"><div class="t">#'+x.number+' '+esc(x.title)+'</div><div class="m2">'+esc(sub)+'</div></div></div>';};
-    box.innerHTML='<div class="sec"><div class="sech">Needs you · '+need.length+'</div>'+(need.length?need.map(function(x){return pick(x,'●','y',TK_STAGE[x.stage]+' · '+agoShort(x.stageSince));}).join('')
-      :'<div class="tkempty">Nothing is waiting on you. Click a ticket to see its details.</div>')+'</div>'
-      +'<div class="sec"><div class="sech">Blocked on others · '+blk.length+'</div>'+(blk.length?blk.map(function(x){return pick(x,'‖','b',TK_STAGE[x.stage]+' · '+(x.blockedOn||'')+' · '+agoShort(x.stageSince));}).join('')
-      :'<div class="tkempty">Nothing is waiting on anyone else.</div>')+'</div>';
-    box.querySelectorAll('[data-k]').forEach(function(el){el.onclick=function(){tkSel=el.dataset.k;renderTickets();};});return;}
-  var p=tkPrimaryPr(t),liveChat=t.chats.filter(function(x){return x.state!=='ended';})[0]||null;
-  var head='<div class="ph"><div class="tkh"><span class="num">#'+t.number+'</span>'+tkLabels(t,4)+'<span class="lbl">'+esc(t.repo.split('/').pop())+'</span><span class="age">opened '+esc(fmtDay(t.createdAt))+(t.author?' · '+esc(t.author):'')+'</span></div>'+
-    '<h2><a href="'+esc(t.url)+'" target="_blank" rel="noopener">'+esc(t.title)+'</a></h2>'+
-    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="pill"><span class="dot" style="background:'+TK_TONE[t.tone]+'"></span>'+TK_STAGE[t.stage]+' · '+agoShort(t.stageSince)+'</span>'+(t.blockedOn?'<span class="blk">waiting on '+esc(t.blockedOn)+'</span>':'')+'<span class="meta">'+agoShort(t.createdAt)+' since opened · moved '+rel(t.stageSince)+'</span></div></div>';
-  var hist='<div class="sec"><div class="sech">Stage history</div><div class="tl">'+t.history.map(function(h){var d=(h.at?fmtDay(h.at):'')+(h.at&&h.detail?' · ':'')+h.detail;
-    return '<div class="tls'+(h.now?' now':'')+(!h.done&&!h.now?' todo':'')+'"><span class="m"></span><span class="w">'+TK_STAGE[h.stage]+'</span><span class="d">'+esc(d)+'</span></div>';}).join('')+'</div></div>';
-  var who='<div class="sec" id="tkwork"><div class="sech">Working it</div>'+(t.chats.length?t.chats.slice().sort(function(a,b){return b.lastActive-a.lastActive;}).map(tkChatRow).join(''):'<div class="tkempty">No chat has picked this up.</div>')+'<div class="picker"></div></div>';
-  var ev=tkEvents(t);var latest=ev.length?'<div class="sec"><div class="sech">Latest</div>'+ev.map(function(e){return '<div class="ev'+(e.tone==='good'?' good':e.tone==='bad'?' bad':'')+'"><span class="at">'+agoShort(e.at)+'</span><span>'+esc(e.text)+'</span></div>';}).join('')+'</div>':'';
-  var acts='<div class="acts">'+(liveChat?'<button class="sbtn pri" data-goto="'+esc(liveChat.key)+'">Go to pane</button>':'')+
-    '<a class="sbtn" href="'+esc(t.url)+'" target="_blank" rel="noopener">Open issue</a>'+(p?'<a class="sbtn" href="'+esc(p.url)+'" target="_blank" rel="noopener">Open PR</a>':'')+
-    '<button class="sbtn" data-thread="1">New thread on #'+t.number+'</button></div>';
-  box.innerHTML=head+hist+who+tkPrRows(p)+latest+acts;
-  box.querySelectorAll('[data-goto]').forEach(function(b){b.onclick=function(){var k=b.dataset.goto;var i=k.indexOf(':');jump(k.slice(i+1),k.slice(0,i),box);};});
-  box.querySelectorAll('.launchbtn').forEach(function(b){b.onclick=function(){openPicker(b.dataset.sid,b.dataset.agent,$('#tkwork'),'resume','',b.dataset.agent);};});
-  var nt=box.querySelector('[data-thread]');if(nt)nt.onclick=function(){openComposer({prompt:'Work on '+t.repo+'#'+t.number+': '+t.title+'\\n'+t.url,project:TK.dirs[t.repo]||''});};}
+function renderKanban(rows){KB_ROWS=rows;var box=$('#kanban');var by={};KB_COLS.forEach(function(k){by[k]=[];});
+  rows.forEach(function(c){by[kbCol(c)].push(c);});
+  // Longest-waiting first in the waiting columns; most recent first elsewhere.
+  ['needsYou','blocked'].forEach(function(k){by[k].sort(function(a,b){return fresh(a)-fresh(b);});});
+  var cols=KB_COLS.filter(function(k){return k!=='done'||!liveOnly;});
+  box.style.gridTemplateColumns='repeat('+cols.length+',minmax(200px,1fr))';
+  box.innerHTML=cols.map(function(k){var wait=k==='needsYou'||k==='blocked';
+    return '<div class="col c-'+k+(wait?' wait':'')+'"><div class="colhd"><span class="colnm">'+KB_NAME[k]+'</span><span class="colct">'+by[k].length+'</span></div>'+
+      (by[k].map(kbCard).join('')||'<div class="tkempty">'+(KB_EMPTY[k]||'Nothing here.')+'</div>')+'</div>';}).join('');
+  box.querySelectorAll('.tk[data-sid]').forEach(function(el){el.onclick=function(){selectChat(el.dataset.sid,el.dataset.agent);};});
+  kbTails(rows);}
 // ---- Detail panel ------------------------------------------------------------
 // Clicking a card selects it and fills the sticky right column. Everything cheap
 // renders from DATA straight away; the expensive half (git, gh, transcript scan)
@@ -1418,14 +1258,14 @@ function renderTicketPanel(){var box=$('#tkpanel');var t=tkSel?tkByKey(tkSel):nu
 // waiting on you.
 var sel=null, DETAIL=null, detailTimer=null, detailRetry=null, lastOpen=false, TAILS={}, tailsAt=0;
 const STAGE_GLYPH={discovery:'?',implementation:'+',shipping:'^',thread:'~',blocked:'!'};
-function detailShown(){const d=$('#detail');return !!d&&getComputedStyle(d).display!=='none'&&tab!=='em'&&tab!=='trees'&&tab!=='tickets';}
+function detailShown(){const d=$('#detail');return !!d&&getComputedStyle(d).display!=='none'&&tab!=='em'&&tab!=='trees';}
 function selKey(){return sel?sel.agent+':'+sel.sid:'';}
 function selChat(){return sel?DATA.chats.find(c=>c.agent===sel.agent&&c.session_id===sel.sid)||null:null;}
 function isTurn(c){return st(c)==='waiting_on_user'&&!isWorking(c);}
 function selectChat(sid,agent){if(sel&&sel.sid===sid&&sel.agent===agent)return;sel={sid,agent};const sc=selChat();if(sc&&pipeEvent(sc)){ackPipe(sc);setTimeout(render,0);}DETAIL=null;lastOpen=false;
-  document.querySelectorAll('#list .card').forEach(el=>el.classList.toggle('sel',el.dataset.sid===sid&&el.dataset.agent===agent));
+  document.querySelectorAll('#list .card, #kanban .tk').forEach(el=>el.classList.toggle('sel',el.dataset.sid===sid&&el.dataset.agent===agent));
   renderDetail();loadDetail();clearInterval(detailTimer);detailTimer=setInterval(loadDetail,20000);}
-function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);document.querySelectorAll('#list .card.sel').forEach(el=>el.classList.remove('sel'));renderDetail();}
+function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);document.querySelectorAll('#list .card.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));renderDetail();}
 function loadDetail(){if(!sel)return;const k=selKey();fetch('/api/detail?session='+encodeURIComponent(sel.sid)+'&agent='+encodeURIComponent(sel.agent)).then(r=>r.json()).then(d=>{if(selKey()!==k)return;DETAIL=d;renderDetail();
   // gh runs in the background on the server; ask again shortly rather than wait on it.
   clearTimeout(detailRetry);if(d.pending)detailRetry=setTimeout(loadDetail,3000);}).catch(()=>{});}
@@ -1591,15 +1431,11 @@ $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);
 setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
-heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshEm();refreshTickets();
+heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshEm();
 $('#default-agent').onchange=updateDefaultAgent;
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(refresh,5000);
 setInterval(refreshEm,15000);
-// Tickets: the header controls re-draw from TK; only the repo set needs a refetch, and only while the tab is up.
-$('#tkq').addEventListener('input',()=>{if(tab==='tickets')renderTickets();});
-['#tkrepo','#tksort'].forEach(s=>$(s).addEventListener('change',()=>{if(tab==='tickets')renderTickets();}));
-setInterval(()=>{if(tab==='tickets')refreshTickets();},30000);
 </script>
 </body></html>`;
 }

@@ -215,7 +215,8 @@ export const LABEL_SYSTEM =
   'and awaiting the user, a decision or approval the user owes, conversational back-and-forth, or parked\n' +
   '- blocked: the next move belongs to SOMEONE OTHER than the user or the assistant: waiting on a reply ' +
   'from a named person, team, agency, client or vendor (an email, Slack message or PR review sent to them ' +
-  'and not yet answered), or on an external event the chat cannot hurry\n' +
+  'and not yet answered), or on an external event the chat cannot hurry. A last assistant message ' +
+  "ending in a line 'Waiting on <who>: ...' is blocked unless the user has replied since\n" +
   'Judge stage by the MOST RECENT activity, not the chat as a whole.';
 
 export function buildAsk(prompts: string[], act: Activity, priorTopic: string, idleMin: number, threads: string[] = []): string {

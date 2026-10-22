@@ -29,7 +29,6 @@ import { indexFreshLaunches, recentLaunches, startThread } from './newthread.ts'
 import { parseLane } from './compact.ts';
 import { cachedPipeline, dots, parsePrRef, pipelineKey, tickPipelines, wantPipeline, type Pipeline } from './pipeline.ts';
 import { refreshShipBoards, shipBoards, type ShipBoard } from './ships.ts';
-import { buildTickets, markTicketsRequested, refreshTickets, repoSlug, ticketsDue, ticketsSnapshot, DONE_WINDOW_MS, type ChatInput, type PrRow } from './tickets.ts';
 
 export const SERVER_PORT = 4317;
 
@@ -104,68 +103,6 @@ function shipDetail(chatKey: string): unknown {
     };
   }
   return null;
-}
-
-// ---- Tickets ----------------------------------------------------------------
-// Every board chat as the Tickets tab sees it: its repo (origin remote, cached
-// per directory), pane state, PR and ship role. tickets.ts does the matching.
-
-function chatState(v: ChatView, L: LiveLoc | undefined): ChatInput['state'] {
-  if (!L) return 'ended';
-  if (L.working) return 'working';
-  return !v.summary_pending && v.state === 'waiting_on_user' ? 'your_turn' : 'idle';
-}
-
-async function ticketChats(views: ChatView[], live: Record<string, LiveLoc>): Promise<{ chats: ChatInput[]; repos: string[]; dirs: Record<string, string> }> {
-  const dirs = [...new Set(views.map((v) => v.project_dir).filter(Boolean))];
-  const slugs = new Map(await Promise.all(dirs.map(async (d) => [d, await repoSlug(d)] as const)));
-  // One directory per repo for the composer: the shortest path is the primary checkout, not a worktree.
-  const repoDirs: Record<string, string> = {};
-  for (const d of dirs) {
-    const s = slugs.get(d);
-    if (s && (!repoDirs[s] || d.length < repoDirs[s].length)) repoDirs[s] = d;
-  }
-  // The pane classifier's stage, keyed by pane and trusted only for the session it labelled.
-  const paneStage = new Map(realTopicDeps.readPanes().map((r) => [r.pane_id, r] as const));
-  const chats: ChatInput[] = [];
-  for (const v of views) {
-    const repo = slugs.get(v.project_dir) || '';
-    if (!repo) continue;
-    const ck = agentSessionKey(v.agent, v.session_id);
-    const L = live[ck];
-    const ref = chatPrRef(v, ck);
-    const c: ChatInput = {
-      key: ck, repo, title: v.title, firstMessage: v.first_message.slice(0, 2000), state: chatState(v, L), lastActive: v.last_active_at,
-      ...(v.started_at ? { since: v.started_at } : {}),
-      ...(L?.name ? { name: L.name } : {}),
-      ...(L ? { loc: `${L.tmux_session}:${L.window_index}.${L.pane_index}` } : {}),
-      ...(ref ? { prKey: pipelineKey(ref.repo, ref.number) } : {}),
-    };
-    const ps = L ? paneStage.get(L.pane_id) : undefined;
-    if (ps?.stage === 'blocked' && ps.sid === v.session_id) c.waitingOnOthers = true;
-    for (const b of shipBoards()) {
-      if (b.slug !== repo) continue;
-      const role = b.byChat[ck];
-      if (role?.next) c.shipNext = role.next;
-      if (role?.ships.length) {
-        c.shipPrs = role.ships
-          .map((n) => b.shipped.find((s) => s.number === n))
-          .filter((s): s is NonNullable<typeof s> => !!s)
-          .map((s) => ({
-            repo: b.slug, number: s.number, title: s.title, url: s.url, isDraft: false, body: '', headRefName: s.branch,
-            state: s.state === 'MERGED' ? 'merged' : s.state === 'CLOSED' ? 'closed' : 'open',
-            ...(s.createdAt ? { createdAt: s.createdAt } : {}), ...(s.mergedAt ? { mergedAt: s.mergedAt } : {}),
-          }));
-      }
-      // In the ship in flight: holding the lock, or staged into the batch it carries.
-      if (b.lock && !b.lock.stale && (b.lock.holderKey === ck || role?.next === 'staged' || role?.next === 'both')) {
-        c.shipping = true;
-        c.shipAt = b.lock.acquiredAt;
-      }
-    }
-    chats.push(c);
-  }
-  return { chats, repos: [...new Set([...slugs.values()].filter(Boolean))].sort(), dirs: repoDirs };
 }
 
 // Map a running pane's (cleaned) title back to a session, for the bootstrap path
@@ -298,6 +235,8 @@ function snapshot(): { defaultAgent: LaunchPreference; views: ChatView[]; live: 
   }
   const liveMap = liveSessions({ titleToSession: titleToSession(views) });
   const names = liveMap.size ? paneNameMap() : new Map<string, string>();
+  // The pane classifier's @stage, trusted only for the session it labelled.
+  const stages = liveMap.size ? new Map(realTopicDeps.readPanes().map((r) => [r.pane_id, r] as const)) : new Map();
   const live: Record<string, LiveLoc> = {};
   for (const [key, info] of liveMap) {
     const mt = mtime.get(key) ?? 0;
@@ -307,7 +246,9 @@ function snapshot(): { defaultAgent: LaunchPreference; views: ChatView[]; live: 
        misses a long tool call, and the pane hint misses the instant between a
        tool returning and the next one starting. */
     const working = paneIsMidTurn(info.pane_id) || now - mt < WORKING_MS;
-    live[key] = { ...info, working, ...(name ? { name } : {}) };
+    const ps = stages.get(info.pane_id);
+    const stage = ps && ps.sid === info.session_id && ps.stage ? ps.stage : '';
+    live[key] = { ...info, working, ...(name ? { name } : {}), ...(stage ? { stage } : {}) };
   }
   if (process.env.LOOM_DEBUG) {
     const panes = listTmuxPanes();
@@ -428,38 +369,6 @@ export function createServer(): http.Server {
     // Ship groups: the next ship on each shared main checkout, the one in flight, and recent ship/ PRs.
     if (url.pathname === '/api/ships') {
       return json(res, 200, { ok: true, boards: shipBoards() satisfies ShipBoard[] });
-    }
-
-    // Tickets: GitHub issues placed by what the board knows. The listings are
-    // whatever the tickets tick last fetched (a first look kicks it; nothing is
-    // fetched on this path), and chats are matched from the same snapshot the
-    // board uses, so the client only renders.
-    if (url.pathname === '/api/tickets') {
-      const now = Date.now();
-      // peek=1 is the page warming its tab count on load; it does not count as
-      // someone looking, so it never pins the fast cadence.
-      if (!url.searchParams.has('peek')) markTicketsRequested(now);
-      const { views, live } = snapshot();
-      ticketChats(views, live)
-        .then(({ chats, repos, dirs }) => {
-          if (ticketsDue(now)) refreshTickets(repos, undefined, now).catch((e) => console.error('[loom] tickets refresh failed:', (e as Error).message));
-          const s = ticketsSnapshot(now);
-          const issues = [...s.byRepo.values()].flatMap((r) => r.issues);
-          const prs = [...s.byRepo.values()].flatMap((r) => r.prs);
-          // A PR that can still move is registered with the pipeline store at its
-          // slow cadence; it ages out once nobody opens the tab for a while.
-          const pipeline = (p: PrRow) => (p.state === 'open' || now - (p.mergedAt ?? 0) <= DONE_WINDOW_MS ? wantPipeline(p.repo, p.number, false, now) : cachedPipeline(p.repo, p.number));
-          const { tickets, backlog } = buildTickets({ issues, prs, chats, pipeline, now, me: s.me });
-          const repo = url.searchParams.get('repo') || 'all';
-          json(res, 200, {
-            ok: true, repos, dirs,
-            tickets: repo === 'all' ? tickets : tickets.filter((t) => t.repo === repo),
-            backlog: repo === 'all' ? backlog : { [repo]: backlog[repo] ?? 0 },
-            fetchedAt: s.fetchedAt, refreshing: s.refreshing, ...(s.error ? { error: s.error } : {}),
-          });
-        })
-        .catch((e) => json(res, 200, { ok: false, repos: [], dirs: {}, tickets: [], backlog: {}, fetchedAt: 0, refreshing: false, error: (e as Error).message }));
-      return;
     }
 
     // Open an owned Slack thread in the Slack app (https permalink as fallback).
@@ -878,19 +787,6 @@ export function startGhTicks(): void {
   setTimeout(ships, 2_000);
   setInterval(ships, 15_000);
 
-  // Tickets: the issue and PR listings for every repo on the board. Each pass
-  // decides its own pace (a minute while the tab is open, ten otherwise). The
-  // first pass runs right after boot so the tab opens populated.
-  let ticketing = false;
-  setInterval(() => {
-    if (ticketing || !ticketsDue()) return;
-    ticketing = true;
-    const { views, live } = snapshot();
-    ticketChats(views, live)
-      .then(({ repos }) => refreshTickets(repos))
-      .catch((e) => console.error('[loom] tickets tick failed:', (e as Error).message))
-      .finally(() => { ticketing = false; });
-  }, 5_000);
 }
 
 // Start only when run directly (not when imported by tests).
