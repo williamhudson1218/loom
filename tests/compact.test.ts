@@ -118,8 +118,56 @@ describe('trackIdle', () => {
   });
 });
 
+// Replay a plan against the fixture the way tmux would: a swap exchanges the two
+// panes' slots. Returns the panes in slot order.
+function replay(panes: LanePane[], swaps: { src: string; dst: string }[]): LanePane[] {
+  const out = panes.map((p) => ({ ...p }));
+  for (const s of swaps) {
+    const a = out.find((p) => p.pane_id === s.src)!;
+    const b = out.find((p) => p.pane_id === s.dst)!;
+    for (const k of ['tmux_session', 'window_index', 'pane_index'] as const) [a[k], b[k]] = [b[k], a[k]];
+  }
+  return out.sort((a, b) => parseLane(a.tmux_session)!.n - parseLane(b.tmux_session)!.n || Number(a.pane_index) - Number(b.pane_index));
+}
+// Tick until the lane is settled, as the compactor would over several ticks.
+function settle(panes: LanePane[]): { panes: LanePane[]; ticks: number } {
+  let cur = panes;
+  let ticks = 0;
+  for (;;) {
+    const swaps = planCompaction(cur, longIdle(cur), null, NOW);
+    if (!swaps.length) return { panes: cur, ticks };
+    cur = replay(cur, swaps);
+    ticks++;
+  }
+}
+const ids = (panes: LanePane[]) => panes.map((p) => p.pane_id);
+
 describe('planCompaction', () => {
-  it('pulls the latest claude panes into the earliest holes (the tp-2 scenario)', () => {
+  it('slides every later pane one slot into a single hole, keeping their order', () => {
+    const panes = [
+      claude('%c1', 'loom-tp-2', 0), pane('%h1', 'loom-tp-2', 1),
+      claude('%c2', 'loom-tp-3', 0), claude('%c3', 'loom-tp-3', 1), claude('%c4', 'loom-tp-3', 2),
+    ];
+    const swaps = planCompaction(panes, longIdle(panes), null, NOW);
+    expect(swaps.map((s) => [s.src, s.dst])).toEqual([['%c2', '%h1'], ['%c3', '%h1'], ['%c4', '%h1']]);
+    expect(ids(replay(panes, swaps))).toEqual(['%c1', '%c2', '%c3', '%c4', '%h1']);
+  });
+
+  it('moves a pane past exactly as many holes as were freed before it', () => {
+    // c1 has one hole ahead of it and moves one slot; c2 and c3 have two and move two.
+    const panes = [
+      pane('%h1', 'loom-tp-2', 0), claude('%c1', 'loom-tp-2', 1), pane('%h2', 'loom-tp-2', 2),
+      claude('%c2', 'loom-tp-3', 0), claude('%c3', 'loom-tp-3', 1),
+    ];
+    const swaps = planCompaction(panes, longIdle(panes), null, NOW);
+    expect(swaps.map((s) => [s.src, s.dst])).toEqual([['%c1', '%h1'], ['%c2', '%h1'], ['%c3', '%h2']]);
+    expect(ids(replay(panes, swaps))).toEqual(['%c1', '%c2', '%c3', '%h1', '%h2']);
+  });
+
+  it('settles the tp-2 scenario with every agent pane still in its original order', () => {
+    // Three holes in tp-2, a full tp-3 and tp-4, one chat each in tp-5..7. The old
+    // planner pulled c12, c11 and c10 across the lane into tp-2; now the whole lane
+    // shifts left by three and nothing changes places with anything else.
     const panes = [
       pane('%h1', 'loom-tp-2', 0), claude('%c1', 'loom-tp-2', 1), pane('%h2', 'loom-tp-2', 2), pane('%h3', 'loom-tp-2', 3),
       claude('%c2', 'loom-tp-3', 0), claude('%c3', 'loom-tp-3', 1), claude('%c4', 'loom-tp-3', 2), claude('%c5', 'loom-tp-3', 3),
@@ -128,13 +176,31 @@ describe('planCompaction', () => {
       claude('%c11', 'loom-tp-6', 0), pane('%s6', 'loom-tp-6', 1), pane('%s6b', 'loom-tp-6', 2), pane('%s6c', 'loom-tp-6', 3),
       claude('%c12', 'loom-tp-7', 0), pane('%s7', 'loom-tp-7', 1), pane('%s7b', 'loom-tp-7', 2), pane('%s7c', 'loom-tp-7', 3),
     ];
-    const swaps = planCompaction(panes, longIdle(panes), null, NOW);
-    expect(swaps.map((s) => [s.src, s.dst])).toEqual([
-      ['%c12', '%h1'],
-      ['%c11', '%h2'],
-      ['%c10', '%h3'],
-    ]);
-    expect(swaps.every((s) => s.lane === 'tp')).toBe(true);
+    const first = planCompaction(panes, longIdle(panes), null, NOW);
+    expect(first).toHaveLength(MAX_SWAPS_PER_TICK);
+    expect(first[0]).toMatchObject({ src: '%c1', dst: '%h1', lane: 'tp' });
+    expect(first.map((s) => s.src)).toEqual(['%c1', '%c2', '%c3', '%c4', '%c5', '%c6', '%c7', '%c8']);
+    const done = settle(panes);
+    const agents = ids(done.panes.filter((p) => p.agent));
+    expect(agents).toEqual(['%c1', '%c2', '%c3', '%c4', '%c5', '%c6', '%c7', '%c8', '%c9', '%c10', '%c11', '%c12']);
+    expect(done.panes.slice(0, 12).every((p) => p.agent)).toBe(true);
+    expect(done.ticks).toBe(2);
+  });
+
+  it('never carries a pane past an agent pane Will is in', () => {
+    const blocked = [pane('%h1', 'loom-tp-2', 0), claude('%f', 'loom-tp-2', 1), claude('%c2', 'loom-tp-3', 0)];
+    expect(planCompaction(blocked, longIdle(blocked), '%f', NOW)).toEqual([]);
+    // A hole on the far side of the focused pane still fills, from behind it.
+    const beyond = [pane('%h1', 'loom-tp-2', 0), claude('%f', 'loom-tp-2', 1), pane('%h2', 'loom-tp-2', 2), claude('%c2', 'loom-tp-3', 0)];
+    expect(planCompaction(beyond, longIdle(beyond), '%f', NOW).map((s) => [s.src, s.dst])).toEqual([['%c2', '%h2']]);
+  });
+
+  it('never carries a pane past a group', () => {
+    const panes = [
+      pane('%h1', 'loom-tp-2', 0), claude('%g1', 'loom-tp-2', 1, { group: 'g' }), claude('%g2', 'loom-tp-2', 2, { group: 'g' }),
+      claude('%c1', 'loom-tp-3', 0),
+    ];
+    expect(planCompaction(panes, longIdle(panes), null, NOW)).toEqual([]);
   });
 
   it('is a no-op when the only holes sit after every claude pane', () => {

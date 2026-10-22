@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readLayout, type PaneSnap, type Layout } from './snapshot.ts';
+import { readLayout, savedWindowsOf, type PaneSnap, type Layout } from './snapshot.ts';
 import { LAYOUT_PATH } from './paths.ts';
 import { attachedSessions } from './placements.ts';
 import { orderSessionsByTabs, type SavedGhosttyWindow } from './ghostty.ts';
@@ -37,11 +37,6 @@ function existingSessions(): Set<string> {
   } catch {
     return new Set(); // tmux server not running yet
   }
-}
-
-export function savedWindowsOf(layout: Layout): SavedGhosttyWindow[] {
-  if (layout.ghostty_windows?.length) return layout.ghostty_windows;
-  return layout.ghostty_tabs?.length ? [{ tabs: layout.ghostty_tabs }] : [];
 }
 
 export interface RestoreResult {

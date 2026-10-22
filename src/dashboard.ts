@@ -19,7 +19,9 @@ export interface ChatView {
   breakdown: string[];
   first_message: string;
   message_count: number;
-  last_active_at: number;
+  started_at: number;
+  last_active_at: number; // the file's last write of any kind
+  last_turn_at: number; // the last prompt or reply; 0 until re-indexed
   activity: Record<string, number>;
   summary_pending: boolean;
   saved: boolean;
@@ -44,7 +46,9 @@ export function toChatViews(db: Database.Database): ChatView[] {
     breakdown: safeArray(r.breakdown_json),
     first_message: r.first_message,
     message_count: r.message_count,
+    started_at: r.started_at,
     last_active_at: r.last_active_at,
+    last_turn_at: r.last_turn_at ?? 0,
     activity: safeObj(r.activity_json),
     summary_pending: r.summary_dirty === 1 && !r.title,
     saved: r.saved === 1,
@@ -301,6 +305,93 @@ export function renderDashboard(
   .tfoot { display:flex; align-items:center; gap:12px; padding:11px 15px; background:#12151e; border-top:1px solid #232634; position:sticky; bottom:0; z-index:2; }
   .tsum { font-size:12.5px; color:#8b93a7; }
   .tsum b { color:#e6e6e6; }
+  /* Tickets — GitHub issues by stage, with the chats and PRs working them
+     hanging off each card. Hidden until its tab is selected; syncControls()
+     owns the toggle, same as #em-section. Sizes and colours are the approved
+     comp's; the panel sits under the sticky header rather than at the top. */
+  .tab.tktab.on { background:#2a3a52; color:#cfe0ff; }
+  .tab.tktab.on:hover { background:#334664; }
+  #tkbar { display:none; }
+  .tkbar1 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  #tkq { flex:1; min-width:220px; }
+  .tkbar2 { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .tkbar2 .chip { font:inherit; font-size:12px; } .tkbar2 .chip:hover { background:#1f2535; }
+  .tkbar2 .seg { margin-left:0; }
+  .vh { position:absolute; left:-9999px; }
+  #tickets-section { display:none; padding:16px 20px 24px; }
+  .tkhint { font-size:11px; color:#6f778a; margin:0 0 10px; }
+  .tkmain { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:16px; align-items:start; }
+  @media (max-width:1100px) { .tkmain { grid-template-columns:1fr; } }
+  .tkboard { display:grid; grid-template-columns:44px repeat(6,minmax(200px,1fr)) 44px; gap:10px; align-items:start; overflow-x:auto; }
+  .tkboard.closed { grid-template-columns:minmax(0,1fr); }
+  .tkx .col { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .tkx .colhd { display:flex; align-items:baseline; justify-content:space-between; padding:0 2px 2px; border-bottom:1px solid #232634; }
+  .tkx .colnm { font-size:12px; font-weight:700; color:#8b93a7; text-transform:uppercase; letter-spacing:.6px; }
+  .tkx .colct { font-size:12px; color:#8b93a7; display:flex; align-items:center; gap:6px; }
+  .tkx .rail { display:flex; flex-direction:column; align-items:center; gap:10px; background:#11141d; border:1px solid #232634; border-radius:10px; padding:10px 0; min-height:420px; cursor:pointer; }
+  .tkx .rail:hover { border-color:#3a4258; }
+  .tkx .rail .nm { writing-mode:vertical-rl; transform:rotate(180deg); font-size:11px; font-weight:700; color:#8b93a7; text-transform:uppercase; letter-spacing:.6px; }
+  .tkx .rail .ct { font-size:12px; font-weight:700; color:#c4ccdc; background:#1b1f2a; border:1px solid #2b3040; border-radius:999px; padding:1px 7px; }
+  .tkx .rail button, .tkx .colct button { background:transparent; border:0; color:#8b93a7; font-size:14px; padding:0; line-height:1; }
+  .tkx .rail button:hover, .tkx .colct button:hover { color:#e6e6e6; background:transparent; }
+  .tkx .tk { background:#161a24; border:1px solid #232634; border-left:4px solid var(--pending); border-radius:10px; padding:9px 11px; display:flex; flex-direction:column; gap:5px; text-align:left; color:#e6e6e6; width:100%; box-sizing:border-box; font:inherit; }
+  .tkx .tk:hover { background:#1a1f2c; }
+  .tkx .tk.sel { background:#1b2233; border-color:#3b4a6b; border-left-color:var(--waiting_on_user); }
+  .tkx .tk.you { border-left-color:var(--waiting_on_user); }
+  .tkx .tk.work { border-left-color:var(--done); }
+  .tkx .tk.bad { border-left-color:var(--error); }
+  .tkx .tk.stale { border-left-color:var(--warning); }
+  .tkx .tk { overflow:hidden; }
+  .tkx .col.wait .colhd { border-bottom-color:#3a4258; }
+  .tkx .col.c-needsYou .colnm { color:var(--waiting_on_user); } .tkx .col.c-blocked .colnm { color:#ffaf5f; }
+  .tkx .lbl.stg { background:transparent; border:1px solid #2b3040; color:#8b93a7; }
+  .tkx .blk { font-size:11px; color:#ffd7a8; background:#3a2a1a; border:1px solid #5a3f22; border-radius:4px; padding:0 6px; line-height:16px; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
+  .tkx .g.b { color:#ffaf5f; }
+  .tkx .tkh { display:flex; align-items:center; gap:6px; font-size:11px; color:#8b93a7; flex-wrap:wrap; }
+  .tkx .num { font-weight:700; color:#c4ccdc; }
+  .tkx .lbl { font-size:10px; padding:0 5px; border-radius:4px; background:#232634; color:#aab3c5; line-height:16px; }
+  .tkx .lbl.bug { background:#3a2227; color:#f0a0a8; } .tkx .lbl.feat { background:#1f3a2c; color:#a8e6c0; }
+  .tkx .lbl.otto { background:#2b3446; color:#bcd2f5; } .tkx .lbl.auto { background:#3a3826; color:#f0dfa0; }
+  .tkx .age { margin-left:auto; }
+  .tkx .ttl { font-size:13px; line-height:1.3; color:#e6e6e6; }
+  .tkx .who { font-size:12px; color:#c4ccdc; display:flex; align-items:center; gap:6px; min-width:0; }
+  .tkx .who .g { font-weight:700; } .tkx .g.w { color:var(--done); } .tkx .g.y { color:var(--waiting_on_user); } .tkx .g.i { color:#8b93a7; } .tkx .g.r { color:var(--error); }
+  .tkx .pn { color:#8b93a7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tkx .pr { display:flex; align-items:center; gap:6px; font-size:11px; color:#8b93a7; }
+  .tkx .pr .n { color:#c4ccdc; font-weight:600; }
+  .tkx .s { display:inline-block; width:9px; height:9px; border-radius:50%; border:1.5px solid #6b7280; box-sizing:border-box; flex-shrink:0; }
+  .tkx .s.ok { background:var(--done); border-color:var(--done); } .tkx .s.run { background:var(--waiting_on_user); border-color:var(--waiting_on_user); } .tkx .s.no { background:var(--error); border-color:var(--error); }
+  .tkx .need { font-size:11px; color:#cfe0ff; background:#1f2d4a; border:1px solid #2f4470; border-radius:4px; padding:0 6px; line-height:16px; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
+  .tkx .panel { position:sticky; top:calc(var(--hh,150px) + 16px); max-height:calc(100vh - var(--hh,150px) - 32px); overflow-y:auto; background:#11141d; border:1px solid #232634; border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; gap:14px; min-width:0; box-sizing:border-box; }
+  .tkx .ph { display:flex; flex-direction:column; gap:6px; }
+  .tkx .ph h2 { margin:0; font-size:16px; line-height:1.3; }
+  .tkx .ph h2 a { color:inherit; text-decoration:none; } .tkx .ph h2 a:hover { text-decoration:underline; }
+  .tkx .meta { font-size:12px; color:#8b93a7; margin:0; }
+  .tkx .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:#cfe0ff; background:#1f2d4a; border:1px solid #2f4470; border-radius:999px; padding:2px 10px; }
+  .tkx .pill .dot { display:inline-block; width:8px; height:8px; border-radius:50%; }
+  .tkx .sec { display:flex; flex-direction:column; gap:8px; }
+  .tkx .sech { font-size:11px; font-weight:700; color:#8b93a7; text-transform:uppercase; letter-spacing:.6px; }
+  .tkx .tl { display:flex; flex-direction:column; gap:0; border-left:2px solid #232634; margin-left:5px; padding-left:12px; }
+  .tkx .tls { display:flex; align-items:baseline; gap:8px; font-size:12px; padding:3px 0; position:relative; }
+  .tkx .tls .m { position:absolute; left:-19px; top:9px; width:10px; height:10px; border-radius:50%; background:var(--done); }
+  .tkx .tls.now .m { background:var(--waiting_on_user); box-shadow:0 0 0 3px #1f2d4a; }
+  .tkx .tls.todo .m { background:#0d0f15; border:2px solid #3a4258; box-sizing:border-box; }
+  .tkx .tls .w { color:#e6e6e6; font-weight:600; min-width:92px; }
+  .tkx .tls.todo .w { color:#6f778a; }
+  .tkx .tls .d { color:#8b93a7; }
+  .tkx .row { display:flex; align-items:center; gap:10px; font-size:12px; background:#161a24; border:1px solid #232634; border-radius:8px; padding:8px 10px; }
+  .tkx .row.pick { cursor:pointer; } .tkx .row.pick:hover { background:#1a2030; border-color:#3a4a63; }
+  .tkx .row .grow { flex:1; min-width:0; }
+  .tkx .row .t { color:#e6e6e6; }
+  .tkx .row .m2 { color:#8b93a7; font-size:11px; }
+  .tkx .sbtn { height:26px; box-sizing:border-box; border-radius:6px; padding:0 10px; background:#1b1f2a; border:1px solid #2b3040; color:#c4ccdc; font-size:12px; font-weight:600; white-space:nowrap; text-decoration:none; display:inline-flex; align-items:center; font-family:inherit; }
+  .tkx .sbtn:hover { background:#222a3d; color:#fff; }
+  .tkx .sbtn.pri { background:#26304a; border-color:#3b4a6b; color:#fff; }
+  .tkx .ev { display:flex; gap:8px; font-size:12px; color:#c4ccdc; }
+  .tkx .ev .at { color:#8b93a7; min-width:44px; flex-shrink:0; }
+  .tkx .ev.good { color:#a8e6c0; } .tkx .ev.bad { color:#f0a0a8; }
+  .tkx .acts { display:flex; gap:6px; flex-wrap:wrap; }
+  .tkx .tkempty { color:#6f778a; font-size:12.5px; padding:6px 2px; }
   .card.s-done { border-left-color:var(--done); }
   .card.s-waiting_on_user { border-left-color:var(--waiting_on_user); }
   .card.s-warning { border-left-color:var(--warning); }
@@ -459,7 +550,7 @@ export function renderDashboard(
   .drow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:#c4ccdc; }
   .stage { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#1b1f2a; border:1px solid currentColor; }
   .stage.s-discovery { color:#5fafff; } .stage.s-implementation { color:#87d787; }
-  .stage.s-shipping { color:#d787d7; } .stage.s-thread { color:#ffaf5f; }
+  .stage.s-shipping { color:#d787d7; } .stage.s-thread { color:#ffaf5f; } .stage.s-blocked { color:#ff875f; }
   .dname { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#c4ccdc; }
   .dloc { color:#8b93a7; font-size:12px; }
   code.copyable { cursor:pointer; } code.copyable:hover { border-color:#3a4a63; color:#c4ccdc; }
@@ -586,6 +677,14 @@ export function renderDashboard(
     <div class="chips" id="chips"></div>
     <div class="seg" id="livetoggle" role="group" aria-label="Show live chats or all chats"></div>
   </div>
+  <div id="tkbar">
+    <div class="tkbar1">
+      <label for="tkq" class="vh">Search tickets</label><input id="tkq" type="search" placeholder="search tickets, chats, PRs…"/>
+      <label for="tkrepo" class="vh">Repository</label><select id="tkrepo"><option value="all">all repos</option></select>
+      <label for="tksort" class="vh">Sort</label><select id="tksort"><option value="needs">sort: needs you first</option><option value="longest">sort: longest in stage</option><option value="moved">sort: recently moved</option></select>
+    </div>
+    <div class="tkbar2"><div class="chips" id="tkchips"></div><div class="seg" id="tkseg" role="group" aria-label="Open tickets or closed this week"></div></div>
+  </div>
   <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
 </header>
 <div id="boardwrap">
@@ -612,6 +711,15 @@ export function renderDashboard(
   <div class="twrap" id="twrap">
     <div class="trail" id="tree-rail"></div>
     <div class="tdetail" id="tree-detail"></div>
+  </div>
+</section>
+<section id="tickets-section">
+  <div class="tkx">
+    <p class="tkhint" id="tkhint"></p>
+    <div class="tkmain">
+      <section class="tkboard" id="tkboard" aria-label="Tickets by stage"></section>
+      <aside class="panel" id="tkpanel" aria-label="Selected ticket"></aside>
+    </div>
   </div>
 </section>
 <div id="composer" hidden>
@@ -681,7 +789,7 @@ function scoped(){return tab==='saved'?savedBase():boardBase();}
 function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%360;return 'background:hsl('+h+',42%,20%);color:hsl('+h+',72%,76%)';}
 // Segmented Board / Saved switch. Counts are totals (independent of the live
 // filter) so they don't jump around as you toggle Live-only.
-function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['em','⚙ EM',EM.findings.length,' emtab'],['trees','⑂ Trees',treeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
+function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns=DATA.chats.filter(isSaved).length;const defs=[['board','▦ Board',nb,''],['saved','★ Saved',ns,' savedtab'],['tickets','⊞ Tickets',TK.fetchedAt?ticketCount():'…',' tktab'],['em','⚙ EM',EM.findings.length,' emtab'],['trees','⑂ Trees',treeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+'<span class="cnt">'+d[2]+'</span></button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';syncControls();liveToggle();chips();render();});}
 // Live-only toggle is a Board concept; hide it on the Saved tab (saved chats are
 // usually closed, so filtering them by "live" is meaningless).
 // The EM tab shows the ledger, not chats, so every chat-scoped control goes away
@@ -689,7 +797,7 @@ function renderTabs(){const nb=DATA.chats.filter(c=>!isSaved(c)).length;const ns
 // The EM and Trees tabs both show something other than chats, so every
 // chat-scoped control goes away with either — leaving the project/sort pickers
 // visible would imply they filter it.
-function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=em||tr;
+function syncControls(){const em=tab==='em';const tr=tab==='trees';const tk=tab==='tickets';const other=em||tr||tk;
   $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
   $('.controls').style.display=other?'none':'';
   $('#row3').style.display=other?'none':'';
@@ -701,15 +809,28 @@ function syncControls(){const em=tab==='em';const tr=tab==='trees';const other=e
   // clearing the inline style just lets that rule win again — the tab renders
   // its rows into a section that is still hidden.
   $('#em-section').style.display=em?'block':'none';
-  $('#trees-section').style.display=tr?'block':'none';}
+  $('#trees-section').style.display=tr?'block':'none';
+  // The Tickets tab keeps its own header controls (search / repo / sort / chips)
+  // in the sticky header, where the board's would otherwise be.
+  $('#tickets-section').style.display=tk?'block':'none';
+  $('#tkbar').style.display=tk?'block':'none';}
 function liveToggle(){const board=DATA.chats.filter(c=>!isSaved(c));const nLive=board.filter(isLive).length;const nAll=board.length;const t=$('#livetoggle');t.innerHTML='<button data-live="1" class="'+(liveOnly?'on':'')+'" title="only chats running in a pane">● Live '+nLive+'</button><button data-live="0" class="'+(liveOnly?'':'on')+'" title="every chat on the board">All '+nAll+'</button>';t.querySelectorAll('button').forEach(b=>b.onclick=()=>{liveOnly=b.dataset.live==='1';liveToggle();chips();render();});}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
+// When someone last spoke in the chat — a prompt or a reply. last_active_at is
+// the file's last write, which Claude Code keeps bumping (title rewrites, system
+// records, late tool results) long after the conversation stopped, so sorting on
+// it floated dead chats to the top. A row not yet re-indexed has no last_turn_at
+// and falls back.
+function fresh(c){return c.last_turn_at||c.last_active_at;}
 function chips(){const base=scoped();const ct={all:base.length,working:0,waiting_on_user:0,drafts:0,issues:0,done:0};base.forEach(c=>{if(isWorking(c))ct.working++;ct.drafts+=draftsFor(c).length;const s=st(c);if(s==='waiting_on_user')ct.waiting_on_user++;else if(s==='warning'||s==='error')ct.issues++;else if(s==='done')ct.done++;});const defs=[['all','All',''],['working','⚡ Working','var(--warning)'],['waiting_on_user','Your turn','var(--waiting_on_user)'],['drafts','✉ Drafts','#e8a6e0'],['issues','Issues','var(--error)'],['done','Done','var(--done)']];$('#chips').innerHTML=defs.map(d=>'<span class="chip'+(stateFilter===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]&&d[0]!=='working'?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</span>').join('');$('#chips').querySelectorAll('.chip').forEach(el=>el.onclick=()=>{stateFilter=el.dataset.f;chips();render();});}
 function matchFilter(c){if(stateFilter==='all')return true;if(stateFilter==='working')return isWorking(c);if(stateFilter==='drafts')return hasDrafts(c);const s=st(c);if(stateFilter==='issues')return s==='warning'||s==='error';return s===stateFilter;}
-function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
+function render(){renderTabs();syncControls();if(tab==='em'){renderEm(EM);return;}if(tab==='trees'){renderTrees();return;}if(tab==='tickets'){renderTickets();return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sort=$('#sort').value;
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
-const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(b.last_active_at-a.last_active_at);
-let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):scoped()).filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));rows.sort((a,b)=>{const wa=isWorking(a)?1:0,wb=isWorking(b)?1:0;if(wa!==wb)return wb-wa;const la=DATA.live[chatKey(a)]?1:0,lb=DATA.live[chatKey(b)]?1:0;if(la!==lb)return lb-la;return sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b);});const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=shipStrip()+((ghostCards()+rows.map(card).join(''))||empty);list.querySelectorAll('.card').forEach(wireCard);wireShips(list);renderDetail();}
+const rec=(a,b)=>tab==='saved'?(b.saved_at-a.saved_at):(fresh(b)-fresh(a));
+let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):scoped()).filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));// Pure recency: no live-first or working-first tier. A working chat is writing
+// replies now, so it is at the top anyway; a live chat nobody has spoken to in a
+// day belongs below a finished one from an hour ago.
+rows.sort((a,b)=>sort==='active'?(sum(b.activity)-sum(a.activity)): sort==='long'?(b.message_count-a.message_count):rec(a,b));const list=$('#list');const empty=tab==='saved'?'<p class="meta">Nothing saved yet — hit <b>☆ save</b> on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta">No live sessions detected yet — send a prompt in a chat to register it, or switch to <b>All</b>.</p>':'<p class="meta">no matches</p>');list.innerHTML=shipStrip()+((ghostCards()+rows.map(card).join(''))||empty);list.querySelectorAll('.card').forEach(wireCard);wireShips(list);renderDetail();}
 // Shared by board and archive cards. Archive cards carry data-jsonl/data-proj
 // (they have no DB row, so the server needs those passed back to it).
 function wireCard(el){const sourceAgent=el.dataset.agent||'claude';el.onclick=(e)=>{if(e.target.closest('button,code,.picker,a'))return;
@@ -811,7 +932,7 @@ function wireSteps(box){box.querySelectorAll('[data-step]').forEach(el=>el.oncli
 // resume/branch/close — lives in the detail panel for the selected card.
 function card(c){const s=st(c);const L=DATA.live[chatKey(c)];const W=!!(L&&L.working);const id=esc(c.session_id);const agent=esc(c.agent);const pru=c.pr_url||(((DATA.chatPr||{})[chatKey(c)]||'').split('#')[1]?'https://github.com/'+DATA.chatPr[chatKey(c)].replace('#','/pull/'):'');const prn=pru?(pru.split('/pull/')[1]||'').replace(/[^0-9]/g,''):'';const pr=prn?' · <span class="prn" title="'+esc(pru)+'">PR #'+esc(prn)+'</span>':'';const sav=c.saved?'<button class="ico unsavebtn" data-sid="'+id+'" title="remove from Saved for later">★</button>':'<button class="ico savebtn" data-sid="'+id+'" title="'+(L?'save for later &amp; close this pane':'save for later')+'">☆</button>';const open=L?'<button class="ico open" data-jump="'+id+'" title="open in Ghostty">↗</button>':'';return '<div class="card s-'+s+(W?' work':'')+(c.saved?' saved':'')+(sel&&sel.sid===c.session_id&&sel.agent===c.agent?' sel':'')+'" data-sid="'+id+'" data-agent="'+agent+'">'+(W?'<div class="sweep"></div>':'')+
 '<div class="chead"><h2>'+esc(disp(c))+'</h2><span class="pill source">'+agentLabel(c.agent)+'</span><span class="pill '+s+'">'+SLABEL[s]+'</span>'+open+sav+'</div>'+
-'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(c.last_active_at)+' · '+liveTag(c)+pr+pipeCard(c)+shipCardChips(c)+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
+'<div class="meta"><span class="ptag" style="'+pcolor(c.project)+'">'+esc(c.project)+'</span>'+c.message_count+' msgs · <span class="spark">'+spark(c.activity)+'</span> '+rel(fresh(c))+' · '+liveTag(c)+pr+pipeCard(c)+shipCardChips(c)+(ownsSlack(c)?' · <span class="slk" title="owns a Slack thread">#</span>':'')+(hasDrafts(c)?' · <span class="dft" title="Slack draft awaiting your okay">✉ '+draftsFor(c).length+'</span>':'')+'</div>'+
 (c.summary_pending?'<div class="pending-note">indexed, summarizing…</div>':'<div class="ov">'+esc(c.overview)+'</div>')+
 '</div>';}
 $('#gen').textContent='· '+DATA.chats.length+' chats · '+new Date(DATA.generatedAt).toLocaleString();
@@ -825,7 +946,7 @@ function loadTranscript(toBottom){if(!panelSid)return;const req=panelSid;var u='
 function renderFoot(d){const f=$('#pfoot');if(d.live){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live '+agentLabel(d.agent)+' pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else{f.innerHTML='<div class="stalefoot">This chat isn\\'t running — <b>'+esc(resumeLabel(d.agent).slice(2))+'</b> from its card to send messages.</div>';}}
 function sendMsg(){const ta=$('#pinput');if(!ta||!panelSid)return;const t=ta.value.trim();if(!t)return;ta.value='';fetch('/send?session='+encodeURIComponent(panelSid)+'&agent='+encodeURIComponent(panelAgent)+'&text='+encodeURIComponent(t),{method:'POST'}).then(r=>r.json()).then(()=>{setTimeout(()=>loadTranscript(true),500);setTimeout(()=>loadTranscript(true),2500);}).catch(()=>{});}
 $('#pclose').onclick=closeChat;$('#overlay').onclick=closeChat;
-document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(sel)deselect();});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(panelSid)closeChat();else if(tab==='tickets'){if(tkSel){tkSel=null;renderTickets();}}else if(sel)deselect();});
 var lastRenderAt=0;
 function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+'##'+(DATA.drafts||[]).map(x=>x.id).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',')+'##'+pipeSig()+'##'+shipSig();}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
@@ -1112,6 +1233,183 @@ function wireCleanup(det){
         if(o.failed&&o.failed.length)bits.push('failed '+o.failed.length);
         treeMsg=bits.join(' · ')||'Nothing removed';
         treeLoaded=false;renderTrees();refreshTrees(true);}).catch(function(){treeMsg='Removal failed';renderTrees();});};});}
+// ---- Tickets -----------------------------------------------------------------
+// GitHub issues in stage columns, with the chats and PRs working them hanging
+// off each card. Everything renders from TK, fetched when the tab opens and
+// every 30s while it is the active tab — never on the 5s board poll. The
+// matching (issue ↔ chat ↔ PR) is the server's; the client filters, sorts and draws.
+var TK={repos:[],dirs:{},tickets:[],backlog:{},fetchedAt:0,refreshing:false,error:''};
+var tkLoaded=false,tkBusy=false,tkSyncT=null,tkSel=null,tkChip='',tkSeg='open',tkRail={proposed:false,done:false},tkRepoSig='',tkTailsAt=0;
+var TK_STAGE={proposed:'Proposed',ready:'Ready',progress:'In progress',review:'In review',shipping:'Shipping',done:'Done'};
+// Columns: the two waiting columns lead, then the stages. A card in a waiting column still carries its stage.
+var TK_COL=Object.assign({needsYou:'Needs you',blocked:'Blocked'},TK_STAGE);
+var TK_MID=['needsYou','blocked','ready','progress','review','shipping'];
+function tkColOf(t){return t.column||t.stage;}
+var TK_TONE={failing:'var(--error)',needsYou:'var(--waiting_on_user)',working:'var(--done)',stale:'var(--warning)',none:'var(--pending)'};
+var TK_CLS={failing:' bad',needsYou:' you',working:' work',stale:' stale',none:''};
+// The pane's stage glyph: ~ working, ● your turn, ◦ idle, × ended.
+var TK_GLYPH={working:['w','~'],your_turn:['y','●'],idle:['i','◦'],ended:['r','×']};
+function ticketCount(){return TK.tickets.filter(function(t){return t.stage!=='done';}).length;}
+function tkKey(t){return t.repo+'#'+t.number;}
+function tkByKey(k){return TK.tickets.find(function(t){return tkKey(t)===k;})||null;}
+function tkShort(k){return k.slice(k.indexOf(':')+1,k.indexOf(':')+9);}
+function tkName(c){return c.name||(c.otto?'otto':tkShort(c.key));}
+function agoShort(ms){if(!ms)return '';var r=rel(ms);return r==='just now'?'now':r.replace(' ago','');}
+function fmtDay(ms){return ms?new Date(ms).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'';}
+// peek=1 while the tab is not up: warms the tab count without telling the server someone is looking.
+// While the server is still syncing with GitHub, poll every 3s so the board fills the moment it lands.
+function refreshTickets(){if(tkBusy)return;tkBusy=true;clearTimeout(tkSyncT);
+  fetch('/api/tickets?repo=all'+(tab==='tickets'?'':'&peek=1')).then(function(r){return r.json();}).then(function(d){
+    TK=d;tkLoaded=true;tkBusy=false;
+    if(tkSel&&!tkByKey(tkSel))tkSel=null;
+    renderTabs();if(tab==='tickets')renderTickets();
+    if(d.refreshing)tkSyncT=setTimeout(refreshTickets,3000);
+  }).catch(function(){tkBusy=false;if(tab==='tickets')renderTickets();});}
+function tkPrimaryChat(t){var order={your_turn:0,working:1,idle:2,ended:3};
+  return t.chats.slice().sort(function(a,b){return (order[a.state]-order[b.state])||(b.lastActive-a.lastActive);})[0]||null;}
+// The PR the card speaks for: the newest open one, else the newest merged one.
+function tkPrimaryPr(t){var open=t.prs.filter(function(p){return p.state==='open';}).sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);});
+  if(open.length)return open[0];var m=t.prs.filter(function(p){return p.state==='merged';}).sort(function(a,b){return (b.mergedAt||0)-(a.mergedAt||0);});return m[0]||t.prs[0]||null;}
+function tkMatch(t){var repo=$('#tkrepo').value;if(repo!=='all'&&t.repo!==repo)return false;
+  if(tkChip==='needsYou'&&!t.needsYou)return false;if(tkChip==='blocked'&&!t.blocked)return false;if(tkChip==='working'&&!t.working)return false;if(tkChip==='failing'&&!t.failing)return false;
+  if(tkChip==='stale'&&!t.stale)return false;if(tkChip==='otto'&&!t.otto)return false;if(tkChip==='nochat'&&t.chats.length)return false;
+  var q=$('#tkq').value.trim().toLowerCase();if(!q)return true;
+  var hay=('#'+t.number+' '+t.title+' '+t.chats.map(function(c){return tkName(c)+' '+(c.title||'');}).join(' ')+' '+t.prs.map(function(p){return '#'+p.number+' '+p.title;}).join(' ')).toLowerCase();
+  return hay.indexOf(q)>=0;}
+// "needs you first" is the server's order; the other two re-sort by time in stage.
+function tkSorted(list){var m=$('#tksort').value;if(m==='needs')return list;
+  return list.slice().sort(function(a,b){return m==='longest'?(a.stageSince-b.stageSince):(b.stageSince-a.stageSince);});}
+function tkLabel(l){var cls=l==='bug'?' bug':(l==='enhancement'||l==='feature')?' feat':l.indexOf('agent:')===0?' otto':l==='auto-triage'?' auto':'';return '<span class="lbl'+cls+'">'+esc(l)+'</span>';}
+function tkLabels(t,cap){var ls=t.labels.slice().sort(function(a,b){return (a.indexOf('agent:')===0?0:1)-(b.indexOf('agent:')===0?0:1);}).slice(0,cap).map(tkLabel).join('');
+  // A repo tint only earns its place when more than one repo is on the board.
+  if(TK.repos.length>1)ls+='<span class="lbl" style="'+pcolor(t.repo.split('/').pop())+'">'+esc(t.repo.split('/').pop())+'</span>';return ls;}
+function tkStep(p,k){var s=p&&p.pipeline?p.pipeline.steps.find(function(x){return x.key===k;}):null;return s||null;}
+function tkDots(p){if(!p||!p.pipeline)return '';return dotsHtml({dots:p.pipeline.steps.map(function(s){return {label:s.label,state:s.state,detail:s.detail};})});}
+// What the PR is waiting on, in a few words — the same reading the board's dots give.
+function tkPrPhrase(p){if(p.state==='closed')return 'closed';if(!p.pipeline)return p.state==='merged'?'merged':p.isDraft?'draft':'fetching…';
+  var st=function(k){var s=tkStep(p,k);return s?s.state:'';};var sd=function(k){var s=tkStep(p,k);return s&&s.detail||'';};
+  if(p.state==='merged'){var d=st('deploy');return d==='pass'?'deployed':d==='running'?'deploying':d==='fail'?'deploy failed':d==='skipped'?'merged, no deploy':'deploy queued';}
+  if(st('checks')==='fail')return sd('checks')||'checks failed';
+  if(st('review')==='fail')return sd('review')||'changes requested';
+  if(st('checks')==='running')return 'checks running';
+  if(st('review')==='running')return 'reviewing';
+  if(st('review')==='pass')return 'approve to merge';
+  return p.isDraft?'draft':(sd('review')||'waiting for review');}
+function tkChatWhen(c){return c.state==='working'?'working '+agoShort(c.since||c.lastActive):c.waitingOnOthers&&c.state!=='ended'?'waiting on someone '+agoShort(c.lastActive):c.state==='your_turn'?'your turn '+agoShort(c.lastActive):c.state==='idle'?'idle '+agoShort(c.lastActive):'ended '+rel(c.lastActive);}
+function tkWho(t){var c=tkPrimaryChat(t),p=tkPrimaryPr(t);
+  if(c){var g=c.waitingOnOthers&&c.state!=='working'&&c.state!=='ended'?['b','‖']:TK_GLYPH[c.state];var when=tkChatWhen(c);
+    if(c.shipping)when='shipping now';else if(c.shipNext==='staged')when='staged, rides next /ship';else if(c.shipNext)when+=' · '+(c.shipNext==='both'?'partly staged':'unstaged');
+    var extra=t.chats.length>1?' +'+(t.chats.length-1):'';
+    return '<div class="who"><span class="g '+g[0]+'">'+g[1]+'</span>'+esc(tkName(c))+extra+' <span class="pn">· '+esc(when)+'</span></div>';}
+  if(p&&p.state!=='closed'){var ph=tkPrPhrase(p);var s=t.needsYou?'your_turn':t.working?'working':'idle';var g2=TK_GLYPH[s];var rv=tkStep(p,'review');
+    var line=p.state==='merged'?'merged · '+ph:(t.needsYou&&rv&&rv.state==='pass'?'review green · needs your approval':t.labels.indexOf('agent:blocked')>=0?'agent:blocked · '+ph:ph);
+    return '<div class="who"><span class="g '+g2[0]+'">'+g2[1]+'</span><span class="pn">'+esc(line)+'</span></div>';}
+  var pn='no chat yet';if(t.labels.indexOf('agent:ready')>=0)pn+=' · Otto eligible';
+  var days=Math.floor((Date.now()-t.stageSince)/86400000);if(days>=2&&t.stage!=='done')pn+=' · '+days+'d in '+TK_STAGE[t.stage];
+  return '<div class="who"><span class="g i">◦</span><span class="pn">'+esc(pn)+'</span></div>';}
+function tkCard(t){var c=tkPrimaryChat(t),p=tkPrimaryPr(t);var k=tkKey(t);var col=tkColOf(t);
+  var tail=c&&c.state==='your_turn'?TAILS[c.key]:'';
+  var asked=tail?'<div><span class="'+(c.waitingOnOthers?'blk':'need')+'" title="'+esc(tail)+'">'+(c.waitingOnOthers?'last: ':'asked: ')+esc(tail.length>90?tail.slice(0,90)+'…':tail)+'</span></div>':'';
+  // Blocked says on whom; a Needs-you card that is ALSO blocked keeps the note, so nothing is hidden by the precedence.
+  var on=t.blockedOn?'<div><span class="blk" title="'+esc(t.blockedOn)+'">waiting on '+esc(t.blockedOn)+'</span></div>':'';
+  // In a waiting column the stage is no longer the column, so it rides on the card.
+  var stg=col!==t.stage?'<span class="lbl stg">'+esc(TK_STAGE[t.stage])+'</span>':'';
+  return '<button class="tk'+TK_CLS[t.tone]+(tkSel===k?' sel':'')+'" data-k="'+esc(k)+'"'+(tkSel===k?' aria-current="true"':'')+'>'+
+    '<div class="tkh"><span class="num">#'+t.number+'</span>'+stg+tkLabels(t,3)+'<span class="age" title="in '+esc(TK_STAGE[t.stage])+' since '+esc(fmtDay(t.stageSince))+'">'+agoShort(t.stageSince)+'</span></div>'+
+    '<div class="ttl">'+esc(t.title)+'</div>'+tkWho(t)+on+asked+
+    (p?'<div class="pr"><span class="n">PR #'+p.number+'</span>'+tkDots(p)+'<span>'+esc(tkPrPhrase(p))+'</span></div>':'')+'</button>';}
+// The "asked: …" strip is the same tail the board's Waiting-on-you list shows, from /api/tails.
+function tkTails(list){var keys=[];list.forEach(function(t){t.chats.forEach(function(c){if(c.state==='your_turn'&&keys.indexOf(c.key)<0)keys.push(c.key);});});
+  if(!keys.length)return;if(Date.now()-tkTailsAt<15000&&!keys.some(function(k){return !(k in TAILS);}))return;tkTailsAt=Date.now();
+  fetch('/api/tails?keys='+encodeURIComponent(keys.slice(0,40).join(','))).then(function(r){return r.json();}).then(function(j){if(j.ok){Object.assign(TAILS,j.tails);if(tab==='tickets')renderTickets();}}).catch(function(){});}
+function tkCol(stage,list,expanded){var nm=TK_COL[stage]+(stage==='done'?' 7d':'');var wait=stage==='needsYou'||stage==='blocked';
+  var hd='<div class="colhd"><span class="colnm">'+nm+'</span><span class="colct">'+list.length+(expanded?'<button data-rail="'+stage+'" aria-label="Collapse '+nm+'">'+(stage==='proposed'?'‹':'›')+'</button>':'')+'</span></div>';
+  var none=stage==='done'?'Nothing closed this week.':stage==='needsYou'?'Nothing is waiting on you.':stage==='blocked'?'Nothing is waiting on anyone else.':'Nothing here.';
+  return '<div class="col c-'+stage+(wait?' wait':'')+'">'+hd+(list.map(tkCard).join('')||'<div class="tkempty">'+none+'</div>')+'</div>';}
+function tkRailHtml(stage,n){var nm=stage==='proposed'?'Proposed':'Done 7d';
+  return '<div class="rail" data-rail="'+stage+'" aria-label="'+nm+', collapsed"><button aria-label="Expand '+nm+'">'+(stage==='proposed'?'›':'‹')+'</button><span class="ct">'+n+'</span><span class="nm">'+nm+'</span></div>';}
+function tkChips(){var ct={needsYou:0,blocked:0,working:0,failing:0,stale:0,otto:0,nochat:0};
+  TK.tickets.forEach(function(t){if(t.stage==='done')return;if(t.needsYou)ct.needsYou++;if(t.blocked)ct.blocked++;if(t.working)ct.working++;if(t.failing)ct.failing++;if(t.stale)ct.stale++;if(t.otto)ct.otto++;if(!t.chats.length)ct.nochat++;});
+  var defs=[['needsYou','Needs you','var(--waiting_on_user)'],['blocked','Blocked','#ffaf5f'],['working','Working','var(--done)'],['failing','Failing','var(--error)'],['stale','Stale 3d+','var(--warning)'],['otto','Otto',''],['nochat','No chat yet','']];
+  $('#tkchips').innerHTML=defs.map(function(d){return '<button class="chip'+(tkChip===d[0]?' on':'')+'" data-f="'+d[0]+'">'+(d[2]?'<span class="dot" style="background:'+d[2]+'"></span>':'')+d[1]+' '+ct[d[0]]+'</button>';}).join('');
+  $('#tkchips').querySelectorAll('.chip').forEach(function(el){el.onclick=function(){tkChip=tkChip===el.dataset.f?'':el.dataset.f;renderTickets();};});}
+function tkSegHtml(){var open=ticketCount(),done=TK.tickets.length-open;
+  $('#tkseg').innerHTML='<button data-s="open" class="'+(tkSeg==='open'?'on':'')+'">Open '+open+'</button><button data-s="closed" class="'+(tkSeg==='closed'?'on':'')+'">Closed this week '+done+'</button>';
+  $('#tkseg').querySelectorAll('button').forEach(function(b){b.onclick=function(){tkSeg=b.dataset.s;renderTickets();};});}
+// Rebuilt only when the repo set changes, so the 30s poll never resets the selection.
+function tkRepoOptions(){var sig=TK.repos.join(',');if(sig===tkRepoSig)return;tkRepoSig=sig;var sel=$('#tkrepo');var cur=sel.value;
+  sel.innerHTML='<option value="all">all repos</option>'+TK.repos.map(function(r){return '<option value="'+esc(r)+'">'+esc(r.split('/').pop())+'</option>';}).join('');
+  sel.value=TK.repos.indexOf(cur)>=0?cur:'all';}
+function tkHint(open,done){var repo=$('#tkrepo').value;var back=0;Object.keys(TK.backlog||{}).forEach(function(r){if(repo==='all'||r===repo)back+=TK.backlog[r];});
+  var slug=repo!=='all'?repo:(TK.repos.length===1?TK.repos[0]:'');var more=back?(slug?'<a href="https://github.com/'+esc(slug)+'/issues" target="_blank" rel="noopener">'+back+' more in GitHub</a>':back+' more in GitHub'):'';
+  return open+' open · '+done+' closed this week'+(more?' · '+more:'')+(TK.refreshing?' · syncing…':TK.fetchedAt?' · synced '+rel(TK.fetchedAt):'')+(TK.error?' · <span style="color:#e8b84b">'+esc(TK.error)+'</span>':'');}
+function renderTickets(){var box=$('#tkboard');
+  // Lazy first load, same as Trees: the listings are the server's, fetched when the tab is opened.
+  if(!tkLoaded&&!tkBusy)refreshTickets();
+  tkRepoOptions();tkChips();tkSegHtml();
+  if(!tkLoaded){$('#tkhint').textContent=tkBusy?'Loading tickets…':'';box.innerHTML='';$('#tkpanel').innerHTML='<div class="tkempty">'+(tkBusy?'Loading…':'Nothing loaded yet.')+'</div>';return;}
+  // Nothing has come back from GitHub yet: one syncing line, not six empty columns.
+  if(!TK.fetchedAt){var m=TK.error?esc(TK.error):'Syncing with GitHub…';$('#tkhint').innerHTML=m;box.innerHTML='';$('#tkpanel').innerHTML='<div class="tkempty">'+m+'</div>';return;}
+  var all=TK.tickets.filter(tkMatch);var by={};
+  ['proposed'].concat(TK_MID,['done']).forEach(function(s){by[s]=tkSorted(all.filter(function(t){return tkColOf(t)===s;}));});
+  $('#tkhint').innerHTML=tkHint(all.length-by.done.length,by.done.length);
+  var h='';
+  if(tkSeg==='closed'){box.classList.add('closed');box.style.gridTemplateColumns='';h=tkCol('done',by.done,false);}
+  else{box.classList.remove('closed');
+    box.style.gridTemplateColumns=(tkRail.proposed?'minmax(200px,1fr)':'44px')+' repeat('+TK_MID.length+',minmax(200px,1fr)) '+(tkRail.done?'minmax(200px,1fr)':'44px');
+    h=(tkRail.proposed?tkCol('proposed',by.proposed,true):tkRailHtml('proposed',by.proposed.length))
+      +TK_MID.map(function(s){return tkCol(s,by[s],false);}).join('')
+      +(tkRail.done?tkCol('done',by.done,true):tkRailHtml('done',by.done.length));}
+  box.innerHTML=h;
+  box.querySelectorAll('[data-rail]').forEach(function(el){el.onclick=function(e){e.stopPropagation();tkRail[el.dataset.rail]=!tkRail[el.dataset.rail];renderTickets();};});
+  box.querySelectorAll('.tk[data-k]').forEach(function(el){el.onclick=function(){tkSel=el.dataset.k;renderTickets();};});
+  tkTails(all);renderTicketPanel();}
+function tkChatRow(c){var g=TK_GLYPH[c.state];var i=c.key.indexOf(':');var agent=c.key.slice(0,i),sid=c.key.slice(i+1);
+  var btn=c.state==='ended'
+    ?'<button class="sbtn launchbtn" data-sid="'+esc(sid)+'" data-agent="'+esc(agent)+'" data-action="resume">Resume</button>'
+    :'<button class="sbtn pri" data-goto="'+esc(c.key)+'">Go to pane</button>';
+  var title=c.title?(c.title.length>70?c.title.slice(0,70)+'…':c.title):'';
+  return '<div class="row"><span class="g '+g[0]+'" style="font-weight:700">'+g[1]+'</span><div class="grow"><div class="t">'+esc(tkName(c))+(c.loc?' <span class="m2">· '+esc(c.loc)+'</span>':'')+'</div>'+
+    '<div class="m2">'+esc(tkChatWhen(c))+(title?' · '+esc(title):'')+'</div></div>'+btn+'</div>';}
+// Checks / Review / Merge / Deploy from the pipeline's top-level steps.
+function tkPrRows(p){if(!p)return '';var rv=tkStep(p,'review');
+  var rows=[['checks','Checks'],['review','Review'],['merged','Merge'],['deploy','Deploy']].map(function(r,i){var s=tkStep(p,r[0]);
+    var cls=s?(s.state==='pass'?' ok':s.state==='running'?' run':s.state==='fail'?' no':''):'';
+    var m2=!s?'fetching…':(s.detail||(s.state==='waiting'?(r[0]==='merged'?(rv&&rv.state==='pass'?'waiting on you':'waiting on review'):'not started'):s.state))+(stepDur(s)?' · '+stepDur(s):'');
+    return '<div class="row"><span class="s'+cls+'"></span><div class="grow"><div class="t">'+r[1]+'</div><div class="m2">'+esc(m2)+'</div></div>'+(i===0?'<a class="sbtn" href="'+esc(p.url)+'" target="_blank" rel="noopener">Open PR</a>':'')+'</div>';}).join('');
+  return '<div class="sec"><div class="sech">PR #'+p.number+(p.title?' · '+esc(p.title):'')+'</div>'+rows+'</div>';}
+// Newest first: pipeline transitions, PR open/merge, chat start/stop, the close.
+function tkEvents(t){var ev=[];
+  t.prs.forEach(function(p){(p.pipeline?p.pipeline.events:[]).forEach(function(e){ev.push({at:e.at,text:'PR #'+p.number+': '+e.text,tone:e.tone});});
+    if(p.mergedAt)ev.push({at:p.mergedAt,text:'PR #'+p.number+' merged',tone:'good'});if(p.createdAt)ev.push({at:p.createdAt,text:'PR #'+p.number+' opened',tone:'info'});});
+  t.chats.forEach(function(c){var n=tkName(c);if(c.since)ev.push({at:c.since,text:n+' started',tone:'info'});
+    if(c.state==='ended')ev.push({at:c.lastActive,text:n+' ended',tone:'info'});else if(c.state==='your_turn')ev.push({at:c.lastActive,text:n+' is waiting on you',tone:'info'});});
+  if(t.closedAt)ev.push({at:t.closedAt,text:'issue closed',tone:'good'});
+  return ev.filter(function(e){return e.at;}).sort(function(a,b){return b.at-a.at;}).slice(0,6);}
+function renderTicketPanel(){var box=$('#tkpanel');var t=tkSel?tkByKey(tkSel):null;
+  if(box.querySelector('.picker:not(:empty)'))return; // a lane picker is open: don't wipe it under the click
+  if(!t){var need=TK.tickets.filter(function(x){return tkColOf(x)==='needsYou';}),blk=TK.tickets.filter(function(x){return tkColOf(x)==='blocked';});
+    var pick=function(x,g,cls,sub){return '<div class="row pick" data-k="'+esc(tkKey(x))+'"><span class="g '+cls+'" style="font-weight:700">'+g+'</span><div class="grow"><div class="t">#'+x.number+' '+esc(x.title)+'</div><div class="m2">'+esc(sub)+'</div></div></div>';};
+    box.innerHTML='<div class="sec"><div class="sech">Needs you · '+need.length+'</div>'+(need.length?need.map(function(x){return pick(x,'●','y',TK_STAGE[x.stage]+' · '+agoShort(x.stageSince));}).join('')
+      :'<div class="tkempty">Nothing is waiting on you. Click a ticket to see its details.</div>')+'</div>'
+      +'<div class="sec"><div class="sech">Blocked on others · '+blk.length+'</div>'+(blk.length?blk.map(function(x){return pick(x,'‖','b',TK_STAGE[x.stage]+' · '+(x.blockedOn||'')+' · '+agoShort(x.stageSince));}).join('')
+      :'<div class="tkempty">Nothing is waiting on anyone else.</div>')+'</div>';
+    box.querySelectorAll('[data-k]').forEach(function(el){el.onclick=function(){tkSel=el.dataset.k;renderTickets();};});return;}
+  var p=tkPrimaryPr(t),liveChat=t.chats.filter(function(x){return x.state!=='ended';})[0]||null;
+  var head='<div class="ph"><div class="tkh"><span class="num">#'+t.number+'</span>'+tkLabels(t,4)+'<span class="lbl">'+esc(t.repo.split('/').pop())+'</span><span class="age">opened '+esc(fmtDay(t.createdAt))+(t.author?' · '+esc(t.author):'')+'</span></div>'+
+    '<h2><a href="'+esc(t.url)+'" target="_blank" rel="noopener">'+esc(t.title)+'</a></h2>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="pill"><span class="dot" style="background:'+TK_TONE[t.tone]+'"></span>'+TK_STAGE[t.stage]+' · '+agoShort(t.stageSince)+'</span>'+(t.blockedOn?'<span class="blk">waiting on '+esc(t.blockedOn)+'</span>':'')+'<span class="meta">'+agoShort(t.createdAt)+' since opened · moved '+rel(t.stageSince)+'</span></div></div>';
+  var hist='<div class="sec"><div class="sech">Stage history</div><div class="tl">'+t.history.map(function(h){var d=(h.at?fmtDay(h.at):'')+(h.at&&h.detail?' · ':'')+h.detail;
+    return '<div class="tls'+(h.now?' now':'')+(!h.done&&!h.now?' todo':'')+'"><span class="m"></span><span class="w">'+TK_STAGE[h.stage]+'</span><span class="d">'+esc(d)+'</span></div>';}).join('')+'</div></div>';
+  var who='<div class="sec" id="tkwork"><div class="sech">Working it</div>'+(t.chats.length?t.chats.slice().sort(function(a,b){return b.lastActive-a.lastActive;}).map(tkChatRow).join(''):'<div class="tkempty">No chat has picked this up.</div>')+'<div class="picker"></div></div>';
+  var ev=tkEvents(t);var latest=ev.length?'<div class="sec"><div class="sech">Latest</div>'+ev.map(function(e){return '<div class="ev'+(e.tone==='good'?' good':e.tone==='bad'?' bad':'')+'"><span class="at">'+agoShort(e.at)+'</span><span>'+esc(e.text)+'</span></div>';}).join('')+'</div>':'';
+  var acts='<div class="acts">'+(liveChat?'<button class="sbtn pri" data-goto="'+esc(liveChat.key)+'">Go to pane</button>':'')+
+    '<a class="sbtn" href="'+esc(t.url)+'" target="_blank" rel="noopener">Open issue</a>'+(p?'<a class="sbtn" href="'+esc(p.url)+'" target="_blank" rel="noopener">Open PR</a>':'')+
+    '<button class="sbtn" data-thread="1">New thread on #'+t.number+'</button></div>';
+  box.innerHTML=head+hist+who+tkPrRows(p)+latest+acts;
+  box.querySelectorAll('[data-goto]').forEach(function(b){b.onclick=function(){var k=b.dataset.goto;var i=k.indexOf(':');jump(k.slice(i+1),k.slice(0,i),box);};});
+  box.querySelectorAll('.launchbtn').forEach(function(b){b.onclick=function(){openPicker(b.dataset.sid,b.dataset.agent,$('#tkwork'),'resume','',b.dataset.agent);};});
+  var nt=box.querySelector('[data-thread]');if(nt)nt.onclick=function(){openComposer({prompt:'Work on '+t.repo+'#'+t.number+': '+t.title+'\\n'+t.url,project:TK.dirs[t.repo]||''});};}
 // ---- Detail panel ------------------------------------------------------------
 // Clicking a card selects it and fills the sticky right column. Everything cheap
 // renders from DATA straight away; the expensive half (git, gh, transcript scan)
@@ -1119,8 +1417,8 @@ function wireCleanup(det){
 // never on the board poll. With nothing selected the column lists every chat
 // waiting on you.
 var sel=null, DETAIL=null, detailTimer=null, detailRetry=null, lastOpen=false, TAILS={}, tailsAt=0;
-const STAGE_GLYPH={discovery:'?',implementation:'+',shipping:'^',thread:'~'};
-function detailShown(){const d=$('#detail');return !!d&&getComputedStyle(d).display!=='none'&&tab!=='em'&&tab!=='trees';}
+const STAGE_GLYPH={discovery:'?',implementation:'+',shipping:'^',thread:'~',blocked:'!'};
+function detailShown(){const d=$('#detail');return !!d&&getComputedStyle(d).display!=='none'&&tab!=='em'&&tab!=='trees'&&tab!=='tickets';}
 function selKey(){return sel?sel.agent+':'+sel.sid:'';}
 function selChat(){return sel?DATA.chats.find(c=>c.agent===sel.agent&&c.session_id===sel.sid)||null:null;}
 function isTurn(c){return st(c)==='waiting_on_user'&&!isWorking(c);}
@@ -1199,13 +1497,13 @@ function wireDetail(box,c){const agent=c.agent;const act=box.querySelector('.dac
   box.querySelectorAll('.launchbtn').forEach(b=>b.onclick=()=>openPicker(b.dataset.sid,agent,act,b.dataset.action,b.dataset.proj||'',b.dataset.agent));
   const cb=box.querySelector('.dactions .closebtn');if(cb)cb.onclick=()=>confirmClose(cb,agent,act);wireDrafts(box,c);}
 // Empty state: every live chat whose turn it is, longest-waiting first.
-function waitingChats(){return DATA.chats.filter(c=>isLive(c)&&isTurn(c)).sort((a,b)=>a.last_active_at-b.last_active_at);}
+function waitingChats(){return DATA.chats.filter(c=>isLive(c)&&isTurn(c)).sort((a,b)=>fresh(a)-fresh(b));}
 function renderWaiting(){const box=$('#detail');const w=waitingChats();
   const keys=w.map(chatKey);
   if(keys.length&&(Date.now()-tailsAt>15000||keys.some(k=>!(k in TAILS)))){tailsAt=Date.now();fetch('/api/tails?keys='+encodeURIComponent(keys.join(','))).then(r=>r.json()).then(j=>{if(j.ok){Object.assign(TAILS,j.tails);if(!sel)renderWaiting();}}).catch(()=>{});}
   box.innerHTML='<div class="dsec"><h3>Waiting on you <span class="n">'+w.length+'</span></h3>'+
     (w.length?w.map(c=>{const L=DATA.live[chatKey(c)];return '<div class="wait" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"><div class="wt">'+esc(disp(c))+'</div>'+
-      '<div class="wm">waiting '+rel(c.last_active_at).replace(' ago','')+' · '+esc(L.tmux_session)+' · pane '+esc(L.pane_index)+(L.name?' · @'+esc(L.name):'')+'</div>'+
+      '<div class="wm">waiting '+rel(fresh(c)).replace(' ago','')+' · '+esc(L.tmux_session)+' · pane '+esc(L.pane_index)+(L.name?' · @'+esc(L.name):'')+'</div>'+
       (TAILS[chatKey(c)]?'<div class="wx">'+esc(TAILS[chatKey(c)])+'</div>':'')+'</div>';}).join(''):'<div class="dempty">Nothing is waiting on you. Click a card to see its details.</div>')+'</div>';
   box.querySelectorAll('.wait').forEach(el=>el.onclick=()=>{selectChat(el.dataset.sid,el.dataset.agent);const card=document.querySelector('#list .card.sel');if(card)card.scrollIntoView({block:'nearest'});});}
 function setHeaderHeight(){document.documentElement.style.setProperty('--hh',$('header').offsetHeight+'px');}
@@ -1250,9 +1548,14 @@ var CIMAGES=[], composerOpen=false, composerBusy=false;
 function lsGet(k){try{return localStorage.getItem(k)||'';}catch(e){return '';}}
 function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 function composerProjects(){const seen={},out=[];DATA.chats.slice().sort((a,b)=>b.last_active_at-a.last_active_at).forEach(c=>{if(c.project_dir&&!seen[c.project_dir]){seen[c.project_dir]=1;out.push(c.project_dir);}});return out;}
-function openComposer(){if(composerOpen)return;composerOpen=true;const m=$('#composer');m.hidden=false;
-  const projs=composerProjects();const last=lsGet('loom.lastProject');const def=projs.indexOf(last)>=0?last:(projs[0]||'');
+// prefill ({prompt, project}) seeds the composer — the Tickets panel's "New
+// thread on #N" — and otherwise the last-used project is selected.
+function openComposer(prefill){if(composerOpen)return;composerOpen=true;const m=$('#composer');m.hidden=false;
+  const seed=prefill&&typeof prefill.prompt==='string'?prefill:null;
+  let projs=composerProjects();if(seed&&seed.project&&projs.indexOf(seed.project)<0)projs=[seed.project].concat(projs);
+  const last=seed&&seed.project?seed.project:lsGet('loom.lastProject');const def=projs.indexOf(last)>=0?last:(projs[0]||'');
   $('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===def?' selected':'')+'>'+esc(shortPath(p))+'</option>').join('');
+  if(seed)$('#cprompt').value=seed.prompt;
   $('#cagent').value=DATA.defaultAgent==='codex'?'codex':'claude';
   $('#ctarget').innerHTML='<option value="">Next open pane</option>';
   fetch('/api/lanes?all=1').then(r=>r.json()).then(ls=>{$('#ctarget').innerHTML='<option value="">Next open pane</option>'+ls.map(l=>'<option value="'+esc(l.lane)+'">loom-'+esc(l.lane)+(l.open?' → '+esc(l.open.where):' (full: splits a new pane)')+'</option>').join('');}).catch(()=>{});
@@ -1274,7 +1577,7 @@ function launchThread(){if(composerBusy)return;const prompt=$('#cprompt').value;
 function ghostCards(){if(tab!=='board')return '';const L=DATA.launches||[];return L.filter(g=>!DATA.chats.some(c=>{const x=DATA.live[chatKey(c)];return x&&x.pane_id===g.pane_id&&c.last_active_at>=g.at-5000;})).map(g=>
   '<div class="card ghost"><div class="chead"><h2>'+esc((g.prompt||'').split('\\n')[0].slice(0,90)||'New thread')+'</h2><span class="pill pending">Starting…</span></div>'+
   '<div class="meta"><span class="ptag" style="'+pcolor(g.project)+'">'+esc(g.project)+'</span>'+esc(g.where)+' · '+rel(g.at)+'</div></div>').join('');}
-$('#newbtn').onclick=openComposer;
+$('#newbtn').onclick=()=>openComposer();
 $('#ccancel').onclick=closeComposer;
 $('#claunch').onclick=launchThread;
 $('#composer').addEventListener('mousedown',e=>{if(e.target.id==='composer')closeComposer();});
@@ -1288,11 +1591,15 @@ $('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',updateDeep);
 setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
-heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshEm();
+heat();projects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshEm();refreshTickets();
 $('#default-agent').onchange=updateDefaultAgent;
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(refresh,5000);
 setInterval(refreshEm,15000);
+// Tickets: the header controls re-draw from TK; only the repo set needs a refetch, and only while the tab is up.
+$('#tkq').addEventListener('input',()=>{if(tab==='tickets')renderTickets();});
+['#tkrepo','#tksort'].forEach(s=>$(s).addEventListener('change',()=>{if(tab==='tickets')renderTickets();}));
+setInterval(()=>{if(tab==='tickets')refreshTickets();},30000);
 </script>
 </body></html>`;
 }

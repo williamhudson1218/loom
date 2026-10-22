@@ -5,10 +5,14 @@ import { agentPaneIds } from './placements.ts';
 
 // Lane compaction (issue #1). Workspace sessions numbered `loom-<lane>-<N>` form
 // a lane, and live agent panes are kept packed to the left of it: when a Claude
-// session ends, its pane drops back to a shell (a "hole"), and the latest agent
-// pane in the lane slides into it. Everything is a `swap-pane`, never a create
-// or kill, so every session keeps its grid and every pane keeps its `%id`,
-// `@name`, `@group` and running process — probed against tmux on 2026-09-30.
+// session ends, its pane drops back to a shell (a "hole"), and every agent pane
+// after it slides one slot toward it, so the lane keeps its order — a pane only
+// ever moves past the holes freed ahead of it, never past another chat. (Until
+// 2026-10-20 the LAST pane in the lane jumped into the hole instead, which
+// teleported a chat from tp-5 to tp-2 and made the lane impossible to keep in
+// one's head.) Everything is a `swap-pane`, never a create or kill, so every
+// session keeps its grid and every pane keeps its `%id`, `@name`, `@group` and
+// running process — probed against tmux on 2026-09-30.
 //
 // The planner is pure so it can be tested against fake pane lists; the executor
 // and `move`/`ungroup` take an injected tmux runner for the same reason.
@@ -92,9 +96,14 @@ function slotOrder(a: LanePane, b: LanePane): number {
   );
 }
 
-// Per lane: while a hole sits before a movable agent pane, swap the earliest
-// hole with the latest such pane, then update the model and go again. Lanes
-// never exchange panes. Capped per tick so a big reshuffle is spread out.
+// Per lane: fill the earliest hole with the NEAREST agent pane after it, update
+// the model and go again. The hole lands where that pane was, so the next pass
+// pulls the pane behind it one slot too: the whole tail shifts left, each pane
+// moving exactly as many slots as there are holes ahead of it. A pinned agent
+// pane — one Will is in, or a group member — is a wall: a hole before it fills
+// only from the panes between them, so nothing ever changes places with it.
+// Lanes never exchange panes. Capped per tick so a big reshuffle is spread out
+// (a 24-slot lane with three holes settles in two ticks).
 export function planCompaction(
   panes: LanePane[],
   idleSince: ReadonlyMap<string, number>,
@@ -108,15 +117,22 @@ export function planCompaction(
   }
   const swaps: Swap[] = [];
   for (const [lane, members] of lanes) {
-    const slots = [...members].sort(slotOrder).map((p) => ({ id: p.pane_id, cls: classifyPane(p, idleSince, focused, now) }));
+    const slots = [...members]
+      .sort(slotOrder)
+      .map((p) => ({ id: p.pane_id, agent: p.agent, cls: classifyPane(p, idleSince, focused, now) }));
+    let from = 0; // holes before this index are walled off this tick
     while (swaps.length < MAX_SWAPS_PER_TICK) {
-      const h = slots.findIndex((s) => s.cls === 'hole');
+      const h = slots.findIndex((s, i) => i >= from && s.cls === 'hole');
       if (h < 0) break;
       let m = -1;
-      for (let i = slots.length - 1; i > h; i--) if (slots[i].cls === 'claude') { m = i; break; }
-      if (m < 0) break;
+      for (let i = h + 1; i < slots.length; i++) {
+        if (slots[i].cls === 'claude') { m = i; break; }
+        if (slots[i].cls === 'pinned' && slots[i].agent) break;
+      }
+      if (m < 0) { from = h + 1; continue; }
       swaps.push({ lane, src: slots[m].id, dst: slots[h].id });
       [slots[h], slots[m]] = [slots[m], slots[h]];
+      from = 0;
     }
   }
   return swaps;

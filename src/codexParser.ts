@@ -8,6 +8,7 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
   let project_dir = '';
   let started_at = 0;
   let ended_at = 0;
+  let last_turn_at = 0;
   let message_count = 0;
   let first_message = '';
   let pr_url = '';
@@ -48,11 +49,13 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
     const payload = obj.payload;
     if (payload?.type === 'user_message') {
       message_count++;
+      if (ts > last_turn_at) last_turn_at = ts;
       const text = typeof payload.message === 'string' ? cleanText(payload.message) : '';
       if (text && !first_message) first_message = text;
       if (ts) activity[localDay(ts)] = (activity[localDay(ts)] ?? 0) + 1;
     } else if (payload?.type === 'agent_message') {
       message_count++;
+      if (ts > last_turn_at) last_turn_at = ts;
     }
   }
 
@@ -64,6 +67,7 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
     started_at,
     ended_at,
     last_active_at: ended_at,
+    last_turn_at,
     message_count,
     activity,
     files_touched: [],

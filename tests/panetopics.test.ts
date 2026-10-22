@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   PaneTopics, LABEL_SYSTEM, buildAsk, isHeadless, parseReply, planPane, recentActivity, topicRefreshDue, userPrompts,
-  REFRESH_TOPIC_MS, RECLASSIFY_STAGE_MS, TOPIC_OPTIONS, type PaneLabels, type PaneRow, type TopicDeps,
+  REFRESH_TOPIC_MS, REFRESH_GROWTH_BYTES, RECLASSIFY_STAGE_MS, TOPIC_OPTIONS, type PaneLabels, type PaneRow, type TopicDeps,
 } from '../src/panetopics.ts';
 import { agentSessionKey, type LiveInfo } from '../src/placements.ts';
 
@@ -46,6 +46,26 @@ describe('recentActivity', () => {
   it('notices /ship typed as a prompt', () => {
     expect(recentActivity(user('/ship'), ['/ship']).ship).toBe(true);
   });
+
+  it("keeps the assistant's own one-line descriptions of its tool calls, deduplicated, oldest first", () => {
+    const t = [
+      user('https://x.slack.com/archives/C1/p1'),
+      tool('Bash', { command: 'ls', description: 'Look up the Slack CLI usage' }),
+      tool('Bash', { command: 'node slack.mjs read-thread', description: 'Read the linked Slack thread' }),
+      tool('Bash', { command: 'psql ...', description: 'List prod form tables to find the KS SIT revision rows' }),
+      tool('Bash', { command: 'psql ...', description: 'List prod form tables to find the KS SIT revision rows' }),
+      tool('Agent', { description: 'Research Delaware W-1 return rules', prompt: 'long brief' }),
+      tool('Skill', { skill: 'review-pr', args: '3249' }),
+      tool('Read', { file_path: '/a.ts' }),
+    ].join('\n');
+    expect(recentActivity(t).doings).toEqual([
+      'Look up the Slack CLI usage',
+      'Read the linked Slack thread',
+      'List prod form tables to find the KS SIT revision rows',
+      'Research Delaware W-1 return rules',
+      '/review-pr 3249',
+    ]);
+  });
 });
 
 describe('isHeadless', () => {
@@ -77,10 +97,27 @@ describe('buildAsk', () => {
     const a = recentActivity(tool('Edit'));
     const ask = buildAsk(['one', 'two'], a, 'Old Label', 4);
     expect(ask).toContain("Current topic: 'Old Label'");
-    for (const s of ['discovery', 'implementation', 'shipping', 'thread']) expect(LABEL_SYSTEM).toContain(`- ${s}:`);
+    for (const s of ['discovery', 'implementation', 'shipping', 'thread', 'blocked']) expect(LABEL_SYSTEM).toContain(`- ${s}:`);
     expect(ask.indexOf('<chat>')).toBeLessThan(ask.indexOf('one'));
     expect(ask).toContain('1 edits');
     expect(ask).toContain('one\n---\ntwo');
+  });
+
+  it("carries the Slack threads the chat owns and the assistant's doings, so a bare link still names a subject", () => {
+    const a = recentActivity(tool('Bash', { command: 'x', description: 'Find which tenant holds filing batch 2311' }));
+    const ask = buildAsk(['https://x.slack.com/archives/C1/p1'], a, '', 0, ["#filings: @Will KS SIT can't be created"]);
+    expect(ask).toContain("#filings: @Will KS SIT can't be created");
+    expect(ask).toContain('Find which tenant holds filing batch 2311');
+    expect(ask.indexOf('<chat>')).toBeLessThan(ask.indexOf('#filings'));
+    expect(ask.indexOf('#filings')).toBeLessThan(ask.indexOf('</chat>'));
+    // Nothing to say stays silent rather than printing empty headings.
+    const bare = buildAsk(['hi'], recentActivity(''), '', 0);
+    expect(bare).not.toMatch(/Slack threads this chat|descriptions of its recent tool calls/);
+  });
+
+  it('tells the namer the subject is never the medium the chat arrived by', () => {
+    expect(LABEL_SYSTEM).toMatch(/Slack thread/);
+    expect(LABEL_SYSTEM).toMatch(/placeholder/);
   });
 });
 
@@ -114,6 +151,13 @@ describe('topicRefreshDue', () => {
     expect(topicRefreshDue(labels({ topicAt: now - 1000 }), 9, now)).toBe(false);
     expect(topicRefreshDue(labels({ topic: '' }), 0, now)).toBe(true);
   });
+
+  it('also refreshes once an autonomous run has grown a lot with no new prompts', () => {
+    const due = labels({ topicAt: now - REFRESH_TOPIC_MS });
+    expect(topicRefreshDue(due, 0, now, REFRESH_GROWTH_BYTES)).toBe(true);
+    expect(topicRefreshDue(due, 0, now, REFRESH_GROWTH_BYTES - 1)).toBe(false);
+    expect(topicRefreshDue(labels({ topicAt: now - 1000 }), 0, now, 10 * REFRESH_GROWTH_BYTES)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -125,7 +169,7 @@ function live(paneId: string, sid: string, session = 'loom-tp-2'): Map<string, L
   }]]);
 }
 
-function fakeDeps(transcript: string, reply = '{"topic":"Pane Topics","stage":"implementation"}') {
+function fakeDeps(transcript: string, reply = '{"topic":"Pane Topics","stage":"implementation"}', threads: string[] = []) {
   const opts = new Map<string, Record<string, string>>();
   const calls: string[] = [];
   const row = (paneId: string, session: string): PaneRow => {
@@ -152,6 +196,7 @@ function fakeDeps(transcript: string, reply = '{"topic":"Pane Topics","stage":"i
       calls.push(ask);
       return reply;
     },
+    threads: () => threads,
     log: () => {},
   };
   return { deps, opts, calls };
@@ -211,6 +256,39 @@ describe('PaneTopics', () => {
     expect(t.tick(live('%1', 's1'), now).started).toBe(1);
     await settle();
     expect(opts.get('%1')).toMatchObject({ '@topic': 'Kept', '@stage': 'thread' });
+  });
+});
+
+describe('PaneTopics on a chat opened from a link', () => {
+  it('asks with the Slack thread the chat owns', async () => {
+    const { deps, calls } = fakeDeps(
+      [user('https://x.slack.com/archives/C1/p1'), tool('Bash', { command: 'x', description: 'Read the linked Slack thread' })].join('\n'),
+      '{"topic":"KS SIT Tax Code","stage":"discovery"}',
+      ["#filings: @Will KS SIT can't be created"],
+    );
+    const t = new PaneTopics(deps, 'loom-');
+    t.tick(live('%1', 's1'));
+    await settle();
+    expect(calls[0]).toContain("KS SIT can't be created");
+    expect(calls[0]).toContain('Read the linked Slack thread');
+  });
+
+  it('replaces a placeholder topic once the run has grown, even with no new prompts', async () => {
+    const filler = Array.from({ length: 3000 }, () => tool('Bash', { command: 'psql', description: 'Find which tenant holds filing batch 2311' })).join('\n');
+    const transcript = [user('https://x.slack.com/archives/C1/p1'), filler].join('\n');
+    expect(transcript.length).toBeGreaterThan(REFRESH_GROWTH_BYTES);
+    const { deps, opts, calls } = fakeDeps(transcript, '{"topic":"Filing Batch 2311","stage":"discovery"}');
+    const now = Date.now();
+    opts.set('%1', {
+      '@topic': 'Slack Thread Link', '@stage': 'discovery', '@topic_sid': 's1',
+      '@topic_at': String(Math.floor((now - REFRESH_TOPIC_MS) / 1000) - 1), '@topic_off': '100',
+      '@stage_at': String(Math.floor(now / 1000)), '@stage_size': String(transcript.length),
+    });
+    const t = new PaneTopics(deps, 'loom-');
+    expect(t.tick(live('%1', 's1'), now).started).toBe(1);
+    await settle();
+    expect(calls[0]).toContain("Current topic: 'Slack Thread Link'");
+    expect(opts.get('%1')?.['@topic']).toBe('Filing Batch 2311');
   });
 });
 

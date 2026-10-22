@@ -1,0 +1,10 @@
+{"type": "user", "timestamp": "2026-06-15T12:00:00.000Z", "sessionId": "sess-rec", "cwd": "/Users/me/dev/proj", "message": {"role": "user", "content": "start the work"}}
+{"type": "assistant", "timestamp": "2026-06-15T12:00:05.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/Users/me/dev/proj/a.ts"}}]}}
+{"type": "user", "timestamp": "2026-06-15T12:00:06.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+{"type": "user", "timestamp": "2026-06-15T12:04:00.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "now finish it"}]}}
+{"type": "assistant", "timestamp": "2026-06-15T12:05:00.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "Done."}]}}
+{"type": "system", "timestamp": "2026-06-15T12:05:01.000Z", "content": "turn ended"}
+{"type": "ai-title", "timestamp": "2026-06-15T12:20:00.000Z", "aiTitle": "Rewritten title"}
+{"type": "attachment", "timestamp": "2026-06-15T12:25:00.000Z", "attachment": {"type": "queued_command"}}
+{"type": "user", "timestamp": "2026-06-15T12:30:00.000Z", "isMeta": true, "message": {"role": "user", "content": [{"type": "text", "text": "<system-reminder>a reminder</system-reminder>"}]}}
+{"type": "user", "timestamp": "2026-06-15T12:31:00.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "late result"}]}}

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
 import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
-import { readGhosttyWindows, savedWindowsFrom, type SavedGhosttyWindow } from './ghostty.ts';
+import { readGhosttyWindows, savedWindowsFrom, tabMatchesSession, type SavedGhosttyWindow } from './ghostty.ts';
 import { paneNameMap } from './panenames.ts';
 import type { Agent } from './types.ts';
 
@@ -48,7 +48,9 @@ export interface Layout {
   // flattening them into one. Absent in legacy snapshots, which restore treats
   // as a single window of ghostty_tabs.
   ghostty_windows?: SavedGhosttyWindow[];
-  ghostty_tabs_at?: number; // when ghostty_tabs / ghostty_windows were last read
+  // When the tab bar was last read — including a read carryTabMap declined,
+  // so an uninformative tab bar is not re-read every tick.
+  ghostty_tabs_at?: number;
 }
 
 export interface CaptureLayoutInput {
@@ -226,23 +228,59 @@ export function writeLayout(now: number, opts: WriteLayoutOpts = {}): Layout | n
   const prev = readLayout(file);
   archiveStaleLayout(prev, now, file);
   const stale = now - (prev?.ghostty_tabs_at ?? 0) >= GHOSTTY_TABS_TTL_MS;
-  if (stale) {
-    const windows = (opts.readWindows ?? (() => savedWindowsFrom(readGhosttyWindows())))();
-    // An empty read means Ghostty is closed or accessibility is denied — keep the
-    // last known order rather than forgetting it.
-    if (windows.length) {
-      layout.ghostty_tabs = windows.flatMap((w) => w.tabs);
-      layout.ghostty_windows = windows;
-      layout.ghostty_tabs_at = now;
-    }
-  }
-  if (!layout.ghostty_tabs && prev?.ghostty_tabs) {
-    layout.ghostty_tabs = prev.ghostty_tabs;
-    if (prev.ghostty_windows) layout.ghostty_windows = prev.ghostty_windows;
-    layout.ghostty_tabs_at = prev.ghostty_tabs_at;
-  }
+  const read = stale ? (opts.readWindows ?? (() => savedWindowsFrom(readGhosttyWindows())))() : null;
+  carryTabMap(layout, prev, read, now);
   fs.writeFileSync(file, JSON.stringify(layout, null, 2), 'utf-8');
   return layout;
+}
+
+// The windows a snapshot remembers. A legacy snapshot with only the flat tab
+// list is one window; no tab record at all is none.
+export function savedWindowsOf(layout: Layout): SavedGhosttyWindow[] {
+  if (layout.ghostty_windows?.length) return layout.ghostty_windows;
+  return layout.ghostty_tabs?.length ? [{ tabs: layout.ghostty_tabs }] : [];
+}
+
+// How many of the layout's sessions a tab map can put in a window.
+export function placeable(windows: SavedGhosttyWindow[], layout: Layout): number {
+  const titles = windows.flatMap((w) => w.tabs);
+  return layout.sessions.filter((s) => titles.some((t) => tabMatchesSession(t, s.name))).length;
+}
+
+// Carry the tab map onto a fresh snapshot: the new read when it places at
+// least one of the live sessions and no fewer of them than the saved map does,
+// otherwise the saved map. `read` is null when the tab bar was not consulted.
+//
+// A tab only carries its session name while a tmux client is attached to it.
+// Once the server dies every tab reverts to its shell prompt, and while a
+// restore is attaching only some have been retitled — so a non-empty read can
+// know less than the map it would replace. On 2026-10-20 the first snapshot
+// after a restore recreated the sessions read 16 bare shells, replaced the
+// two-window map with it, and the `loom restore` that followed, able to place
+// nothing, piled all 19 sessions into one window. Counting against the
+// snapshot's own sessions means a session that has been closed does not pin
+// the old map; a session left alive without a tab does, until it is closed or
+// reattached.
+//
+// An empty read (Ghostty closed, accessibility denied) keeps the saved read
+// time so the next tick tries again; a declined read takes the new time so
+// a dead tab bar is only re-read on the slow cadence.
+export function carryTabMap(layout: Layout, prev: Layout | null, read: SavedGhosttyWindow[] | null, now: number): void {
+  const saved = prev ? savedWindowsOf(prev) : [];
+  if (read?.length) {
+    const known = placeable(read, layout);
+    if (known > 0 && known >= placeable(saved, layout)) {
+      layout.ghostty_tabs = read.flatMap((w) => w.tabs);
+      layout.ghostty_windows = read;
+      layout.ghostty_tabs_at = now;
+      return;
+    }
+  }
+  if (prev?.ghostty_tabs) {
+    layout.ghostty_tabs = prev.ghostty_tabs;
+    if (prev.ghostty_windows) layout.ghostty_windows = prev.ghostty_windows;
+    layout.ghostty_tabs_at = read?.length ? now : prev.ghostty_tabs_at;
+  }
 }
 
 export function readLayout(path: string = LAYOUT_PATH): Layout | null {

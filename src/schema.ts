@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS chats (
   started_at        INTEGER NOT NULL,
   ended_at          INTEGER NOT NULL,
   last_active_at    INTEGER NOT NULL,
+  last_turn_at      INTEGER NOT NULL DEFAULT 0,
   message_count     INTEGER NOT NULL,
   activity_json     TEXT NOT NULL DEFAULT '{}',
   files_touched     TEXT NOT NULL DEFAULT '',
@@ -109,6 +110,7 @@ export function applySchema(db: Database.Database): void {
           started_at        INTEGER NOT NULL,
           ended_at          INTEGER NOT NULL,
           last_active_at    INTEGER NOT NULL,
+          last_turn_at      INTEGER NOT NULL DEFAULT 0,
           message_count     INTEGER NOT NULL,
           activity_json     TEXT NOT NULL DEFAULT '{}',
           files_touched     TEXT NOT NULL DEFAULT '',
@@ -156,6 +158,16 @@ export function applySchema(db: Database.Database): void {
         CREATE INDEX chats_saved_idx ON chats(saved);
       `);
     })();
+  }
+  // last_turn_at (2026-10-20) arrived after the v2 rebuild, so it is checked
+  // against the table as it stands now. Existing rows get 0 and the index pass
+  // only re-reads a file whose mtime changed, so zero every mtime once: the
+  // next pass re-parses what is inside the window and fills the column, and
+  // until then the board falls back to last_active_at for those rows.
+  const cols2 = db.prepare(`PRAGMA table_info(chats)`).all() as { name: string }[];
+  if (!cols2.some((c) => c.name === 'last_turn_at')) {
+    db.exec(`ALTER TABLE chats ADD COLUMN last_turn_at INTEGER NOT NULL DEFAULT 0`);
+    db.exec(`UPDATE chats SET jsonl_mtime = 0`);
   }
   // Created after the ALTERs above: on a pre-existing DB the `saved` column only
   // exists once the migration has added it, so this index can't live in the

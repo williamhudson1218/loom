@@ -64,6 +64,24 @@ describe('openDb', () => {
     expect(names).toContain('last_pane_id'); // forward-compat
     expect(names).toContain('saved');
     expect(names).toContain('saved_at');
+    expect(names).toContain('last_turn_at');
+    db.close();
+  });
+
+  it('adds last_turn_at to an older DB and forces every row to re-index', () => {
+    const db = openDb(':memory:');
+    db.exec(`ALTER TABLE chats DROP COLUMN last_turn_at`);
+    db.prepare(
+      `INSERT INTO chats (agent, session_id, project_dir, jsonl_path, started_at, ended_at, last_active_at, message_count, jsonl_mtime, last_indexed_at)
+       VALUES ('claude', 's1', '/p', '/p/s1.jsonl', 1, 2, 2, 1, 999, 1)`,
+    ).run();
+    applySchema(db);
+    const row = db.prepare(`SELECT last_turn_at, jsonl_mtime FROM chats WHERE session_id = 's1'`).get() as any;
+    expect(row).toEqual({ last_turn_at: 0, jsonl_mtime: 0 });
+    applySchema(db); // idempotent: a second pass must not zero mtimes again
+    db.prepare(`UPDATE chats SET jsonl_mtime = 5`).run();
+    applySchema(db);
+    expect((db.prepare(`SELECT jsonl_mtime FROM chats`).get() as any).jsonl_mtime).toBe(5);
     db.close();
   });
 

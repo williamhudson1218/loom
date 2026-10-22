@@ -11,7 +11,7 @@ const NOW = 2_000_000_000_000;
 function chatRow(over: Partial<ChatRow> = {}): ChatRow {
   return {
     agent: 'claude', session_id: 's1', project_dir: '/repo', jsonl_path: '/nope.jsonl',
-    started_at: NOW - 600_000, ended_at: NOW, last_active_at: NOW, message_count: 12,
+    started_at: NOW - 600_000, ended_at: NOW, last_active_at: NOW, last_turn_at: NOW, message_count: 12,
     activity_json: '{}', files_touched: '', files_written: '', first_message: 'do the thing',
     claude_auto_title: '', pr_url: '', title: 't', overview: 'o', state: 'waiting_on_user',
     breakdown_json: '[]', summary_dirty: 0, summary_model: '', summary_at: 0,

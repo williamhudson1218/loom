@@ -19,7 +19,8 @@ export interface ParsedChat {
   jsonl_path: string;
   started_at: number;
   ended_at: number;
-  last_active_at: number;
+  last_active_at: number; // the last record of any kind — the file was busy
+  last_turn_at: number; // the last user prompt or assistant message — someone spoke
   message_count: number;
   activity: Record<string, number>; // localDay -> user-message count
   files_touched: string[];
@@ -58,6 +59,7 @@ export interface ChatRow {
   started_at: number;
   ended_at: number;
   last_active_at: number;
+  last_turn_at: number; // 0 until the row is re-indexed after the column arrived
   message_count: number;
   activity_json: string;
   files_touched: string;

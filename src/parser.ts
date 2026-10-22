@@ -11,6 +11,63 @@ export function localDay(ts: number): string {
 }
 
 const FILE_TOOLS = new Set(['Read', 'Edit', 'Write', 'NotebookEdit']);
+
+// A record that is someone actually saying something: a user prompt (not a
+// tool_result handed back to the model, not an injected system reminder) or an
+// assistant message. Claude Code writes plenty else to a transcript — `system`,
+// `ai-title`, `attachment`, `queue-operation`, `file-history-snapshot`, request
+// blobs — often long after the conversation stopped, so "last record" is not
+// "last activity"; a title rewrite at midnight would float a dead chat to the
+// top of the board.
+export function isTurnRecord(obj: any): boolean {
+  const role = obj?.message?.role;
+  if (obj?.type === 'assistant' && role === 'assistant') return true;
+  if (obj?.type !== 'user' || role !== 'user' || obj.isMeta) return false;
+  const c = obj.message.content;
+  if (typeof c === 'string') return true;
+  return Array.isArray(c) && c.some((b: any) => b?.type === 'text');
+}
+
+export const TAIL_TURN_BYTES = 256 * 1024;
+
+// The last turn's timestamp from the end of a transcript, without reading the
+// whole file: for a live chat the DB is up to an index pass stale, and the
+// board poll needs the fresh value every few seconds. 0 when no turn is inside
+// the tail (a huge tool result can push it out) or the file is unreadable — the
+// caller keeps the value it has.
+export function lastTurnAtFromTail(jsonlPath: string, bytes: number = TAIL_TURN_BYTES): number {
+  let fd: number;
+  try {
+    fd = fs.openSync(jsonlPath, 'r');
+  } catch {
+    return 0;
+  }
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - bytes);
+    const buf = Buffer.alloc(size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    const lines = buf.toString('utf-8').split('\n');
+    if (start > 0) lines.shift(); // a partial first line
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].trim()) continue;
+      let obj: any;
+      try {
+        obj = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      if (!isTurnRecord(obj)) continue;
+      const ts = typeof obj.timestamp === 'string' ? Date.parse(obj.timestamp) : NaN;
+      if (!Number.isNaN(ts)) return ts;
+    }
+    return 0;
+  } catch {
+    return 0;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 
 export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
@@ -18,6 +75,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
   let project_dir = '';
   let started_at = 0;
   let ended_at = 0;
+  let last_turn_at = 0;
   let message_count = 0;
   let first_message = '';
   let claude_auto_title = '';
@@ -54,6 +112,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
         ts = parsed;
         if (!started_at || ts < started_at) started_at = ts;
         if (ts > ended_at) ended_at = ts;
+        if (ts > last_turn_at && isTurnRecord(obj)) last_turn_at = ts;
       }
     }
 
@@ -97,6 +156,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
     started_at,
     ended_at,
     last_active_at: ended_at,
+    last_turn_at,
     message_count,
     activity,
     files_touched: Array.from(files),

@@ -4,11 +4,12 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { CLAUDE_PROJECTS_DIR, SESSION_PREFIX } from './paths.ts';
 import type { LiveInfo } from './placements.ts';
+import { threadsFor } from './slack.ts';
 
 // Every live Claude chat in a workspace pane carries two labels beside its @name:
 //
 //   @topic   what the chat is ABOUT, 2-4 words ("ACH Prenote Retry")
-//   @stage   where it is: discovery | implementation | shipping | thread
+//   @stage   where it is: discovery | implementation | shipping | thread | blocked
 //
 // so a dozen panes can be told apart by subject and triaged by stage from the
 // border alone. Both are written by one haiku call over the transcript and
@@ -27,13 +28,17 @@ import type { LiveInfo } from './placements.ts';
 //   @stage_at     epoch seconds of the last stage classification
 //   @stage_size   transcript size at that classification
 
-export const STAGES = ['discovery', 'implementation', 'shipping', 'thread'] as const;
+export const STAGES = ['discovery', 'implementation', 'shipping', 'thread', 'blocked'] as const;
 export type Stage = (typeof STAGES)[number];
 
 export const TOPIC_MAX = 32;
 // Refresh the topic once the conversation has moved on: enough time AND enough new prompts.
 export const REFRESH_TOPIC_MS = 15 * 60 * 1000;
 export const REFRESH_PROMPTS = 3;
+// An autonomous run has one launch prompt and then megabytes of work, so new
+// prompts never come: enough transcript growth since the naming also counts.
+// The early name is often a placeholder (the chat had only opened a link).
+export const REFRESH_GROWTH_BYTES = 256 * 1024;
 // Stage moves faster than subject: re-classify whenever the chat has grown and this has passed.
 export const RECLASSIFY_STAGE_MS = 3 * 60 * 1000;
 // A failed or rejected call waits this long before the pane is tried again.
@@ -41,6 +46,10 @@ export const RETRY_MS = 2 * 60 * 1000;
 export const MAX_CONCURRENT = 3;
 const RECENT_PROMPTS = 8;
 const RECENT_TOOLS = 80;
+// The assistant's own one-line descriptions of its tool calls. When the user's
+// only prompt is a link, these are where the subject shows up.
+const RECENT_DOINGS = 12;
+const DOING_CHARS = 100;
 // Transcripts run to tens of MB; everything the namer needs is near the end.
 const TAIL_BYTES = 2 * 1024 * 1024;
 const FULL_READ_CAP = 64 * 1024 * 1024;
@@ -107,6 +116,7 @@ export interface Activity {
   ciWatch: boolean; // gh run watch, gh pr checks, deploy polling
   lastFrom: 'user' | 'assistant' | '';
   lastAssistantText: string;
+  doings: string[]; // the `description` the assistant gave each recent tool call, oldest first
 }
 
 const TEST_CMD = /\b(vitest|jest|pytest|yarn (test|jest)|go test|cargo test)\b/;
@@ -119,7 +129,7 @@ export function recentActivity(text: string, prompts: string[] = []): Activity {
   const act: Activity = {
     edits: 0, reads: 0, tests: 0, agents: 0,
     commit: false, push: false, prCreate: false, prReady: false, ship: false, ciWatch: false,
-    lastFrom: '', lastAssistantText: '',
+    lastFrom: '', lastAssistantText: '', doings: [],
   };
   const tools: { name: string; input: Record<string, unknown> }[] = [];
   for (const e of entries) {
@@ -134,8 +144,11 @@ export function recentActivity(text: string, prompts: string[] = []): Activity {
       act.lastFrom = 'user';
     }
   }
+  const doings: string[] = [];
   for (const t of tools.slice(-RECENT_TOOLS)) {
     const cmd = typeof t.input.command === 'string' ? t.input.command : '';
+    const doing = describeCall(t.name, t.input);
+    if (doing && doings[doings.length - 1] !== doing && !doings.includes(doing)) doings.push(doing);
     if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(t.name)) act.edits++;
     else if (/^(Agent|Task)$/.test(t.name)) act.agents++;
     else if (t.name === 'Bash' && TEST_CMD.test(cmd)) act.tests++;
@@ -151,7 +164,21 @@ export function recentActivity(text: string, prompts: string[] = []): Activity {
   }
   if (prompts.some((p) => /^\/ship\b/.test(p))) act.ship = true;
   act.lastAssistantText = act.lastAssistantText.slice(-600);
+  act.doings = doings.slice(-RECENT_DOINGS);
   return act;
+}
+
+// What the assistant said it was doing with a call: the `description` it wrote
+// for a Bash command or a delegated agent, or the skill it invoked.
+function describeCall(name: string, input: Record<string, unknown>): string {
+  let s = '';
+  if (name === 'Skill' && typeof input.skill === 'string') {
+    s = `/${input.skill}${typeof input.args === 'string' && input.args ? ' ' + input.args : ''}`;
+  } else if (typeof input.description === 'string') {
+    s = input.description;
+  }
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.length > DOING_CHARS ? s.slice(0, DOING_CHARS - 1) + '…' : s;
 }
 
 // Headless `claude -p` runs stamp a non-cli entrypoint. They are not chats.
@@ -173,23 +200,35 @@ export const LABEL_SYSTEM =
   'topic: 2-4 words naming the chat\'s SUBJECT (the system, feature, form, client, PR or bug it is about), ' +
   "not the activity: never 'Investigate', 'Question', 'Help', 'Fix', 'Chat'. Title Case, no punctuation " +
   "beyond a hyphen, at most 28 characters, distinct among a dozen similar chats. Examples: 'ACH Prenote " +
-  "Retry', 'NJ WR-30 Credential', 'Tmux Pane Topics', 'SYM767 CA SUI'. If a current topic is given, keep " +
-  'it exactly unless the latest messages have clearly moved to a different subject.\n\n' +
+  "Retry', 'NJ WR-30 Credential', 'Tmux Pane Topics', 'SYM767 CA SUI'. The subject is what the chat works " +
+  'ON, never the medium it arrived by: a chat opened from a Slack thread, a GitHub issue, a PR link or a ' +
+  "ticket is about what that thread, issue or PR concerns ('KS SIT Tax Code', never 'Slack Thread Link'). " +
+  "When the user's messages are only a link or a command, take the subject from the thread's root message " +
+  'and from what the assistant has been doing. If a current topic is given, keep it exactly unless the ' +
+  'latest messages have clearly moved to a different subject; but a current topic that names only a ' +
+  'medium or an activity is a placeholder, so replace it as soon as the subject is clear.\n\n' +
   'stage: exactly one of\n' +
   '- discovery: researching, reading code, debugging, designing, brainstorming; no real edits yet\n' +
   '- implementation: editing code or files, running tests\n' +
   '- shipping: committing, a PR open or in its review loop, CI, deploy, /ship\n' +
-  '- thread: an open thread with no active work: a question answered and awaiting the user, parked or ' +
-  'blocked on someone, conversational back-and-forth, or waiting on a person to review\n' +
+  '- thread: an open thread with no active work where the next move is the USER\'s: a question answered ' +
+  'and awaiting the user, a decision or approval the user owes, conversational back-and-forth, or parked\n' +
+  '- blocked: the next move belongs to SOMEONE OTHER than the user or the assistant: waiting on a reply ' +
+  'from a named person, team, agency, client or vendor (an email, Slack message or PR review sent to them ' +
+  'and not yet answered), or on an external event the chat cannot hurry\n' +
   'Judge stage by the MOST RECENT activity, not the chat as a whole.';
 
-export function buildAsk(prompts: string[], act: Activity, priorTopic: string, idleMin: number): string {
+export function buildAsk(prompts: string[], act: Activity, priorTopic: string, idleMin: number, threads: string[] = []): string {
   const flags = [
     act.commit && 'git commit', act.push && 'git push', act.prCreate && 'gh pr create',
     act.prReady && 'gh pr ready', act.ship && '/ship', act.ciWatch && 'CI/deploy watching',
   ].filter(Boolean);
   let ask = '<chat>\n';
   ask += "The user's messages, oldest first:\n\n" + prompts.map((p) => p.slice(0, 800)).join('\n---\n') + '\n';
+  if (threads.length) ask += '\nSlack threads this chat is working (channel: root message):\n' + threads.map((t) => `- ${t}`).join('\n') + '\n';
+  if (act.doings.length) {
+    ask += "\nThe assistant's own one-line descriptions of its recent tool calls, oldest first:\n" + act.doings.map((d) => `- ${d}`).join('\n') + '\n';
+  }
   if (act.lastAssistantText) ask += `\nTail of the last assistant message:\n${act.lastAssistantText}\n`;
   ask +=
     '\nRecent assistant activity (last tool calls): ' +
@@ -257,8 +296,11 @@ export function planPane(cur: PaneLabels, sid: string, size: number, now: number
 
 // After reading what the transcript holds since the last naming: is the topic
 // due a refresh? Stage rides along on every call, topic only when this says so.
-export function topicRefreshDue(cur: PaneLabels, newPrompts: number, now: number): boolean {
-  return !cur.topic || (now - cur.topicAt >= REFRESH_TOPIC_MS && newPrompts >= REFRESH_PROMPTS);
+// `grown` is how many bytes the transcript gained since the naming.
+export function topicRefreshDue(cur: PaneLabels, newPrompts: number, now: number, grown = 0): boolean {
+  if (!cur.topic) return true;
+  if (now - cur.topicAt < REFRESH_TOPIC_MS) return false;
+  return newPrompts >= REFRESH_PROMPTS || grown >= REFRESH_GROWTH_BYTES;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +319,7 @@ export interface TopicDeps {
   stat(file: string): { size: number; mtimeMs: number } | null;
   readRange(file: string, from: number, to: number): string;
   haiku(ask: string): Promise<string>;
+  threads(sid: string): string[]; // Slack threads the chat owns, as 'label: root preview'
   log(msg: string): void;
 }
 
@@ -368,6 +411,15 @@ export const realTopicDeps: TopicDeps = {
         (err, stdout) => (err ? reject(err) : resolve(stdout)));
     });
   },
+  threads(sid) {
+    // Reads the hook's thread state and Loom's preview cache; a preview still
+    // being fetched is simply left out, and the growth refresh picks it up later.
+    try {
+      return threadsFor(sid).filter((t) => t.preview).map((t) => `${t.label}: ${t.preview}`);
+    } catch {
+      return [];
+    }
+  },
   log(msg) {
     console.log(`[loom] topics: ${msg}`);
   },
@@ -437,7 +489,7 @@ export class PaneTopics {
         return;
       }
       const sinceOff = cur.topic ? this.deps.readRange(file, Math.min(cur.topicOff, st.size), st.size) : '';
-      const wantTopic = topicRefreshDue(cur, cur.topic ? userPrompts(sinceOff).length : 0, now);
+      const wantTopic = topicRefreshDue(cur, cur.topic ? userPrompts(sinceOff).length : 0, now, st.size - cur.topicOff);
       const stageDue = now - cur.stageAt >= RECLASSIFY_STAGE_MS && st.size !== cur.stageSize;
       if (!wantTopic && !stageDue) {
         // A refresh's clock ran out but too few new prompts: look again in a minute, not every tick.
@@ -456,7 +508,8 @@ export class PaneTopics {
         return;
       }
       const act = recentActivity(tail, prompts);
-      const ask = buildAsk(prompts, act, cur.topic, Math.max(0, Math.round((now - st.mtimeMs) / 60_000)));
+      const threads = wantTopic ? this.deps.threads(sid) : [];
+      const ask = buildAsk(prompts, act, cur.topic, Math.max(0, Math.round((now - st.mtimeMs) / 60_000)), threads);
 
       let out: string;
       try {

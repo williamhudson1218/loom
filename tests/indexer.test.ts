@@ -49,6 +49,7 @@ describe('upsertChat', () => {
       started_at: 1,
       ended_at: 2,
       last_active_at: 2,
+      last_turn_at: 0,
       message_count: 2,
       activity: {},
       files_touched: ['/x/AGENTS.md', '/x/a.ts'],
@@ -73,7 +74,7 @@ describe('isAnalyzerSession', () => {
   const base: ParsedChat = {
     agent: 'claude',
     session_id: 's', project_dir: '/Users/me/dev/proj', jsonl_path: '/x.jsonl',
-    started_at: 0, ended_at: 0, last_active_at: 0, message_count: 2,
+    started_at: 0, ended_at: 0, last_active_at: 0, last_turn_at: 0, message_count: 2,
     activity: {}, files_touched: [], files_written: [], first_message: 'fix the bug', claude_auto_title: '', pr_url: '',
   };
 
