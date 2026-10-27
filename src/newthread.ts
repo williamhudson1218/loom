@@ -181,6 +181,32 @@ export function indexFreshLaunches(
   }
 }
 
+/**
+ * A shell pane to launch into: an open one per chooseTarget, or a fresh split
+ * (named, and given a beat for its shell to start reading the tty) when the
+ * lanes are full. Shared by the composer and the Slack-thread hotkey's resume.
+ */
+export function acquirePane(
+  projectDir: string,
+  lane: string,
+  prefer: string,
+  run: TmuxRunner = defaultRun,
+): { ok: true; paneId: string; split: boolean } | { ok: false; detail: string } {
+  const target = chooseTarget(readWorld(run), readGeometry(run), lane, prefer);
+  if (!target) return { ok: false, detail: lane ? `no loom-${lane}-N session to split` : 'no lane sessions found' };
+  if (!target.split) return { ok: true, paneId: target.pane_id, split: false };
+  let paneId: string;
+  try {
+    paneId = run(['split-window', '-d', target.horizontal ? '-h' : '-v', '-t', target.from, '-c', projectDir, '-P', '-F', '#{pane_id}']).trim();
+  } catch (e) {
+    return { ok: false, detail: 'split failed: ' + (e as Error).message };
+  }
+  nameNewPanes();
+  // Give the new shell a beat to start reading its tty before the launch is typed.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  return { ok: true, paneId, split: true };
+}
+
 export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun): GotoResult & { pane_id?: string; where?: string; images?: string[] } {
   if (!isValidProjectDir(input.projectDir)) return { ok: false, detail: 'invalid project dir' };
   if (!input.prompt.trim() && !input.images?.length) return { ok: false, detail: 'empty prompt' };
@@ -191,21 +217,9 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun)
   } catch (e) {
     return { ok: false, detail: (e as Error).message };
   }
-  const target = chooseTarget(readWorld(run), readGeometry(run), input.lane ?? '', input.prefer ?? '');
-  if (!target) return { ok: false, detail: input.lane ? `no loom-${input.lane}-N session to split` : 'no lane sessions found' };
-  let paneId: string;
-  if (target.split) {
-    try {
-      paneId = run(['split-window', '-d', target.horizontal ? '-h' : '-v', '-t', target.from, '-c', input.projectDir, '-P', '-F', '#{pane_id}']).trim();
-    } catch (e) {
-      return { ok: false, detail: 'split failed: ' + (e as Error).message };
-    }
-    nameNewPanes();
-    // Give the new shell a beat to start reading its tty before the launch is typed.
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
-  } else {
-    paneId = target.pane_id;
-  }
+  const pane = acquirePane(input.projectDir, input.lane ?? '', input.prefer ?? '', run);
+  if (!pane.ok) return pane;
+  const { paneId, split } = pane;
   const prompt = promptWithImages(input.prompt, images);
   const r = launchInPane({
     paneId,
@@ -225,5 +239,5 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun)
     /* the id is still a usable address */
   }
   recent.push({ id, pane_id: paneId, where, project: path.basename(input.projectDir), projectDir: input.projectDir, agent: input.agent, prompt: prompt.slice(0, 200), at: Date.now() });
-  return { ...r, pane_id: paneId, where, images, detail: r.detail + (target.split ? ' (split a new pane)' : '') };
+  return { ...r, pane_id: paneId, where, images, detail: r.detail + (split ? ' (split a new pane)' : '') };
 }

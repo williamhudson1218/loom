@@ -1,9 +1,10 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, dialog } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification } from 'electron';
+import { startPick, stopHelper } from './picker.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, SERVER_PORT, startGhTicks } from '../src/server.ts';
-import { openDb } from '../src/db.ts';
+import { openDb, getSlackHotkey } from '../src/db.ts';
 import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
@@ -43,6 +44,7 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let quitting = false;
+let slackAccel = '';
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -184,6 +186,54 @@ async function runOnce(): Promise<void> {
   }
 }
 
+// The "open the chat for this Slack thread" hotkey: it opens a pick overlay
+// (app/picker.ts), and the Slack message clicked there resolves to its thread
+// parent, which is POSTed to the server's /api/slack/thread-goto: the same
+// endpoint a curl with a permalink hits. Failures notify; a jump is its own
+// feedback.
+function slackHotkey(): string {
+  const db = openDb();
+  try {
+    return getSlackHotkey(db);
+  } finally {
+    db.close();
+  }
+}
+
+function notify(body: string): void {
+  if (Notification.isSupported()) new Notification({ title: 'Loom', body, silent: true }).show();
+}
+
+async function threadGoto(url: string): Promise<void> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/slack/thread-goto`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const out = (await r.json()) as { ok: boolean; detail?: string };
+    if (!out.ok) notify(out.detail || 'Could not open the chat for this thread');
+  } catch (e) {
+    notify('Slack thread lookup failed: ' + (e as Error).message);
+  }
+}
+
+function slackThreadGoto(): void {
+  void startPick({ notify, goto: threadGoto });
+}
+
+function registerSlackHotkey(): string {
+  const accel = slackHotkey();
+  if (accel.toLowerCase() === 'off') return '';
+  try {
+    if (globalShortcut.register(accel, slackThreadGoto)) return accel;
+  } catch {
+    /* an invalid accelerator throws */
+  }
+  console.error(`[loom] could not register the Slack thread hotkey ${accel}`);
+  return '';
+}
+
 function buildTray(): void {
   tray = new Tray(nativeImage.createEmpty());
   trayMenu = Menu.buildFromTemplate([
@@ -201,6 +251,10 @@ function buildTray(): void {
       click: (item) => setCompactEnabled(item.checked),
     },
     { label: 'Refresh now', click: () => void runOnce() },
+    {
+      label: 'Pick a Slack message to open its chat' + (slackAccel ? `  (${slackAccel.replace(/Command/g, 'Cmd').replace(/Control/g, 'Ctrl').replace(/Alt/g, 'Option')})` : ''),
+      click: slackThreadGoto,
+    },
     { type: 'separator' },
     { label: 'Quit Loom', click: () => { quitting = true; app.quit(); } },
   ]);
@@ -215,6 +269,8 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => {
   quitting = true;
+  globalShortcut.unregisterAll();
+  stopHelper();
   // Bracket the quit: the line written here and the one the watcher writes if
   // the server disappears are what tell us whether Loom's exit is implicated.
   noteTmuxState(Date.now(), 'loom-quit');
@@ -237,6 +293,7 @@ app.whenReady().then(() => {
   // paint below — after it, our own fresh tints would be swept too.
   clearPaneTints();
 
+  slackAccel = registerSlackHotkey();
   buildTray();
   app.setLoginItemSettings({ openAtLogin: true });
 

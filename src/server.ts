@@ -24,6 +24,7 @@ import { getTrees, filesFor, diffFor, removeWorktrees, panesFromLive, knownWorkt
 import type { DiffMode } from './git.ts';
 import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, threadOwners } from './slack.ts';
+import { defaultGotoDeps, threadGoto } from './slackgoto.ts';
 import { discardDraft, pendingDrafts, sendDraft } from './outbox.ts';
 import { indexFreshLaunches, recentLaunches, startThread } from './newthread.ts';
 import { parseLane } from './compact.ts';
@@ -377,6 +378,36 @@ export function createServer(): http.Server {
       openThread(url.searchParams.get('key') || '')
         .then((r) => json(res, r.ok ? 200 : 404, r))
         .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
+      return;
+    }
+
+    // "Open the chat for this Slack thread" (the app's global hotkey posts the
+    // clipboard here). Body {url, pane?}: the owning chat is jumped to if live,
+    // otherwise resumed into `pane` or an open lane pane. Never starts a chat for
+    // an unowned thread. 200 on a jump/resume, 404 when nothing owns the thread.
+    if (url.pathname === '/api/slack/thread-goto' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => {
+        if (raw.length < 64 * 1024) raw += chunk;
+      });
+      req.on('end', () => {
+        let b: { url?: unknown; pane?: unknown };
+        try {
+          b = JSON.parse(raw || '{}') ?? {};
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid body' });
+        }
+        const pane = typeof b.pane === 'string' && /^%\d+$/.test(b.pane) ? b.pane : undefined;
+        // An explicit pane is typed into, so it must be a free shell, never a running agent.
+        if (pane && !readWorld().panes.some((p) => p.pane_id === pane && !p.agent && /^(zsh|bash|fish|sh)$/.test(p.command))) {
+          return json(res, 409, { ok: false, detail: `pane ${pane} is not an idle shell` });
+        }
+        const snap = snapshot();
+        const dirs = new Map(snap.views.filter((v) => v.agent === 'claude').map((v) => [v.session_id, v.project_dir]));
+        threadGoto(typeof b.url === 'string' ? b.url : '', defaultGotoDeps(() => snap.live, (sid) => dirs.get(sid) ?? null), { pane })
+          .then((r) => json(res, r.ok ? 200 : r.reason === 'no_owner' || r.reason === 'not_slack' ? 404 : 409, r))
+          .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
+      });
       return;
     }
 

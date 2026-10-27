@@ -1,4 +1,6 @@
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,3 +31,10 @@ await build({
   logLevel: 'info',
 });
 console.log('built dist/main.js');
+
+// slack-ax, the Accessibility helper the Slack pick overlay hit-tests through
+// (see native/slack-ax.swift). electron-builder ships it as an extraResource,
+// outside the asar, so it can be executed. Needs the Xcode command line tools.
+fs.mkdirSync('build-native', { recursive: true });
+execFileSync('swiftc', ['-O', 'native/slack-ax.swift', '-o', 'build-native/slack-ax'], { stdio: 'inherit' });
+console.log('built build-native/slack-ax');

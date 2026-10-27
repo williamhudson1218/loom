@@ -29,3 +29,13 @@ export function setDefaultAgent(db: Database.Database, agent: LaunchPreference):
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(agent);
 }
+
+// The global "pick a Slack message, open its chat" hotkey, as an Electron
+// accelerator. Unset reads as the default; 'off' disables it. Change with
+//   sqlite3 ~/.loom/manager.db "INSERT OR REPLACE INTO settings VALUES ('slack_goto_hotkey', 'Control+Alt+K')"
+// and restart Loom (the shortcut is registered at launch).
+export const DEFAULT_SLACK_HOTKEY = 'Command+Shift+L';
+export function getSlackHotkey(db: Database.Database): string {
+  const row = db.prepare(`SELECT value FROM settings WHERE key = 'slack_goto_hotkey'`).get() as { value: string } | undefined;
+  return row?.value?.trim() || DEFAULT_SLACK_HOTKEY;
+}

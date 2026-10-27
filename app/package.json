@@ -19,6 +19,7 @@
     "directories": { "output": "release" },
     "files": ["dist/**", "node_modules/**", "package.json"],
     "asarUnpack": ["**/node_modules/better-sqlite3/**"],
+    "extraResources": [{ "from": "build-native/slack-ax", "to": "slack-ax" }],
     "mac": {
       "target": "dir",
       "icon": "assets/icon.icns",
