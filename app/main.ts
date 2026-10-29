@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification } from 'electron';
+import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, Notification } from 'electron';
 import { startPick, stopHelper } from './picker.ts';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -10,6 +10,7 @@ import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
 import { SESSION_PREFIX } from '../src/paths.ts';
+import { trayIcon } from './trayIcon.ts';
 import {
   liveSessions,
   liveSessionsFrom,
@@ -144,7 +145,7 @@ function updateTray(): void {
   const parts: string[] = [];
   if (c.working) parts.push(`⚡${c.working}`);
   if (c.yourTurn) parts.push(`🔵${c.yourTurn}`);
-  tray.setTitle(parts.length ? ' ' + parts.join(' ') : ' ◍');
+  tray.setTitle(parts.length ? ' ' + parts.join(' ') : '');
   tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn`);
   const compactItem = trayMenu?.getMenuItemById('compact');
   if (compactItem) compactItem.checked = compactEnabled();
@@ -235,7 +236,7 @@ function registerSlackHotkey(): string {
 }
 
 function buildTray(): void {
-  tray = new Tray(nativeImage.createEmpty());
+  tray = new Tray(trayIcon());
   trayMenu = Menu.buildFromTemplate([
     { label: 'Open Loom', click: showWindow },
     { type: 'separator' },
