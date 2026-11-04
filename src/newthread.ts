@@ -186,6 +186,41 @@ export function indexFreshLaunches(
  * (named, and given a beat for its shell to start reading the tty) when the
  * lanes are full. Shared by the composer and the Slack-thread hotkey's resume.
  */
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Block until a freshly split shell has finished starting up, so the launch
+ * command is typed at a real prompt. A fixed 400ms was not enough for a zsh
+ * with p10k's instant prompt and an nvm auto-use hook: keys typed while it was
+ * still initialising came back garbled (`cd` arrived as `cccd`) and the resume
+ * never ran. Ready = the screen has output and has not changed for 500ms;
+ * gives up after 8s and types anyway, as before.
+ */
+export function waitForShellReady(paneId: string, run: TmuxRunner = defaultRun, opts: { maxMs?: number; quietMs?: number; stepMs?: number; sleep?: (ms: number) => void } = {}): boolean {
+  const maxMs = opts.maxMs ?? 8000, quietMs = opts.quietMs ?? 500, stepMs = opts.stepMs ?? 100, sleep = opts.sleep ?? sleepMs;
+  let last = '';
+  let stableFor = 0;
+  for (let waited = 0; waited < maxMs; waited += stepMs) {
+    sleep(stepMs);
+    let screen = '';
+    try {
+      screen = run(['capture-pane', '-p', '-t', paneId]).trim();
+    } catch {
+      return false;
+    }
+    if (screen && screen === last) {
+      stableFor += stepMs;
+      if (stableFor >= quietMs) return true;
+    } else {
+      stableFor = 0;
+      last = screen;
+    }
+  }
+  return false;
+}
+
 export function acquirePane(
   projectDir: string,
   lane: string,
@@ -202,8 +237,7 @@ export function acquirePane(
     return { ok: false, detail: 'split failed: ' + (e as Error).message };
   }
   nameNewPanes();
-  // Give the new shell a beat to start reading its tty before the launch is typed.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  waitForShellReady(paneId, run);
   return { ok: true, paneId, split: true };
 }
 

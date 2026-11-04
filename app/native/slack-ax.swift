@@ -70,13 +70,35 @@ func isThreadList(_ list: AXUIElement?) -> Bool {
   return str(l, "AXDescription").hasPrefix("Thread")
 }
 
+/// The value of `thread_ts=` in a reply permalink, or nil for a root.
+func threadTs(_ u: String) -> String? {
+  guard let r = u.range(of: "thread_ts=") else { return nil }
+  return String(u[r.upperBound...].prefix { $0 != "&" })
+}
+
 /// The open thread pane's root: the first item in its list whose permalink has
-/// no thread_ts (replies carry one, the root does not). nil when scrolled away.
+/// no thread_ts (replies carry one, the root does not). nil when scrolled away,
+/// and nil when the list holds more than one thread: Slack's Threads view stacks
+/// many threads in one list (its description also starts with "Thread"), and
+/// there a message with no thread_ts is its own root, not a reply of the first
+/// thread on screen. Without this, clicking any root in that view resolved to
+/// whichever thread happened to be at the top.
 func threadRoot(_ list: AXUIElement) -> String? {
+  var root: String?
+  var rootTs: String?
   for item in children(list) where isItem(item) {
-    if let u = timestampURL(item), !u.contains("thread_ts=") { return u }
+    guard let u = timestampURL(item) else { continue }
+    if let t = threadTs(u) {
+      if let rt = rootTs, t != rt { return nil } // a second thread: the Threads view
+    } else if root == nil {
+      root = u
+      if let m = u.range(of: #"/p(\d{10})(\d{6})"#, options: .regularExpression) {
+        let digits = u[m].dropFirst(2)
+        rootTs = "\(digits.prefix(10)).\(digits.suffix(6))"
+      }
+    }
   }
-  return nil
+  return root
 }
 
 func describe(_ item: AXUIElement, _ list: AXUIElement?, withRoot: Bool) -> [String: Any]? {
