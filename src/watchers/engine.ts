@@ -166,7 +166,8 @@ export function act(db: Database.Database, w: Watcher, eventId: number, m: Match
       detail = r.detail;
     }
   } else if (w.action.kind === 'notify') {
-    const target = m.subject.startsWith('chat:') && m.chat ? { agent: m.chat.agent, sid: m.chat.session_id } : undefined;
+    // The chat the match is about: the chat itself, the PR's chat, or the chat that owns the Slack thread.
+    const target = m.chat ? { agent: m.chat.agent, sid: m.chat.session_id } : undefined;
     result = deps.notify(w.label, text || m.title, target) ? 'notified' : 'failed';
     if (result === 'failed') detail = 'notifications are not available';
   } else if (w.action.kind === 'tell_orch') {

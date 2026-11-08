@@ -7,7 +7,6 @@ import { execFileSync } from 'node:child_process';
 import { openDb } from '../src/db.ts';
 import { LATE_STEPS_KEY, detect, registerSteps, resetLateFailures, runMigration, setupDone, type MigrationContext, type MigrationStep } from '../src/migrate.ts';
 import { STEPS } from '../src/migrations/index.ts';
-import { LEGACY_SHIP_REPO } from '../src/migrations/ship.ts';
 import { keepOrchPrompt } from '../src/migrations/orchprompt.ts';
 import { ORCH_PROMPT, orchPromptText } from '../src/orchsession.ts';
 import { copyTokenToKeychain, laneFromSpawns, reviewSkillFromBriefs, voiceSkillFromBriefs } from '../src/migrations/settings.ts';
@@ -98,7 +97,7 @@ function legacyInstall(): string {
   write(c.slackTokenPath!, JSON.stringify({ user_token: TOKEN }));
   write(path.join(c.loomHome!, 'orchestrator', 'prompt.md'), OLD_PROMPT);
   // The one repo a pre-ship_projects install shipped, as a git checkout.
-  const repo = path.join(c.home!, LEGACY_SHIP_REPO);
+  const repo = path.join(c.home!, 'dev', 'work-app');
   fs.mkdirSync(repo, { recursive: true });
   execFileSync('git', ['init', '-q', '-b', 'main', repo]);
   write(path.join(c.legacyStateDir!, 'ship-labels.json'), JSON.stringify({ sess1: { label: 'a ship label', repo, at: 5 } }));
@@ -297,8 +296,8 @@ describe('migration: what else a legacy install keeps', () => {
   it('ships the legacy repo with /ship and labels required, imports its labels, on the legacy path only', () => {
     const dbPath = legacyInstall();
     const db = open(dbPath);
-    runMigration(db, { dbPath, steps: STEPS, context: ctxFor() });
-    const repo = path.join(ctxFor().home!, LEGACY_SHIP_REPO);
+    const repo = path.join(ctxFor().home!, 'dev', 'work-app');
+    runMigration(db, { dbPath, steps: STEPS, context: { ...ctxFor(), env: { LOOM_SHIP_REPOS: repo } } });
     const rowsShip = db.prepare(`SELECT project_dir, ship_command, label_required, enabled FROM ship_projects WHERE project_dir = ?`).all(repo);
     expect(rowsShip).toEqual([{ project_dir: repo, ship_command: '/ship', label_required: 1, enabled: 1 }]);
     expect(db.prepare(`SELECT label FROM ship_labels WHERE session_id = 'sess1'`).get()).toEqual({ label: 'a ship label' });

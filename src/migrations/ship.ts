@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { MigrationStep } from '../migrate.ts';
@@ -10,21 +9,18 @@ declare const __LOOM_REPO_DIR__: string | undefined;
 
 // Ship, legacy install (§12 step 3 and the ship-labels part of step 5).
 //
-// Before per-project Ship, the list of ship repos was `$LOOM_SHIP_REPOS` or one
-// built-in default, the button sent `/ship`, and a label was required. Carry
-// exactly that over as ship_projects rows so an existing install behaves the
-// same, then add the Loom repo itself disabled so it is one switch away.
+// Before per-project Ship, the list of ship repos was `$LOOM_SHIP_REPOS`, the
+// button sent `/ship`, and a label was required. Carry those repos over as
+// ship_projects rows so an existing install behaves the same, then add the Loom
+// repo itself disabled so it is one switch away. With the variable unset nothing
+// is guessed: ship repos are chosen in Settings › Ship (ship_projects).
 // The legacy labels file is imported into ship_labels once; the file itself is
 // left alone and stays a read fallback (src/shipview.ts mergeLabel).
 
-/** The one repo an install from before ship_projects shipped. This is the only place it is named. */
-export const LEGACY_SHIP_REPO = path.join('dev', 'tax-pilot-app');
 export const LEGACY_SHIP_COMMAND = '/ship';
 
 export interface ShipMigrationOpts {
-  /** Home dir the legacy default resolves under. */
-  home?: string;
-  /** $LOOM_SHIP_REPOS, colon-separated (unset or empty = the legacy default repo). */
+  /** $LOOM_SHIP_REPOS, colon-separated. Unset or empty: no ship repos are carried over. */
   envRepos?: string;
   /** Loom's own checkout, added disabled when it is a git repo. */
   loomRepoDir?: string;
@@ -53,9 +49,8 @@ function insertRow(db: Database.Database, dir: string, command: string, labelReq
 export function migrateShip(db: Database.Database, opts: ShipMigrationOpts = {}): ShipMigrationResult {
   const git = opts.git ?? defaultSyncGit;
   const now = opts.now ?? Date.now();
-  const home = opts.home ?? os.homedir();
   const env = opts.envRepos; // the migration passes ctx.env.LOOM_SHIP_REPOS; never read process.env here
-  const list = env ? env.split(':').filter(Boolean) : [path.join(home, LEGACY_SHIP_REPO)];
+  const list = env ? env.split(':').filter(Boolean) : [];
   const repos: string[] = [];
   for (const dir of list) {
     if (!isGitRepo(dir)) continue; // the old shipRepos() skipped these too
@@ -84,7 +79,6 @@ export const step: MigrationStep = {
   id: 'ship',
   run: (ctx) => {
     const r = migrateShip(ctx.db, {
-      home: ctx.home,
       envRepos: ctx.env.LOOM_SHIP_REPOS,
       labelsFile: path.join(ctx.legacyStateDir, 'ship-labels.json'),
       now: ctx.now,

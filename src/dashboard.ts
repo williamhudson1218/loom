@@ -1455,6 +1455,13 @@ window.loomOpenChat=function(agent,sid,retried){
   openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();
   setTimeout(function(){const r=document.querySelector('#sidelist .srow.sel, #kanban .tk.sel');if(r&&r.scrollIntoView)r.scrollIntoView({block:'nearest'});},0);
 };
+// A notification about a PR: open the chat working on it (the most recently active one), else the orchestrator.
+window.loomOpenPr=function(url){
+  const want=String(url||'').replace(/[#?].*$/,'').replace(/[/]+$/,'');
+  const c=DATA.chats.filter(x=>x.pr_url&&String(x.pr_url).replace(/[#?].*$/,'').replace(/[/]+$/,'')===want).sort((a,b)=>fresh(b)-fresh(a))[0];
+  if(c){window.loomOpenChat(c.agent,c.session_id);return;}
+  if(typeof selectOrch==='function')selectOrch();
+};
 ${SETTINGS_VIEW_JS}
 ${PRUNE_VIEW_JS}
 // ---- Slack auto-start banner ----------------------------------------------------

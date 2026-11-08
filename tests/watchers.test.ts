@@ -516,7 +516,7 @@ describe('message_chat, notify, tell_orch', () => {
 });
 
 describe('notify targets', () => {
-  it('a chat-subject watcher notify carries the chat; a Slack subject carries none', async () => {
+  it('a watcher notify carries the chat it is about: the chat itself, or the Slack thread owner', async () => {
     add(db, { label: 'N', enabled: true, run_mode: 'live', source: { kind: 'chats', params: {} }, trigger: { kind: 'done_idle', params: { min: 1 } }, action: { kind: 'notify', params: { template: 'x' } } });
     const targets: unknown[] = [];
     const notify = (_t: string, _b: string, tg?: unknown) => { targets.push(tg); return true; };
@@ -525,14 +525,14 @@ describe('notify targets', () => {
     expect(targets).toEqual([{ agent: 'claude', sid: expect.any(String) }]);
 
     const w = add(db, slackDraft({ action: { kind: 'notify', params: { template: 'y' } } }));
-    // A Slack match never names a chat target, even when a thread owner is known.
+    // A Slack match opens the chat that owns the thread.
     const m = { key: 'k', subject: 'slack:1.2', title: 't', permalink: '', vars: {}, chat: { agent: 'claude' as const, session_id: 's9' } };
     const d = deps({ notify });
     targets.length = 0;
     const { act } = await import('../src/watchers/engine.ts');
     const eid = (db.prepare(`INSERT INTO watcher_events (watcher_id, event_key, subject, title, permalink, detected_at, decision) VALUES (?, 'k', 'slack:1.2', 't', '', 1, 'fired')`).run(w.id).lastInsertRowid) as number;
     act(db, getWatcher(db, w.id)!, eid, m, d);
-    expect(targets).toEqual([undefined]);
+    expect(targets).toEqual([{ agent: 'claude', sid: 's9' }]);
   });
 });
 

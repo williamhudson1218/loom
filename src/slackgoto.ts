@@ -151,7 +151,7 @@ export type StartedOrFailed = { ok: true; started: StartedThread } | { ok: false
 
 /**
  * The lane a resumed chat should land in: the one already running the most
- * chats in the same project, so a tax-pilot chat comes back among tax-pilot
+ * chats in the same project, so a chat in one project comes back among that project's
  * chats. It is a hard choice (an open pane there, else a split there) rather
  * than a preference, since a preference falls through to any lane with an open
  * pane first. '' lets chooseTarget take any lane with room.

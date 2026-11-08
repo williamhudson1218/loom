@@ -3,7 +3,7 @@ import { openDb } from './db.ts';
 import { getSetting } from './settingsSchema.ts';
 
 /** What a notification is about; a click brings the user there. */
-export type NotifyTarget = { agent: string; sid: string } | { orch: true } | undefined;
+export type NotifyTarget = { agent: string; sid: string } | { pr: string } | { orch: true } | undefined;
 
 export interface NotifyInput {
   title: string;

@@ -179,7 +179,7 @@ describe('labels', () => {
 describe('migration (legacy install)', () => {
   it('ships the legacy repo with /ship and labels required; Loom is added disabled', () => {
     const home = fs.mkdtempSync(path.join(tmp, 'home-'));
-    const legacy = path.join(home, 'dev', 'tax-pilot-app');
+    const legacy = path.join(home, 'dev', 'work-app');
     fs.mkdirSync(path.dirname(legacy), { recursive: true });
     fs.mkdirSync(legacy);
     git(legacy, 'init', '-q', '-b', 'main');
@@ -187,7 +187,7 @@ describe('migration (legacy install)', () => {
     const loom = mkRepo('loomrepo');
     const labelsFile = path.join(tmp, 'ship-labels.json');
     fs.writeFileSync(labelsFile, JSON.stringify({ A: { label: 'one', repo: legacy + '/', at: 7 }, B: { label: 'two', repo: '', at: 8 }, C: { label: '  ', repo: '', at: 9 } }));
-    const r = migrateShip(db, { home, envRepos: '', loomRepoDir: loom, labelsFile, now: 100 });
+    const r = migrateShip(db, { envRepos: legacy, loomRepoDir: loom, labelsFile, now: 100 });
     expect(r).toEqual({ repos: [legacy], loomAdded: true, labels: 2 });
     const rows = listShipProjects(db, { includeDisabled: true });
     expect(rows.find((x) => x.project_dir === legacy)).toMatchObject({ ship_command: '/ship', label_required: true, enabled: true, repo_slug: 'o/tp', base_branch: 'main' });
@@ -198,8 +198,13 @@ describe('migration (legacy install)', () => {
     expect(mergeLabel(db, {}, 'B', legacy, '')).toEqual({ label: 'two', source: 'db' });
     // idempotent, and never overwrites an edited row
     updateShipProject(db, legacy, { ship_command: '/mine' });
-    expect(migrateShip(db, { home, envRepos: '', loomRepoDir: loom, labelsFile, now: 200 })).toEqual({ repos: [legacy], loomAdded: false, labels: 0 });
+    expect(migrateShip(db, { envRepos: legacy, loomRepoDir: loom, labelsFile, now: 200 })).toEqual({ repos: [legacy], loomAdded: false, labels: 0 });
     expect(listShipProjects(db).find((x) => x.project_dir === legacy)?.ship_command).toBe('/mine');
+  });
+  it('guesses no repo when $LOOM_SHIP_REPOS is unset: ship repos are chosen in Settings', () => {
+    const r = migrateShip(db, { envRepos: '', loomRepoDir: '', labelsFile: path.join(tmp, 'none.json'), now: 1 });
+    expect(r.repos).toEqual([]);
+    expect(listShipProjects(db, { includeDisabled: true })).toEqual([]);
   });
   it('honours $LOOM_SHIP_REPOS and skips paths that are not git repos', () => {
     const a = mkRepo('envA');

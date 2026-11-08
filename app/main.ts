@@ -150,6 +150,10 @@ function createWindow(): void {
 }
 
 // Server-side notifications (parked replies, watchers, Needs you) come here so a click opens the chat.
+// Shown notifications are held here until clicked or closed: Electron drops the click
+// handler of a Notification that has been garbage-collected, so a click minutes later
+// would only raise the app instead of opening the chat.
+const liveNotifications = new Set<Notification>();
 setAppNotifier(({ title, body, target, sound }) => {
   if (!Notification.isSupported()) throw new Error('notifications unavailable');
   const n = new Notification({
@@ -159,15 +163,20 @@ setAppNotifier(({ title, body, target, sound }) => {
     ...(sound && sound !== 'off' && sound !== 'system' ? { sound } : {}),
   });
   n.on('click', () => {
+    liveNotifications.delete(n);
     showWindow();
     const js =
       target && 'orch' in target
         ? 'typeof selectOrch === "function" && selectOrch()'
-        : target
-          ? 'typeof window.loomOpenChat === "function" && window.loomOpenChat(' + JSON.stringify(target.agent) + ',' + JSON.stringify(target.sid) + ')'
-          : '';
+        : target && 'pr' in target
+          ? 'typeof window.loomOpenPr === "function" && window.loomOpenPr(' + JSON.stringify(target.pr) + ')'
+          : target
+            ? 'typeof window.loomOpenChat === "function" && window.loomOpenChat(' + JSON.stringify(target.agent) + ',' + JSON.stringify(target.sid) + ')'
+            : '';
     if (js) void win?.webContents.executeJavaScript(js).catch(() => {});
   });
+  n.on('close', () => liveNotifications.delete(n));
+  liveNotifications.add(n);
   n.show();
 });
 
@@ -385,7 +394,8 @@ function startOrchestratorSession(): void {
       const i = item.ref_id.indexOf(':');
       const head = i > 0 ? item.ref_id.slice(0, i) : '';
       target = head === 'claude' || head === 'codex' ? { agent: head, sid: item.ref_id.slice(i + 1) } : { agent: '', sid: item.ref_id };
-    } else target = { orch: true };
+    } else if (item.ref_type === 'pr' && item.ref_id) target = { pr: item.ref_id }; // the chat working that PR
+    else target = { orch: true };
     notifyUser({ title: 'Needs you: ' + item.title, body: item.why || 'The orchestrator needs you.', target });
   });
 }
