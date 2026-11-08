@@ -217,9 +217,10 @@ export interface ShipConfig {
   base: string;
   command: string;
   labelRequired: boolean;
+  shipLock: boolean; // a ship takes <repo>/.git/ship.lock
 }
 
-const fromRow = (r: ShipProject): ShipConfig => ({ repo: r.project_dir, base: r.base_branch, command: r.ship_command, labelRequired: r.label_required });
+const fromRow = (r: ShipProject): ShipConfig => ({ repo: r.project_dir, base: r.base_branch, command: r.ship_command, labelRequired: r.label_required, shipLock: r.ship_lock });
 
 /**
  * The repos Ship works on: the enabled ship_projects rows. $LOOM_SHIP_REPOS
@@ -236,7 +237,7 @@ export function shipConfigs(db?: Database.Database): ShipConfig[] {
     const list: ShipConfig[] = env
       ? env.split(':').filter(Boolean).map((p) => {
           const r = rows.find((x) => x.project_dir === p);
-          return r ? fromRow(r) : { repo: p, base: 'main', command: DEFAULT_SHIP_COMMAND, labelRequired: false };
+          return r ? fromRow(r) : { repo: p, base: 'main', command: DEFAULT_SHIP_COMMAND, labelRequired: false, shipLock: true };
         })
       : rows.map(fromRow);
     return list.filter((c) => fs.existsSync(path.join(c.repo, '.git')));
@@ -255,10 +256,15 @@ export function shipConfigFor(repo: string, db?: Database.Database): ShipConfig 
   return shipConfigs(db).find((c) => c.repo === repo) ?? null;
 }
 
-/** What the plugin's label hook needs (written to plugin-state.json by whoever owns that file). */
-export function shipPluginState(db?: Database.Database): { repos: string[]; label_required: string[] } {
+/** What the ship hooks need (written to plugin-state.json by whoever owns that file). */
+export function shipPluginState(db?: Database.Database): { repos: string[]; label_required: string[]; lock: string[]; base: Record<string, string> } {
   const cfgs = shipConfigs(db);
-  return { repos: cfgs.map((c) => c.repo), label_required: cfgs.filter((c) => c.labelRequired).map((c) => c.repo) };
+  return {
+    repos: cfgs.map((c) => c.repo),
+    label_required: cfgs.filter((c) => c.labelRequired).map((c) => c.repo),
+    lock: cfgs.filter((c) => c.shipLock).map((c) => c.repo),
+    base: Object.fromEntries(cfgs.map((c) => [c.repo, c.base])),
+  };
 }
 
 const CHAT_WINDOW_MS = 48 * 3_600_000; // chats this recent can belong to a listed ship

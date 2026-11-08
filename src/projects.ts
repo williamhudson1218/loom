@@ -103,7 +103,9 @@ export function lastUsedProject(db: Database.Database): string | null {
 // The repos Ship works on (ship_projects). An empty table means no Ship line.
 // Per row: the base branch a ship targets, the command the Ship button sends
 // into a new chat in the repo, whether a chat must carry a "what I'm shipping"
-// label (the plugin's label hook), and an enabled switch.
+// label (the plugin's label hook), whether a ship takes the repo's ship lock
+// (`<repo>/.git/ship.lock`: other chats can't stage on its base branch while a
+// ship runs), and an enabled switch.
 
 export const DEFAULT_SHIP_COMMAND = '/loom:ship';
 const MAX_SHIP_COMMAND = 200;
@@ -114,12 +116,13 @@ export interface ShipProject {
   base_branch: string;
   ship_command: string;
   label_required: boolean;
+  ship_lock: boolean;
   enabled: boolean;
   added_at: number;
 }
 
-type ShipRow = Omit<ShipProject, 'label_required' | 'enabled'> & { label_required: number; enabled: number };
-const toShip = (r: ShipRow): ShipProject => ({ ...r, label_required: r.label_required === 1, enabled: r.enabled === 1 });
+type ShipRow = Omit<ShipProject, 'label_required' | 'ship_lock' | 'enabled'> & { label_required: number; ship_lock: number; enabled: number };
+const toShip = (r: ShipRow): ShipProject => ({ ...r, label_required: r.label_required === 1, ship_lock: r.ship_lock !== 0, enabled: r.enabled === 1 });
 
 /** Sync git for the small probes below. Throws on a non-zero exit. */
 export type SyncGit = (args: string[], cwd: string) => string;
@@ -181,6 +184,8 @@ export function getShipProject(db: Database.Database, dir: string): ShipProject 
 export interface AddShipInput {
   command?: unknown;
   labelRequired?: boolean;
+  /** Default on. */
+  shipLock?: boolean;
   baseBranch?: string;
   enabled?: boolean;
 }
@@ -211,19 +216,20 @@ export function addShipProject(
       enabled: input.enabled ?? true,
       ...(input.command !== undefined ? { ship_command: cmd.command } : {}),
       ...(input.labelRequired !== undefined ? { label_required: input.labelRequired } : {}),
+      ...(input.shipLock !== undefined ? { ship_lock: input.shipLock } : {}),
       ...(base ? { base_branch: base } : {}),
     });
   }
   db.prepare(
-    `INSERT INTO ship_projects (project_dir, repo_slug, base_branch, ship_command, label_required, enabled, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(root, detectRepoSlug(root, git), base || detectBaseBranch(root, git), cmd.command, input.labelRequired ? 1 : 0, input.enabled === false ? 0 : 1, now);
+    `INSERT INTO ship_projects (project_dir, repo_slug, base_branch, ship_command, label_required, ship_lock, enabled, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(root, detectRepoSlug(root, git), base || detectBaseBranch(root, git), cmd.command, input.labelRequired ? 1 : 0, input.shipLock === false ? 0 : 1, input.enabled === false ? 0 : 1, now);
   return { ok: true, project: getShipProject(db, root)! };
 }
 
 export function updateShipProject(
   db: Database.Database,
   dir: string,
-  patch: { ship_command?: unknown; base_branch?: string; label_required?: boolean; enabled?: boolean },
+  patch: { ship_command?: unknown; base_branch?: string; label_required?: boolean; ship_lock?: boolean; enabled?: boolean },
 ): { ok: true; project: ShipProject } | { ok: false; detail: string } {
   const row = getShipProject(db, dir);
   if (!row) return { ok: false, detail: 'unknown repo' };
@@ -240,8 +246,9 @@ export function updateShipProject(
     if (b) base = b;
   }
   const label = typeof patch.label_required === 'boolean' ? patch.label_required : row.label_required;
+  const lock = typeof patch.ship_lock === 'boolean' ? patch.ship_lock : row.ship_lock;
   const enabled = typeof patch.enabled === 'boolean' ? patch.enabled : row.enabled;
-  db.prepare(`UPDATE ship_projects SET ship_command = ?, base_branch = ?, label_required = ?, enabled = ? WHERE project_dir = ?`).run(command, base, label ? 1 : 0, enabled ? 1 : 0, dir);
+  db.prepare(`UPDATE ship_projects SET ship_command = ?, base_branch = ?, label_required = ?, ship_lock = ?, enabled = ? WHERE project_dir = ?`).run(command, base, label ? 1 : 0, lock ? 1 : 0, enabled ? 1 : 0, dir);
   return { ok: true, project: getShipProject(db, dir)! };
 }
 

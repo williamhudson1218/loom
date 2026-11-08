@@ -51,7 +51,7 @@ export async function addHandler({ json, body }: RouteCtx): Promise<void> {
   const b = await body();
   if (!b) return json(400, { ok: false, detail: 'bad body' });
   const r = withSync((db) =>
-    addShipProject(db, str(b.path), { command: b.ship_command, labelRequired: bool(b.label_required), baseBranch: str(b.base_branch), enabled: bool(b.enabled) }),
+    addShipProject(db, str(b.path), { command: b.ship_command, labelRequired: bool(b.label_required), shipLock: bool(b.ship_lock), baseBranch: str(b.base_branch), enabled: bool(b.enabled) }),
   );
   json(r.ok ? 200 : 400, r.ok ? { ok: true, project: r.project } : { ok: false, detail: r.detail });
 }
@@ -60,7 +60,7 @@ export async function updateHandler({ json, body }: RouteCtx): Promise<void> {
   const b = await body();
   if (!b || !str(b.project_dir)) return json(400, { ok: false, detail: 'project_dir is required' });
   const r = withSync((db) =>
-    updateShipProject(db, str(b.project_dir), { ship_command: b.ship_command, base_branch: typeof b.base_branch === 'string' ? b.base_branch : undefined, label_required: bool(b.label_required), enabled: bool(b.enabled) }),
+    updateShipProject(db, str(b.project_dir), { ship_command: b.ship_command, base_branch: typeof b.base_branch === 'string' ? b.base_branch : undefined, label_required: bool(b.label_required), ship_lock: bool(b.ship_lock), enabled: bool(b.enabled) }),
   );
   json(r.ok ? 200 : r.detail === 'unknown repo' ? 404 : 400, r.ok ? { ok: true, project: r.project } : { ok: false, detail: r.detail });
 }

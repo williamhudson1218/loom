@@ -119,9 +119,39 @@ class ShipLock(HomeCase):
         subprocess.run(["git", "init", "-q", self.repo], check=True)
         self.addCleanup(lambda: __import__("shutil").rmtree(self.repo, ignore_errors=True))
 
-    def lock(self, sub, sid="sess-1"):
+    def lock(self, sub, sid="sess-1", repo=None, cwd=None):
         env = dict(os.environ, CLAUDE_CODE_SESSION_ID=sid)
-        return subprocess.run([sys.executable, LOOM_BIN, "ship-lock", sub], capture_output=True, text=True, cwd=self.repo, env=env)
+        argv = [sys.executable, LOOM_BIN, "ship-lock", sub] + ([repo] if repo else [])
+        return subprocess.run(argv, capture_output=True, text=True, cwd=cwd or self.repo, env=env)
+
+    def test_repo_argument_picks_that_repos_lock(self):
+        other = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(other, ignore_errors=True))
+        self.assertEqual(self.lock("acquire", repo=self.repo, cwd=other).returncode, 0)
+        self.assertTrue(os.path.exists(os.path.join(self.repo, ".git", "ship.lock")))
+        self.assertIn("held by sess-1", self.lock("status", repo=self.repo, cwd=other).stdout)
+
+    def test_one_lock_per_repo(self):
+        b = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(b, ignore_errors=True))
+        subprocess.run(["git", "init", "-q", b], check=True)
+        self.lock("acquire")
+        self.assertEqual(self.lock("acquire", sid="sess-2", repo=b).returncode, 0)
+        self.assertIn("sess-1", open(os.path.join(self.repo, ".git", "ship.lock")).read())
+        self.assertIn("sess-2", open(os.path.join(b, ".git", "ship.lock")).read())
+
+    def test_acquire_is_a_noop_when_loom_has_the_lock_off(self):
+        root = os.path.realpath(self.repo)
+        self.write_state(ship={"repos": [root], "label_required": [], "lock": []})
+        r = self.lock("acquire")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("off for", r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".git", "ship.lock")))
+
+    def test_acquire_when_loom_predates_the_lock_setting(self):
+        self.write_state(ship={"repos": [os.path.realpath(self.repo)], "label_required": []})
+        self.assertEqual(self.lock("acquire").returncode, 0)
+        self.assertTrue(os.path.exists(os.path.join(self.repo, ".git", "ship.lock")))
 
     def test_acquire_status_release(self):
         self.assertEqual(self.lock("acquire").returncode, 0)

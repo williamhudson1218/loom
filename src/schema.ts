@@ -269,6 +269,7 @@ CREATE TABLE IF NOT EXISTS ship_projects (
   base_branch    TEXT NOT NULL DEFAULT 'main',
   ship_command   TEXT NOT NULL DEFAULT '/loom:ship',
   label_required INTEGER NOT NULL DEFAULT 0,
+  ship_lock      INTEGER NOT NULL DEFAULT 1,
   enabled        INTEGER NOT NULL DEFAULT 1,
   added_at       INTEGER NOT NULL DEFAULT 0
 );
@@ -280,6 +281,15 @@ CREATE TABLE IF NOT EXISTS ship_attr_overrides (
   PRIMARY KEY (repo, path)
 );
 `;
+
+/**
+ * Columns ship_projects gained after it shipped. ADD COLUMN backfills every
+ * existing row with the default, so the ship lock is on for repos already on Ship.
+ */
+export function ensureShipColumns(db: Database.Database): void {
+  const have = new Set((db.prepare(`PRAGMA table_info(ship_projects)`).all() as { name: string }[]).map((c) => c.name));
+  if (!have.has('ship_lock')) db.exec(`ALTER TABLE ship_projects ADD COLUMN ship_lock INTEGER NOT NULL DEFAULT 1`);
+}
 
 // Projects (src/projects.ts): the folders a chat can be started in. Seeded from
 // indexed chats' project dirs (insert-if-missing), then edited by the person.
@@ -434,6 +444,7 @@ export function applySchema(db: Database.Database): void {
   ensureWatcherColumns(db);
   db.exec(CHAT_EDITS_SCHEMA_SQL);
   db.exec(SHIP_SCHEMA_SQL);
+  ensureShipColumns(db);
   db.exec(PROJECTS_SCHEMA_SQL);
   db.exec(SLACK_THREADS_SCHEMA_SQL);
   db.exec(ORCHESTRATOR_SCHEMA_SQL);

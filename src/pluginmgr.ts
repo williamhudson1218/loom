@@ -232,6 +232,10 @@ export function scanLegacyHooks(settingsPath: string = path.join(os.homedir(), '
 export interface ShipGate {
   repos: string[];
   labelRequired?: string[];
+  /** Repos whose ship takes `<repo>/.git/ship.lock`; the git-add guard blocks staging on their base branch while it is held. */
+  lock?: string[];
+  /** Each repo's base branch (the branch the lock protects). */
+  base?: Record<string, string>;
 }
 type ShipProvider = (db: Database.Database) => ShipGate;
 
@@ -239,8 +243,13 @@ let shipProvider: ShipProvider = (db) => {
   // ship_projects: one row per repo Ship works on (src/schema.ts). The hook gates on
   // ship.label_required, so the rows that require a label are listed explicitly.
   try {
-    const rows = db.prepare(`SELECT project_dir AS p, label_required AS l FROM ship_projects WHERE enabled = 1`).all() as { p: string; l: number }[];
-    return { repos: rows.map((r) => r.p), labelRequired: rows.filter((r) => r.l).map((r) => r.p) };
+    const rows = db.prepare(`SELECT project_dir AS p, label_required AS l, ship_lock AS k, base_branch AS b FROM ship_projects WHERE enabled = 1`).all() as { p: string; l: number; k: number; b: string }[];
+    return {
+      repos: rows.map((r) => r.p),
+      labelRequired: rows.filter((r) => r.l).map((r) => r.p),
+      lock: rows.filter((r) => r.k).map((r) => r.p),
+      base: Object.fromEntries(rows.map((r) => [r.p, r.b || 'main'])),
+    };
   } catch {
     return { repos: [] };
   }
@@ -256,6 +265,8 @@ export function buildPluginStateFile(db: Database.Database): Record<string, unkn
   const gate = shipProvider(db);
   const ship: Record<string, unknown> = { repos: gate.repos };
   if (gate.labelRequired) ship.label_required = gate.labelRequired;
+  if (gate.lock) ship.lock = gate.lock;
+  if (gate.base) ship.base = gate.base;
   // plugin_version marks the plugin as installed: the legacy record-placement.sh shim
   // stands down when it is set. Absent until installed; Remove deletes the whole file.
   const version = (getSetting(db, 'plugin_state', { env: false }) as PluginState).installed_version;
@@ -283,10 +294,36 @@ function installed(db: Database.Database): boolean {
 }
 
 /**
+ * At startup, rewrite plugin-state.json when anything reads it: the plugin is
+ * installed, or a repo is on Ship (the ship hooks read its lock and label lists,
+ * installed plugin or not). An upgrade that adds a key to the file then reaches
+ * the hooks without waiting for a settings change.
+ */
+function refreshPluginStateOnStart(openDb: () => Database.Database, loomHome: string): void {
+  try {
+    const db = openDb();
+    try {
+      let ship = false;
+      try {
+        ship = !!db.prepare(`SELECT 1 FROM ship_projects LIMIT 1`).get();
+      } catch {
+        /* no table yet */
+      }
+      if (installed(db) || ship) writePluginStateFile(db, loomHome);
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    console.error('[loom] plugin-state.json not refreshed:', (e as Error).message);
+  }
+}
+
+/**
  * Keep plugin-state.json current: rewrites it when a setting it carries changes.
  * Call once at startup with a way to open the DB; returns the unsubscribe.
  */
 export function startPluginStateSync(openDb: () => Database.Database, loomHome: string = TOOL_DIR): () => void {
+  refreshPluginStateOnStart(openDb, loomHome);
   return onSettingChanged((c) => {
     if (c.key !== 'slack_mode' && c.key !== 'outbox_chat_drafts') return;
     const db = openDb();

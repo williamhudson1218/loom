@@ -24,13 +24,18 @@ tree, or the user mid-edit) and are left alone.
 
 Several chats often share one working tree. While you stage, commit and push, hold the lock so a
 parallel chat's `git add` cannot sweep half-finished work into your commit. The lock is a file
-(`ship.lock`) in the git common dir, so every worktree of the repo sees it.
+(`ship.lock`) in the git common dir of the repo you ship, so every worktree of that repo sees it and a
+ship in one repo never blocks another. Always name the repo you are shipping:
 
 ```bash
-loom ship-lock acquire      # before touching the index; re-run right before the commit to re-stamp it
-loom ship-lock release      # after the branch is pushed, and on ANY failure or abort
-loom ship-lock status
+REPO="$(git rev-parse --show-toplevel)"
+loom ship-lock acquire "$REPO"   # before touching the index; re-run right before the commit to re-stamp it
+loom ship-lock release "$REPO"   # after the branch is pushed, and on ANY failure or abort
+loom ship-lock status "$REPO"
 ```
+
+- The lock is a per-repo setting in Loom (Settings › Ship, "Ship lock", on by default). When it is off
+  for this repo, `acquire` says so and takes nothing; carry on with the ship.
 
 - Acquire fails with `held by another session (...)`: another chat is mid-ship. **Do not stage, commit
   or push, and do not release a lock you do not own.** Finish everything else you have, retry at the end,
@@ -55,7 +60,7 @@ loom ship-lock status
    - On a feature branch: push that branch.
    - A plain push is the only push. If it is rejected, `git pull --rebase` and push again. Never `--force`
      or `--force-with-lease`.
-6. **Release the lock** (`loom ship-lock release`). The commit is pushed; the index is free again.
+6. **Release the lock** (`loom ship-lock release "$REPO"`). The commit is pushed; the index is free again.
 7. **Open the PR** with `gh pr create` (draft if the project reviews every push automatically, ready otherwise).
    Body: what changed, why, how it was checked, and anything not verified. Add the one-line ship label
    (`loom ship-label "<what this is>"`) if it has not been recorded.

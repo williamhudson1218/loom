@@ -242,9 +242,10 @@ describe('plugin-state.json', () => {
     add.run('/r/one', 1, 1);
     add.run('/r/two', 0, 1);
     add.run('/r/off', 1, 0);
+    db.prepare(`UPDATE ship_projects SET ship_lock = 0, base_branch = 'trunk' WHERE project_dir = '/r/two'`).run();
     const file = writePluginStateFile(db, home);
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).plugin_version).toBeUndefined();
-    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ slack_mode: 'direct', outbox_chat_drafts: true, ship: { repos: ['/r/one', '/r/two'], label_required: ['/r/one'] } });
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ slack_mode: 'direct', outbox_chat_drafts: true, ship: { repos: ['/r/one', '/r/two'], label_required: ['/r/one'], lock: ['/r/one'], base: { '/r/one': 'main', '/r/two': 'trunk' } } });
     expect(fs.readdirSync(home).filter((n) => n.endsWith('.tmp'))).toEqual([]);
   });
   it('is rewritten on setting changes once installed, and not before', async () => {
@@ -260,6 +261,23 @@ describe('plugin-state.json', () => {
     await mgr().install();
     setSetting(db, 'slack_mode', 'off');
     expect(JSON.parse(fs.readFileSync(path.join(home, 'plugin-state.json'), 'utf8')).slack_mode).toBe('off');
+  });
+});
+
+describe('plugin-state.json at startup', () => {
+  it('is written when a repo is on Ship, plugin installed or not', () => {
+    const file = path.join(tmp, 'boot.db');
+    const d = openDb(file);
+    d.prepare(`INSERT INTO ship_projects(project_dir) VALUES ('/r/one')`).run();
+    d.close();
+    cleanups.push(startPluginStateSync(() => openDb(file), home));
+    expect(JSON.parse(fs.readFileSync(path.join(home, 'plugin-state.json'), 'utf8')).ship).toMatchObject({ repos: ['/r/one'], lock: ['/r/one'] });
+  });
+  it('is not written with no ship repos and no plugin', () => {
+    const file = path.join(tmp, 'empty.db');
+    openDb(file).close();
+    cleanups.push(startPluginStateSync(() => openDb(file), home));
+    expect(fs.existsSync(path.join(home, 'plugin-state.json'))).toBe(false);
   });
 });
 

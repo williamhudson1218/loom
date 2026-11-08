@@ -49,7 +49,7 @@ def events_dir():
 DEFAULT_STATE = {
     "slack_mode": "skip",          # direct | mcp | skip
     "outbox_chat_drafts": False,   # record drafts shown in chat
-    "ship": {"repos": [], "label_required": []},
+    "ship": {"repos": [], "label_required": [], "lock": []},
 }
 
 
@@ -68,11 +68,14 @@ def read_plugin_state():
             state[k] = data[k]
     ship = data.get("ship")
     if isinstance(ship, dict):
-        for k in ("repos", "label_required"):
+        for k in ("repos", "label_required", "lock"):
             if isinstance(ship.get(k), list):
                 state["ship"][k] = [str(x) for x in ship[k]]
         if "label_required" not in ship:
             state["ship"]["label_required"] = list(state["ship"]["repos"])
+        # A Loom that predates the per-repo ship lock: every ship repo takes it.
+        if "lock" not in ship:
+            state["ship"]["lock"] = list(state["ship"]["repos"])
     return state
 
 

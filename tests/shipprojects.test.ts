@@ -42,7 +42,24 @@ describe('a new database', () => {
     expect(listShipProjects(db, { includeDisabled: true })).toEqual([]);
     expect(shipRepos(db)).toEqual([]);
     expect(shipConfigs(db)).toEqual([]);
-    expect(shipPluginState(db)).toEqual({ repos: [], label_required: [] });
+    expect(shipPluginState(db)).toEqual({ repos: [], label_required: [], lock: [], base: {} });
+  });
+});
+
+describe('ship lock column', () => {
+  it('is added on for rows that predate it', () => {
+    const old = new Database(':memory:');
+    old.exec(`CREATE TABLE ship_projects (project_dir TEXT PRIMARY KEY, repo_slug TEXT NOT NULL DEFAULT '', base_branch TEXT NOT NULL DEFAULT 'main', ship_command TEXT NOT NULL DEFAULT '/loom:ship', label_required INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, added_at INTEGER NOT NULL DEFAULT 0)`);
+    old.prepare(`INSERT INTO ship_projects (project_dir) VALUES ('/r/legacy')`).run();
+    applySchema(old);
+    expect(listShipProjects(old)[0]).toMatchObject({ project_dir: '/r/legacy', ship_lock: true });
+    applySchema(old); // idempotent
+    old.close();
+  });
+  it('can be added off', () => {
+    const dir = mkRepo('lockoff');
+    expect(addShipProject(db, dir, { shipLock: false })).toMatchObject({ ok: true, project: { ship_lock: false } });
+    expect(shipPluginState(db).lock).toEqual([]);
   });
 });
 
@@ -89,7 +106,7 @@ describe('Add repo to Ship', () => {
     const dir = mkRepo('g', { remote: 'https://github.com/o/g.git', base: 'develop' });
     fs.mkdirSync(path.join(dir, 'pkg'));
     const r = addShipProject(db, path.join(dir, 'pkg'), {}, undefined, 5);
-    expect(r).toMatchObject({ ok: true, project: { project_dir: dir, repo_slug: 'o/g', base_branch: 'develop', ship_command: '/loom:ship', label_required: false, enabled: true, added_at: 5 } });
+    expect(r).toMatchObject({ ok: true, project: { project_dir: dir, repo_slug: 'o/g', base_branch: 'develop', ship_command: '/loom:ship', label_required: false, ship_lock: true, enabled: true, added_at: 5 } });
     expect(shipRepos(db)).toEqual([dir]);
     expect(shipConfigFor(dir, db)).toMatchObject({ base: 'develop', command: '/loom:ship' });
   });
@@ -113,7 +130,10 @@ describe('Add repo to Ship', () => {
     expect(updateShipProject(db, dir, { ship_command: '/ship', base_branch: 'trunk', label_required: true })).toMatchObject({ ok: true, project: { ship_command: '/ship', base_branch: 'trunk', label_required: true } });
     expect(updateShipProject(db, dir, { ship_command: 'nope' }).ok).toBe(false);
     expect(updateShipProject(db, '/nowhere', { enabled: true })).toEqual({ ok: false, detail: 'unknown repo' });
-    expect(shipPluginState(db)).toEqual({ repos: [dir], label_required: [dir] });
+    expect(shipPluginState(db)).toEqual({ repos: [dir], label_required: [dir], lock: [dir], base: { [dir]: 'trunk' } });
+    expect(updateShipProject(db, dir, { ship_lock: false })).toMatchObject({ ok: true, project: { ship_lock: false, label_required: true } });
+    expect(shipPluginState(db).lock).toEqual([]);
+    updateShipProject(db, dir, { ship_lock: true });
     updateShipProject(db, dir, { enabled: false });
     expect(listShipProjects(db)).toEqual([]);
     expect(listShipProjects(db, { includeDisabled: true })).toHaveLength(1);
@@ -193,7 +213,7 @@ describe('migration (legacy install)', () => {
     expect(rows.find((x) => x.project_dir === legacy)).toMatchObject({ ship_command: '/ship', label_required: true, enabled: true, repo_slug: 'o/tp', base_branch: 'main' });
     expect(rows.find((x) => x.project_dir === loom)).toMatchObject({ ship_command: '/loom:ship', enabled: false });
     expect(shipRepos(db)).toEqual([legacy]);
-    expect(shipPluginState(db)).toEqual({ repos: [legacy], label_required: [legacy] });
+    expect(shipPluginState(db)).toEqual({ repos: [legacy], label_required: [legacy], lock: [legacy], base: { [legacy]: 'main' } });
     expect(mergeLabel(db, {}, 'A', legacy, '')).toEqual({ label: 'one', source: 'db' });
     expect(mergeLabel(db, {}, 'B', legacy, '')).toEqual({ label: 'two', source: 'db' });
     // idempotent, and never overwrites an edited row
@@ -236,7 +256,11 @@ describe('plugin-state.json follows ship_projects', () => {
     const dir = mkRepo('ps');
     const add = await call(addHandler, { path: dir, ship_command: '/ship', label_required: true });
     expect(add.code).toBe(200);
-    expect(state()).toEqual({ repos: [dir], label_required: [dir] });
+    expect(state()).toEqual({ repos: [dir], label_required: [dir], lock: [dir], base: { [dir]: 'main' } });
+    await call(updateHandler, { project_dir: dir, ship_lock: false });
+    expect(state().lock).toEqual([]);
+    await call(updateHandler, { project_dir: dir, ship_lock: true });
+    expect(state().lock).toEqual([dir]);
     await call(updateHandler, { project_dir: dir, label_required: false });
     expect(state().label_required ?? []).toEqual([]);
     await call(updateHandler, { project_dir: dir, enabled: false });

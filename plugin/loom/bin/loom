@@ -9,7 +9,7 @@
   loom thread open <url> [--ack] [--eyes]            mark a ticket looking (eyes only on a channel's top-level post)
   loom thread stage <url> looking|blocked|done [note...] [--react]
   loom ship-label "<label>" [--repo <path>] | --show | --clear
-  loom ship-lock acquire | release | status | wait   (local file in the git common dir, no Loom needed)
+  loom ship-lock acquire | release | status | wait [repo]   (<repo>'s git common dir, default the cwd's; no Loom needed)
   loom route list | send <name> <text...>
   loom test-links add <url> [--label "<what to check>"] | list [--json] | clear [<url>]
   loom trees prune [--repo <dir>] [--dry-run] [--json]   remove worktrees that are merged, clean and unused
@@ -387,11 +387,27 @@ def cmd_ship_label(args):
 
 # ---------- ship lock ----------
 
-def lock_path():
-    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+def lock_repo(repo=None):
+    """(primary checkout root, lock file) for `repo` (default: the cwd). One lock per repo, shared by its worktrees."""
+    cwd = os.path.expanduser(repo) if repo else None
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, cwd=cwd)
     if r.returncode != 0 or not r.stdout.strip():
-        die("ship-lock: not inside a git repository", 2)
-    return os.path.join(r.stdout.strip(), "ship.lock")
+        die("ship-lock: not inside a git repository" + (" (%s)" % repo if repo else ""), 2)
+    common = r.stdout.strip()
+    root = os.path.dirname(common) if os.path.basename(common) == ".git" else common
+    return os.path.realpath(root), os.path.join(common, "ship.lock")
+
+
+def lock_path(repo=None):
+    return lock_repo(repo)[1]
+
+
+def lock_off(root):
+    """True when Loom has this repo on Ship with its ship lock switched off (Settings > Ship)."""
+    ship = c.read_plugin_state().get("ship") or {}
+    repos = [os.path.realpath(x) for x in ship.get("repos") or []]
+    lock = [os.path.realpath(x) for x in ship.get("lock") or []]
+    return root in repos and root not in lock
 
 
 def read_lock(path):
@@ -409,7 +425,7 @@ def pane_phrase(d):
 
 def cmd_ship_lock(args):
     sub = args[0] if args else "status"
-    path = lock_path()
+    root, path = lock_repo(args[1] if len(args) > 1 else None)
     me = os.environ.get("AGENT_SESSION_ID") or c.session_id() or os.environ.get("CODEX_THREAD_ID") or "unknown"
     cur = read_lock(path)
 
@@ -419,6 +435,9 @@ def cmd_ship_lock(args):
     def stale(d):
         return age(d) > TTL_SECONDS
 
+    if sub == "acquire" and lock_off(root):
+        print("ship-lock: off for %s in Loom (Settings > Ship); not acquiring" % root)
+        return
     if sub == "acquire":
         if cur and cur.get("session_id") != me and not stale(cur):
             print("ship-lock: held by another session (%s%s, %ds ago); not acquiring"
@@ -458,7 +477,7 @@ def cmd_ship_lock(args):
         else:
             print("ship-lock: unlocked")
     else:
-        die("usage: loom ship-lock acquire | release | status | wait", 2)
+        die("usage: loom ship-lock acquire | release | status | wait [repo]", 2)
 
 
 # ---------- test links ----------
