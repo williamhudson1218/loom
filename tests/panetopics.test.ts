@@ -105,11 +105,11 @@ describe('buildAsk', () => {
 
   it("carries the Slack threads the chat owns and the assistant's doings, so a bare link still names a subject", () => {
     const a = recentActivity(tool('Bash', { command: 'x', description: 'Find which tenant holds filing batch 2311' }));
-    const ask = buildAsk(['https://x.slack.com/archives/C1/p1'], a, '', 0, ["#filings: @Will KS SIT can't be created"]);
-    expect(ask).toContain("#filings: @Will KS SIT can't be created");
+    const ask = buildAsk(['https://x.slack.com/archives/C1/p1'], a, '', 0, ["#ops: @Sam KS SIT can't be created"]);
+    expect(ask).toContain("#ops: @Sam KS SIT can't be created");
     expect(ask).toContain('Find which tenant holds filing batch 2311');
-    expect(ask.indexOf('<chat>')).toBeLessThan(ask.indexOf('#filings'));
-    expect(ask.indexOf('#filings')).toBeLessThan(ask.indexOf('</chat>'));
+    expect(ask.indexOf('<chat>')).toBeLessThan(ask.indexOf('#ops'));
+    expect(ask.indexOf('#ops')).toBeLessThan(ask.indexOf('</chat>'));
     // Nothing to say stays silent rather than printing empty headings.
     const bare = buildAsk(['hi'], recentActivity(''), '', 0);
     expect(bare).not.toMatch(/Slack threads this chat|descriptions of its recent tool calls/);
@@ -264,7 +264,7 @@ describe('PaneTopics on a chat opened from a link', () => {
     const { deps, calls } = fakeDeps(
       [user('https://x.slack.com/archives/C1/p1'), tool('Bash', { command: 'x', description: 'Read the linked Slack thread' })].join('\n'),
       '{"topic":"KS SIT Tax Code","stage":"discovery"}',
-      ["#filings: @Will KS SIT can't be created"],
+      ["#ops: @Sam KS SIT can't be created"],
     );
     const t = new PaneTopics(deps, 'loom-');
     t.tick(live('%1', 's1'));

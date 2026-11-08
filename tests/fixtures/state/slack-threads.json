@@ -1,0 +1,23 @@
+{
+  "recent_acks": ["Taking a look"],
+  "threads": {
+    "C0TESTCHAN1/1793839555.348489": {
+      "url": "https://acme.slack.com/archives/C0TESTCHAN1/p1793839555348489",
+      "session_id": "11111111-2222-3333-4444-555555555555",
+      "cwd": "/tmp/demo-project",
+      "claimed_at": "2026-11-05T15:20:00",
+      "stage": "looking",
+      "react": true,
+      "ack": { "text": "Taking a look", "at": "2026-11-05T15:21:00" },
+      "history": [{ "stage": "looking", "at": "2026-11-05T15:21:00" }]
+    },
+    "C0TESTCHAN2/1793900000.000100": {
+      "url": "https://acme.slack.com/archives/C0TESTCHAN2/p1793900000000100",
+      "session_id": "66666666-7777-8888-9999-000000000000",
+      "cwd": "/tmp/other-project",
+      "claimed_at": "2026-11-06T08:00:00",
+      "started": true
+    },
+    "C0TESTCHAN3/1793900000.000200": { "stage": "done", "history": [{ "stage": "done", "at": "2026-11-06T09:00:00" }] }
+  }
+}

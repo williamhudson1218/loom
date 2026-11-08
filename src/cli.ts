@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
-import { openDb } from './db.ts';
+import { loadTmuxSocketSetting, openDb } from './db.ts';
 import { refresh } from './indexer.ts';
-import { summarizeDirty, defaultRunner, type ClaudeRunner } from './analyzer.ts';
+import { summarizeDirty, defaultRunner, analyzerConfig, type ClaudeRunner } from './analyzer.ts';
+import { getSetting } from './settingsSchema.ts';
 import { writeDashboard } from './dashboard.ts';
 import { restore } from './restore.ts';
 import { writeLayout } from './snapshot.ts';
@@ -16,17 +17,29 @@ export async function runPass(
   opts: { now?: number; projectsDir?: string; dashboardPath?: string } = {},
 ) {
   const now = opts.now ?? Date.now();
-  const idx = await refresh(db, { projectsDir: opts.projectsDir, now });
+  const idx = await refresh(db, { projectsDir: opts.projectsDir, now, windowDays: analyzerConfig(db).windowDays });
   const analyze = await summarizeDirty(db, runner, { now });
   const dashboard = writeDashboard(db, opts.dashboardPath ?? DASHBOARD_PATH, now);
   return { scanned: idx.scanned, changed: idx.changed, pruned: idx.pruned, analyze, dashboard };
 }
 
+// The ghostty_attach_cmd setting, read once for the restore output.
+function attachCmdSetting(): string {
+  const db = openDb();
+  try {
+    return getSetting(db, 'ghostty_attach_cmd');
+  } finally {
+    db.close();
+  }
+}
+
 async function main() {
   const cmd = process.argv[2] ?? 'run';
+  loadTmuxSocketSetting();
 
   if (cmd === 'restore') {
     const dryRun = process.argv.includes('--dry-run');
+    const attachCmd = attachCmdSetting();
     const noOpen = process.argv.includes('--no-open'); // rebuild tmux only, skip Ghostty tabs
     const r = restore({ dryRun, prefix: SESSION_PREFIX });
     if (dryRun) {
@@ -34,7 +47,7 @@ async function main() {
       console.log(`\n[dry-run] would restore ${r.restored.length} sessions: ${r.restored.join(', ') || '(none)'}`);
       if (r.skipped.length) console.log(`[dry-run] skipped (already running): ${r.skipped.join(', ')}`);
       if (r.attach.length && !noOpen) {
-        const g = attachGhosttyTabs(r.attach, { dryRun: true, windows: readGhosttyWindows(), saved: r.windows, attached: attachedSessions() });
+        const g = attachGhosttyTabs(r.attach, { dryRun: true, windows: readGhosttyWindows(), saved: r.windows, attached: attachedSessions(), attachCmd });
         console.log(`\n[dry-run] would place ${r.attach.length} session(s) into Ghostty tabs ` +
           `(${g.reused} reused, ${g.opened} new, ${g.leftover} spare) via osascript:\n${g.script}`);
       }
@@ -42,17 +55,17 @@ async function main() {
       console.log(`[loom] restored ${r.restored.length} session(s): ${r.restored.join(', ') || '(none)'}`);
       if (r.skipped.length) console.log(`  skipped (already running): ${r.skipped.join(', ')}`);
       if (r.attach.length && !noOpen) {
-        const g = attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows });
+        const g = attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows, attachCmd });
         if (g.ok) {
           console.log(`[loom] ${g.detail}`);
         } else {
           console.log(`[loom] tab open failed: ${g.detail}`);
           console.log('  attach manually:');
-          for (const s of r.attach) console.log(`    ta ${s}`);
+          for (const s of r.attach) console.log(`    ${attachCmd} ${s}`);
         }
       } else if (r.attach.length) {
         console.log('\nOpen a Ghostty tab per session and attach:');
-        for (const s of r.attach) console.log(`  ta ${s}`);
+        for (const s of r.attach) console.log(`  ${attachCmd} ${s}`);
       }
     }
     return;

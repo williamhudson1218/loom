@@ -457,7 +457,7 @@ export interface RemovalResult {
 }
 
 /**
- * Loom's first destructive on-disk action. No `--force`: if git has any objection
+ * Loom's first destructive on-disk action. No force flag: if git has any objection
  * the removal fails loudly rather than being overridden, and the branch is only
  * deleted with `-d`, which itself refuses anything unmerged.
  */

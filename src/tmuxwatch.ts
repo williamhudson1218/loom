@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { tmux } from './tmux.ts';
 import { TOOL_DIR } from './paths.ts';
 
 // Losing the tmux server takes every session with it, and it happens rarely
@@ -21,7 +21,7 @@ const SEP = '~|LOOM|~';
 // it directly, and it changes exactly when the server is replaced.
 export function tmuxServerState(): TmuxServerState {
   try {
-    const out = execFileSync('tmux', ['list-sessions', '-F', `#{pid}${SEP}#{session_name}`], { encoding: 'utf-8' });
+    const out = tmux(['list-sessions', '-F', `#{pid}${SEP}#{session_name}`]);
     const lines = out.split('\n').filter(Boolean);
     return { pid: lines[0]?.split(SEP)[0] ?? '', sessions: lines.length };
   } catch {

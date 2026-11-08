@@ -1,78 +1,20 @@
-import { execFileSync } from 'node:child_process';
+import { tmux } from './tmux.ts';
 import type { Agent } from './types.ts';
 import { recordPlacement } from './placements.ts';
+import { RESUME_FULL_ENV, ansiQuote, claudeCommand, shq, type LaunchSettings } from './launch.ts';
+import { currentTerminal, jumpWith, realJumpDeps, type GotoResult, type JumpDeps, type TerminalKind } from './terminal.ts';
 
-export interface GotoResult {
-  ok: boolean;
-  detail: string;
+export type { GotoResult };
+
+// Jump to a chat's pane: select it within tmux, then bring the user's terminal to
+// it. Which terminal is the `terminal` setting (src/terminal.ts): Ghostty tab
+// focus as ever on a lane workspace, Loom's own window by default on a new
+// install, or an iTerm2 / Terminal.app tab found by tty.
+export function gotoPane(paneId: string, tmuxSession: string, kind: TerminalKind = currentTerminal(), deps: JumpDeps = realJumpDeps()): GotoResult {
+  return jumpWith(kind, { paneId, session: tmuxSession }, deps);
 }
 
-// AppleScript: bring Ghostty forward and click the tab whose title ends with the
-// tmux session name (tabs are titled "ta <session>" / "tn <session>").
-const FOCUS_TAB_SCRIPT = `
-on run argv
-  set sess to item 1 of argv
-  tell application "Ghostty" to activate
-  delay 0.12
-  tell application "System Events" to tell process "Ghostty"
-    repeat with w in windows
-      if exists tab group 1 of w then
-        repeat with t in (radio buttons of tab group 1 of w)
-          if (title of t) ends with sess then
-            click t
-            return "ok"
-          end if
-        end repeat
-      end if
-    end repeat
-  end tell
-  return "tab-not-found"
-end run`;
-
-// Jump to a chat's pane: select it within tmux, then focus its Ghostty tab.
-// tmux selection is the reliable core; Ghostty focus is best-effort (Accessibility).
-export function gotoPane(paneId: string, tmuxSession: string): GotoResult {
-  try {
-    execFileSync('tmux', ['select-window', '-t', paneId]);
-    execFileSync('tmux', ['select-pane', '-t', paneId]);
-  } catch (e) {
-    return { ok: false, detail: 'tmux select failed: ' + (e as Error).message };
-  }
-  try {
-    const r = execFileSync('osascript', ['-e', FOCUS_TAB_SCRIPT, tmuxSession], {
-      encoding: 'utf-8',
-    }).trim();
-    return { ok: true, detail: `tmux ok; ghostty ${r}` };
-  } catch (e) {
-    // tmux already selected the pane; only the Ghostty focus failed.
-    return { ok: true, detail: 'tmux ok; ghostty focus failed (grant Accessibility): ' + (e as Error).message };
-  }
-}
-
-function shq(s: string): string {
-  return "'" + s.replace(/'/g, `'\\''`) + "'";
-}
-
-/**
- * Quote any text as ONE shell word that survives being typed into a pane by
- * send-keys: `$'…'` (ANSI-C quoting, zsh and bash alike) spells newlines, tabs
- * and every other control character as escapes, so a multi-line prompt goes in
- * as a single line and nothing in it can submit early or be read as a key.
- */
-export function ansiQuote(s: string): string {
-  let out = "$'";
-  for (const ch of s) {
-    const c = ch.codePointAt(0)!;
-    if (ch === '\\') out += '\\\\';
-    else if (ch === "'") out += "\\'";
-    else if (ch === '\n') out += '\\n';
-    else if (ch === '\t') out += '\\t';
-    else if (ch === '\r') out += '\\r';
-    else if (c < 0x20 || c === 0x7f) out += '\\x' + c.toString(16).padStart(2, '0');
-    else out += ch;
-  }
-  return out + "'";
-}
+export { ansiQuote, RESUME_FULL_ENV };
 
 // Codex's composer needs a beat between receiving typed text and the Enter that
 // submits it: an Enter sent in the same burst arrives before the text is processed
@@ -90,9 +32,9 @@ export function sendToPane(paneId: string, text: string, agent: Agent = 'claude'
   const clean = text.replace(/\r?\n/g, ' ').trim(); // both agents submit on Enter; keep one line
   if (!clean) return { ok: false, detail: 'empty message' };
   try {
-    execFileSync('tmux', ['send-keys', '-t', paneId, '-l', clean]);
+    tmux(['send-keys', '-t', paneId, '-l', clean]);
     if (agent === 'codex') settle();
-    execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+    tmux(['send-keys', '-t', paneId, 'Enter']);
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
@@ -115,14 +57,14 @@ export function sendToPane(paneId: string, text: string, agent: Agent = 'claude'
 export function closeSession(paneId: string, agent: Agent = 'claude'): GotoResult {
   try {
     if (agent === 'codex') {
-      execFileSync('tmux', ['send-keys', '-t', paneId, '-l', '/quit']);
+      tmux(['send-keys', '-t', paneId, '-l', '/quit']);
       settle();
-      execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+      tmux(['send-keys', '-t', paneId, 'Enter']);
       settle();
-      execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+      tmux(['send-keys', '-t', paneId, 'Enter']);
     } else {
-      execFileSync('tmux', ['send-keys', '-t', paneId, 'C-c']);
-      execFileSync('tmux', ['send-keys', '-t', paneId, 'C-c']);
+      tmux(['send-keys', '-t', paneId, 'C-c']);
+      tmux(['send-keys', '-t', paneId, 'C-c']);
     }
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
@@ -142,16 +84,6 @@ function branchSeed(agent: Agent): string {
     'prior work. Briefly acknowledge that you understand this is a fork, then wait for my next instruction.'
   );
 }
-
-// Resuming a long-running session pops a "resume from a summary, or the full
-// session as-is?" prompt before the pane is usable. Loom resumes mean "put this
-// chat back exactly as it was", so the two thresholds that trigger that prompt
-// are pushed out of reach on every command Loom launches.
-//
-// It has to be the real environment: Claude Code applies a settings.json `env`
-// block through an allowlist, and these keys are not on it.
-export const RESUME_FULL_ENV =
-  'CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=99999999 CLAUDE_CODE_RESUME_TOKEN_THRESHOLD=999999999';
 
 export interface LaunchInput {
   projectDir: string;
@@ -173,24 +105,30 @@ export interface LaunchInPaneInput extends LaunchInput {
 
 const PANE_INFO_SEP = '~|LOOM|~';
 
-export function buildLaunchCommand(input: LaunchInput): string {
+export function buildLaunchCommand(input: LaunchInput, settings?: LaunchSettings): string {
   const cd = `cd ${shq(input.projectDir)} && `;
   if (input.fresh) {
-    const promptArg = input.prompt?.trim() ? ' ' + ansiQuote(input.prompt) : '';
-    return cd + (input.selectedAgent === 'codex' ? `codex${promptArg}` : `claude --dangerously-skip-permissions${promptArg}`);
+    if (input.selectedAgent === 'codex') {
+      const promptArg = input.prompt?.trim() ? ' ' + ansiQuote(input.prompt) : '';
+      return cd + `codex${promptArg}`;
+    }
+    // A fresh Claude chat can be given its session id up front (--session-id), so
+    // whoever starts it knows which transcript is theirs before it exists.
+    return claudeCommand({ kind: 'chat', dir: input.projectDir, sid: input.sessionId, prompt: input.prompt }, settings);
   }
   // Native session ids are agent-specific. Cross-agent handoff starts a clean
   // session, so an id from the source agent can never be passed accidentally.
   if (input.sourceAgent !== input.selectedAgent) return cd + input.selectedAgent;
-  const seedArg = input.fork ? ' ' + shq(branchSeed(input.selectedAgent)) : '';
+  // A resume can carry a first prompt (a parked chat resumed with the reply that woke it).
+  const seed = input.fork ? branchSeed(input.selectedAgent) : input.prompt;
   if (input.selectedAgent === 'codex') {
     // Codex forks through its own subcommand rather than a resume flag, and both
     // `resume` and `fork` take an optional prompt as their second positional arg.
     const verb = input.fork ? 'fork' : 'resume';
+    const seedArg = input.fork ? ' ' + shq(seed!) : seed?.trim() ? ' ' + ansiQuote(seed) : '';
     return cd + `codex ${verb} ${shq(input.sessionId)}${seedArg}`;
   }
-  const forkFlag = input.fork ? ' --fork-session' : '';
-  return cd + `${RESUME_FULL_ENV} claude --resume ${shq(input.sessionId)}${forkFlag} --dangerously-skip-permissions${seedArg}`;
+  return claudeCommand({ kind: input.fork ? 'branch' : 'resume', dir: input.projectDir, sid: input.sessionId, prompt: seed }, settings);
 }
 
 // Launch an agent into an idle (shell) pane, then focus it. A fork starts a new
@@ -204,17 +142,15 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
   let tmuxSession = '';
   let paneInfo: string[] = [];
   try {
-    paneInfo = execFileSync('tmux', ['display-message', '-p', '-t', input.paneId,
-      `#{session_name}${PANE_INFO_SEP}#{window_index}${PANE_INFO_SEP}#{pane_index}${PANE_INFO_SEP}#{pane_current_path}`], {
-      encoding: 'utf-8',
-    }).trim().split(PANE_INFO_SEP);
+    paneInfo = tmux(['display-message', '-p', '-t', input.paneId,
+      `#{session_name}${PANE_INFO_SEP}#{window_index}${PANE_INFO_SEP}#{pane_index}${PANE_INFO_SEP}#{pane_current_path}`]).trim().split(PANE_INFO_SEP);
     tmuxSession = paneInfo[0] ?? '';
   } catch {
     /* focus will be skipped */
   }
   const cmd = buildLaunchCommand(input);
   try {
-    execFileSync('tmux', ['send-keys', '-t', input.paneId, cmd, 'Enter']);
+    tmux(['send-keys', '-t', input.paneId, cmd, 'Enter']);
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }

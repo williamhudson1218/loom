@@ -2,10 +2,9 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { execFile } from 'node:child_process';
 import type Database from 'better-sqlite3';
+import { getSetting } from './settingsSchema.ts';
 import {
   TRANSCRIPT_CHAR_CAP,
-  ANALYZE_CAP,
-  ANALYZE_CONCURRENCY,
   MIN_MESSAGES_FOR_LLM,
   SUMMARY_PROMPT_PREAMBLE,
   TOOL_DIR,
@@ -13,7 +12,36 @@ import {
 import type { Agent, Summary, ChatRow, ChatState } from './types.ts';
 import { CHAT_STATES } from './types.ts';
 
-export type ClaudeRunner = (prompt: string) => Promise<string>;
+// `model` is the value for `claude --model`; absent means pass no flag (the account default).
+export interface RunnerOpts {
+  model?: string;
+  claudeBin?: string;
+}
+export type ClaudeRunner = (prompt: string, opts?: RunnerOpts) => Promise<string>;
+
+export interface AnalyzerConfig {
+  summaryModel: string; // haiku | sonnet | opus | account
+  cap: number;
+  concurrency: number;
+  windowDays: number;
+  claudeBin: string;
+}
+
+/** The summary settings, resolved (env > row > default). */
+export function analyzerConfig(db: Database.Database): AnalyzerConfig {
+  return {
+    summaryModel: getSetting(db, 'summary_model'),
+    cap: getSetting(db, 'analyze_cap'),
+    concurrency: getSetting(db, 'analyze_concurrency'),
+    windowDays: getSetting(db, 'active_window_days'),
+    claudeBin: getSetting(db, 'claude_bin'),
+  };
+}
+
+/** `--model` argv for the summary_model setting: nothing for "account". */
+export function modelArgs(summaryModel: string): string[] {
+  return summaryModel && summaryModel !== 'account' ? ['--model', summaryModel] : [];
+}
 
 export async function transcriptToText(
   agent: Agent,
@@ -130,11 +158,11 @@ export function parseSummary(raw: string): Summary {
 //       --safe-mode keeps auth (keychain) intact.
 //   --no-session-persistence : don't write these calls' own session transcripts
 //       to disk (otherwise chat-manager would index its own summarization prompts).
-export const defaultRunner: ClaudeRunner = (prompt: string) =>
+export const defaultRunner: ClaudeRunner = (prompt: string, opts: RunnerOpts = {}) =>
   new Promise((resolve, reject) => {
     execFile(
-      'claude',
-      ['-p', '--safe-mode', '--no-session-persistence', prompt],
+      opts.claudeBin || 'claude',
+      ['-p', '--safe-mode', '--no-session-persistence', ...(opts.model ? ['--model', opts.model] : []), prompt],
       { cwd: TOOL_DIR, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
       (err, stdout) => {
         if (err) reject(err);
@@ -166,10 +194,16 @@ export async function summarizeDirty(
   runner: ClaudeRunner,
   opts: { cap?: number; concurrency?: number; now?: number; model?: string } = {},
 ): Promise<{ attempted: number; succeeded: number; failed: number; heuristic: number }> {
-  const cap = opts.cap ?? ANALYZE_CAP;
-  const concurrency = opts.concurrency ?? ANALYZE_CONCURRENCY;
+  const cfg = analyzerConfig(db);
+  const cap = opts.cap ?? cfg.cap;
+  const concurrency = opts.concurrency ?? cfg.concurrency;
   const now = opts.now ?? Date.now();
-  const model = opts.model ?? 'claude-code';
+  const runOpts: RunnerOpts = {
+    model: cfg.summaryModel === 'account' ? undefined : cfg.summaryModel,
+    claudeBin: cfg.claudeBin || undefined,
+  };
+  // What summary_model records on the row: the configured model, or the old label for "account".
+  const model = opts.model ?? (cfg.summaryModel === 'account' ? 'claude-code' : cfg.summaryModel);
 
   const rows = db
     .prepare(`SELECT * FROM chats WHERE summary_dirty = 1 ORDER BY last_active_at ASC LIMIT ?`)
@@ -203,7 +237,7 @@ export async function summarizeDirty(
     }
     try {
       const text = await transcriptToText(row.agent, row.jsonl_path);
-      const raw = await runner(buildPrompt(text));
+      const raw = await runner(buildPrompt(text), runOpts);
       const summary = parseSummary(raw);
       writeSummary.run({
         title: summary.title,

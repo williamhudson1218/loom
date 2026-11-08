@@ -3,8 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { defaultGitAsync, type AsyncGitRunner } from './git.ts';
 import { defaultGh, parsePorcelainZ, type GhRunner, type PorcelainEntry } from './detail.ts';
-import { scanTranscript } from './sessionscan.ts';
+import { chatEditedFiles, scanTranscript } from './sessionscan.ts';
 import type { ChatView, LiveLoc } from './dashboard.ts';
+import { isViewSession } from './tmux.ts';
+import { applyOverrides, loadAllOverrides, type AttrOverride } from './shipview.ts';
+import { openDb } from './db.ts';
+import { TOOL_DIR } from './paths.ts';
+import type Database from 'better-sqlite3';
+import { DEFAULT_SHIP_COMMAND, detectBaseBranch, gitRepoRoot, listShipProjects, type ShipProject } from './projects.ts';
 
 // Ship groups: which chats ride in the same /ship. On the shared main checkout
 // git cannot say which chat wrote what, so a chat's share of a ship is the
@@ -67,8 +73,11 @@ export interface ShippedGroup extends Omit<ShipPr, 'files'> {
 export interface ShipBoard {
   repo: string; // primary checkout
   slug: string; // owner/name
+  base: string; // the branch ships target (the row's base_branch)
+  command: string; // what the Ship button sends (the row's ship_command)
+  labelRequired: boolean; // every chat in the ship needs a label
   generatedAt: number;
-  onMain: boolean;
+  onMain: boolean; // the checkout is on `base`
   next: NextShip;
   lock: ShipLock | null;
   shipped: ShippedGroup[];
@@ -155,6 +164,16 @@ export function byChatIndex(next: NextShip, shipped: ShippedGroup[]): ShipBoard[
   return out;
 }
 
+// The ship hook records `tmux display -p '#S:#I.#P'`, and for a window that Loom
+// has attached a grouped `loom-view-*` session to, tmux may answer with that view
+// session instead of the chat's own. A view is Loom's plumbing, never an address
+// a person can jump to, so swap in the chat's real live target, or say nothing.
+export function cleanLockPane(pane: string, loc?: Pick<LiveLoc, 'tmux_session' | 'window_index' | 'pane_index'>): string {
+  const session = pane.split(':')[0];
+  if (!isViewSession(session)) return pane;
+  return loc && !isViewSession(loc.tmux_session) ? `${loc.tmux_session}:${loc.window_index}.${loc.pane_index}` : '';
+}
+
 export function parseLock(raw: string, now: number = Date.now()): Omit<ShipLock, 'holderKey' | 'batch'> | null {
   try {
     const o = JSON.parse(raw);
@@ -191,10 +210,55 @@ export function toShipPr(raw: any): ShipPr | null {
 /* --------------------------------------------------------------- gathering */
 
 const HOME = os.homedir();
-export function shipRepos(): string[] {
-  const env = process.env.LOOM_SHIP_REPOS;
-  const list = env ? env.split(':').filter(Boolean) : [path.join(HOME, 'dev', 'tax-pilot-app')];
-  return list.filter((d) => fs.existsSync(path.join(d, '.git')));
+
+/** What a ship needs to know about its repo: the row's settings, or the defaults for an env-listed path. */
+export interface ShipConfig {
+  repo: string;
+  base: string;
+  command: string;
+  labelRequired: boolean;
+}
+
+const fromRow = (r: ShipProject): ShipConfig => ({ repo: r.project_dir, base: r.base_branch, command: r.ship_command, labelRequired: r.label_required });
+
+/**
+ * The repos Ship works on: the enabled ship_projects rows. $LOOM_SHIP_REPOS
+ * (colon-separated) overrides the list; a path it names that has a row uses
+ * that row's settings, any other gets the defaults. A new install has no rows,
+ * so there is no Ship line until a repo is added.
+ */
+export function shipConfigs(db?: Database.Database): ShipConfig[] {
+  const own = db ? null : openDb();
+  const d = db ?? own!;
+  try {
+    const rows = listShipProjects(d, { includeDisabled: !!process.env.LOOM_SHIP_REPOS });
+    const env = process.env.LOOM_SHIP_REPOS;
+    const list: ShipConfig[] = env
+      ? env.split(':').filter(Boolean).map((p) => {
+          const r = rows.find((x) => x.project_dir === p);
+          return r ? fromRow(r) : { repo: p, base: 'main', command: DEFAULT_SHIP_COMMAND, labelRequired: false };
+        })
+      : rows.map(fromRow);
+    return list.filter((c) => fs.existsSync(path.join(c.repo, '.git')));
+  } catch {
+    return [];
+  } finally {
+    own?.close();
+  }
+}
+
+export function shipRepos(db?: Database.Database): string[] {
+  return shipConfigs(db).map((c) => c.repo);
+}
+
+export function shipConfigFor(repo: string, db?: Database.Database): ShipConfig | null {
+  return shipConfigs(db).find((c) => c.repo === repo) ?? null;
+}
+
+/** What the plugin's label hook needs (written to plugin-state.json by whoever owns that file). */
+export function shipPluginState(db?: Database.Database): { repos: string[]; label_required: string[] } {
+  const cfgs = shipConfigs(db);
+  return { repos: cfgs.map((c) => c.repo), label_required: cfgs.filter((c) => c.labelRequired).map((c) => c.repo) };
 }
 
 const CHAT_WINDOW_MS = 48 * 3_600_000; // chats this recent can belong to a listed ship
@@ -202,20 +266,22 @@ const SHIPS_TTL_MS = 60_000;
 const SHIP_LIMIT = 12;
 
 /** Every recent Claude chat's edits inside `repo`, repo-relative. Yields between transcripts. */
-export async function chatEditsFor(repo: string, views: ChatView[], live: Record<string, LiveLoc>, now: number = Date.now()): Promise<ChatEdits[]> {
+export async function chatEditsFor(repo: string, views: ChatView[], live: Record<string, LiveLoc>, now: number = Date.now(), windowMs: number = CHAT_WINDOW_MS): Promise<ChatEdits[]> {
   const out: ChatEdits[] = [];
   const prefix = repo.endsWith('/') ? repo : repo + '/';
   for (const v of views) {
     if (v.agent !== 'claude') continue;
     const key = `${v.agent}:${v.session_id}`;
-    if (!live[key] && now - v.last_active_at > CHAT_WINDOW_MS) continue;
+    if (!live[key] && now - v.last_active_at > windowMs) continue;
     const s = scanTranscript(v.jsonl_path);
+    // Edit/Write calls, files written or staged from Bash, and the chat's subagents' edits.
+    const ed = chatEditedFiles(v.jsonl_path);
     const edits: ChatEdits['edits'] = {};
-    for (const [abs, last] of Object.entries(s.editedFiles)) {
+    for (const [abs, last] of Object.entries(ed.last)) {
       if (!abs.startsWith(prefix)) continue;
       const rel = abs.slice(prefix.length);
       if (rel.startsWith('.worktrees/')) continue; // a worktree's files never ride a main ship
-      edits[rel] = { first: s.editedFirst[abs] ?? last, last };
+      edits[rel] = { first: ed.first[abs] ?? last, last };
     }
     if (Object.keys(edits).length || s.shipCmds.length) out.push({ key, edits, shipCmds: s.shipCmds });
     await new Promise((r) => setImmediate(r));
@@ -258,12 +324,16 @@ export async function buildShipBoard(
   git: AsyncGitRunner = defaultGitAsync,
   gh: GhRunner = defaultGh,
   now: number = Date.now(),
+  overrides: AttrOverride[] = [],
+  config: Pick<ShipConfig, 'base' | 'command'> & { labelRequired?: boolean } | null = null,
 ): Promise<ShipBoard> {
   const slug = slugFromRemote(await q(git, ['remote', 'get-url', 'origin'], repo));
   const branch = (await q(git, ['rev-parse', '--abbrev-ref', 'HEAD'], repo)).trim();
-  const onMain = branch === 'main' || branch === 'master';
+  // Without a configured base, main or master counts (the older behaviour).
+  const base = config?.base ?? 'main';
+  const onMain = config ? branch === config.base : branch === 'main' || branch === 'master';
   const status = onMain ? parsePorcelainZ(await q(git, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], repo)) : new Map<string, PorcelainEntry>();
-  const chats = await chatEditsFor(repo, views, live, now);
+  const chats = applyOverrides(await chatEditsFor(repo, views, live, now), overrides.filter((o) => o.repo === repo), now);
   const next = groupNextShip(status, chats);
 
   let lock: ShipLock | null = null;
@@ -284,18 +354,97 @@ export async function buildShipBoard(
         const [at = '', ...files] = (await q(git, ['show', '--name-only', '--format=%ct', 'HEAD'], repo)).split('\n').map((x) => x.trim()).filter(Boolean);
         if (Number(at) * 1000 >= l.acquiredAt) batch = files;
       }
-      lock = { ...l, holderKey: holder ? `${holder.agent}:${holder.session_id}` : '', batch };
+      const holderKey = holder ? `${holder.agent}:${holder.session_id}` : '';
+      lock = { ...l, pane: cleanLockPane(l.pane, live[holderKey]), holderKey, batch };
     }
   }
 
   const shipped = slug ? shippedMembership(await recentShips(slug, gh, now), chats) : [];
-  return { repo, slug, generatedAt: now, onMain, next, lock, shipped, byChat: byChatIndex(next, shipped) };
+  return { repo, slug, base, command: config?.command ?? DEFAULT_SHIP_COMMAND, labelRequired: !!config?.labelRequired, generatedAt: now, onMain, next, lock, shipped, byChat: byChatIndex(next, shipped) };
+}
+
+/* -------------------------------------------------------------- candidates */
+
+// A git project with staged work that is not on Ship yet. The board offers
+// "Add <repo> to Ship" for it, which POSTs /api/ship/projects.
+export interface ShipCandidate {
+  repo: string; // primary checkout
+  name: string;
+  slug: string;
+  base: string;
+  staged: number;
+  chats: string[]; // live chats working in it
+}
+
+const rootCache = new Map<string, { at: number; root: string; slug: string; base: string }>();
+const ROOT_TTL_MS = 5 * 60_000;
+
+/** Live chats' git projects that have staged files and a GitHub remote but no ship row. */
+export async function findShipCandidates(
+  views: ChatView[],
+  live: Record<string, LiveLoc>,
+  onShip: string[],
+  git: AsyncGitRunner = defaultGitAsync,
+  now: number = Date.now(),
+): Promise<ShipCandidate[]> {
+  const byRepo = new Map<string, ShipCandidate>();
+  const dirs = new Map<string, string[]>();
+  for (const v of views) {
+    const key = `${v.agent}:${v.session_id}`;
+    if (!live[key] || !v.project_dir || v.project_dir.includes('/.worktrees/')) continue;
+    dirs.set(v.project_dir, [...(dirs.get(v.project_dir) ?? []), key]);
+  }
+  for (const [dir, keys] of dirs) {
+    let info = rootCache.get(dir);
+    if (!info || now - info.at > ROOT_TTL_MS) {
+      const root = gitRepoRoot(dir);
+      const slug = root ? slugFromRemote(await q(git, ['remote', 'get-url', 'origin'], root)) : '';
+      info = { at: now, root, slug, base: root ? detectBaseBranch(root) : 'main' };
+      rootCache.set(dir, info);
+    }
+    if (!info.root || !info.slug || onShip.includes(info.root)) continue;
+    const staged = (await q(git, ['diff', '--cached', '--name-only'], info.root)).split('\n').filter(Boolean).length;
+    if (!staged) continue;
+    const c = byRepo.get(info.root) ?? { repo: info.root, name: path.basename(info.root), slug: info.slug, base: info.base, staged, chats: [] };
+    c.chats.push(...keys);
+    byRepo.set(info.root, c);
+  }
+  return [...byRepo.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /* ------------------------------------------------------------------- cache */
 
-let boards: ShipBoard[] = [];
+// The last built boards are kept on disk so a restart shows the ship line straight away,
+// instead of nothing until the first build (git + gh) finishes several seconds later.
+function boardsCacheFile(): string {
+  return path.join(TOOL_DIR, 'ship-boards.json');
+}
+function loadCachedBoards(): ShipBoard[] {
+  if (process.env.VITEST) return [];
+  try {
+    const j = JSON.parse(fs.readFileSync(boardsCacheFile(), 'utf8')) as unknown;
+    return Array.isArray(j) ? (j as ShipBoard[]) : [];
+  } catch {
+    return [];
+  }
+}
+function saveCachedBoards(b: ShipBoard[]): void {
+  if (process.env.VITEST) return;
+  try {
+    const f = boardsCacheFile();
+    fs.writeFileSync(f + '.tmp', JSON.stringify(b));
+    fs.renameSync(f + '.tmp', f);
+  } catch {
+    /* best effort */
+  }
+}
+let boards: ShipBoard[] = loadCachedBoards();
+let candidates: ShipCandidate[] = [];
 let building = false;
+
+export function shipCandidates(): ShipCandidate[] {
+  return candidates;
+}
 
 export function shipBoards(): ShipBoard[] {
   return boards;
@@ -307,14 +456,32 @@ export async function refreshShipBoards(views: ChatView[], live: Record<string, 
   building = true;
   try {
     const out: ShipBoard[] = [];
-    for (const repo of shipRepos()) {
+    let overrides: AttrOverride[] = [];
+    try {
+      const db = openDb();
       try {
-        out.push(await buildShipBoard(repo, views, live));
+        overrides = loadAllOverrides(db);
+      } finally {
+        db.close();
+      }
+    } catch {
+      /* no overrides this pass */
+    }
+    for (const cfg of shipConfigs()) {
+      const repo = cfg.repo;
+      try {
+        out.push(await buildShipBoard(repo, views, live, defaultGitAsync, defaultGh, Date.now(), overrides, cfg));
       } catch (e) {
         console.error('[loom] ship board failed for', repo, (e as Error).message);
       }
     }
     boards = out;
+    saveCachedBoards(out);
+    try {
+      candidates = await findShipCandidates(views, live, shipRepos());
+    } catch {
+      candidates = [];
+    }
     return boards;
   } finally {
     building = false;

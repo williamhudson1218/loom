@@ -12,6 +12,7 @@ import {
 import { parseJsonlFile } from './parser.ts';
 import { parseCodexJsonlFile } from './codexParser.ts';
 import type { ParsedChat } from './types.ts';
+import { claimFromFirstMessage } from './slackowner.ts';
 
 const DAY_MS = 86_400_000;
 
@@ -104,6 +105,16 @@ export function listCodexSessionJsonls(sessionsDir: string = CODEX_SESSIONS_DIR)
   return out.sort();
 }
 
+// A chat whose opening prompt links a Slack thread owns it (slack_threads, first
+// claim wins). Best effort: ownership bookkeeping never fails an index pass.
+function noteSlackClaim(db: Database.Database, parsed: ParsedChat): void {
+  try {
+    claimFromFirstMessage(db, parsed);
+  } catch {
+    /* a DB without the table (older tests) or a locked row: skip */
+  }
+}
+
 export function upsertChat(
   db: Database.Database,
   parsed: ParsedChat,
@@ -148,6 +159,7 @@ export function upsertChat(
         1, @jsonl_mtime, @last_indexed_at
       )`,
     ).run(common);
+    noteSlackClaim(db, parsed);
     return 'inserted';
   }
 
@@ -162,6 +174,7 @@ export function upsertChat(
        summary_dirty=1, jsonl_mtime=@jsonl_mtime, last_indexed_at=@last_indexed_at
      WHERE agent=@agent AND session_id=@session_id`,
   ).run(common);
+  noteSlackClaim(db, parsed);
   return 'updated';
 }
 

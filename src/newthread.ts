@@ -7,8 +7,11 @@ import { parseJsonlFile } from './parser.ts';
 import { upsertChat } from './indexer.ts';
 import { defaultRun, laneTargets, nextOpenPane, parseLane, readWorld, type TmuxRunner, type WorldState } from './compact.ts';
 import { launchInPane, type GotoResult } from './goto.ts';
+import { isViewSession } from './tmux.ts';
 import { nameNewPanes } from './panenames.ts';
 import { isValidProjectDir } from './findchat.ts';
+import { acquireManagedPane, pickStrategy } from './managed.ts';
+import { currentTerminal } from './terminal.ts';
 import type { Agent } from './types.ts';
 
 // The board's "New thread" composer: start a fresh agent session in a pane with
@@ -115,7 +118,8 @@ export function readGeometry(run: TmuxRunner = defaultRun): PaneGeom[] {
       .map((l) => {
         const [pane_id, session, w, h] = l.split(' ');
         return { pane_id, session, width: Number(w), height: Number(h) };
-      });
+      })
+      .filter((g) => !isViewSession(g.session)); // a view repeats its group's panes
   } catch {
     return [];
   }
@@ -137,6 +141,11 @@ export interface Launched {
 // chat in that pane is indexed.
 const recent: Launched[] = [];
 const LAUNCH_TTL_MS = 5 * 60_000;
+/** Show a launch made elsewhere (Slack auto-start) as a placeholder card until its chat is indexed. */
+export function noteLaunch(l: Omit<Launched, 'id' | 'at'>): void {
+  recent.push({ ...l, id: newId(), at: Date.now() });
+}
+
 export function recentLaunches(now: number = Date.now()): Launched[] {
   while (recent.length && now - recent[0].at > LAUNCH_TTL_MS) recent.shift();
   return [...recent];
@@ -241,6 +250,21 @@ export function acquirePane(
   return { ok: true, paneId, split: true };
 }
 
+export type AcquiredPane = { ok: true; paneId: string; split: boolean; managed: boolean } | { ok: false; detail: string };
+
+/**
+ * Where a new chat goes. With lane sessions (the owner's workflow) this is
+ * acquirePane exactly as before. With none, it is a fresh Loom-managed window.
+ */
+export function acquirePaneAuto(projectDir: string, lane: string, prefer: string, run: TmuxRunner = defaultRun): AcquiredPane {
+  if (pickStrategy(readWorld(run)) === 'lanes') {
+    const r = acquirePane(projectDir, lane, prefer, run);
+    return r.ok ? { ...r, managed: false } : r;
+  }
+  const m = acquireManagedPane(projectDir, { run, ready: (id) => waitForShellReady(id, run) });
+  return m.ok ? { ok: true, paneId: m.paneId, split: false, managed: true } : m;
+}
+
 export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun): GotoResult & { pane_id?: string; where?: string; images?: string[] } {
   if (!isValidProjectDir(input.projectDir)) return { ok: false, detail: 'invalid project dir' };
   if (!input.prompt.trim() && !input.images?.length) return { ok: false, detail: 'empty prompt' };
@@ -251,9 +275,9 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun)
   } catch (e) {
     return { ok: false, detail: (e as Error).message };
   }
-  const pane = acquirePane(input.projectDir, input.lane ?? '', input.prefer ?? '', run);
+  const pane = acquirePaneAuto(input.projectDir, input.lane ?? '', input.prefer ?? '', run);
   if (!pane.ok) return pane;
-  const { paneId, split } = pane;
+  const { paneId, split, managed } = pane;
   const prompt = promptWithImages(input.prompt, images);
   const r = launchInPane({
     paneId,
@@ -263,7 +287,7 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun)
     selectedAgent: input.agent,
     fresh: true,
     prompt,
-    focus: !!input.focus,
+    focus: !!input.focus && !(managed && currentTerminal() === 'inside'), // Loom's own terminal shows a managed window; an external one is switched to it
   });
   if (!r.ok) return r;
   let where = paneId;

@@ -3,9 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { readThreads, type ThreadRec } from './slack.ts';
+import { parseSlackThread, type ThreadRef } from './slackref.ts';
+import { autoStartThread, getOwner, noteStart, type PickedText, type StartedThread } from './slackowner.ts';
+import { openDb, getDefaultAgent } from './db.ts';
+import { MANAGED_SESSION } from './managed.ts';
 import { searchArchive, isValidProjectDir, type ArchiveResult } from './findchat.ts';
 import { gotoPane, launchInPane, type GotoResult } from './goto.ts';
-import { acquirePane } from './newthread.ts';
+import { acquirePaneAuto, noteLaunch } from './newthread.ts';
 import { parseLane } from './compact.ts';
 import type { LiveLoc } from './dashboard.ts';
 
@@ -14,50 +18,21 @@ import type { LiveLoc } from './dashboard.ts';
 // (pickedThread), and that permalink is POSTed to /api/slack/thread-goto, which
 // lands here. A pasted or curl'd link takes the same path. A
 // Slack permalink resolves to the chat that owns the thread, and that chat is
-// jumped to if it is running in a pane, or resumed into one if not. Nothing is
-// ever created for a thread no chat has touched.
+// jumped to if it is running in a pane, or resumed into one if not. A thread no
+// chat owns starts one (slackowner.autoStartThread) with the thread as its first
+// prompt; before 2026-11-05 that was only a notification.
 
 /* ------------------------------------------------------------ the link */
 
-// Mirrors URL_RE and thread_keys() in ~/.claude/hooks/slack-threads.py exactly,
-// because the hook's keys are what the state file is keyed by: a link that
-// normalises differently here would never find its owner.
-const URL_RE = /https:\/\/[\w-]+\.slack\.com\/archives\/([A-Z0-9]+)\/p(\d{10})(\d{6})(\?[^\s>)\]|]*)?/;
-
-export interface ThreadRef {
-  key: string; // `<channel>/<root ts>`, the state file's key
-  url: string; // the root's own permalink
-  channel: string;
-  ts: string; // the thread root
-  linkTs: string; // the message the link pointed at: a reply's own ts, or the root
-}
-
-/**
- * The thread a Slack permalink belongs to, or null if the text holds none. A
- * reply link carries its root in `?thread_ts=`, and the thread is that root,
- * not the reply. Only the first link in the text counts.
- */
-export function parseSlackThread(text: string): ThreadRef | null {
-  const m = URL_RE.exec(text || '');
-  if (!m) return null;
-  const [whole, channel, sec, frac, query] = m;
-  const linkTs = `${sec}.${frac}`;
-  let ts = linkTs;
-  if (query) {
-    // parse_qs drops blank values and takes the first; URLSearchParams.get is the
-    // same first value, and the shape check rejects the blank.
-    const root = new URLSearchParams(query.slice(1)).get('thread_ts');
-    if (root && /^\d{10}\.\d{6}$/.test(root)) ts = root;
-  }
-  const base = whole.split('/archives/')[0];
-  return { key: `${channel}/${ts}`, url: `${base}/archives/${channel}/p${ts.replace('.', '')}`, channel, ts, linkTs };
-}
+export { parseSlackThread, type ThreadRef } from './slackref.ts';
 
 /** What the pick overlay's AX helper reports for the clicked message. */
 export interface PickedMessage {
   url: string; // the message's own permalink (a reply's carries ?thread_ts= when Slack adds it)
   inThread: boolean; // clicked inside the open thread pane
   rootUrl?: string | null; // that pane's root permalink, when the helper found it
+  text?: string; // the message body, when the helper could read it
+  author?: string;
 }
 
 /**
@@ -75,12 +50,15 @@ export function pickedThread(m: PickedMessage): ThreadRef | null {
 /* ------------------------------------------------------------ the owner */
 
 export interface Owner {
-  session_id: string;
+  session_id: string; // '' for a chat Loom started whose session id is not known yet
   cwd: string; // where the chat was started; '' when unknown
-  source: 'state' | 'search';
+  source: 'table' | 'state' | 'search';
+  pane_id?: string; // the pane a still-starting chat was opened in
 }
 
 export interface LookupDeps {
+  // Loom's own slack_threads table: checked first.
+  owned?: (key: string) => { session_id: string; cwd: string; pane_id: string } | null;
   threads: () => Record<string, ThreadRec>;
   search: (q: string) => Promise<ArchiveResult>;
   // Does this transcript really mention the link? Guards the full-text match.
@@ -88,11 +66,13 @@ export interface LookupDeps {
 }
 
 /**
- * Who owns a thread. The slack-threads state is the authority; a thread it does
- * not know falls back to the transcripts that mention the parent's permalink,
- * and the most recently active of those wins.
+ * Who owns a thread. Loom's own table first, then the slack-threads hook's state
+ * file; a thread neither knows falls back to the transcripts that mention the
+ * parent's permalink, and the most recently active of those wins.
  */
 export async function findOwner(ref: ThreadRef, deps: LookupDeps): Promise<Owner | null> {
+  const mine = deps.owned?.(ref.key);
+  if (mine && (mine.session_id || mine.pane_id)) return { session_id: mine.session_id, cwd: mine.cwd, source: 'table', pane_id: mine.pane_id || undefined };
   const rec = deps.threads()[ref.key];
   if (rec?.session_id) return { session_id: rec.session_id, cwd: rec.cwd ?? '', source: 'state' };
   // Parent only: a reply's own ts is not the thread, and a chat that only ever
@@ -146,8 +126,9 @@ export function supersetLive(sessionId: string, home: string = process.env.SUPER
 /* ------------------------------------------------------------ the jump */
 
 export interface ThreadGotoResult extends GotoResult {
-  action?: 'jumped' | 'resumed';
-  reason?: 'not_slack' | 'no_owner' | 'elsewhere' | 'no_dir' | 'no_pane' | 'failed';
+  action?: 'jumped' | 'resumed' | 'started';
+  reason?: 'not_slack' | 'no_owner' | 'elsewhere' | 'no_dir' | 'no_pane' | 'failed' | 'no_project';
+  started?: StartedThread;
   key?: string;
   session_id?: string;
   source?: Owner['source'];
@@ -159,9 +140,14 @@ export interface GotoDeps extends LookupDeps {
   projectDirOf: (sessionId: string) => string | null; // the board's record, when it has one
   elsewhere: (sessionId: string) => boolean;
   goto: (paneId: string, tmuxSession: string) => GotoResult;
-  acquire: (projectDir: string, lane: string) => { ok: true; paneId: string } | { ok: false; detail: string };
-  resume: (paneId: string, projectDir: string, sessionId: string) => GotoResult;
+  acquire: (projectDir: string, lane: string) => { ok: true; paneId: string; managed?: boolean } | { ok: false; detail: string };
+  resume: (paneId: string, projectDir: string, sessionId: string, focus: boolean) => GotoResult;
+  // Nothing owns the thread: start a chat for it (see slackowner.autoStartThread).
+  // Absent, an unowned thread is just reported, as before.
+  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string }) => StartedOrFailed;
 }
+
+export type StartedOrFailed = { ok: true; started: StartedThread } | { ok: false; reason: 'no_project' | 'failed'; detail: string };
 
 /**
  * The lane a resumed chat should land in: the one already running the most
@@ -181,14 +167,27 @@ export function preferredLane(projectDir: string, live: Record<string, LiveLoc>)
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
 }
 
-export async function threadGoto(text: string, deps: GotoDeps, opts: { pane?: string } = {}): Promise<ThreadGotoResult> {
+export async function threadGoto(text: string, deps: GotoDeps, opts: { pane?: string; picked?: PickedText } = {}): Promise<ThreadGotoResult> {
   const ref = parseSlackThread(text);
   if (!ref) return { ok: false, reason: 'not_slack', detail: 'Not a Slack message link' };
   const owner = await findOwner(ref, deps);
-  if (!owner) return { ok: false, reason: 'no_owner', key: ref.key, detail: 'No chat owns this thread' };
+  if (!owner) {
+    if (!deps.start) return { ok: false, reason: 'no_owner', key: ref.key, detail: 'No chat owns this thread' };
+    const s = deps.start(ref, opts.picked ?? {}, { pane: opts.pane });
+    if (!s.ok) return { ok: false, reason: s.reason, key: ref.key, detail: s.detail };
+    const st = s.started;
+    return { ok: true, detail: `started a chat in ${st.where}`, action: 'started', key: ref.key, session_id: st.session_id, pane_id: st.pane_id, started: st };
+  }
   const base = { key: ref.key, session_id: owner.session_id, source: owner.source };
 
   const live = deps.live();
+  if (!owner.session_id) {
+    // Started by Loom a moment ago and not yet tied to a session: its pane is the chat.
+    const there = Object.values(live).find((l) => l.pane_id === owner.pane_id);
+    if (!there) return { ok: false, ...base, reason: 'failed', detail: 'The chat for this thread is still starting' };
+    const r = deps.goto(there.pane_id, there.tmux_session);
+    return { ...r, ...base, action: 'jumped', pane_id: there.pane_id, ...(r.ok ? {} : { reason: 'failed' }) };
+  }
   const here = live[`claude:${owner.session_id}`];
   if (here?.running && here.pane_id) {
     const r = deps.goto(here.pane_id, here.tmux_session);
@@ -201,18 +200,40 @@ export async function threadGoto(text: string, deps: GotoDeps, opts: { pane?: st
   const dir = deps.projectDirOf(owner.session_id) || owner.cwd;
   if (!dir || !isValidProjectDir(dir)) return { ok: false, ...base, reason: 'no_dir', detail: `No project directory for chat ${owner.session_id.slice(0, 8)}` };
   let paneId = opts.pane ?? '';
+  let managed = false;
   if (!paneId) {
     const p = deps.acquire(dir, preferredLane(dir, live));
     if (!p.ok) return { ok: false, ...base, reason: 'no_pane', detail: p.detail };
     paneId = p.paneId;
+    managed = !!p.managed;
   }
-  const r = deps.resume(paneId, dir, owner.session_id);
+  const r = deps.resume(paneId, dir, owner.session_id, !managed);
   return { ...r, ...base, action: 'resumed', pane_id: paneId, ...(r.ok ? {} : { reason: 'failed' }) };
 }
 
-/** The real wiring, minus the two things only the server knows: the live map and the board. */
+/** Loom's own ownership table, as findOwner's first source. A missing or locked DB reads as "no row". */
+function ownedFromDb(key: string): { session_id: string; cwd: string; pane_id: string } | null {
+  try {
+    const db = openDb();
+    try {
+      const r = getOwner(db, key);
+      return r ? { session_id: r.session_id, cwd: r.project_dir, pane_id: r.pane_id } : null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The real wiring, minus the two things only the server knows: the live map and
+ * the board. An unowned thread starts a chat, where acquire would put a resume
+ * (the same lane choice on the owner's workspace, a managed window otherwise).
+ */
 export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirOf: (sid: string) => string | null): GotoDeps {
   return {
+    owned: ownedFromDb,
     threads: () => readThreads(),
     search: (q) => searchArchive(q),
     mentions: transcriptMentions,
@@ -220,7 +241,43 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
     projectDirOf,
     elsewhere: (sid) => supersetLive(sid),
     goto: gotoPane,
-    acquire: (dir, lane) => acquirePane(dir, lane, lane),
-    resume: (paneId, dir, sid) => launchInPane({ paneId, projectDir: dir, sessionId: sid, sourceAgent: 'claude', selectedAgent: 'claude' }),
+    acquire: (dir, lane) => acquirePaneAuto(dir, lane, lane),
+    resume: (paneId, dir, sid, focus) => launchInPane({ paneId, projectDir: dir, sessionId: sid, sourceAgent: 'claude', selectedAgent: 'claude', focus }),
+    start: (ref, picked, o) => {
+      const r = autoStartThread(
+        ref,
+        picked,
+        {
+          db: () => openDb(),
+          validDir: isValidProjectDir,
+          agent: () => {
+            const db = openDb();
+            try {
+              return getDefaultAgent(db) === 'codex' ? 'codex' : 'claude';
+            } finally {
+              db.close();
+            }
+          },
+          launch: ({ projectDir, prompt, agent, sessionId, pane }) => {
+            let paneId = pane ?? '';
+            let managed = false;
+            if (!paneId) {
+              const p = acquirePaneAuto(projectDir, preferredLane(projectDir, live()), '');
+              if (!p.ok) return p;
+              paneId = p.paneId;
+              managed = p.managed;
+            }
+            const l = launchInPane({ paneId, projectDir, sessionId, sourceAgent: agent, selectedAgent: agent, fresh: true, prompt, focus: !managed });
+            if (!l.ok) return { ok: false, detail: l.detail };
+            noteLaunch({ pane_id: paneId, where: paneId, project: path.basename(projectDir), projectDir, agent, prompt: prompt.slice(0, 200) });
+            return { ok: true, paneId, where: managed ? 'a new window in ' + MANAGED_SESSION : l.detail.replace(/^started; ?/, '') || paneId };
+          },
+        },
+        { pane: o.pane, projectDir: o.projectDir },
+      );
+      if (!r.ok) return r;
+      noteStart(r);
+      return { ok: true, started: r };
+    },
   };
 }

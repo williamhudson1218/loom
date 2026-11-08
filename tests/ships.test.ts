@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parsePorcelainZ } from '../src/detail.ts';
-import { byChatIndex, fileState, groupNextShip, parseLock, shippedMembership, slugFromRemote, toShipPr, type ChatEdits, type ShipPr } from '../src/ships.ts';
+import { byChatIndex, fileState, groupNextShip, cleanLockPane, parseLock, shippedMembership, slugFromRemote, toShipPr, type ChatEdits, type ShipPr } from '../src/ships.ts';
 import { emptyScan, scanLines } from '../src/sessionscan.ts';
 
 const status = parsePorcelainZ(['M  a.ts', ' M b.ts', 'MM c.ts', '?? d.ts', 'M  e.ts', ''].join('\0'));
@@ -59,6 +59,21 @@ describe('shippedMembership', () => {
   });
 });
 
+describe('cleanLockPane', () => {
+  const loc = { tmux_session: 'loom-tp-3', window_index: '1', pane_index: '0' };
+  it('replaces a loom-view-* address with the chat\'s real live target', () => {
+    expect(cleanLockPane('loom-view-a0512c4dae:3.0', loc)).toBe('loom-tp-3:1.0');
+  });
+  it('never leaks a view name when the chat is not live', () => {
+    expect(cleanLockPane('loom-view-a0512c4dae:3.0')).toBe('');
+    expect(cleanLockPane('loom-view-a0512c4dae:3.0', { ...loc, tmux_session: 'loom-view-zz' })).toBe('');
+  });
+  it('leaves a real address alone', () => {
+    expect(cleanLockPane('loom-tp-2:1.0', loc)).toBe('loom-tp-2:1.0');
+    expect(cleanLockPane('%12', loc)).toBe('%12');
+  });
+});
+
 describe('parsing', () => {
   it('reads the ship lock and marks it stale past the TTL', () => {
     const l = parseLock('{"session_id":"abc","tmux_pane":"loom-tp-2:1.0","acquired_at":1000}', 1_100_000);
@@ -71,7 +86,7 @@ describe('parsing', () => {
     expect(s).toMatchObject({ number: 5, branch: 'ship/x', headAt: Date.parse('2026-10-16T19:10:00Z'), files: ['a.ts'] });
   });
   it('reads the repo slug off either remote form', () => {
-    expect(slugFromRemote('git@github.com:tax-pilot-org/tax-pilot-app.git')).toBe('tax-pilot-org/tax-pilot-app');
+    expect(slugFromRemote('git@github.com:acme-org/acme-app.git')).toBe('acme-org/acme-app');
     expect(slugFromRemote('https://github.com/o/r\n')).toBe('o/r');
   });
   it('the transcript scan records first edits and /ship runs', () => {

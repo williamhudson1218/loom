@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ansiQuote, buildLaunchCommand } from '../src/goto.ts';
-import { chooseTarget, promptWithImages, saveImages, type PaneGeom } from '../src/newthread.ts';
+import { LEGACY_LAUNCH_SETTINGS as LEGACY } from '../src/launch.ts';
+import { acquirePaneAuto, chooseTarget, promptWithImages, saveImages, type PaneGeom } from '../src/newthread.ts';
 import type { LanePane, WorldState } from '../src/compact.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
@@ -29,11 +30,11 @@ describe('ansiQuote', () => {
 
 describe('fresh launch command', () => {
   it('passes the prompt as the agent’s CLI argument', () => {
-    expect(buildLaunchCommand({ projectDir: '/p q', sessionId: '', sourceAgent: 'claude', selectedAgent: 'claude', fresh: true, prompt: 'say hi\nand stop' }))
+    expect(buildLaunchCommand({ projectDir: '/p q', sessionId: '', sourceAgent: 'claude', selectedAgent: 'claude', fresh: true, prompt: 'say hi\nand stop' }, LEGACY))
       .toBe("cd '/p q' && claude --dangerously-skip-permissions $'say hi\\nand stop'");
-    expect(buildLaunchCommand({ projectDir: '/p', sessionId: '', sourceAgent: 'codex', selectedAgent: 'codex', fresh: true, prompt: 'go' }))
+    expect(buildLaunchCommand({ projectDir: '/p', sessionId: '', sourceAgent: 'codex', selectedAgent: 'codex', fresh: true, prompt: 'go' }, LEGACY))
       .toBe("cd '/p' && codex $'go'");
-    expect(buildLaunchCommand({ projectDir: '/p', sessionId: '', sourceAgent: 'claude', selectedAgent: 'claude', fresh: true }))
+    expect(buildLaunchCommand({ projectDir: '/p', sessionId: '', sourceAgent: 'claude', selectedAgent: 'claude', fresh: true }, LEGACY))
       .toBe("cd '/p' && claude --dangerously-skip-permissions");
   });
 });
@@ -96,5 +97,65 @@ describe('dashboard script', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     const js = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
     expect(() => new Function(js)).not.toThrow();
+  });
+});
+
+describe('acquirePaneAuto: lanes keep today\'s picker, no lanes means a managed window', () => {
+  const SEP = '~|LOOM|~';
+  // A fake tmux: list-panes answers with the given panes, every other call is recorded.
+  function fake(panes: { id: string; session: string; idx: string; cmd?: string }[]) {
+    const calls: string[][] = [];
+    const run = (args: string[]): string => {
+      calls.push(args);
+      if (args[0] === 'list-panes' && args.includes('-a')) {
+        const fmt = String(args[args.indexOf('-F') + 1]);
+        if (fmt.includes('#{pane_width}')) return panes.map((p) => `${p.id} ${p.session} 80 24`).join('\n');
+        if (fmt.includes('#{pane_pid}')) return panes.map((p) => [p.id, p.session, '1', p.idx, '999999', p.cmd ?? 'zsh', '', ''].join(SEP)).join('\n');
+        return panes.map((p) => [p.id, p.session, ''].join(SEP)).join('\n');
+      }
+      if (args[0] === 'has-session') throw new Error('no session');
+      if (args[0] === 'new-session') return '%88\n';
+      if (args[0] === 'display-message') return '';
+      if (args[0] === 'capture-pane') return 'prompt';
+      return '';
+    };
+    return { run, calls };
+  }
+  const env = { free: process.env.LOOM_MIN_FREE_MB, load: process.env.LOOM_MAX_LOAD_PER_CPU };
+  const restore = () => {
+    if (env.free === undefined) delete process.env.LOOM_MIN_FREE_MB; else process.env.LOOM_MIN_FREE_MB = env.free;
+    if (env.load === undefined) delete process.env.LOOM_MAX_LOAD_PER_CPU; else process.env.LOOM_MAX_LOAD_PER_CPU = env.load;
+  };
+
+  it('with a lane session, uses the lane\'s open pane and never creates a managed window', () => {
+    const { run, calls } = fake([{ id: '%1', session: 'loom-tp-2', idx: '0' }]);
+    expect(acquirePaneAuto('/p', 'tp', '', run)).toEqual({ ok: true, paneId: '%1', split: false, managed: false });
+    expect(calls.some((c) => c[0] === 'new-session' || c[0] === 'new-window')).toBe(false);
+  });
+
+  it('with no lane session, creates the managed session in the project dir', () => {
+    process.env.LOOM_MIN_FREE_MB = '1';
+    process.env.LOOM_MAX_LOAD_PER_CPU = '100000';
+    try {
+      const { run, calls } = fake([{ id: '%1', session: 'work', idx: '0' }]);
+      const r = acquirePaneAuto('/proj', '', '', run);
+      expect(r).toMatchObject({ ok: true, paneId: '%88', split: false, managed: true });
+      const ns = calls.find((c) => c[0] === 'new-session')!;
+      expect(ns).toEqual(expect.arrayContaining(['-s', 'loom-managed', '-c', '/proj']));
+    } finally {
+      restore();
+    }
+  });
+
+  it('relays the cap\'s refusal without touching tmux', () => {
+    process.env.LOOM_MIN_FREE_MB = '99999999';
+    try {
+      const { run, calls } = fake([]);
+      const r = acquirePaneAuto('/proj', '', '', run);
+      expect(r).toMatchObject({ ok: false, detail: expect.stringContaining('Not starting a new chat') });
+      expect(calls.some((c) => c[0] === 'new-session')).toBe(false);
+    } finally {
+      restore();
+    }
   });
 });

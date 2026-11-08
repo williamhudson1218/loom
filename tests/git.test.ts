@@ -11,19 +11,19 @@ import {
   type WorktreeState,
 } from '../src/git.ts';
 
-// Fixtures below are real output captured from tax-pilot-app, which is the repo
+// Fixtures below are real output captured from acme-app, which is the repo
 // this feature exists to survive: 44 worktrees, squash-merged branches, and one
 // worktree holding uncommitted work that every merge-based test calls disposable.
 
-const PORCELAIN = `worktree /Users/w/dev/tax-pilot-app
+const PORCELAIN = `worktree /Users/w/dev/acme-app
 HEAD d9e02686209c2ee5ff6b206d6b3f0f39697f3e07
 branch refs/heads/main
 
-worktree /Users/w/dev/tax-pilot-app/.worktrees/filing-mn-mnwh
+worktree /Users/w/dev/acme-app/.worktrees/filing-mn-mnwh
 HEAD 3f5dfe686f0f73685b7b43c67b8eee1ebc50e7ff
 branch refs/heads/fix/mnwh-nullable-company
 
-worktree /Users/w/dev/tax-pilot-app/.worktrees/detached-one
+worktree /Users/w/dev/acme-app/.worktrees/detached-one
 HEAD 1bc474df30530d3dbfaba5ba6e9bbdc83abb7d93
 detached
 
@@ -34,8 +34,8 @@ describe('parseWorktreeList', () => {
     const wts = parseWorktreeList(PORCELAIN);
     expect(wts).toHaveLength(3);
     expect(wts[0]).toMatchObject({
-      path: '/Users/w/dev/tax-pilot-app',
-      name: 'tax-pilot-app',
+      path: '/Users/w/dev/acme-app',
+      name: 'acme-app',
       branch: 'main',
       primary: true,
     });
@@ -146,7 +146,7 @@ describe('parseNumstat', () => {
 });
 
 describe('assignPanesToWorktrees', () => {
-  const REPO = '/Users/w/dev/tax-pilot-app';
+  const REPO = '/Users/w/dev/acme-app';
   const WT = REPO + '/.worktrees/feature-demo-editor';
   const paths = [REPO, WT, REPO + '/.worktrees/filing-or-132'];
   const pane = (cwd: string, session = 'loom-tp-4', id = '%7') => ({ tmux_session: session, pane_id: id, cwd });
@@ -288,7 +288,7 @@ describe('removalPlan', () => {
   });
 
   it('never plans removal of the primary worktree even when asked directly', () => {
-    const primary = classify({ ...base, name: 'tax-pilot-app', primary: true }) as WorktreeState;
+    const primary = classify({ ...base, name: 'acme-app', primary: true }) as WorktreeState;
     expect(removalPlan([primary], [primary.path]).approved).toEqual([]);
   });
 

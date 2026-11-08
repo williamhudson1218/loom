@@ -1,0 +1,38 @@
+{
+  "drafts": {
+    "d19a3c0f1a2b": {
+      "channel": "C0TESTCHAN1",
+      "created_at": "2026-11-05T15:28:42",
+      "id": "d19a3c0f1a2b",
+      "messages": ["Here is the first revision of the reply in this thread"],
+      "session_id": "11111111-2222-3333-4444-555555555555",
+      "status": "superseded",
+      "closed_at": "2026-11-05T15:39:07",
+      "thread_ts": "1793839555.348489",
+      "thread_url": "https://acme.slack.com/archives/C0TESTCHAN1/p1793839555348489"
+    },
+    "d19a3c0f9c3d": {
+      "channel": "C0TESTCHAN1",
+      "created_at": "2026-11-05T15:39:07",
+      "id": "d19a3c0f9c3d",
+      "messages": ["Here is the reply in this thread", "And a second short message"],
+      "revised_at": "2026-11-05T15:41:00",
+      "session_id": "11111111-2222-3333-4444-555555555555",
+      "status": "pending",
+      "thread_ts": "1793839555.348489",
+      "thread_url": "https://acme.slack.com/archives/C0TESTCHAN1/p1793839555348489"
+    },
+    "d19a3c1a0001": {
+      "channel": "D0TESTDM01",
+      "created_at": "2026-11-04T09:00:00",
+      "id": "d19a3c1a0001",
+      "messages": ["A direct message that already went out"],
+      "permalink": "https://acme.slack.com/archives/D0TESTDM01/p1793700000000100",
+      "sent_at": "2026-11-04T09:05:00",
+      "closed_at": "2026-11-04T09:05:00",
+      "sent_by": "loom",
+      "session_id": "66666666-7777-8888-9999-000000000000",
+      "status": "sent"
+    }
+  }
+}

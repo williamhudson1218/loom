@@ -5,7 +5,7 @@
 // makes Slack's Electron renderer expose its DOM tree) and reads attributes.
 //
 //   {"op":"trust","prompt":false}      -> {"trusted":true}
-//   {"op":"hit","x":900,"y":400}       -> {"ok":true,"url":"…","rect":{x,y,w,h},"inThread":false,"rootUrl":null}
+//   {"op":"hit","x":900,"y":400}       -> {"ok":true,"url":"…","rect":{x,y,w,h},"inThread":false,"rootUrl":null,"text":"…","author":"…"}
 //                                         {"ok":false,"reason":"not_message"|"covered"|"no_slack"|"untrusted"}
 //     "root":true also finds the open thread pane's root when a reply lacks thread_ts;
 //     "anyWindow":true skips the "is Slack the window on top here" check (tests).
@@ -101,10 +101,38 @@ func threadRoot(_ list: AXUIElement) -> String? {
   return root
 }
 
+/// Best-effort body and sender of a message, for the first prompt of a chat Loom
+/// starts. Static text under the item, skipping the timestamp link; text under
+/// the sender button is the author. Slack's DOM classes drift, so a miss just
+/// yields "" and the chat starts from the permalink alone.
+func collectText(_ e: AXUIElement, _ body: inout [String], _ author: inout String, _ depth: Int = 0) {
+  if depth > 40 || body.joined().count > 4000 { return }
+  let cl = classes(e)
+  if cl.contains("c-timestamp") { return }
+  let isSender = cl.contains(where: { $0.hasPrefix("c-message__sender") || $0 == "c-message_kit__sender" })
+  if str(e, "AXRole") == "AXStaticText" {
+    let v = str(e, "AXValue")
+    if !v.isEmpty { if isSender { author = v } else { body.append(v) } }
+    return
+  }
+  if isSender {
+    var inner: [String] = []
+    var ignore = ""
+    for c in children(e) { collectText(c, &inner, &ignore, depth + 1) }
+    if author.isEmpty { author = inner.joined() }
+    return
+  }
+  for c in children(e) { collectText(c, &body, &author, depth + 1) }
+}
+
 func describe(_ item: AXUIElement, _ list: AXUIElement?, withRoot: Bool) -> [String: Any]? {
   guard let url = timestampURL(item) else { return nil }
   let inThread = isThreadList(list)
-  var out: [String: Any] = ["url": url, "rect": rect(item), "inThread": inThread, "rootUrl": NSNull()]
+  var body: [String] = []
+  var author = ""
+  collectText(item, &body, &author)
+  var out: [String: Any] = ["url": url, "rect": rect(item), "inThread": inThread, "rootUrl": NSNull(),
+                            "text": String(body.joined(separator: " ").prefix(4000)), "author": author]
   if withRoot, inThread, !url.contains("thread_ts="), let l = list, let root = threadRoot(l) { out["rootUrl"] = root }
   return out
 }

@@ -4,6 +4,7 @@ import { parseJsonlFile } from '../src/parser.ts';
 import { upsertChat } from '../src/indexer.ts';
 import path from 'node:path';
 import { toChatViews, renderDashboard } from '../src/dashboard.ts';
+import { CHAT_MENU_JS } from '../src/chatmenu.ts';
 
 const FIX = path.join(__dirname, 'fixtures', 'sample-chat.jsonl');
 
@@ -23,23 +24,51 @@ describe('dashboard', () => {
     const html = renderDashboard(views, 9999);
     expect(html).toContain('<!doctype html>');
     expect(html).toContain('My Title');
-    // session_id is embedded in the data blob; the copy-id button + id chip are
-    // assembled client-side from it (so only 'sess-abc' and the 'copy id' label
-    // appear as literals in the static shell).
+    // session_id is embedded in the data blob; the rows, header and menu are
+    // assembled client-side from it.
     expect(html).toContain('sess-abc');
-    expect(html).toContain('copy id');
+    expect(html).toContain("copyText(c.session_id,'session id copied')");
     db.close();
   });
 
-  it('renders the EM feed container, mode switcher, and its fetch wiring', () => {
+  it('has no EM tab, section or fetch wiring', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
-    expect(html).toContain('id="em-feed"');
-    expect(html).toContain('id="em-modes"');
-    expect(html).toContain('/api/em');
-    expect(html).toContain('/api/em/mode');
-    // The section defaults to hidden and is revealed with an explicit 'block' —
-    // clearing the inline style would let the stylesheet re-hide it.
-    expect(html).toContain("$('#em-section').style.display=em?'block':'none'");
+    expect(html).not.toContain('em-section');
+    expect(html).not.toContain('em-feed');
+    expect(html).not.toContain('em-modes');
+    expect(html).not.toMatch(/\/api\/em(\/|'|\?|$)/m);
+    expect(html).not.toContain('refreshEm');
+    expect(html).not.toContain("['em',");
+    // the tab strip is exactly Board, Saved, Tickets, Watchers, Trees
+    for (const t of ['board', 'saved', 'tickets', 'watch', 'trees']) expect(html).toContain(`['${t}','`);
+  });
+
+  it('shows tab badges only where actionable, and drops the chat count and timestamp', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).not.toContain('id="gen"');
+    expect(html).not.toContain("$('#gen')");
+    expect(html).toContain("(d[2]>0?'<span class=\"cnt\">'");
+    expect(html).toContain("['board','▦ Board',0,'']");
+    expect(html).toContain("['saved','★ Saved',0,");
+    expect(html).toContain('staleTreeCount()');
+    expect(html).toContain('watchBadge()');
+  });
+
+  it('has the stale and unreachable header indicator and the Slack chip', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).toContain('id="stale"');
+    expect(html).toContain('id="slackchip"');
+    expect(html).toContain('Loom server not reachable');
+    expect(html).toContain('age>30000');
+    expect(html).toContain('Slack connected');
+    expect(html).toContain('Slack: MCP');
+  });
+
+  it('carries the eight tour anchors', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    for (const a of ['filters', 'group', 'chat-tabs', 'outbox', 'ship', 'row', 'slack', 'gear']) {
+      expect(html).toContain(`data-tour="${a}"`);
+    }
   });
 
   it('marks summary_pending for un-summarized chats', async () => {
@@ -77,23 +106,92 @@ describe('dashboard', () => {
     expect(html).toContain('/unsave?session='); // client unsave endpoint
   });
 
-  it('lays the header out in three rows: brand+heatmap+actions, tabs+filters, chips+live toggle', () => {
+  it('lays out a session sidebar beside the selected chat, not a board and a drawer', () => {
     const html = renderDashboard([], 9999);
+    const at = (str: string) => html.indexOf(str);
     const header = html.slice(html.indexOf('<header>'), html.indexOf('</header>'));
-    const at = (s: string) => header.indexOf(s);
 
-    // Row 1: the heatmap sits in the topbar, between the brand and the actions.
-    expect(at('class="brand"')).toBeLessThan(at('id="heatmap"'));
-    expect(at('id="heatmap"')).toBeLessThan(at('class="actions"'));
-    expect(at('id="heatmap"')).toBeLessThan(at('class="row2"'));
-    // Row 2: tabs then filters. Row 3: chips then the live toggle.
-    expect(at('id="tabs"')).toBeLessThan(at('id="q"'));
-    expect(at('class="row2"')).toBeLessThan(at('id="row3"'));
-    expect(at('id="chips"')).toBeLessThan(at('id="livetoggle"'));
-    expect(at('id="livetoggle"')).toBeGreaterThan(at('id="row3"'));
-    // The live toggle is a segmented control now, not a chip.
-    expect(header).toContain('<div class="seg" id="livetoggle"');
-    expect(header).not.toContain('id="livetoggle" class="chip');
+    // Header: brand, heatmap, actions, then the view tabs. The filters moved out.
+    expect(header.indexOf('class="brand"')).toBeLessThan(header.indexOf('id="heatmap"'));
+    expect(header.indexOf('id="heatmap"')).toBeLessThan(header.indexOf('class="actions"'));
+    expect(header.indexOf('class="actions"')).toBeLessThan(header.indexOf('id="tabs"'));
+    expect(header).toContain('id="sidetoggle"');
+    expect(header).not.toContain('id="q"');
+    expect(header).not.toContain('id="chips"');
+
+    // Sidebar: filter, selects, chips, live toggle, archive link, then the rows.
+    const sideStart = html.indexOf('<aside id="side"');
+    const side = html.slice(sideStart, html.indexOf('</aside>', sideStart));
+    for (const id of ['id="q"', 'id="proj"', 'id="sort"', 'id="fbtn"', 'id="fchips"', 'id="fpop"', 'id="livetoggle"', 'id="deep"', 'id="list"', 'id="archive"']) {
+      expect(side).toContain(id);
+    }
+    expect(side.indexOf('id="q"')).toBeLessThan(side.indexOf('id="fchips"'));
+    expect(side.indexOf('id="fchips"')).toBeLessThan(side.indexOf('id="livetoggle"'));
+    // The status chips row is gone; drafts and issues are checkboxes in the popover.
+    expect(side).not.toContain('id="chips"');
+    expect(side).toContain('id="fdraft"');
+    expect(side).toContain('id="fissue"');
+    expect(side.indexOf('id="livetoggle"')).toBeLessThan(side.indexOf('id="list"'));
+    expect(side).toContain('<div class="seg" id="livetoggle"');
+
+    // Main: header, tabs, then the terminal and the transcript panes.
+    expect(at('id="chatmain"')).toBeGreaterThan(at('id="side"'));
+    expect(at('id="mhead"')).toBeLessThan(at('id="mtabs"'));
+    expect(at('id="mtabs"')).toBeLessThan(at('id="mterm"'));
+    expect(at('id="mterm"')).toBeLessThan(at('id="mtxwrap"'));
+    expect(html).toContain('id="mmsgs"');
+    expect(html).toContain('id="mdetail"');
+    expect(html).toContain('grid-template-columns:var(--sidew,360px) minmax(0,1fr)');
+    expect(html).toContain('id="sidegrip" role="separator"');
+    // The 560px right drawer and its overlay are gone.
+    expect(html).not.toContain('id="panel"');
+    expect(html).not.toContain('id="overlay"');
+    expect(html).not.toContain('id="detail"');
+  });
+
+  it('opens a live chat on its terminal and a chat that is not running on the transcript', () => {
+    const html = renderDashboard([], 9999);
+    // Terminal is the default for a live chat; a stale one lands on Transcript under the banner.
+    expect(html).toContain("mtab=(!sel.arch&&livePaneFor(sid,agent)&&TERM_TOKEN)?'terminal':'transcript'");
+    expect(html).toContain("(c.arch?'Archived chat':'Not running')");
+    expect(html).toContain('const eff=(live&&TERM_TOKEN&&mtab===\'terminal\')?\'terminal\':\'transcript\'');
+    // The terminal mounts into the main area, one at a time, reattaching per chat.
+    expect(html).toContain("openTerm(L.pane_id,$('#mterm'))");
+    expect(html).toContain('function openTerm(paneId,el){closeTerm();');
+    expect(html).toContain('if(my!==termSeq)return;'); // a superseded open must not mount a second terminal
+    // Refit on layout change: an attached pane refits (and resizes tmux); a
+    // mirrored one keeps the pane's real size and only rescales.
+    expect(html).toContain("const layout=()=>{if(ent.parked)return;if(mode==='mirror')scale();else{try{ent.fit.fit();}catch(e){}}};");
+    expect(html).toContain('new ResizeObserver(layout)');
+    // A chat that starts running (Resume) flips to its terminal.
+    expect(html).toContain("&&TERM_TOKEN)mtab='terminal';");
+  });
+
+  it('groups sidebar rows and carries state, project, pane, age, PR and Slack on each', () => {
+    const html = renderDashboard([], 9999);
+    expect(html).toContain("var STATUS_GROUPS=['Working','Your turn','Waiting on others','Saved for later','Recent','Closed'];");
+    for (const frag of ['class="sdot ', 'class="stitle"', 'class="ssub"', 'class="sage"', 'class="chp pr"', 'class="chp sl">Slack']) {
+      expect(html).toContain(frag);
+    }
+    // Right-click on any row opens the menu; Enter selects.
+    expect(html).toContain("sl.addEventListener('contextmenu'");
+    expect(html).toContain('openCtx(c,e.clientX,e.clientY,null)');
+  });
+
+  it('puts Resume + Branch, PR with state, Slack, Save and More in the chat header', () => {
+    const html = renderDashboard([], 9999);
+    expect(html).toContain("mbtn('resume','▶ Resume','pri'");
+    expect(html).toContain("mbtn('branch','⑃ Branch'");
+    expect(html).toContain('b+=prciHeadHtml(c);');
+    expect(html).toContain("mbtn('prci',");
+    expect(html).toContain("mbtn('slack','Slack thread'");
+    expect(html).toContain("mbtn('save','★ '+(c.saved?'Saved':'Save for later')");
+    expect(html).toContain("mbtn('more','⋯'");
+    // PR state words come from the PR itself: draft / review / merged.
+    expect(html).toContain("pr.state==='MERGED'?'merged':pr.state==='CLOSED'?'closed':pr.isDraft?'draft':'review'");
+    // The header reads like the mock: ~/dev/<project> · pane <name> · <tmux target>.
+    expect(html).toContain("' · pane '+(L&&L.name?");
+    expect(html).toContain(":esc(pn))+' · '+esc(where)");
   });
 
   it('counts the live toggle over the same board set the chips count', () => {
@@ -115,7 +213,7 @@ describe('dashboard', () => {
     expect(html).toContain('id="archive"'); // results container
     expect(html).toContain('id="deep"'); // the "search all history" affordance
     expect(html).toContain('/api/search?q='); // client calls the archive endpoint
-    expect(html).toContain('function acard('); // archive card builder
+    expect(html).toContain('function archChat('); // archive hit -> chat the sidebar and main area can show
     expect(html).toContain('function renderArchive('); // archive section renderer
   });
 
@@ -141,6 +239,7 @@ describe('dashboard', () => {
       summary_pending: false,
       saved: false,
       saved_at: 0,
+      tags: [],
     };
 
     const html = renderDashboard([view], 9999, {}, 'codex');
@@ -184,10 +283,240 @@ describe('dashboard', () => {
   it('offers close and branch for both agents, not Claude alone', () => {
     const html = renderDashboard([], 9999, {}, 'claude');
 
-    expect(html).toContain("title=\"exit '+agentLabel(c.agent)+' in this pane");
-    expect(html).toContain('data-action="branch"');
-    // The Claude-only gates these replaced.
+    // Close and Branch are menu/header actions on any chat, never gated on the agent.
+    expect(html).toContain("startLaunch(c,'branch')");
+    expect(html).toContain('doClose(c.session_id,c.agent)');
     expect(html).not.toContain("c.agent==='claude'?'<button class=\"closebtn\"");
     expect(html).not.toContain('canBranch');
   });
 });
+
+describe('per-chat action menu', () => {
+  // The menu list is plain JS shared by the header More menu and the right-click
+  // menu, so it can be evaluated here without a DOM.
+  const chatMenuItems = new Function(`${CHAT_MENU_JS}; return chatMenuItems;`)() as (x: Record<string, unknown>) => {
+    key: string; label: string; hint: string; disabled: boolean; danger: boolean; divider: boolean; tip?: string;
+  }[];
+  const base = { live: true, saved: false, archive: false, prNum: '', prState: '', hasSlack: false, armedClose: false };
+
+  it('keeps the design order, ending on the danger item', () => {
+    expect(chatMenuItems(base).map((i) => i.key)).toEqual([
+      'open', 'external', 'branch', 'pr', 'slack', 'save', 'tags', 'unpark', 'restore', 'copyResume', 'copyId', 'rename', 'orchestrator', 'close',
+    ]);
+    const labels = chatMenuItems({ ...base, prNum: '4231', prState: 'draft', hasSlack: true }).map((i) => i.label);
+    expect(labels).toEqual([
+      'Open terminal', 'Open in external terminal', 'Branch into a new window', 'Open PR #4231', 'Open Slack thread',
+      'Save for later', 'Tags', 'Unpark', 'Restore to board', 'Copy resume command', 'Copy session ID', 'Rename', 'Ask the orchestrator about this', 'Close chat',
+    ]);
+    const last = chatMenuItems(base).at(-1)!;
+    expect(last.danger).toBe(true);
+    expect(chatMenuItems(base).filter((i) => i.danger)).toHaveLength(1);
+  });
+
+  it('disables, never hides, the PR and Slack items when the chat has neither', () => {
+    const items = chatMenuItems(base);
+    expect(items).toHaveLength(14);
+    expect(items.find((i) => i.key === 'pr')).toMatchObject({ label: 'Open PR', disabled: true, hint: 'none' });
+    expect(items.find((i) => i.key === 'slack')).toMatchObject({ label: 'Open Slack thread', disabled: true, hint: 'none' });
+    const withBoth = chatMenuItems({ ...base, prNum: '4231', prState: 'review', hasSlack: true });
+    expect(withBoth.find((i) => i.key === 'pr')).toMatchObject({ disabled: false, hint: 'review' });
+    expect(withBoth.find((i) => i.key === 'slack')).toMatchObject({ disabled: false });
+  });
+
+  it('offers Resume and Remove from board when the chat is not running', () => {
+    const items = chatMenuItems({ ...base, live: false });
+    expect(items[0].label).toBe('Resume');
+    expect(items.find((i) => i.key === 'external')).toMatchObject({ disabled: true });
+    expect(items.at(-1)).toMatchObject({ key: 'close', label: 'Remove from board', danger: true, disabled: false });
+    // A saved chat is exempt from removal until it is unsaved.
+    expect(chatMenuItems({ ...base, live: false, saved: true }).at(-1)).toMatchObject({ disabled: true, hint: 'unsave first' });
+  });
+
+  it('puts Tags right after Save for later, disabled for an archive hit, with the count as its hint', () => {
+    const keys = chatMenuItems(base).map((i) => i.key);
+    expect(keys.indexOf('tags')).toBe(keys.indexOf('save') + 1);
+    expect(chatMenuItems({ ...base, tagCount: 2 }).find((i) => i.key === 'tags')).toMatchObject({ label: 'Tags', hint: '2', disabled: false });
+    expect(chatMenuItems({ ...base, live: false, archive: true }).find((i) => i.key === 'tags')?.disabled).toBe(true);
+  });
+
+  it('toggles Save / Unsave and warns that saving a live chat closes its pane', () => {
+    expect(chatMenuItems(base).find((i) => i.key === 'save')).toMatchObject({ label: 'Save for later', hint: 'closes pane' });
+    expect(chatMenuItems({ ...base, saved: true }).find((i) => i.key === 'save')).toMatchObject({ label: 'Unsave', hint: '' });
+    expect(chatMenuItems({ ...base, live: false }).find((i) => i.key === 'save')?.hint).toBe('');
+  });
+
+  it('enables Ask the orchestrator only while the orchestrator runs, and never for an archive hit', () => {
+    expect(chatMenuItems(base).find((i) => i.key === 'orchestrator')).toMatchObject({
+      label: 'Ask the orchestrator about this', disabled: true, hint: 'not running', tip: 'The orchestrator is not running',
+    });
+    expect(chatMenuItems({ ...base, orchLive: true }).find((i) => i.key === 'orchestrator')).toMatchObject({ disabled: false, hint: '', tip: '' });
+    expect(chatMenuItems({ ...base, orchLive: true, live: false, archive: true }).find((i) => i.key === 'orchestrator')?.disabled).toBe(true);
+  });
+
+  it('asks twice before closing a live chat', () => {
+    expect(chatMenuItems({ ...base, armedClose: true }).at(-1)?.label).toBe('Click again to close');
+  });
+
+  it('disables chat-bound items for an archive hit, which has no board row', () => {
+    const items = chatMenuItems({ ...base, live: false, archive: true });
+    for (const key of ['save', 'rename', 'close']) expect(items.find((i) => i.key === key)?.disabled).toBe(true);
+    expect(items.find((i) => i.key === 'open')?.label).toBe('Resume');
+  });
+
+  it('is embedded in the page and wired to the clipboard, the PR link and the rename dialog', () => {
+    const html = renderDashboard([], 9999);
+    expect(html).toContain('function chatMenuItems(x)');
+    expect(html).toContain('id="ctx"');
+    expect(html).toContain("navigator.clipboard.writeText(text)");
+    expect(html).toContain("copyText(resumeCmd(c),'resume command copied')");
+    expect(html).toContain("window.open(u,'_blank','noopener')");
+    expect(html).toContain("fetch('/api/rename'");
+    expect(html).toContain("fetch('/api/hide'");
+  });
+});
+
+describe('rename and hide', () => {
+  it('shows a title override over the generated title, and keeps it across re-indexing', async () => {
+    const db = openDb(':memory:');
+    const parsed = await parseJsonlFile(FIX);
+    upsertChat(db, parsed, 1000, 5000);
+    db.prepare(`UPDATE chats SET title='Generated' WHERE session_id=?`).run('sess-abc');
+    expect(toChatViews(db)[0].title).toBe('Generated');
+
+    db.prepare(`INSERT INTO chat_titles (agent, session_id, title, updated_at) VALUES ('claude', 'sess-abc', 'Mine', 1)`).run();
+    expect(toChatViews(db)[0].title).toBe('Mine');
+    // The summarizer and indexer rewrite the chats row; the override is a separate row.
+    db.prepare(`UPDATE chats SET title='Regenerated', summary_dirty=1 WHERE session_id=?`).run('sess-abc');
+    upsertChat(db, parsed, 2000, 6000);
+    expect(toChatViews(db)[0].title).toBe('Mine');
+    db.close();
+  });
+
+  it('hides a chat from the board until it is active again', async () => {
+    const db = openDb(':memory:');
+    const parsed = await parseJsonlFile(FIX);
+    upsertChat(db, parsed, 1000, 5000);
+    const last = toChatViews(db)[0].last_active_at;
+    db.prepare(`INSERT INTO chat_hidden (agent, session_id, hidden_at) VALUES ('claude', 'sess-abc', ?)`).run(last + 10);
+    expect(toChatViews(db)).toHaveLength(0);
+    db.prepare(`UPDATE chats SET last_active_at = ? WHERE session_id=?`).run(last + 1000, 'sess-abc');
+    expect(toChatViews(db)).toHaveLength(1);
+    db.close();
+  });
+});
+
+describe('dashboard script', () => {
+  it('parses as a whole and carries the Slack-start banner mount', async () => {
+    const vm = await import('node:vm');
+    const html = renderDashboard([], Date.now(), {}, 'claude', [], [], 'tok');
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const src of scripts) new vm.Script(src);
+    expect(html).toContain('id="mslack"');
+    expect(html).toContain('Started a chat for this Slack thread. No chat owned it.');
+  });
+});
+
+describe('orchestrator view', () => {
+  const load = async () => {
+    const { ORCH_VIEW_JS } = await import('../src/orchview.ts');
+    const esc = (s: string) => (s || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]!);
+    const rel = () => '6m ago';
+    const DATA = { chats: [{ agent: 'claude', session_id: 's1' }], live: {} };
+    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${ORCH_VIEW_JS}; return { orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml };`)(
+      esc, rel, DATA, (c: { agent: string; session_id: string }) => c.agent + ':' + c.session_id,
+    ) as Record<string, (...a: unknown[]) => any>;
+  };
+
+  it('mounts the pinned entry above the list, the view inside the main area, and its wiring', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude', [], [], 'tok', { sessionId: 'o1', needsYou: 2, enabled: true, live: true });
+    expect(html.indexOf('id="orchpin"')).toBeLessThan(html.indexOf('id="list"'));
+    expect(html).toContain('id="orchview"');
+    expect(html).toContain('aria-label="Conversation"');
+    expect(html).toContain('aria-label="Status"');
+    expect(html).toContain('"needsYou":2');
+    for (const route of ['/api/orch', '/api/orch/send', '/api/orch/ask', '/api/orch/notify', '/api/orch/resolve']) expect(html).toContain(`'${route}'`);
+    expect(html).toContain("case 'orchestrator':closeCtx();askOrchestrator(c);return;");
+    expect(html).toContain('orchLive:!!(DATA.orch&&DATA.orch.live)');
+  });
+
+  it('renders the pin as one line: name, Running / Not running, and a Needs you badge', async () => {
+    const v = await load();
+    const on = v.orchPinHtml({ needsYou: 3, live: true, enabled: true }, false);
+    expect(on).toContain('3 need you');
+    expect(on).toContain('Running');
+    const off = v.orchPinHtml({ needsYou: 0, live: false, enabled: true }, true);
+    expect(off).not.toContain('need you');
+    expect(off).toContain('Not running');
+    expect(off).toContain('opin sel');
+  });
+
+  it('renders the rail from the items: Needs you cards with a jump button, Blocked, Moving per agent, Done today', async () => {
+    const v = await load();
+    const html = v.orchRailHtml({
+      items: [
+        { id: 1, kind: 'needs_you', ref_type: 'chat', ref_id: 'claude:s1', title: 'NE 501N rollup', why: 'one per FEIN?', who: '', opened_at: 1, updated_at: 1, resolved_at: 0 },
+        { id: 2, kind: 'needs_you', ref_type: 'pr', ref_id: 'https://github.com/o/r/pull/4198', title: 'PR #4198', why: 'green', who: '', opened_at: 1, updated_at: 1, resolved_at: 0 },
+        { id: 3, kind: 'blocked', ref_type: '', ref_id: '', title: 'NE', why: 'confirmation of the rollup', who: 'Alex', opened_at: 1, updated_at: 1, resolved_at: 0 },
+        { id: 4, kind: 'moving', ref_type: 'chat', ref_id: 'claude:s2', title: 'R03 retry', why: 'opening #4231', who: 'blue-vanilla', opened_at: 1, updated_at: 1, resolved_at: 0 },
+        { id: 5, kind: 'done', ref_type: '', ref_id: '', title: '#4240 merged', why: '', who: '', opened_at: 1, updated_at: 1, resolved_at: 9 },
+      ],
+      moving: [{ chat: 'claude:s9', pane: 'lucky-fern', title: 'MO-941', stage: 'implementation' }],
+    });
+    expect(html).toContain('Needs you · 2');
+    expect(html).toContain('data-jump="1">Open chat');
+    expect(html).toContain('data-jump="2">Open PR');
+    expect(html).toContain('<b>Alex</b>: confirmation of the rollup');
+    expect(html).toContain('Moving · 2');
+    expect(html).toContain('<b>blue-vanilla</b> · R03 retry');
+    expect(html).toContain('<b>lucky-fern</b> · MO-941');
+    expect(html).toContain('#4240 merged');
+  });
+
+  it('interleaves what Loom did with the conversation, and shows event batches as lines', async () => {
+    const v = await load();
+    const tl = v.orchTimeline({
+      messages: [
+        { role: 'user', text: 'where are we', at: 10 },
+        { role: 'user', text: '[Loom events] 09:40, 1 change: (1) your turn -- Update the items', at: 20 },
+        { role: 'assistant', text: 'Sent.', at: 40 },
+      ],
+      log: [{ id: 1, at: 30, kind: 'queued', target: 'cozy-donut', text: 'per company' }, { id: 2, at: 21, kind: 'events', target: 'orchestrator', text: 'dup' }],
+    });
+    const html = tl.map(v.orchMsgHtml).join('');
+    expect(html.indexOf('where are we')).toBeLessThan(html.indexOf('Queued for <b>cozy-donut</b>'));
+    expect(html.indexOf('Queued for')).toBeLessThan(html.indexOf('Sent.'));
+    expect(html).toContain('Loom events · 09:40');
+    expect(html).not.toContain('Update the items');
+    expect(html).not.toContain('dup');
+  });
+
+  it('offers Copy phone link only when the Remote Control link is known', async () => {
+    const v = await load();
+    expect(v.orchHeadHtml({ live: true, remoteUrl: 'https://claude.ai/code/x', notify: 'needs_you' })).toMatch(/data-oa="phone">Copy phone link/);
+    expect(v.orchHeadHtml({ live: true, remoteUrl: '', notify: 'off' })).toMatch(/data-oa="phone" disabled/);
+    expect(v.orchHeadHtml({ live: true, remoteUrl: '', notify: 'off' })).toContain('Notify: Off');
+  });
+});
+
+describe('tag UI wiring', () => {
+  it('has the tag filter, group-by switch, header add control and the Tags submenu', () => {
+    const html = renderDashboard([], 9999);
+    for (const frag of ['id="tagbtn"', 'id="groupby"', 'id="tagpop"', 'data-act="tagpop"', 'function tagsPanel(', 'placeholder="New tag…"', "'/api/chat-tags'", "'/api/tags'"]) {
+      expect(html).toContain(frag);
+    }
+    // Chips on rows truncate to two and show +N; the choices persist like other view prefs.
+    expect(html).toContain('ts.slice(0,2)');
+    expect(html).toContain("lsSet('loom.groupBy',groupBy)");
+    expect(html).toContain("lsSet('loom.tagFilter',JSON.stringify(tagSel))");
+    // The status grouping is the default.
+    expect(html).toContain("groupBy=lsGet('loom.groupBy')==='tag'?'tag':'status'");
+    expect(html).toContain('matchTagFilter(c)');
+  });
+
+  it('carries tag definitions in the data blob', () => {
+    const html = renderDashboard([], 9999, {}, 'claude', [], [], '', null, [{ name: 'ach', color: '#79b1ff', count: 2 }]);
+    expect(html).toContain('"tags":[{"name":"ach","color":"#79b1ff","count":2}]');
+  });
+});
+

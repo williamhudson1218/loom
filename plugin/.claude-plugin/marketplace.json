@@ -1,0 +1,12 @@
+{
+  "name": "loom-local",
+  "owner": { "name": "Loom" },
+  "metadata": { "description": "Local marketplace for the Loom plugin" },
+  "plugins": [
+    {
+      "name": "loom",
+      "source": "./loom",
+      "description": "Hooks, CLI and skills that connect Claude Code chats to Loom"
+    }
+  ]
+}

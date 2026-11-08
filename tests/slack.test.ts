@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openThread, readThreads, slackDeepLink, threadOwners, threadsFor, type ThreadRec } from '../src/slack.ts';
+import { openThread, readThreads, slackDeepLink, threadOwners, threadsFor, type SlackLookups, type ThreadRec } from '../src/slack.ts';
 
 const threads: Record<string, ThreadRec> = {
   'C1/1790000000.000100': { url: 'https://w.slack.com/archives/C1/p1790000000000100', session_id: 's1', stage: 'looking' },
@@ -26,17 +26,24 @@ describe('slack threads', () => {
   });
 
   it('returns a session’s threads without waiting on Slack, newest first', () => {
-    const calls: string[][] = [];
-    const run = async (cmd: string, args: string[]) => {
-      calls.push([cmd, ...args]);
-      return new Promise<string>(() => {}); // never answers: the panel must not wait on it
+    const calls: string[] = [];
+    const never = <T,>(name: string) => (..._a: unknown[]) => {
+      calls.push(name);
+      return new Promise<T>(() => {}); // never answers: the panel must not wait on it
     };
-    const out = threadsFor('s1', run, threads);
+    const api: SlackLookups = {
+      authTest: never('auth.test'),
+      conversationsInfo: never('conversations.info'),
+      conversationsReplies: never('conversations.replies'),
+      usersInfo: never('users.info'),
+      users: () => ({}),
+    };
+    const out = threadsFor('s1', api, threads);
     expect(out.map((t) => t.key)).toEqual(['C2/1790000000.000200', 'C1/1790000000.000100']);
     expect(out[1].stage).toBe('looking');
     expect(out.every((t) => t.preview === null)).toBe(true);
-    expect(calls.some((c) => c.includes('read-thread'))).toBe(true);
-    expect(threadsFor('nobody', run, threads)).toEqual([]);
+    expect(calls).toContain('conversations.replies');
+    expect(threadsFor('nobody', api, threads)).toEqual([]);
   });
 
   it('opens only threads it knows, falling back from the app link to the permalink', async () => {
@@ -48,6 +55,13 @@ describe('slack threads', () => {
       return '';
     };
     expect(await openThread('C9/1.1', run, threads)).toEqual({ ok: false, detail: 'unknown thread' });
+    // An unowned thread is opened from a draft's permalink only when it names the same thread.
+    const opened2: string[] = [];
+    const run2 = async (_c: string, a: string[]) => { opened2.push(a[0]); return ''; };
+    const du = 'https://x.slack.com/archives/C9/p1790000000000200';
+    expect((await openThread('C9/1790000000.000200', run2, threads, du)).ok).toBe(true);
+    expect(opened2.pop()).toBe(du);
+    expect(await openThread('C9/1790000000.000999', run2, threads, du)).toEqual({ ok: false, detail: 'unknown thread' });
     const r = await openThread('C1/1790000000.000100', run, threads);
     expect(r.ok).toBe(true);
     expect(opened[opened.length - 1]).toBe('https://w.slack.com/archives/C1/p1790000000000100');

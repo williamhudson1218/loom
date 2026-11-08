@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { isViewSession, tmux } from './tmux.ts';
 import { COMPACT_LOG_PATH, COMPACT_OFF_PATH, SESSION_PREFIX } from './paths.ts';
 import { agentPaneIds } from './placements.ts';
 
@@ -48,7 +48,7 @@ export interface Swap {
   dst: string; // the hole it lands in
 }
 
-export const defaultRun: TmuxRunner = (args) => execFileSync('tmux', args, { encoding: 'utf-8' });
+export const defaultRun: TmuxRunner = (args) => tmux(args);
 
 // `loom-tp-forms-8` -> { lane: 'tp-forms', n: 8 }. Sessions without a numeric
 // suffix (`loom-tp-terminals`) are in no lane and are never touched.
@@ -242,7 +242,8 @@ export function readWorld(run: TmuxRunner = defaultRun): WorldState {
   } catch {
     return { panes: [], focused: null }; // tmux not running
   }
-  const rows = out.split('\n').filter(Boolean).map((l) => l.split(SEP));
+  // A view session (the embedded terminal) repeats its group's panes; skip it.
+  const rows = out.split('\n').filter(Boolean).map((l) => l.split(SEP)).filter((r) => !isViewSession(r[1]));
   const agents = agentPaneIds(rows.map((r) => ({ pane_id: r[0], pane_pid: r[4] ?? '' })));
   return {
     panes: rows.map((r) => ({

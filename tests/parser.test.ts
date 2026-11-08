@@ -40,11 +40,11 @@ describe('parseJsonlFile', () => {
       f,
       [
         JSON.stringify({ type: 'user', sessionId: 's', cwd: '/x', timestamp: '2026-06-15T12:00:00.000Z', message: { role: 'user', content: 'review https://github.com/org/repo/pull/100' } }),
-        JSON.stringify({ type: 'assistant', timestamp: '2026-06-15T12:01:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Opened https://github.com/tax-pilot-org/tax-pilot-app/pull/787' }] } }),
+        JSON.stringify({ type: 'assistant', timestamp: '2026-06-15T12:01:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Opened https://github.com/acme-org/acme-app/pull/787' }] } }),
       ].join('\n'),
     );
     const c = await parseJsonlFile(f);
-    expect(c.pr_url).toBe('https://github.com/tax-pilot-org/tax-pilot-app/pull/787');
+    expect(c.pr_url).toBe('https://github.com/acme-org/acme-app/pull/787');
   });
 
   it('separates written files from merely-read files', async () => {

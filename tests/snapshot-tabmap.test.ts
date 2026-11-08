@@ -4,7 +4,7 @@ import type { SavedGhosttyWindow } from '../src/ghostty.ts';
 
 const TP = ['loom-tp-terminals', 'loom-tp-2', 'loom-tp-3', 'loom-tp-code'];
 const FORMS = ['loom-tp-forms-1', 'loom-tp-forms-2', 'loom-tp-forms-3'];
-const SHELL = 'willhudson@Wills-MacBook-Pro:~/dev/tax-pilot-app';
+const SHELL = 'willhudson@Wills-MacBook-Pro:~/dev/acme-app';
 
 const layoutOf = (names: string[], taken_at = 2_000_000): Layout => ({
   taken_at,

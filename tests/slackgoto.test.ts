@@ -7,23 +7,23 @@ import { findOwner, parseSlackThread, pickedThread, preferredLane, threadGoto, t
 import type { ArchiveHit } from '../src/findchat.ts';
 import type { LiveLoc } from '../src/dashboard.ts';
 
-const WS = 'https://tax-pilot-workspace.slack.com';
+const WS = 'https://acme-workspace.slack.com';
 
 describe('parseSlackThread', () => {
   it('normalises a root permalink to channel/ts', () => {
-    expect(parseSlackThread(`${WS}/archives/C0BPBJU0BAL/p1792688542707769`)).toEqual({
-      key: 'C0BPBJU0BAL/1792688542.707769',
-      url: `${WS}/archives/C0BPBJU0BAL/p1792688542707769`,
-      channel: 'C0BPBJU0BAL',
+    expect(parseSlackThread(`${WS}/archives/C0TESTADV01/p1792688542707769`)).toEqual({
+      key: 'C0TESTADV01/1792688542.707769',
+      url: `${WS}/archives/C0TESTADV01/p1792688542707769`,
+      channel: 'C0TESTADV01',
       ts: '1792688542.707769',
       linkTs: '1792688542.707769',
     });
   });
 
   it('takes the thread from thread_ts on a reply link, not the reply', () => {
-    const r = parseSlackThread(`${WS}/archives/C0BPBJU0BAL/p1792690000123456?thread_ts=1792688542.707769&cid=C0BPBJU0BAL`);
-    expect(r?.key).toBe('C0BPBJU0BAL/1792688542.707769');
-    expect(r?.url).toBe(`${WS}/archives/C0BPBJU0BAL/p1792688542707769`);
+    const r = parseSlackThread(`${WS}/archives/C0TESTADV01/p1792690000123456?thread_ts=1792688542.707769&cid=C0TESTADV01`);
+    expect(r?.key).toBe('C0TESTADV01/1792688542.707769');
+    expect(r?.url).toBe(`${WS}/archives/C0TESTADV01/p1792688542707769`);
     expect(r?.linkTs).toBe('1792690000.123456');
   });
 
@@ -57,7 +57,7 @@ function stateFixture(): string {
   const f = path.join(dir, 'slack-threads.json');
   fs.writeFileSync(f, JSON.stringify({
     threads: {
-      'C0BPBJU0BAL/1792688542.707769': { url: `${WS}/archives/C0BPBJU0BAL/p1792688542707769`, session_id: 'owner-1', cwd: '/Users/w/dev/tax-pilot-app', claimed_at: '2026-10-20T10:00:00', stage: 'looking' },
+      'C0TESTADV01/1792688542.707769': { url: `${WS}/archives/C0TESTADV01/p1792688542707769`, session_id: 'owner-1', cwd: '/Users/w/dev/acme-app', claimed_at: '2026-10-20T10:00:00', stage: 'looking' },
     },
     recent_acks: {},
   }));
@@ -65,20 +65,20 @@ function stateFixture(): string {
 }
 
 describe('pickedThread', () => {
-  const root = `${WS}/archives/C0BPBJU0BAL/p1793133196766809`;
+  const root = `${WS}/archives/C0TESTADV01/p1793133196766809`;
   it('a channel message is its own parent', () => {
-    expect(pickedThread({ url: root, inThread: false })?.key).toBe('C0BPBJU0BAL/1793133196.766809');
+    expect(pickedThread({ url: root, inThread: false })?.key).toBe('C0TESTADV01/1793133196.766809');
   });
   it('a reply resolves to thread_ts, whatever the pane says', () => {
-    const url = `${WS}/archives/C0BPBJU0BAL/p1793135607595459?thread_ts=1793133196.766809&cid=C0BPBJU0BAL`;
+    const url = `${WS}/archives/C0TESTADV01/p1793135607595459?thread_ts=1793133196.766809&cid=C0TESTADV01`;
     expect(pickedThread({ url, inThread: true, rootUrl: null })?.url).toBe(root);
-    expect(pickedThread({ url, inThread: true, rootUrl: `${WS}/archives/C0BPBJU0BAL/p1700000000000000` })?.url).toBe(root);
+    expect(pickedThread({ url, inThread: true, rootUrl: `${WS}/archives/C0TESTADV01/p1700000000000000` })?.url).toBe(root);
   });
   it('a thread-pane reply without thread_ts takes the pane root', () => {
-    const url = `${WS}/archives/C0BPBJU0BAL/p1793135607595459`;
-    expect(pickedThread({ url, inThread: true, rootUrl: root })?.key).toBe('C0BPBJU0BAL/1793133196.766809');
-    expect(pickedThread({ url, inThread: false, rootUrl: root })?.key).toBe('C0BPBJU0BAL/1793135607.595459');
-    expect(pickedThread({ url, inThread: true, rootUrl: null })?.key).toBe('C0BPBJU0BAL/1793135607.595459');
+    const url = `${WS}/archives/C0TESTADV01/p1793135607595459`;
+    expect(pickedThread({ url, inThread: true, rootUrl: root })?.key).toBe('C0TESTADV01/1793133196.766809');
+    expect(pickedThread({ url, inThread: false, rootUrl: root })?.key).toBe('C0TESTADV01/1793135607.595459');
+    expect(pickedThread({ url, inThread: true, rootUrl: null })?.key).toBe('C0TESTADV01/1793135607.595459');
   });
   it('rejects a non-permalink', () => {
     expect(pickedThread({ url: 'https://example.com', inThread: false })).toBeNull();
@@ -91,8 +91,8 @@ describe('findOwner', () => {
   it('uses the slack-threads state first, reply link or root', async () => {
     const f = stateFixture();
     const deps = { threads: () => readThreads(f), search: noSearch, mentions: () => true };
-    const reply = parseSlackThread(`${WS}/archives/C0BPBJU0BAL/p1792690000123456?thread_ts=1792688542.707769&cid=C0BPBJU0BAL`)!;
-    expect(await findOwner(reply, deps)).toEqual({ session_id: 'owner-1', cwd: '/Users/w/dev/tax-pilot-app', source: 'state' });
+    const reply = parseSlackThread(`${WS}/archives/C0TESTADV01/p1792690000123456?thread_ts=1792688542.707769&cid=C0TESTADV01`)!;
+    expect(await findOwner(reply, deps)).toEqual({ session_id: 'owner-1', cwd: '/Users/w/dev/acme-app', source: 'state' });
   });
 
   it('falls back to transcript search on the parent only, verified, most recent wins', async () => {
@@ -104,9 +104,9 @@ describe('findOwner', () => {
         return { ok: true as const, results: [hit('old', 100), hit('new', 300), hit('fake', 900)] };
       },
       // 'fake' only matched loosely: its transcript never mentions the link.
-      mentions: (p: string, needles: string[]) => !p.includes('fake') && needles[0] === 'C0BPBJU0BAL/p1792688542707769',
+      mentions: (p: string, needles: string[]) => !p.includes('fake') && needles[0] === 'C0TESTADV01/p1792688542707769',
     };
-    const reply = parseSlackThread(`${WS}/archives/C0BPBJU0BAL/p1792690000123456?thread_ts=1792688542.707769`)!;
+    const reply = parseSlackThread(`${WS}/archives/C0TESTADV01/p1792690000123456?thread_ts=1792688542.707769`)!;
     expect(await findOwner(reply, deps)).toEqual({ session_id: 'new', cwd: '/proj/new', source: 'search' });
     expect(queries).toEqual(['p1792688542707769']); // never the reply's own ts
   });
@@ -131,13 +131,13 @@ function loc(session_id: string, tmux_session: string, cwd: string, pane_id = '%
 
 describe('threadGoto', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-slackgoto-proj-'));
-  const link = `${WS}/archives/C0BPBJU0BAL/p1792688542707769`;
+  const link = `${WS}/archives/C0TESTADV01/p1792688542707769`;
 
   function deps(over: Partial<GotoDeps> = {}): GotoDeps & { calls: string[] } {
     const calls: string[] = [];
     return {
       calls,
-      threads: () => ({ 'C0BPBJU0BAL/1792688542.707769': { url: link, session_id: 'owner-1', cwd: dir } }),
+      threads: () => ({ 'C0TESTADV01/1792688542.707769': { url: link, session_id: 'owner-1', cwd: dir } }),
       search: async () => ({ ok: true, results: [] }),
       mentions: () => true,
       live: () => ({}),
@@ -175,9 +175,9 @@ describe('threadGoto', () => {
     const d = deps({ threads: () => new Proxy({}, { get: (_t, k) => (seen.push(String(k)), undefined) }) });
     const queries: string[] = [];
     d.search = async (q) => (queries.push(q), { ok: true, results: [] });
-    const r = await threadGoto(`${WS}/archives/C0BPBJU0BAL/p1792690000123456?thread_ts=1792688542.707769&cid=C0BPBJU0BAL`, d);
-    expect(r).toMatchObject({ ok: false, reason: 'no_owner', key: 'C0BPBJU0BAL/1792688542.707769' });
-    expect(seen).toEqual(['C0BPBJU0BAL/1792688542.707769']);
+    const r = await threadGoto(`${WS}/archives/C0TESTADV01/p1792690000123456?thread_ts=1792688542.707769&cid=C0TESTADV01`, d);
+    expect(r).toMatchObject({ ok: false, reason: 'no_owner', key: 'C0TESTADV01/1792688542.707769' });
+    expect(seen).toEqual(['C0TESTADV01/1792688542.707769']);
     expect(queries).toEqual(['p1792688542707769']);
   });
 
@@ -186,7 +186,7 @@ describe('threadGoto', () => {
     expect(await threadGoto('hello', d)).toMatchObject({ ok: false, reason: 'not_slack' });
     expect(await threadGoto(link, d)).toMatchObject({ ok: false, reason: 'no_owner', detail: 'No chat owns this thread' });
     expect(await threadGoto(link, deps({ elsewhere: () => true }))).toMatchObject({ ok: false, reason: 'elsewhere' });
-    expect(await threadGoto(link, deps({ threads: () => ({ 'C0BPBJU0BAL/1792688542.707769': { url: link, session_id: 'x', cwd: '/gone/dir' } }) }))).toMatchObject({ ok: false, reason: 'no_dir' });
+    expect(await threadGoto(link, deps({ threads: () => ({ 'C0TESTADV01/1792688542.707769': { url: link, session_id: 'x', cwd: '/gone/dir' } }) }))).toMatchObject({ ok: false, reason: 'no_dir' });
     expect(await threadGoto(link, deps({ acquire: () => ({ ok: false, detail: 'no lane sessions found' }) }))).toMatchObject({ ok: false, reason: 'no_pane' });
     expect(d.calls).toEqual([]);
   });

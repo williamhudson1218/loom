@@ -5,6 +5,7 @@ import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
 import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
 import { readGhosttyWindows, savedWindowsFrom, tabMatchesSession, type SavedGhosttyWindow } from './ghostty.ts';
 import { paneNameMap } from './panenames.ts';
+import { tmux } from './tmux.ts';
 import type { Agent } from './types.ts';
 
 const SEP = '~|LOOM|~';
@@ -68,7 +69,7 @@ function windowLayouts(): Map<string, string> {
   const m = new Map<string, string>();
   let out: string;
   try {
-    out = execFileSync('tmux', ['list-windows', '-a', '-F', `#{session_name}${SEP}#{window_index}${SEP}#{window_layout}`], { encoding: 'utf-8' });
+    out = tmux(['list-windows', '-a', '-F', `#{session_name}${SEP}#{window_index}${SEP}#{window_layout}`]);
   } catch {
     return m;
   }

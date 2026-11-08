@@ -285,6 +285,22 @@ export function dots(p: Pipeline): { key: string; label: string; state: StepStat
   return p.steps.map((s) => ({ key: s.key, label: s.label, state: s.state, ...(s.detail ? { detail: s.detail } : {}) }));
 }
 
+export interface PipeJob {
+  label: string;
+  state: StepState;
+  url?: string;
+}
+
+/** The checks, review jobs and deploy jobs that are failing or running, with their run links (capped). */
+export function activeJobs(p: Pipeline, cap = 12): PipeJob[] {
+  const out: PipeJob[] = [];
+  const walk = (kids: Step[] | undefined) => {
+    for (const k of kids ?? []) if (k.state === 'fail' || k.state === 'running') out.push({ label: k.label, state: k.state, ...(k.url ? { url: k.url } : {}) });
+  };
+  for (const s of p.steps) if (s.key === 'checks' || s.key === 'review' || s.key === 'deploy') walk(s.children);
+  return out.sort((a, b) => (a.state === b.state ? 0 : a.state === 'fail' ? -1 : 1)).slice(0, cap);
+}
+
 /* ------------------------------------------------------------------ the store */
 
 const PR_FIELDS = 'number,title,url,state,isDraft,reviewDecision,statusCheckRollup,mergeCommit,mergedAt,reviews';

@@ -4,6 +4,7 @@ import type { Agent } from './types.ts';
 export interface Msg {
   role: 'user' | 'assistant';
   text: string;
+  at?: number; // the entry's timestamp, only with { withTime: true }
 }
 
 // Only real conversation text — user prompts and assistant prose. Tool calls and
@@ -24,6 +25,9 @@ function textOnly(content: unknown): string {
 export interface TranscriptOptions {
   bytes?: number;
   limit?: number;
+  // Stamp each message with its entry's timestamp (ms), so the orchestrator view
+  // can interleave Loom's own log lines with the conversation.
+  withTime?: boolean;
 }
 
 // Preserve the original Claude-only call shape for existing callers while
@@ -62,6 +66,11 @@ export function readTranscript(
   let lines = text.split('\n');
   if (start > 0) lines = lines.slice(1); // drop the partial first line
   const msgs: Msg[] = [];
+  const push = (role: Msg['role'], text: string, o: any) => {
+    if (!opts.withTime) return void msgs.push({ role, text });
+    const at = Date.parse(o?.timestamp ?? '');
+    msgs.push({ role, text, ...(Number.isFinite(at) ? { at } : {}) });
+  };
   for (const line of lines) {
     if (!line.trim()) continue;
     let o: any;
@@ -72,16 +81,16 @@ export function readTranscript(
     }
     if (agent === 'codex' && o?.type === 'event_msg' && o.payload?.type === 'user_message') {
       const t = typeof o.payload.message === 'string' ? o.payload.message.trim() : '';
-      if (t) msgs.push({ role: 'user', text: t });
+      if (t) push('user', t, o);
     } else if (agent === 'codex' && o?.type === 'event_msg' && o.payload?.type === 'agent_message') {
       const t = typeof o.payload.message === 'string' ? o.payload.message.trim() : '';
-      if (t) msgs.push({ role: 'assistant', text: t });
+      if (t) push('assistant', t, o);
     } else if (agent === 'claude' && o?.type === 'user' && o.message?.role === 'user' && !o.isMeta) {
       const t = textOnly(o.message.content);
-      if (t) msgs.push({ role: 'user', text: t });
+      if (t) push('user', t, o);
     } else if (agent === 'claude' && o?.type === 'assistant' && o.message?.role === 'assistant') {
       const t = textOnly(o.message.content);
-      if (t) msgs.push({ role: 'assistant', text: t });
+      if (t) push('assistant', t, o);
     }
   }
   return msgs.slice(-limit);

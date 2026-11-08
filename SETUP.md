@@ -1,126 +1,203 @@
-# Loom — Setup
+# Loom setup
 
-Get Loom building and running on a fresh Mac. For what Loom *is*, see [README.md](./README.md).
+How to build Loom on a Mac and what to expect on first launch. For what Loom is, see [README.md](./README.md).
 
-> **TL;DR** — clone anywhere, then `./setup.sh --install`, register the hook, grant two macOS permissions, launch. Details below.
-
----
+> **Short version.** Clone the repo, run `./setup.sh --install`, open Loom, and follow the setup wizard.
 
 ## 1. Requirements
 
-### Runtime / system
-
 | Requirement | Why | Notes |
 |---|---|---|
-| **macOS** (Apple Silicon or Intel) | Loom shells out to `osascript` / System Events / Ghostty and uses Electron | macOS-only. Apple Silicon is the primary target; Intel works (see build note). |
-| **Node 20+** | CLI + app; native `better-sqlite3` needs a modern ABI | Pinned in [`.nvmrc`](./.nvmrc) and each `package.json` `engines`. `nvm use` picks it up. |
-| **Yarn** (classic, v1) | Package manager for both workspaces | `npm i -g yarn` or `corepack enable`. |
-| **tmux** | Loom's control substrate — live detection, jump, resume, branch, restore all address tmux panes | Without it Loom still indexes/summarizes, but pane actions no-op. |
-| **Claude Code CLI (`claude`), logged in** | Resume/branch launch `claude`; the summarizer runs headless `claude -p` | Auth comes from your Claude Code keychain login — Loom has no token of its own. |
-| **python3** | The placement hook parses hook JSON with it | Ships with the macOS Command Line Tools. |
-| **Free TCP port 4317** | The app binds `127.0.0.1:4317` for the dashboard/API | Single-instance; not configurable without a code change. |
-| **Ghostty** (optional) | Click-to-focus jumps to a session's Ghostty tab | Any terminal works for everything except tab focus. |
+| macOS (Apple Silicon or Intel) | Loom uses Electron, `osascript` and the Accessibility API | macOS only. |
+| Node 20+ | The CLI and the app use a native `better-sqlite3` | Pinned in `.nvmrc`. `nvm use` picks it up. |
+| yarn (classic, v1) | Package manager for both workspaces | `corepack enable` or `npm i -g yarn`. |
+| tmux | Keeps chats alive when Loom quits and is how Loom types into them | `setup.sh` installs it with Homebrew if missing. It warns on 3.6a, which crashes in copy-mode. Loom runs its own server (`tmux -L loom`, config `~/.loom/tmux.conf`), so your tmux and `~/.tmux.conf` are untouched. |
+| Claude Code (`claude`), logged in | Loom resumes chats with it and summarizes them with headless `claude -p` | Loom has no credentials of its own. It uses your Claude Code login. |
+| python3 | The plugin's hooks and the `loom` command use it | Included with the macOS Command Line Tools. |
+| Swift compiler (`swiftc`) | Build time only. Compiles the Keychain helper and the Slack shortcut helper | Included with the Xcode Command Line Tools (`xcode-select --install`). |
+| Free TCP port 4317 | Loom serves its dashboard on `127.0.0.1:4317` | Single instance. Changeable in Settings › Advanced › Port. |
 
-### Build tools
+Optional:
 
-Installed automatically by `yarn install` in each workspace — listed here for reference:
+- `gh` (GitHub CLI), logged in. Needed for pull request status, the pull request watchers and Ship.
+- Ghostty, iTerm2 or Terminal.app, if you want Jump to open an external terminal instead of the one inside Loom.
+- Codex. If `~/.codex` exists Loom can show Codex chats.
+- find-chat, a separate tool that searches every transcript on disk. Put it at `~/.claude/tools/find-chat/bin/find-chat`, or set the path in Settings › Advanced › find-chat binary. Without it, the board works as normal and Search all history says find-chat is not installed. If search reports a `NODE_MODULE_VERSION` mismatch, rebuild find-chat's `better-sqlite3` with the same Node that runs it.
 
-- **esbuild** — bundles `app/main.ts` + `../src/*` into `app/dist/main.js`
-- **electron** + **electron-builder** — package the `.app`
-- **@electron/rebuild** — rebuilds `better-sqlite3` against Electron's ABI
-- **tsx** / **typescript** / **vitest** — run and test the TypeScript backend
+Loom uploads nothing. It reads `~/.claude/projects`, talks to local tmux and the local `claude` CLI, and calls Slack only if you connect it.
 
-### External services / tokens
-
-None beyond your existing Claude Code login. Loom talks only to your local filesystem (`~/.claude/projects/`), local tmux, and the local `claude` CLI. Nothing is uploaded.
-
----
-
-## 2. Build & install
-
-Clone the repo **wherever you like** — Loom no longer requires a fixed path.
+## 2. Build and install
 
 ```bash
-git clone git@github.com:williamhudson1218/loom.git
+git clone <this repo's URL> loom
 cd loom
-./setup.sh            # checks prereqs, installs deps, runs tests, builds Loom.app
-./setup.sh --install  # ...and also copies Loom.app into /Applications
+./setup.sh            # check prerequisites, install, test, build Loom.app
+./setup.sh --install  # the same, then copy Loom.app into /Applications
 ```
 
-`setup.sh` is idempotent and self-locating (run it from any clone path). If you prefer the manual steps it wraps:
+`setup.sh` can be re-run and works from any clone location. It:
+
+1. checks macOS, Node 20+, yarn, the `claude` CLI (a warning if missing), and tmux (installs it with Homebrew if missing);
+2. runs `yarn install` and `yarn test` in the repo root;
+3. creates Loom's data folder and copies Loom's tmux config there (it never overwrites an existing copy);
+4. if `~/.codex` exists, shows the change it would make to `~/.codex/hooks.json` and asks first;
+5. runs `yarn install`, `yarn build`, `yarn rebuild` and `yarn dist` in `app/`, producing `app/release/mac-arm64/Loom.app` (or `app/release/mac/Loom.app` on Intel);
+6. with `--install`, runs `scripts/install-app.sh`.
+
+It does not edit `~/.claude/settings.json`, and it does not write Loom's settings. The first time Loom opens, it sees a brand-new data folder and starts the setup wizard.
+
+To install a build by hand, use `scripts/install-app.sh app/release/mac-arm64/Loom.app`. It quits a running Loom, waits for it to exit, swaps the bundle in and relaunches. Do not delete and copy over a running Loom; opening it mid-copy crashes it.
+
+To use the CLI without the app: `yarn install`, then `./bin/chat-manager run` for one indexing pass.
+
+## 3. The setup wizard
+
+Loom opens the wizard on first launch. Only the **Requirements** step blocks you (tmux, Claude Code logged in, python3). Every other step can be skipped, and each one says what it unlocks.
+
+| Step | What it does |
+|---|---|
+| Projects | Pick the folders you work in. Chats are grouped by project and new chats start there. |
+| Terminal | Inside Loom (default), Ghostty, iTerm2 or Terminal.app. |
+| Agent permissions | Normal (default) or skip permissions, for chats, watcher chats and the orchestrator. |
+| Loom plugin | Installs the plugin. Loom shows the exact `claude plugin` commands first. |
+| Slack connection | Direct app, MCP only, or off. See section 5. |
+| Slack shortcut | Hidden when Slack is off. See section 6. |
+| Ship | Add the repos you ship from. |
+| Orchestrator | A supervising chat. Off by default. Loom asks before it trusts the orchestrator's folder in `~/.claude.json`. |
+| Watchers | Rules that react to events. Off by default. |
+| Done | What is on and off, then a short tour. |
+
+Close the wizard at any time; it resumes where you stopped. Settings (the gear) holds every choice. Settings › Help has **Take the tour** and **Run setup again**.
+
+## 4. The plugin
+
+The plugin connects chats to Loom: hooks, a `loom` command and five skills. Loom installs it through Claude Code, so nothing edits `settings.json` by hand. Loom copies the plugin to `~/.loom/plugin-marketplace` and runs:
 
 ```bash
-# backend (CLI) — Node-ABI native module
-yarn install
-yarn test
-
-# desktop app — Electron-ABI native module
-cd app
-yarn install
-yarn build      # esbuild bundle -> dist/main.js
-yarn rebuild    # rebuild better-sqlite3 for Electron's ABI  (REQUIRED)
-yarn dist       # -> app/release/mac-arm64/Loom.app  (unsigned)
+claude plugin marketplace add ~/.loom/plugin-marketplace --scope user
+claude plugin install loom@loom-local --scope user
 ```
 
-Copy `Loom.app` to `/Applications` and launch it. It embeds the HTTP server, runs the summarizer + layout snapshots on intervals, lives in the menu bar, and registers itself to launch at login.
-
-**CLI-only / dev usage** (no app):
+Remove it from Settings › Helpers, or:
 
 ```bash
-./bin/chat-manager run             # one index + summarize pass, writes the dashboard
-./bin/chat-manager restore --dry-run
+claude plugin uninstall loom@loom-local
+claude plugin marketplace remove loom-local
 ```
 
-### Register the placement hook
+Start new Claude sessions after installing or removing it. Running sessions keep the hooks they started with. Without the plugin, Loom still indexes and shows chats, but Jump and live state are less reliable and Slack thread ownership, the Outbox and ship labels do not work.
 
-Loom knows which tmux pane a chat lives in via a `SessionStart` / `UserPromptSubmit` hook. Add this to `~/.claude/settings.json` under **both** events (use the absolute path to *your* clone):
+Codex has no plugin system. If `~/.codex` exists, Loom adds `hooks/record-placement.sh` to `~/.codex/hooks.json` only after you say yes, and writes `hooks.json.loom-bak` first. `setup.sh` offers this too.
 
-```json
-{ "type": "command", "command": "/path/to/loom/hooks/record-placement.sh", "timeout": 5 }
-```
+## 5. Slack
 
-The hook is a no-op outside tmux, so it's harmless in non-tmux sessions.
+Pick a mode in the wizard or Settings › Slack. You can change it later.
 
----
+### Direct app
 
-## 3. First-run macOS permissions
+1. In Loom, copy the app manifest it shows you (Settings › Slack). It uses your name in the app title.
+2. At [api.slack.com/apps](https://api.slack.com/apps), choose Create New App, From a manifest, and paste it.
+3. Install the app to your workspace. Some workspaces need an admin to approve it.
+4. Copy the **User OAuth Token** (it starts with `xoxp-`) and paste it into Loom. Loom checks it, shows the workspace and user, and stores it in the macOS login Keychain.
 
-On first launch, macOS will prompt (or you can pre-grant in **System Settings › Privacy & Security**):
+The app asks for these user scopes. There is no bot user, no event subscription and no socket.
 
-- **Accessibility** — lets Loom drive System Events to click the right Ghostty tab when you "jump" to a live session. Without it, tmux still selects the pane; only the Ghostty window-focus fails (Loom reports this in the action result).
-- **Automation** — lets Loom send AppleScript to **Ghostty** and **System Events**.
+| Needed for | Scopes |
+|---|---|
+| Reading channels, threads and DMs | `channels:history` `groups:history` `im:history` `mpim:history` |
+| Channel and DM names | `channels:read` `groups:read` `im:read` `mpim:read` |
+| People and emoji | `users:read` `emoji:read` |
+| Thread previews with files | `files:read` |
+| Sending from the Outbox | `chat:write` `im:write` `mpim:write` `files:write` |
+| Reactions | `reactions:write` |
+| Search | `search:read` |
 
-Grant to **Loom.app** (and, the first time, to the terminal you launched it from if you ran it via `electron .`).
+A read-only manifest leaves out `chat:write`, `im:write`, `mpim:write`, `files:write` and `reactions:write`. Loom then reads and never posts. After connecting, Settings › Slack shows "N of M scopes granted" and lists any that are missing.
 
-Because the app is **unsigned** (personal use), Gatekeeper may object if the app was moved/downloaded rather than built locally:
+You can also provide the token in the `SLACK_USER_TOKEN` environment variable, which takes precedence over the Keychain.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Loom.app   # or right-click → Open once
-```
+### MCP only
 
-A locally built app has no quarantine flag and opens directly.
+Loom uses the Claude Slack connector already in your Claude Code setup. No app, no token. Because Loom has no token, these are **off**:
 
----
+- watchers that read a Slack channel
+- parked-thread reply detection and the "reply received" notification
+- Outbox Send, Send and park, Send and close (chats can still post through the connector themselves)
+- channel names, people names and custom emoji in the sidebar, previews and Outbox
+- thread previews and unread counts
+- checking sent drafts against Slack, and reactions from the `loom thread` command
 
-## 4. Where Loom stores data
+These still work: chats that read or post through the connector, thread ownership, drafts showing in the Outbox, and the shortcut.
 
-Loom writes its cache/runtime files (`manager.db`, `dashboard.html`, `layout.json`, `placements.jsonl`) to a **per-user data dir**, resolved identically by the app, the CLI, and the placement hook:
+### Off
 
-1. `$LOOM_HOME` if set
-2. `~/.claude/tools/chat-manager` if it already exists (legacy installs — kept for back-compat)
-3. `~/.loom` otherwise (default)
+Nothing Slack-related appears, and Loom makes no Slack call. Choosing Direct without a token behaves the same until you add one.
 
-Nothing is written into the repo, so the clone location doesn't matter. All of these files are derived caches — deleting them just triggers a re-index. They're private (they embed your indexed chat content) and are git-ignored.
+To disconnect, use Settings › Slack › Disconnect. It deletes the token from the Keychain and turns Slack off.
 
-> **Overriding for the app:** the Finder-launched app does **not** inherit your shell's environment, so `export LOOM_HOME=…` in `.zshrc` won't reach it. To point the app at a custom dir, launch it from a shell that has `LOOM_HOME` set, or leave it on the default.
+## 6. macOS permissions and the shortcut
 
----
+Grant these to **Loom.app** in System Settings › Privacy & Security. Grant only what you use. The embedded terminal, the sidebar, the orchestrator and the Outbox need none of them.
 
-## 5. Gotchas
+- **Accessibility.** Needed for the Slack shortcut (<kbd>⌘⇧L</kbd>, or the key you choose in Settings › Shortcut), which reads the message under the pointer, and for Ghostty tab focus. After you grant it, press the shortcut again. The wizard's shortcut step can test it.
+- **Automation.** Needed only for an external terminal: Ghostty (and System Events), iTerm2 or Terminal.app. Without it tmux still selects the pane; only the window or tab focus fails, and Loom says so.
 
-- **Two `node_modules`, two ABIs.** The root install compiles `better-sqlite3` for your system Node; `app/` compiles it for Electron. After `cd app && yarn install` you **must** `yarn rebuild` — skipping it gives a `NODE_MODULE_VERSION` mismatch at app launch. Don't copy `node_modules` between the two.
-- **Intel build output path.** `yarn dist` emits to `app/release/mac-arm64/` on Apple Silicon and `app/release/mac/` on Intel. `setup.sh` handles both; adjust manual copies accordingly.
-- **Port 4317 must be free.** A second instance exits immediately (single-instance lock); if the port is taken by something else the window won't load.
-- **The app replaces the old launchd jobs.** If you previously ran the `com.loom.*` / `com.chatmanager.*` plists, unload them — the app now owns the summarizer + snapshot intervals. (The plists are git-ignored and retired.)
-- **Ghostty tab titles.** Click-to-focus matches tabs titled `ta <session>` / `tn <session>` (the maintainer's tmux attach aliases). Different tmux workflows still get tmux-level pane selection; only the Ghostty focus step depends on this.
-- **Don't run `asar extract-file` from a repo cwd.** It writes the extracted file into the current directory — run it from `/tmp` (or `grep -a` the archive directly) to avoid leaking a `main.js` bundle into your working tree.
+The app is unsigned. If you built it locally it opens directly. If you downloaded or moved it and macOS objects, run `xattr -dr com.apple.quarantine /Applications/Loom.app` or right-click it and choose Open once.
+
+## 7. Watchers and Ship
+
+**Watchers.** Settings › Watchers has a master switch (off on a new install) and a list of rules. Start from a template: three for Slack (needs Direct), five for chats and three for pull requests (needs `gh`). A new watcher is saved disabled and in shadow mode. Shadow mode records what it would have done without acting. Check what it logged, then switch it to live. Watcher chats start in a Loom-managed window unless you set Settings › Watchers › Where watcher chats start to a lane.
+
+**Ship.** Settings › Ship lists the repos Ship works on. For each repo you set the base branch (default `main`), the command the Ship button sends (default `/loom:ship`) and whether a ship label is required. The repo needs a remote and `gh` logged in. There is no Ship button until you add a repo.
+
+## 8. Where Loom stores data
+
+The data folder is found the same way by the app, the CLI and the hook:
+
+1. `$LOOM_HOME`, if set
+2. `~/.claude/tools/chat-manager`, if it already exists (older installs)
+3. `~/.loom`
+
+It holds `manager.db` (the index and settings), `dashboard.html`, `layout.json`, `placements.jsonl`, `tmux.conf`, the Outbox, watcher briefs, the orchestrator folder, `plugin-marketplace/` and `plugin-state.json`. Nothing is written into the repo. Slack tokens live in the Keychain, not here. Settings changes made in the app are saved in `manager.db`; before it changes an older install's data, Loom copies `manager.db` to a `manager.db.pre-*` backup.
+
+The Finder-launched app does not read your shell profile, so `LOOM_HOME` in `.zshrc` does not reach it. To use a custom folder, start the app from a shell that has `LOOM_HOME` set.
+
+## 9. Uninstall
+
+1. Remove the plugin (Settings › Helpers, or the two `claude plugin` commands in section 4).
+2. Settings › Slack › Disconnect, if you used Direct. Delete the Slack app at api.slack.com/apps if you want.
+3. If you allowed the Codex hook, remove the `record-placement.sh` entry from `~/.codex/hooks.json`. A `.loom-bak` copy is beside it.
+4. Quit Loom from the menu bar and delete `/Applications/Loom.app`. That also removes the open-at-login entry.
+5. Delete `~/.loom` (or your `LOOM_HOME`) to remove Loom's data. Your Claude chats in `~/.claude` are not touched.
+6. Run `tmux -L loom kill-server` to stop Loom's tmux server. This ends the chats running in it, so save what you need first.
+
+## 10. Gotchas
+
+- **Two `node_modules`, two ABIs.** The root install builds `better-sqlite3` for your Node. `app/` builds it for Electron. After `cd app && yarn install`, run `yarn rebuild`, or the app fails to launch with a `NODE_MODULE_VERSION` mismatch. Do not copy `node_modules` between them.
+- **Intel output path.** `yarn dist` writes to `app/release/mac-arm64/` on Apple Silicon and `app/release/mac/` on Intel. `setup.sh` handles both.
+- **Port 4317 must be free.** A second Loom exits at once, and if another program holds the port the window does not load.
+- **Old launchd jobs.** If you ran an earlier version's `com.loom.*` or `com.chatmanager.*` jobs, unload them. The app now runs those intervals itself.
+- **Extracting from the app bundle.** `asar extract-file` writes into the current directory. Run it from a scratch folder, not from the repo.
+
+## 11. External terminals
+
+Terminal, tmux socket and the other choices are in Settings (or `PUT /api/settings` with a JSON body).
+
+| Setting | New install | Values |
+|---|---|---|
+| `terminal` | `inside` | `inside`, `ghostty`, `iterm2`, `terminal` |
+| `tmux_socket` | `loom` | a socket name, or `default` for your own tmux server. `$LOOM_TMUX_SOCKET` overrides. Restart Loom after changing it. |
+| `watchers_enabled` | off | on or off |
+
+With an external terminal, Jump runs `tmux switch-client` on the attached client and brings the app forward. iTerm2 and Terminal.app select the tab whose tty matches the client, so a tmux client must be attached there (`tmux -L loom attach`). Ghostty matches the tab by its title, set by Settings › Terminal › Ghostty attach command.
+
+## 12. Advanced: lanes and crash recovery
+
+Optional. Skip it unless you keep your own tmux workspace. Loom also understands tmux sessions named `loom-<lane>-<n>` on your own tmux server. Set Settings › Advanced › tmux server to `default` and leave the session prefix at `loom-`. Then you can use:
+
+- **Crash recovery.** Loom saves the tmux layout every 15 seconds. After a tmux crash, `./bin/chat-manager restore --dry-run` shows the plan and `./bin/chat-manager restore` rebuilds every session with its pane geometry and resumes the right chats. Only sessions whose names start with the session prefix are saved. `$LOOM_SESSION_PREFIX` overrides the prefix; an empty value includes every session.
+- **Ghostty tab reuse** on restore (Settings › Terminal › Reuse Ghostty tabs).
+- **Pane topics and tints** (Settings › Terminal).
+- **Lane targets** for new threads and watcher chats.
+
+The paths for Ship repos and the optional Slack command-line tools can be set with `$LOOM_SHIP_REPOS` (colon-separated), `$LOOM_SLACK_CLI`, `$LOOM_SLACK_THREADS_CLI` and `$LOOM_SLACK_STATE_DIR`. They are skipped quietly when absent.

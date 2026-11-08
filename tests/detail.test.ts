@@ -137,7 +137,7 @@ describe('PR summary', () => {
   });
 
   it('reads the repo and number off a PR url', () => {
-    expect(parsePrUrl('https://github.com/tax-pilot-org/tax-pilot-app/pull/3110')).toEqual({ repo: 'tax-pilot-org/tax-pilot-app', number: 3110 });
+    expect(parsePrUrl('https://github.com/acme-org/acme-app/pull/3110')).toEqual({ repo: 'acme-org/acme-app', number: 3110 });
     expect(parsePrUrl('nope')).toBeNull();
   });
 
@@ -172,23 +172,24 @@ describe('detail panel shell', () => {
   it('ships the panel column, its fetch, and the waiting-on-you empty state', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     expect(html).toContain('id="boardwrap"');
-    expect(html).toContain('id="detail"');
+    expect(html).toContain('id="mdetail"');
+    expect(html).toContain('id="mempty"');
     expect(html).toContain('/api/detail?session=');
     expect(html).toContain('/api/tails?keys=');
     expect(html).toContain('Waiting on you');
   });
 });
 
-describe('light cards', () => {
-  it('drops the button row from board cards; open and save ride the title line, PR the meta line', () => {
+describe('light rows', () => {
+  it('keeps sidebar rows free of buttons; actions live in the header and the menu, PR and Slack ride chips', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
-    const card = html.slice(html.indexOf('function card(c){'), html.indexOf("$('#gen').textContent"));
-    expect(card).not.toContain('class="resume"');
-    expect(card).not.toContain('copy id');
-    expect(card).not.toContain('branchbtn');
-    expect(card).toContain('class="ico open"');
-    expect(card).toContain('class="ico savebtn"');
-    expect(card).toContain("' · <span class=\"prn\"");
+    const row = html.slice(html.indexOf('function srow(c){'), html.indexOf('function sidebarRows('));
+    expect(row).not.toContain('class="resume"');
+    expect(row).not.toContain('branchbtn');
+    expect(row).not.toContain('<button');
+    expect(row).toContain('class="chp pr"');
+    expect(row).toContain('class="chp sl">Slack');
+    expect(row).toContain('aria-haspopup="menu"');
   });
 });
 

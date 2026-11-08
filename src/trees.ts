@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import {
   inspectWorktreesAsync,
   resolveBaseRefAsync,
@@ -22,11 +22,14 @@ import {
  * of repos Will actually works in falls out of the board for free.
  */
 
+/** A worktree with the time of its HEAD commit (epoch ms), for the Trees badge's 14-day stale rule. */
+export type TreeState = WorktreeState & { lastCommitAt?: number };
+
 export interface RepoTrees {
   root: string;
   name: string;
   base: string;
-  worktrees: WorktreeState[];
+  worktrees: TreeState[];
 }
 
 export interface TreesPayload {
@@ -124,12 +127,23 @@ async function scan(input: ScanInput): Promise<Entry> {
   const repos: RepoTrees[] = [];
   for (const root of roots) {
     const base = await resolveBaseRefAsync(root);
-    const worktrees = await inspectWorktreesAsync(root, { base, panes: input.panes });
+    const worktrees: TreeState[] = await inspectWorktreesAsync(root, { base, panes: input.panes });
+    await Promise.all(worktrees.map(async (w) => { w.lastCommitAt = await lastCommitAt(w.path); }));
     if (worktrees.length) repos.push({ root, name: path.basename(root), base, worktrees });
   }
   // Busiest repo first — the one with the most worktrees is the one being asked about.
   repos.sort((a, b) => b.worktrees.length - a.worktrees.length);
   return { at: Date.now(), scanMs: Date.now() - t0, repos };
+}
+
+/** The committer time of HEAD in `dir`, epoch ms; undefined when git cannot say. */
+export function lastCommitAt(dir: string): Promise<number | undefined> {
+  return new Promise((resolve) =>
+    execFile('git', ['log', '-1', '--format=%ct', 'HEAD'], { cwd: dir, encoding: 'utf-8', timeout: 5_000 }, (err, out) => {
+      const sec = Number(String(out ?? '').trim());
+      resolve(!err && Number.isFinite(sec) && sec > 0 ? sec * 1000 : undefined);
+    }),
+  );
 }
 
 export async function getTrees(input: ScanInput, opts: { force?: boolean } = {}): Promise<TreesPayload> {

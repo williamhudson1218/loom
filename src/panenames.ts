@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { isViewSession, tmux } from './tmux.ts';
 import { SESSION_PREFIX } from './paths.ts';
 
 // Every workspace pane gets a short, sayable name ("blue-vanilla") so it can be
@@ -172,9 +172,7 @@ const SEP = '~|LOOM|~';
 export function readPaneNames(): PaneNameRow[] {
   let out: string;
   try {
-    out = execFileSync('tmux', ['list-panes', '-a', '-F', `#{pane_id}${SEP}#{session_name}${SEP}#{@name}`], {
-      encoding: 'utf-8',
-    });
+    out = tmux(['list-panes', '-a', '-F', `#{pane_id}${SEP}#{session_name}${SEP}#{@name}`]);
   } catch {
     return []; // tmux not running
   }
@@ -184,7 +182,8 @@ export function readPaneNames(): PaneNameRow[] {
     .map((l) => {
       const p = l.split(SEP);
       return { pane_id: p[0], session_name: p[1] ?? '', name: (p[2] ?? '').trim() };
-    });
+    })
+    .filter((r) => !isViewSession(r.session_name)); // a view repeats its group's panes
 }
 
 // pane_id -> name, named panes only. The read side for the snapshot and the API.
@@ -194,7 +193,7 @@ export function paneNameMap(rows: PaneNameRow[] = readPaneNames()): Map<string, 
 
 export function setPaneName(paneId: string, name: string): void {
   try {
-    execFileSync('tmux', ['set-option', '-p', '-t', paneId, '@name', name], { stdio: 'ignore' });
+    tmux(['set-option', '-p', '-t', paneId, '@name', name], { stdio: 'ignore' });
   } catch {
     /* pane vanished between listing it and naming it */
   }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { TOOL_DIR } from './paths.ts';
 import type { Agent } from './types.ts';
+import { isViewSession, tmux } from './tmux.ts';
 
 export const PLACEMENTS_PATH = path.join(TOOL_DIR, 'placements.jsonl');
 
@@ -80,11 +81,9 @@ const SEP = '~|LOOM|~';
 export function listTmuxPanes(): TmuxPane[] {
   let out: string;
   try {
-    out = execFileSync(
-      'tmux',
+    out = tmux(
       ['list-panes', '-a', '-F',
         `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{pane_current_path}${SEP}#{pane_left}${SEP}#{pane_top}${SEP}#{pane_title}`],
-      { encoding: 'utf-8' },
     );
   } catch {
     return []; // tmux not running
@@ -106,7 +105,9 @@ export function listTmuxPanes(): TmuxPane[] {
         top: Number(parts[8] ?? 0),
         title: parts.slice(9).join(SEP),
       };
-    });
+    })
+    // An embedded-terminal view repeats every pane of the session it groups with.
+    .filter((p) => !isViewSession(p.tmux_session));
 }
 
 // Sessions a tmux client is currently attached to — i.e. sessions that already
@@ -115,10 +116,10 @@ export function listTmuxPanes(): TmuxPane[] {
 export function attachedSessions(): Set<string> {
   try {
     return new Set(
-      execFileSync('tmux', ['list-clients', '-F', '#{client_session}'], { encoding: 'utf-8' })
+      tmux(['list-clients', '-F', '#{client_session}'])
         .split('\n')
         .map((s) => s.trim())
-        .filter(Boolean),
+        .filter((s) => s && !isViewSession(s)),
     );
   } catch {
     return new Set(); // tmux not running -> nothing is attached
@@ -128,10 +129,25 @@ export function attachedSessions(): Set<string> {
 // pane_id -> agent for panes whose process tree contains a supported agent.
 // The foreground command can momentarily be a tool subprocess (bash/node/git),
 // so its agent remains identifiable as an ancestor. A closed pane has no agent.
+// `ps -eo` over the whole machine is the costliest sync call Loom makes (~50 ms)
+// and the tray, pane topics, EM scan, board poll and terminals list all want it
+// within the same second. One shared copy, kept for PS_TTL_MS; under vitest it is
+// never reused so tests that change the process table see the change.
+const PS_TTL_MS = 2000;
+let psCache: { at: number; out: string } | null = null;
+
+function psTable(): string {
+  const now = Date.now();
+  if (psCache && !process.env.VITEST && now - psCache.at < PS_TTL_MS) return psCache.out;
+  const out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
+  psCache = { at: now, out };
+  return out;
+}
+
 export function agentPaneIds(panes: Pick<TmuxPane, 'pane_id' | 'pane_pid'>[]): Map<string, Agent> {
   let out: string;
   try {
-    out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
+    out = psTable();
   } catch {
     return new Map();
   }

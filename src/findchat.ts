@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { CLAUDE_PROJECTS_DIR, FIND_CHAT_BIN } from './paths.ts';
+import type Database from 'better-sqlite3';
+import { CLAUDE_PROJECTS_DIR, FIND_CHAT_CANDIDATES } from './paths.ts';
+import { getSetting } from './settingsSchema.ts';
 import { cleanText } from './parser.ts';
 
 // One archive hit, as returned by find-chat's CLI. find-chat hands us
@@ -31,13 +33,42 @@ export type FindChatRunner = (args: string[]) => Promise<string>;
 const SEARCH_TIMEOUT_MS = 60_000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 
+/**
+ * The find-chat binary to run: the configured path (setting or $FIND_CHAT_BIN) when
+ * it exists, else the first known location, else null. null means archive search
+ * is hidden, not broken.
+ */
+export function detectFindChat(configured: string = '', exists: (p: string) => boolean = fs.existsSync): string | null {
+  const c = configured.trim();
+  if (c) return exists(c) ? c : null;
+  return FIND_CHAT_CANDIDATES.find((p) => exists(p)) ?? null;
+}
+
+export function findChatFromSettings(db: Database.Database, exists?: (p: string) => boolean): string | null {
+  return detectFindChat(getSetting(db, 'find_chat_bin'), exists);
+}
+
+// The binary the default runner uses. The server sets it from the setting
+// (setFindChatBin) at startup and on a settings change; unset, it detects.
+let configuredBin: string | null | undefined;
+export function setFindChatBin(bin: string | null | undefined): void {
+  configuredBin = bin;
+}
+
 export const defaultRunner: FindChatRunner = (args) =>
   new Promise((resolve, reject) => {
     // execFile, never a shell — the query is user text and must not be word-split
     // or interpreted. find-chat writes index progress to stderr and the JSON
     // payload to stdout, so only stdout is read.
+    const bin = configuredBin ?? detectFindChat();
+    if (!bin) {
+      const err = new Error('find-chat not installed') as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      reject(err);
+      return;
+    }
     execFile(
-      FIND_CHAT_BIN,
+      bin,
       args,
       { timeout: SEARCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, encoding: 'utf-8' },
       (err, stdout) => (err ? reject(err) : resolve(stdout)),

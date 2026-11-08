@@ -47,6 +47,18 @@ elif [ -d "$HOME/.claude/tools/chat-manager" ]; then
 else
   LOOM_DIR="$HOME/.loom"
 fi
+# Legacy shim: once the Loom plugin is installed, its own copy of this hook
+# records Claude sessions, so this one (still registered in ~/.claude/settings.json
+# on older installs) steps aside to avoid a doubled line. The plugin copy runs with
+# CLAUDE_PLUGIN_ROOT set, so it never skips itself. Codex has no plugin: always recorded.
+if [ "$AGENT" = "claude" ] && [ -z "$CLAUDE_PLUGIN_ROOT" ] && [ -f "$LOOM_DIR/plugin-state.json" ]; then
+  python3 -c 'import json,sys
+try:
+    v = json.load(open(sys.argv[1])).get("plugin_version")
+except Exception:
+    sys.exit(1)
+sys.exit(0 if isinstance(v, str) and v.strip() else 1)' "$LOOM_DIR/plugin-state.json" 2>/dev/null && exit 0
+fi
 mkdir -p "$LOOM_DIR" 2>/dev/null
 OUT="$LOOM_DIR/placements.jsonl"
 python3 -c 'import json,sys,time

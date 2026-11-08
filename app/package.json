@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+    "rebuild": "electron-rebuild -f -w better-sqlite3,node-pty",
     "start": "yarn build && electron .",
     "dist": "yarn build && electron-builder"
   },
@@ -18,8 +19,12 @@
     "productName": "Loom",
     "directories": { "output": "release" },
     "files": ["dist/**", "node_modules/**", "package.json"],
-    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
-    "extraResources": [{ "from": "build-native/slack-ax", "to": "slack-ax" }],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**", "**/node_modules/node-pty/**", "dist/orchmcp.js"],
+    "extraResources": [
+      { "from": "build-native/slack-ax", "to": "slack-ax" },
+      { "from": "build-native/loom-keychain", "to": "loom-keychain" },
+      { "from": "build-plugin", "to": "plugin" }
+    ],
     "mac": {
       "target": "dir",
       "icon": "assets/icon.icns",
@@ -29,7 +34,8 @@
     "npmRebuild": true
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0"
+    "better-sqlite3": "^11.7.0",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",

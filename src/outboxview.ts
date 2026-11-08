@@ -1,0 +1,223 @@
+// The Outbox: Slack drafts that chats propose, shown the way Slack would show
+// them. Each chat has its own outbox: a thin strip on the right edge of the chat
+// view (both tabs) when that chat has pending drafts, which expands into a drawer
+// with the full Slack-style cards. There is no global all-drafts view.
+// Every write still goes through /api/outbox/send|discard (the CLI lock and the
+// pending re-check live there); nothing here talks to Slack. Plain browser JS in
+// strings, embedded verbatim by dashboard.ts. String.raw, no dollar-brace.
+
+export const OUTBOX_VIEW_CSS = String.raw`
+  #chatwrap { display:flex; min-width:0; min-height:0; }
+  #chatwrap > #chatmain { flex:1 1 auto; min-width:0; }
+  #boardwrap.tk #chatwrap { display:none; }
+  #outrail { flex:0 0 400px; width:400px; border-left:1px solid #232634; background:#0d1016; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  #outrail[hidden] { display:none; }
+  #chatwrap[data-rail="collapsed"] #outrail { flex-basis:28px; width:28px; }
+  .orh2 { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid #1d2130; font-size:12px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:#a9c6ff; }
+  .orh2 .sp { flex:1; }
+  .orh2 button { background:transparent; color:#8a90a2; padding:2px 8px; font-size:14px; }
+  .orh2 button:hover { color:#e4e7ee; background:#1b2233; }
+  #outcards { flex:1 1 auto; min-height:0; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:12px; }
+  .orailtab { width:100%; height:100%; border-radius:0; background:transparent; display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px 0; color:#a9c6ff; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
+  .orailtab .oglyph { font-size:14px; line-height:1; }
+  .orailtab .odest { width:18px; height:18px; border-radius:4px; background:#2a3a63; color:#e4e7ee; display:flex; align-items:center; justify-content:center; font-size:10px; letter-spacing:0; }
+  .orailtab:hover { background:#141826; }
+  .orailtab .vt { writing-mode:vertical-rl; }
+  .orailtab .obadge { writing-mode:horizontal-tb; }
+  .outpin { margin-top:0; }
+  .outpin .oic { background:#2a2140; }
+  .draft.sdraft { border:1px solid #2c3a63; border-left:3px solid #6ea2ff; border-radius:10px; padding:0; background:#121a2e; gap:0; overflow:hidden; }
+  .dhd { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:9px 12px; background:#151f38; font-size:12px; color:#a3a9b8; }
+  .dh-ch { font-weight:700; color:#e4e7ee; }
+  .dh-th { color:#8fb4ff; }
+  .dh-th a { color:#8fb4ff; }
+  .dh-ago { margin-left:auto; color:#8a90a2; }
+  .dstale { font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:1px 7px; border-radius:999px; background:rgba(212,167,44,.18); color:#e8b84b; }
+  .dchat { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid #1d2a4a; font-size:12.5px; }
+  .dchat button { background:transparent; color:#9cc0ff; padding:0; font-size:12.5px; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+  .dchat button:hover { text-decoration:underline; background:transparent; }
+  .dchat button[disabled] { color:#8a90a2; cursor:default; text-decoration:none; }
+  .dbody { padding:12px; background:#1a1d21; color:#d1d2d3; }
+  .dbody textarea.dtext { width:100%; box-sizing:border-box; resize:vertical; min-height:70px; background:#222529; color:#d1d2d3; border:1px solid #3b3d41; border-radius:8px; padding:8px; font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; margin-bottom:8px; }
+  .dacts { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:9px 12px; border-top:1px solid #1d2a4a; }
+  .dacts .dsub { margin-left:4px; }
+  .dacts .spacer { flex:1; }
+  .dconf { padding:10px 12px; display:flex; flex-direction:column; gap:8px; border-top:1px solid #1d2a4a; }
+  .slk-row { display:flex; gap:10px; align-items:flex-start; font-family:-apple-system,"Lato","Segoe UI",Roboto,sans-serif; font-size:15px; line-height:1.46; }
+  .slk-av { flex:0 0 36px; width:36px; height:36px; border-radius:6px; background:#5b3a8c; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; object-fit:cover; }
+  .slk-main { flex:1 1 auto; min-width:0; }
+  .slk-meta { display:flex; align-items:baseline; gap:8px; }
+  .slk-meta b { color:#fff; font-weight:900; }
+  .slk-meta span { font-size:12px; color:#ababad; }
+  .slk-msg { overflow-wrap:anywhere; }
+  .slk-msg + .slk-msg { margin-top:2px; }
+  .slk-gap { height:.7em; }
+  .slk-burst { margin-top:8px !important; padding:6px 10px 8px; border:1px solid rgba(255,255,255,.1); border-left:3px solid #4a6aa8; border-radius:8px; background:rgba(255,255,255,.035); }
+  .slk-bh { display:flex; align-items:center; gap:8px; margin-bottom:3px; font-size:11px; color:#8a90a2; }
+  .slk-mark { font-weight:700; letter-spacing:.04em; color:#9cc0ff; }
+  .slk-hts { margin-left:auto; visibility:hidden; }
+  .slk-burst:hover .slk-hts { visibility:visible; }
+  .slk-p { white-space:normal; }
+  .slk-link { color:#1d9bd1; text-decoration:none; }
+  .slk-link:hover { text-decoration:underline; }
+  .slk-mention { color:#1d9bd1; background:rgba(29,155,209,.1); border-radius:3px; padding:0 2px; }
+  .slk-code { font:12px/1.4 Monaco,Menlo,Consolas,monospace; color:#e8912d; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:3px; padding:1px 4px; }
+  .slk-pre { margin:4px 0; font:12px/1.5 Monaco,Menlo,Consolas,monospace; color:#d1d2d3; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:4px; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .slk-quote { margin:4px 0; padding-left:10px; border-left:4px solid #5e6064; }
+  .slk-list { margin:2px 0; }
+  .slk-li { display:flex; gap:6px; }
+  .slk-bul { flex:0 0 auto; min-width:14px; text-align:right; }
+  .slk-lt { min-width:0; }
+  .slk-emoji { width:20px; height:20px; vertical-align:text-bottom; }
+  .slk-emoji-u { font-size:1.15em; line-height:1; }
+  .slk-epill { font-size:12px; padding:0 5px; border-radius:9px; background:rgba(255,255,255,.08); color:#c4ccdc; }
+  .draft.sdraft.leaving { max-height:0 !important; opacity:0; margin-bottom:-12px; border-width:0; transition:max-height .28s ease, opacity .22s ease, margin-bottom .28s ease; pointer-events:none; }
+  .draft.sdraft.sending { border-left-color:#d4a72c; }
+  .draft.sdraft.dim { opacity:.55; border-left-color:#4a5060; }
+  .draft.sdraft.dim:hover, .draft.sdraft.dim:focus-within { opacity:.9; }
+  .dconf .dkeys { margin-top:6px; }
+  .dconf button:disabled { opacity:.45; cursor:not-allowed; }
+  .dconf button.send.close { background:#3b2a1d; color:#f0c9a0; border-color:#5a4029; }
+  .dacts button.park, .dconf button.park { background:#1d3b2c; color:#a6e8c0; border-color:#2c5a43; }
+  .dsend { display:flex; align-items:center; gap:8px; padding:9px 12px; border-top:1px solid #1d2a4a; font-size:12.5px; color:#e8b84b; }
+  .dsend .spin { width:12px; height:12px; border-radius:50%; border:2px solid rgba(232,184,75,.3); border-top-color:#e8b84b; animation:dspin .8s linear infinite; }
+  .dfail { color:#ff8d8d; }
+  @keyframes dspin { to { transform:rotate(360deg); } }
+  #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    .draft.sdraft.leaving, #outrail.closing { transition:none; }
+    .dsend .spin { animation:none; }
+  }
+  @media (max-width:900px) {
+    #chatwrap { flex-direction:column; }
+    #outrail { flex:none; width:auto; border-left:0; border-top:1px solid #232634; max-height:60vh; }
+    #chatwrap[data-rail="collapsed"] #outrail { width:auto; flex-basis:auto; }
+    .orailtab { flex-direction:row; height:auto; justify-content:center; }
+    .orailtab .vt { writing-mode:horizontal-tb; }
+  }
+`;
+
+// Pure helpers (tested by evaluating this string).
+export const OUTBOX_PURE_JS = String.raw`
+function draftDate(d){var t=Date.parse((d&&d.created_at)||'');return isNaN(t)?0:t;}
+function sortDrafts(ds){return ds.slice().sort(function(a,b){return draftDate(a)-draftDate(b)||(a.id<b.id?-1:a.id>b.id?1:0);});}
+// A draft is stale when a newer one exists for the same chat, or it is over a day old.
+function draftStaleReason(d,all,now){
+  if(!d)return '';
+  if(d.stale&&d.stale_reason)return d.stale_reason;
+  var t=draftDate(d);
+  if(all.some(function(x){return x.session_id===d.session_id&&x.id!==d.id&&draftDate(x)>t;}))return 'newer draft in this chat';
+  if(t&&now-t>86400000)return 'over 24h old';
+  return '';
+}
+// hidden with no drafts; a thin strip when collapsed (the default); the drawer when expanded.
+function railMode(n,collapsed){return n<=0?'hidden':(collapsed?'collapsed':'open');}
+function draftsOfChat(all,sid){return sortDrafts((all||[]).filter(function(d){return d.session_id===sid;}));}
+function railStoreKey(k){return 'loom.outbox.closed.'+k;}
+// The rail opens by itself whenever a chat has a draft waiting. Collapsing it records the newest
+// draft it was showing (closedAt); it stays collapsed until a draft newer than that arrives.
+function newestDraftAt(ds){return (ds||[]).reduce(function(m,d){return Math.max(m,draftDate(d));},0);}
+function railShut(closedAt,ds){return closedAt>0&&newestDraftAt(ds)<=closedAt;}
+// A chat that replies into a thread it does not own (another chat claimed it first) still
+// has the thread on its draft: {key,url} of the newest pending draft's thread, or null.
+function draftThreadOf(all,sid){var ds=draftsOfChat(all,sid).filter(function(d){return d.status==null||d.status==='pending';});
+  for(var i=ds.length-1;i>=0;i--){var m=/^(https:[/][/][\w-]+[.]slack[.]com)[/]archives[/]([A-Z0-9]+)[/]p(\d{10})(\d{6})(?:[?#].*)?$/.exec(ds[i].thread_url||'');
+    if(m)return {key:m[2]+'/'+m[3]+'.'+m[4],url:m[1]+'/archives/'+m[2]+'/p'+m[3]+m[4]};}
+  return null;}
+function destInitial(l){var m=String(l||'').replace(/^[#@]/,'').trim();return (m.charAt(0)||'?').toUpperCase();}
+`;
+
+export const OUTBOX_VIEW_JS = String.raw`
+// ---- Outbox rail + view -------------------------------------------------------
+var LEAVING={},outPoll=null;
+var DRAFT_EDITS={},draftConfirm=null,draftArmDiscard=null,draftMsg={},DRAFT_EDIT_ON={};
+var outCollapsed=true,outRailKey='',SLK_DIR=null,SLK_EMOJI=null,slkAt=0,slkLoading=false;
+function draftsFor(c){return draftsOfChat(DATA.drafts,c.session_id);}
+function hasDrafts(c){return (DATA.drafts||[]).some(function(d){return d.session_id===c.session_id;});}
+function draftTexts(d){return DRAFT_EDITS[d.id]||d.messages.slice();}
+function slkCtx(){return {users:(SLK_DIR&&SLK_DIR.users)||{},channels:(SLK_DIR&&SLK_DIR.channels)||{},emoji:SLK_EMOJI||{},custom:(SLK_DIR&&SLK_DIR.custom)||{}};}
+// Names, custom emoji and the shortcode map load once the first draft is on screen,
+// and the names again every ten minutes; each part falls back by itself when absent.
+function loadSlkData(){if(slkLoading)return;const needDir=!SLK_DIR||Date.now()-slkAt>600000;if(!needDir&&SLK_EMOJI)return;slkLoading=true;
+  Promise.all([needDir?fetch('/api/slack/directory').then(r=>r.json()).catch(()=>null):Promise.resolve(SLK_DIR),SLK_EMOJI?Promise.resolve(SLK_EMOJI):fetch('/api/emoji-map').then(r=>r.json()).catch(()=>null)]).then(a=>{
+    if(needDir){SLK_DIR=a[0]&&a[0].ok?a[0]:(SLK_DIR||{users:{},channels:{},custom:{},me:{}});slkAt=Date.now();}
+    SLK_EMOJI=a[1]||SLK_EMOJI||{};slkLoading=false;renderOutbox();}).catch(()=>{slkLoading=false;});}
+function draftDestLabel(d){const u=slkCtx().users;let l=d.label||d.channel;if(l===d.channel&&u[d.channel])l='@'+u[d.channel];return l;}
+function senderName(){return (SLK_DIR&&SLK_DIR.me&&SLK_DIR.me.name)||'You';}
+function avatarHtml(){const m=(SLK_DIR&&SLK_DIR.me)||{};const n=senderName();if(m.avatar&&m.avatar.indexOf('https://')===0)return '<img class="slk-av" alt="" src="'+esc(m.avatar)+'">';return '<span class="slk-av" aria-hidden="true">'+esc(n.charAt(0).toUpperCase()||'?')+'</span>';}
+function draftHeadHtml(d,stale){const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
+  return '<div class="dhd"><span class="dh-ch">'+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
+// The message exactly as Slack lays it out: one sender header, then a bubble per message.
+function slackPreviewHtml(d,texts){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts,slkCtx(),t?hhmm(t):'')+'</div></div>';}
+function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const conf=draftConfirm===d.id;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf;const dest=draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'');
+  const body=editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
+  const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
+  const acts=sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
+    :conf?'<div class="dconf"><div class="dsub">Post as '+esc(senderName())+' to '+esc(dest)+(texts.length>1?' ('+texts.length+' messages)':'')+'</div><div class="arow"><button class="send" data-dact="post-none" title="Post it. The chat stays as it is.">Send</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
+    :'<div class="dacts"><button class="send" data-dact="send">Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
+  return '<div class="draft sdraft'+(sending?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+acts+'</div>';}
+function canPark(d){return !!(d.thread_ts||d.channel);}
+function parkWhyNot(d){return canPark(d)?'':'no thread or channel to watch for a reply';}
+function draftsBusy(box){return !!(box&&box.querySelector('textarea:focus'));}
+// ---- the rail
+function railDrafts(){if(orchSel||tsel||!sel||sel.arch)return [];const c=selChat();return c?draftsFor(c):[];}
+function railLoad(k){try{return Number(localStorage.getItem(railStoreKey(k)))||0;}catch(e){return 0;}}
+function railCollapsed(k,ds){return railShut(railLoad(k),ds);}
+function railSave(k,collapsed){try{if(collapsed)localStorage.setItem(railStoreKey(k),String(newestDraftAt(railDrafts())||Date.now()));else localStorage.removeItem(railStoreKey(k));}catch(e){}}
+function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wrap)return;const ds=railDrafts();
+  const key=ds.length?selKey():'';if(key!==outRailKey){outRailKey=key;outCollapsed=key?railCollapsed(key,ds):true;}
+  else if(outCollapsed&&key&&!railCollapsed(key,ds))outCollapsed=false; // a newer draft arrived: open
+  if(wrap.dataset.closing){return;}
+  const mode=railMode(ds.length,outCollapsed);const was=wrap.dataset.rail;
+  // Last draft gone: slide the rail shut (width transition), refit the terminal once at the end.
+  if(mode==='hidden'&&was&&was!=='hidden'&&!reduceMotion()){wrap.dataset.closing='1';rail.classList.add('closing');setTimeout(()=>{delete wrap.dataset.closing;rail.classList.remove('closing');wrap.dataset.rail='hidden';rail.hidden=true;rail.innerHTML='';refitTerm();},280);outPollSync();return;}
+  wrap.dataset.rail=mode;rail.hidden=mode==='hidden';
+  if(was!==mode)setTimeout(refitTerm,60);outPollSync();
+  if(mode==='hidden'){rail.innerHTML='';return;}
+  if(draftsBusy(rail))return;
+  loadSlkData();
+  if(mode==='collapsed'){const dest=draftDestLabel(ds[ds.length-1]);
+    rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the outbox ('+ds.length+' pending, '+esc(dest)+')" aria-label="Open the outbox, '+ds.length+' pending"><span class="oglyph" aria-hidden="true">\u2709</span><span class="obadge">'+ds.length+'</span><span class="odest">'+esc(destInitial(dest))+'</span></button>';return;}
+  const now=Date.now();
+  rail.innerHTML='<div class="orh2"><span>Outbox</span><span class="obadge">'+ds.length+'</span><span class="sp"></span><button type="button" data-rail="close" title="collapse" aria-label="Collapse the outbox">\u203a</button></div><div id="outcards">'+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join('')+'</div>';focusConfirm();}
+// Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
+function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
+function reduceMotion(){return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);}
+// New draft list from the server (or after a local send/discard). A card that is gone while it
+// is on screen fades and collapses out first (~280 ms); the rail closes after the last one.
+function setDrafts(nl){const old=DATA.drafts||[];const keep=new Set(nl.map(d=>d.id));
+  const gone=reduceMotion()?[]:old.filter(d=>!keep.has(d.id)&&!LEAVING[d.id]&&document.querySelector('#outcards .draft[data-id="'+d.id+'"]'));
+  if(!gone.length){DATA.drafts=nl.concat(old.filter(d=>LEAVING[d.id]&&!keep.has(d.id)));return;}
+  DATA.drafts=nl.concat(old.filter(d=>(LEAVING[d.id]||gone.indexOf(d)>=0)&&!keep.has(d.id)));
+  gone.forEach(d=>{LEAVING[d.id]=1;const el=document.querySelector('#outcards .draft[data-id="'+d.id+'"]');if(el){el.style.maxHeight=el.offsetHeight+'px';void el.offsetHeight;el.classList.add('leaving');}});
+  setTimeout(()=>{gone.forEach(d=>{delete LEAVING[d.id];delete DRAFT_EDITS[d.id];});DATA.drafts=(DATA.drafts||[]).filter(d=>!LEAVING[d.id]&&keep.has(d.id));renderOutbox();},300);}
+// While the open chat has pending drafts, ask for their state every 1.5 s so a chat posting one itself shows as Sending\u2026 within a second or two.
+function outPollSync(){const want=!document.hidden&&railDrafts().length>0;if(want&&!outPoll)outPoll=setInterval(pollOutbox,1500);else if(!want&&outPoll){clearInterval(outPoll);outPoll=null;}}
+function pollOutbox(){if(document.hidden)return;fetch('/api/outbox/state').then(r=>r.json()).then(j=>{if(!j||!j.ok)return;const sig=x=>JSON.stringify((x||[]).map(d=>[d.id,d.send_state||'',d.send_note||'']));const before=sig((DATA.drafts||[]).filter(d=>!LEAVING[d.id]));setDrafts(j.drafts||[]);if(sig(j.drafts)!==before)renderOutbox();}).catch(()=>{});}
+function refitTerm(){try{if(termFit)termFit.fit();}catch(e){}}
+function renderOutbox(){railRender();}
+// ---- actions (rail and view share them)
+function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if(!d)return;
+  if(act==='edit'){DRAFT_EDIT_ON[id]=!DRAFT_EDIT_ON[id];renderOutbox();return;}
+  if(act==='copy'){copyText(draftTexts(d).join(NL+NL),'draft copied');return;}
+  if(act==='send'){if(draftTexts(d).some(t=>!t.trim())){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
+  if(act==='cancel'){draftConfirm=null;renderOutbox();return;}
+  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);btn.disabled=true;btn.textContent='posting…';
+    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after})}).then(r=>r.json()).then(j=>{
+      draftConfirm=null;draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
+      if(j.ok&&!j.dry){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));toast(j.parked?'posted, chat parked'+(j.waiting_on&&j.waiting_on.length?' (waiting on '+j.waiting_on.join(', ')+')':''):(j.done?'posted, chat closed':(after==='park'?(j.detail||'posted'):'posted')));}
+      renderOutbox();setTimeout(refresh,800);}).catch(()=>{draftConfirm=null;draftMsg[id]='server off';renderOutbox();});return;}
+  if(act==='discard'){if(draftArmDiscard!==id){draftArmDiscard=id;renderOutbox();setTimeout(()=>{if(draftArmDiscard===id){draftArmDiscard=null;renderOutbox();}},2500);return;}
+    draftArmDiscard=null;fetch('/api/outbox/discard',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{draftMsg[id]=j.ok?'':(j.detail||'failed');if(j.ok){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));}renderOutbox();setTimeout(refresh,300);}).catch(()=>{});}}
+function wireOutbox(){['#outrail'].forEach(q=>{const box=$(q);
+  box.addEventListener('click',e=>{const r=e.target.closest('button[data-rail]');if(r){outCollapsed=r.dataset.rail==='close';if(outRailKey)railSave(outRailKey,outCollapsed);railRender();return;}
+    const b=e.target.closest('[data-dact]');if(!b)return;const card=b.closest('.draft');if(card)draftAction(b.dataset.dact,card.dataset.id,b);});
+  box.addEventListener('keydown',e=>{if(!draftConfirm)return;const card=e.target.closest&&e.target.closest('.draft');if(!card||card.dataset.id!==draftConfirm)return;
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();draftConfirm=null;renderOutbox();return;}
+    if(e.key!=='Enter'||e.isComposing)return;
+    const onOther=e.target.tagName==='BUTTON'&&!e.altKey&&!e.shiftKey&&e.target.dataset.dact!=='post-none';if(onOther)return;
+    const which=e.altKey?'post-park':(e.shiftKey?'post-close':'post-none');const btn=card.querySelector('[data-dact="'+which+'"]');
+    e.preventDefault();if(btn&&!btn.disabled)draftAction(which,card.dataset.id,btn);});
+  box.addEventListener('input',e=>{const ta=e.target.closest&&e.target.closest('textarea.dtext');if(!ta)return;const card=ta.closest('.draft');const d=(DATA.drafts||[]).find(x=>x.id===card.dataset.id);if(!d)return;const t=draftTexts(d);t[+ta.dataset.i]=ta.value;DRAFT_EDITS[d.id]=t;});});
+}
+`;

@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { isViewSession, tmux } from './tmux.ts';
 import { CLAUDE_PROJECTS_DIR, SESSION_PREFIX } from './paths.ts';
 import type { LiveInfo } from './placements.ts';
 import { threadsFor } from './slack.ts';
+import { getSetting } from './settingsSchema.ts';
+import type Database from 'better-sqlite3';
 
 // Every live Claude chat in a workspace pane carries two labels beside its @name:
 //
@@ -200,7 +203,7 @@ export const LABEL_SYSTEM =
   'topic: 2-4 words naming the chat\'s SUBJECT (the system, feature, form, client, PR or bug it is about), ' +
   "not the activity: never 'Investigate', 'Question', 'Help', 'Fix', 'Chat'. Title Case, no punctuation " +
   "beyond a hyphen, at most 28 characters, distinct among a dozen similar chats. Examples: 'ACH Prenote " +
-  "Retry', 'NJ WR-30 Credential', 'Tmux Pane Topics', 'SYM767 CA SUI'. The subject is what the chat works " +
+  "Retry', 'NJ WR-30 Credential', 'Tmux Pane Topics', 'Acme CA SUI'. The subject is what the chat works " +
   'ON, never the medium it arrived by: a chat opened from a Slack thread, a GitHub issue, a PR link or a ' +
   "ticket is about what that thread, issue or PR concerns ('KS SIT Tax Code', never 'Slack Thread Link'). " +
   "When the user's messages are only a link or a command, take the subject from the thread's root message " +
@@ -319,7 +322,7 @@ export interface TopicDeps {
   transcriptPath(sid: string): string | null;
   stat(file: string): { size: number; mtimeMs: number } | null;
   readRange(file: string, from: number, to: number): string;
-  haiku(ask: string): Promise<string>;
+  haiku(ask: string, model?: string): Promise<string>;
   threads(sid: string): string[]; // Slack threads the chat owns, as 'label: root preview'
   log(msg: string): void;
 }
@@ -329,7 +332,7 @@ const num = (s: string | undefined) => (s && /^\d+$/.test(s) ? Number(s) : 0);
 
 function tmuxQuiet(args: string[]): void {
   try {
-    execFileSync('tmux', args, { stdio: 'ignore' });
+    tmux(args, { stdio: 'ignore' });
   } catch {
     /* pane vanished between listing it and writing to it */
   }
@@ -341,12 +344,12 @@ export const realTopicDeps: TopicDeps = {
   readPanes() {
     let out: string;
     try {
-      out = execFileSync('tmux', ['list-panes', '-a', '-F',
-        ['#{pane_id}', '#{session_name}', ...TOPIC_OPTIONS.map((o) => `#{${o}}`)].join(SEP)], { encoding: 'utf-8' });
+      out = tmux(['list-panes', '-a', '-F',
+        ['#{pane_id}', '#{session_name}', ...TOPIC_OPTIONS.map((o) => `#{${o}}`)].join(SEP)]);
     } catch {
       return [];
     }
-    return out.split('\n').filter(Boolean).map((l) => {
+    return out.split('\n').filter(Boolean).filter((l) => !isViewSession(l.split(SEP)[1])).map((l) => {
       const p = l.split(SEP);
       return {
         pane_id: p[0], session_name: p[1] ?? '', topic: p[2] ?? '', stage: p[3] ?? '', sid: p[4] ?? '',
@@ -402,11 +405,11 @@ export const realTopicDeps: TopicDeps = {
       fs.closeSync(fd);
     }
   },
-  haiku(ask) {
-    // --safe-mode keeps the call from firing Will's hooks, --no-session-persistence
+  haiku(ask, model = 'haiku') {
+    // --safe-mode keeps the call from firing the user's hooks, --no-session-persistence
     // keeps it from being indexed as a session. Run from $HOME, outside any repo.
     return new Promise((resolve, reject) => {
-      execFile('claude', ['-p', '--safe-mode', '--no-session-persistence', '--model', 'haiku',
+      execFile('claude', ['-p', '--safe-mode', '--no-session-persistence', '--model', model,
         '--system-prompt', LABEL_SYSTEM, ask],
         { cwd: os.homedir(), timeout: HAIKU_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
         (err, stdout) => (err ? reject(err) : resolve(stdout)));
@@ -428,17 +431,48 @@ export const realTopicDeps: TopicDeps = {
 
 const sec = (ms: number) => String(Math.floor(ms / 1000));
 
+// The pane_labels / pane_label_model settings. Read through a function so a
+// change applies on the next tick without recreating the namer.
+export interface PaneLabelConfig {
+  enabled: boolean;
+  model: string;
+}
+
+export function paneLabelConfig(db: Database.Database): PaneLabelConfig {
+  return { enabled: getSetting(db, 'pane_labels'), model: getSetting(db, 'pane_label_model') };
+}
+
+const DEFAULT_LABEL_CONFIG = (): PaneLabelConfig => ({ enabled: true, model: 'haiku' });
+
 export class PaneTopics {
   private inflight = new Set<string>(); // pane ids with a namer running
   private retryAt = new Map<string, number>(); // pane id -> earliest next attempt
   private headless = new Set<string>(); // session ids that turned out to be `claude -p`
 
-  constructor(private readonly deps: TopicDeps = realTopicDeps, private readonly prefix: string = SESSION_PREFIX) {}
+  constructor(
+    private readonly deps: TopicDeps = realTopicDeps,
+    private readonly prefix: string = SESSION_PREFIX,
+    private readonly config: () => PaneLabelConfig = DEFAULT_LABEL_CONFIG,
+  ) {}
 
   // One pass: clear panes whose chat is gone, start namers where a rule fires.
   // Never awaits the namers, so a tick is as cheap as a tmux listing plus a stat per chat.
   tick(live: Map<string, LiveInfo>, now: number = Date.now()): { started: number; cleared: number } {
+    const cfg = this.config();
     const rows = this.deps.readPanes();
+    if (!cfg.enabled) {
+      // Labels off: no model calls, and whatever was written comes off the borders.
+      let off = 0;
+      for (const row of rows) {
+        if (!row.session_name.startsWith(this.prefix)) continue;
+        if (row.sid || row.topic || row.stage) {
+          this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
+          this.retryAt.delete(row.pane_id);
+          off++;
+        }
+      }
+      return { started: 0, cleared: off };
+    }
     const chatByPane = new Map<string, LiveInfo>();
     for (const info of live.values()) {
       if (info.agent === 'claude' && info.running && info.tmux_session.startsWith(this.prefix)) chatByPane.set(info.pane_id, info);
@@ -475,13 +509,13 @@ export class PaneTopics {
       }
       this.inflight.add(row.pane_id);
       started++;
-      void this.run(row.pane_id, chat.session_id, file, st, cur, now).finally(() => this.inflight.delete(row.pane_id));
+      void this.run(row.pane_id, chat.session_id, file, st, cur, now, cfg.model).finally(() => this.inflight.delete(row.pane_id));
     }
     return { started, cleared };
   }
 
   private async run(
-    paneId: string, sid: string, file: string, st: { size: number; mtimeMs: number }, cur: PaneLabels, now: number,
+    paneId: string, sid: string, file: string, st: { size: number; mtimeMs: number }, cur: PaneLabels, now: number, model: string,
   ): Promise<void> {
     try {
       const tail = this.deps.readRange(file, Math.max(0, st.size - TAIL_BYTES), st.size);
@@ -514,7 +548,7 @@ export class PaneTopics {
 
       let out: string;
       try {
-        out = await this.deps.haiku(ask);
+        out = await this.deps.haiku(ask, model);
       } catch (e) {
         this.retryAt.set(paneId, Date.now() + RETRY_MS);
         this.deps.log(`${paneId} namer failed: ${(e as Error).message}`);

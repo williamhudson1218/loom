@@ -1,14 +1,23 @@
-import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, Notification } from 'electron';
-import { startPick, stopHelper } from './picker.ts';
+import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, Notification, shell, screen } from 'electron';
+import { loadWinState, saveWinState, restoreBounds } from '../src/winstate.ts';
+import { startPick, stopHelper, axTrusted } from './picker.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createServer, SERVER_PORT, startGhTicks } from '../src/server.ts';
-import { openDb, getSlackHotkey } from '../src/db.ts';
+import { createServer, SERVER_PORT, startGhTicks, loomWriteHeaders } from '../src/server.ts';
+import { attachTerminalBridge } from '../src/ptybridge.ts';
+import { openDb, getSlackHotkey, loadTmuxSocketSetting } from '../src/db.ts';
+import { getSetting, onSettingChanged } from '../src/settingsSchema.ts';
+import { menuAccelerators } from '../src/keymap.ts';
+import { composePath, resolveTmuxTmpdir, loginEnv, shouldAutostartOrchestrator } from '../src/appenv.ts';
+import { practice, setShortcutHost, normalizeAccelerator } from '../src/routes/shortcut.ts';
+import { parseSlackThread, findOwner, defaultGotoDeps } from '../src/slackgoto.ts';
+import { getChannelProjects } from '../src/slackowner.ts';
 import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
+import { currentTerminal, setInsideRaiser } from '../src/terminal.ts';
 import { SESSION_PREFIX } from '../src/paths.ts';
 import { trayIcon } from './trayIcon.ts';
 import {
@@ -24,22 +33,59 @@ import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { PaneTints, desiredTints } from '../src/panetint.ts';
 import { nameNewPanes } from '../src/panenames.ts';
-import { PaneTopics } from '../src/panetopics.ts';
+import { PaneTopics, paneLabelConfig } from '../src/panetopics.ts';
 import { makeCompactor, compactEnabled, setCompactEnabled } from '../src/compact.ts';
 import { defaultRunner } from '../src/analyzer.ts';
-import { scanTick, triageTick } from '../src/em/index.ts';
+import { startWatcherTicks } from '../src/watchers/engine.ts';
+import { startManagedTicks } from '../src/managed.ts';
+import { LiveIndexer, indexedMtimes } from '../src/liveindex.ts';
+import { isOrchestratorRef } from '../src/orchsession.ts';
+import { orchSessionId } from '../src/orchserver.ts';
+import { tmux } from '../src/tmux.ts';
+import { configureOrchestrator } from '../src/orchserver.ts';
+import { setOrchNotifier, orchSettings } from '../src/orchestrator.ts';
+import { notifyUser, setAppNotifier, type NotifyTarget } from '../src/notify.ts';
 
 // Finder-launched apps inherit a minimal PATH; restore the dirs we shell out to
-// (claude, tmux, osascript). Both Homebrew prefixes are included so this works on
-// Apple Silicon (/opt/homebrew/bin) and Intel (/usr/local/bin) Macs.
-// TMUX_TMPDIR so tmux finds the running server socket.
+// (claude, tmux, gh, osascript): the user's extra_path, the built-ins (both
+// Homebrew prefixes, so Apple Silicon and Intel both work), then the login
+// shell's PATH once it has answered. TMUX_TMPDIR (tmux_tmpdir) so tmux finds
+// the running server socket.
 const home = os.homedir();
-process.env.PATH = [
-  path.join(home, '.local/bin'),
-  '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
-  process.env.PATH || '',
-].join(':');
-process.env.TMUX_TMPDIR = process.env.TMUX_TMPDIR || '/tmp';
+const startupPath = process.env.PATH || '';
+const startupTmpdir = process.env.TMUX_TMPDIR || '';
+function readEnvSettings(): { extra: string[]; tmpdir: string } {
+  try {
+    const db = openDb();
+    try {
+      return { extra: getSetting(db, 'extra_path', { env: false }), tmpdir: getSetting(db, 'tmux_tmpdir', { env: false }) };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return { extra: [], tmpdir: 'auto' }; // no DB yet: built-ins only
+  }
+}
+let loginPathCache = '';
+let loginTmpdirCache = '';
+function applyEnv(): void {
+  const s = readEnvSettings();
+  process.env.PATH = composePath({ home, extra: s.extra, loginPath: loginPathCache, current: startupPath });
+  process.env.TMUX_TMPDIR = resolveTmuxTmpdir(s.tmpdir, loginTmpdirCache, startupTmpdir);
+}
+applyEnv();
+// The login shell takes a moment (it sources the user's rc files): fold its answer in when it arrives.
+void loginEnv().then((l) => {
+  if (!l) return;
+  loginPathCache = l.path;
+  loginTmpdirCache = l.tmuxTmpdir;
+  applyEnv();
+});
+// A Dock launch can hand Loom LANG=C.UTF-8, which macOS has no locale for: tmux
+// clients and capture-pane then treat output as ASCII and print '_' for Unicode.
+if (!/UTF-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || '') && !/^[a-z]{2}_[A-Z]{2}\.UTF-?8$/i.test(process.env.LANG || '')) process.env.LC_CTYPE = 'en_US.UTF-8';
+// Before anything talks to tmux: which server (socket) Loom drives.
+loadTmuxSocketSetting();
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -52,12 +98,46 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function createWindow(): void {
+  // Reopen at the size and place it was last closed at (src/winstate.ts).
+  const savedWin = loadWinState();
+  const startBounds = restoreBounds(savedWin, [screen.getPrimaryDisplay(), ...screen.getAllDisplays()].map((d) => d.workArea));
   win = new BrowserWindow({
-    width: 1100,
-    height: 840,
+    ...startBounds,
     title: 'Loom',
     backgroundColor: '#0d0f15',
     show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+  });
+  if (savedWin?.maximized) win.maximize();
+  if (savedWin?.fullScreen) win.setFullScreen(true);
+  {
+    const w = win;
+    let t: NodeJS.Timeout | undefined;
+    const save = (): void => {
+      if (w.isDestroyed() || w.isMinimized()) return;
+      saveWinState({ bounds: w.getNormalBounds(), maximized: w.isMaximized(), fullScreen: w.isFullScreen() });
+    };
+    const soon = (): void => {
+      if (t) clearTimeout(t);
+      t = setTimeout(save, 500);
+    };
+    for (const ev of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'] as const) w.on(ev as 'resize', soon);
+    w.on('close', () => {
+      if (t) clearTimeout(t);
+      save();
+    });
+  }
+  // A file dropped anywhere must never navigate the window to it (or any link off Loom's own origin).
+  const own = `http://localhost:${SERVER_PORT}/`;
+  win.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith(own)) e.preventDefault();
+  });
+  // target=_blank links (PRs, Slack threads, docs) must open in the user's own
+  // browser or app. Electron's default is a bare child BrowserWindow, which hangs
+  // on Slack's app-redirect page.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url) && !url.startsWith(own)) void shell.openExternal(url);
+    return { action: 'deny' };
   });
   win.loadURL(`http://localhost:${SERVER_PORT}/`);
   win.once('ready-to-show', () => win?.show());
@@ -69,6 +149,28 @@ function createWindow(): void {
   });
 }
 
+// Server-side notifications (parked replies, watchers, Needs you) come here so a click opens the chat.
+setAppNotifier(({ title, body, target, sound }) => {
+  if (!Notification.isSupported()) throw new Error('notifications unavailable');
+  const n = new Notification({
+    title,
+    body,
+    silent: sound === 'off',
+    ...(sound && sound !== 'off' && sound !== 'system' ? { sound } : {}),
+  });
+  n.on('click', () => {
+    showWindow();
+    const js =
+      target && 'orch' in target
+        ? 'typeof selectOrch === "function" && selectOrch()'
+        : target
+          ? 'typeof window.loomOpenChat === "function" && window.loomOpenChat(' + JSON.stringify(target.agent) + ',' + JSON.stringify(target.sid) + ')'
+          : '';
+    if (js) void win?.webContents.executeJavaScript(js).catch(() => {});
+  });
+  n.show();
+});
+
 function showWindow(): void {
   if (!win || win.isDestroyed()) createWindow();
   else {
@@ -76,6 +178,9 @@ function showWindow(): void {
     win.focus();
   }
 }
+
+// "Jump" with the terminal set to inside Loom: raise this window; the page opens the chat.
+setInsideRaiser(showWindow);
 
 const paneTints = new PaneTints();
 
@@ -86,6 +191,19 @@ const WORKING_MS = 10_000;
 // want the same three things — the chat rows, the live pane join, and each
 // transcript's mtime — so computing them separately would double the DB open, the
 // `list-panes` and the full `ps` walk on every 4s tick.
+function readSetting<K extends 'ghostty_attach_cmd' | 'pane_tint' | 'pane_tint_base'>(key: K): ReturnType<typeof getSetting<K>> | undefined {
+  try {
+    const db = openDb();
+    try {
+      return getSetting(db, key);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 function trayTick(): { live: number; working: number; yourTurn: number } {
   try {
     const db = openDb();
@@ -128,7 +246,7 @@ function trayTick(): { live: number; working: number; yourTurn: number } {
     }
 
     paneTints.apply(
-      desiredTints(live, lastActive, now, SESSION_PREFIX),
+      desiredTints(live, lastActive, now, SESSION_PREFIX, { enabled: readSetting('pane_tint'), base: readSetting('pane_tint_base') }),
       new Set(panes.map((p) => p.pane_id)),
     );
 
@@ -159,9 +277,12 @@ function clearPaneTints(): void {
 function doRestore(): void {
   try {
     const r = restore({ prefix: SESSION_PREFIX });
-    const g = r.attach.length
-      ? attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows })
-      : { ok: true, detail: 'every session already has a tab' };
+    // Tab rehoming is Ghostty-only; for any other terminal restore just rebuilds tmux.
+    const g = !r.attach.length
+      ? { ok: true, detail: 'every session already has a tab' }
+      : currentTerminal() === 'ghostty'
+        ? attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows, attachCmd: readSetting('ghostty_attach_cmd') })
+        : { ok: true, detail: 'tmux sessions rebuilt; attach to them from your terminal' };
     const detail =
       `Recreated ${r.restored.length} session(s)${r.restored.length ? ': ' + r.restored.join(', ') : ''}\n` +
       (r.skipped.length ? `Already running: ${r.skipped.join(', ')}\n` : '') +
@@ -205,38 +326,178 @@ function notify(body: string): void {
   if (Notification.isSupported()) new Notification({ title: 'Loom', body, silent: true }).show();
 }
 
-async function threadGoto(url: string): Promise<void> {
+async function threadGoto(url: string, picked: { text?: string; author?: string } = {}): Promise<void> {
   try {
     const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/slack/thread-goto`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url }),
+      headers: { 'content-type': 'application/json', ...loomWriteHeaders() },
+      body: JSON.stringify({ url, text: picked.text, author: picked.author }),
     });
-    const out = (await r.json()) as { ok: boolean; detail?: string };
+    const out = (await r.json()) as { ok: boolean; detail?: string; action?: string };
     if (!out.ok) notify(out.detail || 'Could not open the chat for this thread');
+    // No chat owned the thread, so one was started: show it in Loom's main area
+    // (the board picks the new start up on its next poll; nudge it now).
+    else if (out.action === 'started') {
+      showWindow();
+      void win?.webContents.executeJavaScript('typeof refresh === "function" && refresh()').catch(() => {});
+    }
   } catch (e) {
     notify('Slack thread lookup failed: ' + (e as Error).message);
   }
 }
 
+// The orchestrator's MCP server, as a command Claude Code can spawn. In the
+// packaged app the bundle sits in app.asar.unpacked (see package.json asarUnpack).
+let orchConfigured = false;
+function orchShouldRun(): boolean {
+  try {
+    const db = openDb();
+    try {
+      return shouldAutostartOrchestrator(orchSettings.enabled(db), getSetting(db, 'orchestrator_autostart', { env: false }));
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+// Supervision runs only once configureOrchestrator has given it its files, so
+// not configuring (orchestrator off, or autostart off) is what keeps it down.
+function configureOrchSupervision(): void {
+  if (orchConfigured || !orchShouldRun()) return;
+  const script = path.join(__dirname, 'orchmcp.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+  try {
+    configureOrchestrator({ command: process.execPath, args: [script], env: { ELECTRON_RUN_AS_NODE: '1' } });
+    orchConfigured = true;
+  } catch (e) {
+    console.error('[loom] orchestrator setup failed:', (e as Error).message);
+  }
+}
+
+function startOrchestratorSession(): void {
+  configureOrchSupervision();
+  // A new Needs you item: a macOS notification that opens the orchestrator view.
+  // The phone sees the orchestrator's own message through Remote Control.
+  setOrchNotifier((item) => {
+    let target: NotifyTarget;
+    if (item.ref_type === 'chat' && item.ref_id) {
+      const i = item.ref_id.indexOf(':');
+      const head = i > 0 ? item.ref_id.slice(0, i) : '';
+      target = head === 'claude' || head === 'codex' ? { agent: head, sid: item.ref_id.slice(i + 1) } : { agent: '', sid: item.ref_id };
+    } else target = { orch: true };
+    notifyUser({ title: 'Needs you: ' + item.title, body: item.why || 'The orchestrator needs you.', target });
+  });
+}
+
+// What a press would do, for practice mode: the same lookups the real jump makes,
+// stopping before it acts.
+async function practiceResult(url: string, picked: { text?: string; author?: string } = {}): Promise<void> {
+  const ref = parseSlackThread(url);
+  if (!ref) {
+    practice.complete({ ok: false, detail: 'That is not a Slack message link.' });
+    return;
+  }
+  let wouldDo: 'jump' | 'start' = 'start';
+  try {
+    const owner = await findOwner(ref, defaultGotoDeps(() => ({}), () => null));
+    if (owner) wouldDo = 'jump';
+  } catch {
+    /* lookup failed: report the start case */
+  }
+  let project = '';
+  try {
+    const db = openDb();
+    try {
+      project = getChannelProjects(db)[ref.channel] ?? '';
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* no mapping known */
+  }
+  practice.complete({ ok: true, author: picked.author, channel: ref.channel, wouldDo, project });
+}
+
 function slackThreadGoto(): void {
-  void startPick({ notify, goto: threadGoto });
+  if (practice.armed()) {
+    // Practice: the real pick, but the result goes to the wizard and nothing is opened.
+    void startPick({
+      notify: (body) => void practice.complete({ ok: false, detail: body }),
+      goto: practiceResult,
+      pasteFallback: () => pasteFallbackOn(),
+    });
+    return;
+  }
+  void startPick({ notify, goto: threadGoto, pasteFallback: () => pasteFallbackOn() });
+}
+
+function pasteFallbackOn(): boolean {
+  try {
+    const db = openDb();
+    try {
+      return getSetting(db, 'slack_paste_fallback', { env: false });
+    } finally {
+      db.close();
+    }
+  } catch {
+    return true;
+  }
+}
+
+/** Register `accel`; false when the system or another app holds it (or it is invalid). */
+function tryGlobal(accel: string, onPress: () => void = slackThreadGoto): boolean {
+  try {
+    return globalShortcut.register(accel, onPress);
+  } catch {
+    return false; // an invalid accelerator throws
+  }
 }
 
 function registerSlackHotkey(): string {
   const accel = slackHotkey();
   if (accel.toLowerCase() === 'off') return '';
-  try {
-    if (globalShortcut.register(accel, slackThreadGoto)) return accel;
-  } catch {
-    /* an invalid accelerator throws */
-  }
+  if (tryGlobal(accel)) return accel;
   console.error(`[loom] could not register the Slack thread hotkey ${accel}`);
   return '';
 }
 
+/** slack_goto_hotkey changed: swap the global shortcut live. The old one stays if the new one is refused. */
+function reRegisterSlackHotkey(): void {
+  const next = slackHotkey();
+  if (next.toLowerCase() === 'off') {
+    if (slackAccel) globalShortcut.unregister(slackAccel);
+    slackAccel = '';
+  } else if (next !== slackAccel) {
+    if (tryGlobal(next)) {
+      if (slackAccel) globalShortcut.unregister(slackAccel);
+      slackAccel = next;
+    } else {
+      notify(`Could not register ${next}; another app or the system holds it. Keeping ${slackAccel || 'no shortcut'}.`);
+    }
+  }
+  buildTrayMenu();
+}
+
+setShortcutHost({
+  // The conflict check: would register() succeed? Loom's own current shortcut counts as free.
+  tryRegister(accel) {
+    const n = normalizeAccelerator(accel);
+    if (n && slackAccel && normalizeAccelerator(slackAccel) === n) return true;
+    if (!tryGlobal(accel, () => {})) return false;
+    globalShortcut.unregister(accel);
+    return true;
+  },
+});
+
 function buildTray(): void {
   tray = new Tray(trayIcon());
+  tray.on('click', showWindow);
+  buildTrayMenu();
+}
+
+function buildTrayMenu(): void {
+  if (!tray) return;
   trayMenu = Menu.buildFromTemplate([
     { label: 'Open Loom', click: showWindow },
     { type: 'separator' },
@@ -260,7 +521,6 @@ function buildTray(): void {
     { label: 'Quit Loom', click: () => { quitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(trayMenu);
-  tray.on('click', showWindow);
   updateTray();
 }
 
@@ -280,13 +540,65 @@ app.on('before-quit', () => {
   clearPaneTints();
 });
 
+ipcMain.handle('loom:pick-folder', async (event) => {
+  // Only Loom's own page may ask.
+  if (!event.senderFrame?.url.startsWith(`http://localhost:${SERVER_PORT}/`)) return '';
+  const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] };
+  const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+  return r.canceled ? '' : (r.filePaths[0] ?? '');
+});
+
+// Accessibility for the Slack reader, polled by the shortcut step. Only Loom's own page may ask.
+const fromOwnPage = (event: Electron.IpcMainInvokeEvent) => !!event.senderFrame?.url.startsWith(`http://localhost:${SERVER_PORT}/`);
+ipcMain.handle('loom:ax-status', async (event) => (fromOwnPage(event) ? axTrusted() : { trusted: false, helperDown: false }));
+ipcMain.handle('loom:open-accessibility', async (event) => {
+  if (fromOwnPage(event)) await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+});
+
 app.whenReady().then(() => {
-  createServer().listen(SERVER_PORT, '127.0.0.1', () => {
+  // Standard app menu with Settings… (Cmd+,) opening the Settings tab. Keeps the
+  // default roles so copy/paste, window and edit shortcuts still work.
+  const openSettings = () => {
+    showWindow();
+    void win?.webContents.executeJavaScript('typeof openSettings === "function" && openSettings()').catch(() => {});
+  };
+  // Menu accelerators come from the keymap registry (src/keymap.ts), so the menu
+  // and the Help list cannot disagree. Actions the menu can run are mapped here.
+  // ⌘N from anywhere, the terminal included: the menu accelerator fires before the page sees the key.
+  const openNewThread = () => {
+    showWindow();
+    void win?.webContents.executeJavaScript('typeof openComposer === "function" && !composerOpen && openComposer()').catch(() => {});
+  };
+  const menuActions: Record<string, () => void> = { settings: openSettings, newThread: openNewThread };
+  const accel = (action: string) => menuAccelerators().find((m) => m.action === action)?.accelerator;
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: app.name, submenu: [{ role: 'about' }, { type: 'separator' }, { label: 'Settings…', accelerator: accel('settings'), click: menuActions.settings }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'File', submenu: [{ label: 'New Thread', accelerator: accel('newThread'), click: menuActions.newThread }, { type: 'separator' }, { role: 'close' }] },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ]));
+  const server = createServer();
+  // The embedded terminal: WebSocket + node-pty on this same server. Quitting
+  // closes Loom's views of the chats; the chats themselves keep running in tmux.
+  const stopTerminals = attachTerminalBridge(server, { port: SERVER_PORT });
+  app.on('will-quit', stopTerminals);
+  server.listen(SERVER_PORT, '127.0.0.1', () => {
     createWindow();
   });
-  // PR pipelines + ship groups (gh/git). Same reason as the EM ticks below: the
-  // server.ts auto-run block never runs in the bundle, so they start here.
+  // PR pipelines + ship groups (gh/git). The server.ts auto-run block never runs
+  // in the bundle (its import.meta.url guard is false there), so they start here.
   startGhTicks();
+  // Watchers (src/watchers/): Slack, chats and PRs, on one 15 s tick. Polling Slack
+  // costs no model usage; a chat starts only when a Live watcher fires. Same bundle
+  // reason as above; the runtime (snapshot, tmux, Slack) is registered by server.ts.
+  startWatcherTicks();
+  // Reap Loom-managed windows whose agent has exited (src/managed.ts).
+  startManagedTicks();
+  // The orchestrator session (src/orchsession.ts): started on the board tick that
+  // startGhTicks runs, restarted when it dies. Its MCP server is dist/orchmcp.js,
+  // run by this same binary as plain node; asarUnpack keeps it a real file.
+  startOrchestratorSession();
 
   // The real crash recovery. before-quit handles a clean exit, but nothing fires
   // on SIGKILL, so a killed Loom leaves stale tints on panes it will never see
@@ -295,6 +607,12 @@ app.whenReady().then(() => {
   clearPaneTints();
 
   slackAccel = registerSlackHotkey();
+  // Live: a new slack_goto_hotkey takes effect without a restart.
+  onSettingChanged((c) => {
+    if (c.key === 'slack_goto_hotkey') reRegisterSlackHotkey();
+    else if (c.key === 'orchestrator_enabled' || c.key === 'orchestrator_autostart') configureOrchSupervision();
+    else if (c.key === 'extra_path' || c.key === 'tmux_tmpdir') applyEnv();
+  });
   buildTray();
   app.setLoginItemSettings({ openAtLogin: true });
 
@@ -327,7 +645,33 @@ app.whenReady().then(() => {
   // Topic + stage labels for every live chat pane (see src/panetopics.ts). The
   // tick is a tmux listing and a stat per chat; haiku is only called when a rule
   // fires, at most MAX_CONCURRENT at once, and never awaited here.
-  const paneTopics = new PaneTopics();
+  const paneTopics = new PaneTopics(undefined, SESSION_PREFIX, () => {
+    const db = openDb();
+    try {
+      return paneLabelConfig(db);
+    } finally {
+      db.close();
+    }
+  });
+  // Index a live session the moment it appears (and keep its row fresh), rather
+  // than waiting for the 10-minute full pass. One transcript at a time.
+  const liveIndexer = new LiveIndexer();
+  setInterval(() => {
+    try {
+      const live = liveSessions();
+      const db = openDb();
+      let indexed: Map<string, number>;
+      try {
+        indexed = indexedMtimes(db);
+      } finally {
+        db.close();
+      }
+      const orchSid = orchSessionId();
+      liveIndexer.tick([...live.values()], indexed, Date.now(), (l) => isOrchestratorRef(l, orchSid, { run: tmux }));
+    } catch (e) {
+      console.error('[loom] live index failed:', (e as Error).message);
+    }
+  }, 5 * 1000);
   setInterval(() => {
     try {
       paneTopics.tick(liveSessions());
@@ -335,36 +679,4 @@ app.whenReady().then(() => {
       console.error('[loom] pane topics failed:', (e as Error).message);
     }
   }, 5 * 1000);
-
-  // EM ticks. These must live HERE, not in src/server.ts's `import.meta.url`
-  // block — that guard is deliberately false in the bundle, so anything inside
-  // it never runs in the packaged app, which is the actual always-on daemon.
-  //
-  // Fast tick: signals + detectors only, no model calls. A tick with nothing
-  // wrong costs nothing, so it is free to run often.
-  setInterval(() => {
-    const db = openDb();
-    try {
-      scanTick(db, Object.fromEntries(liveSessions()), Date.now());
-    } catch (e) {
-      console.error('[loom] em scan failed:', (e as Error).message);
-    } finally {
-      db.close();
-    }
-  }, 30 * 1000);
-
-  // Slow tick: one model call per NEW finding. Serialized against itself so a
-  // slow pass cannot overlap the next one and double-handle a finding.
-  let triaging = false;
-  setInterval(() => {
-    if (triaging) return;
-    triaging = true;
-    const db = openDb();
-    void triageTick(db, Date.now(), { live: Object.fromEntries(liveSessions()) })
-      .catch((e: Error) => console.error('[loom] em triage failed:', e.message))
-      .finally(() => {
-        db.close();
-        triaging = false;
-      });
-  }, 5 * 60 * 1000);
 });

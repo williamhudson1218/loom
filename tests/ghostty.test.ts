@@ -128,7 +128,7 @@ describe('planTabAttach across windows', () => {
     expect(plan.windows[0].assignments.map((a) => a.reuse?.tab_index ?? null)).toEqual([1, null]);
     expect(plan.windows[1].window).toBeNull();
     expect(plan.windows[1].bounds).toEqual({ x: 900, y: 0, w: 800, h: 600 });
-    const s = buildAttachScript(plan);
+    const s = buildAttachScript(plan, 'ta');
     expect(s).toContain('keystroke "n" using command down');
     expect(s).toContain('set position of window 1 to {900, 0}');
     expect(s).toContain('set size of window 1 to {800, 600}');
@@ -177,7 +177,7 @@ describe('orderSessionsByTabs', () => {
 describe('buildAttachScript', () => {
   it('clicks a reused tab and types its attach command', () => {
     const tabs = [tab('loom-a', 1)];
-    const s = buildAttachScript(planTabAttach({ sessions: ['loom-a'], tabs, attached: [] }));
+    const s = buildAttachScript(planTabAttach({ sessions: ['loom-a'], tabs, attached: [] }), 'ta');
     expect(s).toContain('tell application "Ghostty" to activate');
     expect(s).toContain('click radio button 1 of tab group 1 of window 1');
     expect(s).toContain('keystroke "ta loom-a"');
@@ -187,7 +187,7 @@ describe('buildAttachScript', () => {
   it('selects the last tab before opening new ones so they append in order', () => {
     const tabs = [tab('loom-a', 1)];
     const plan = planTabAttach({ sessions: ['loom-a', 'loom-b', 'loom-c'], tabs, attached: [] });
-    const s = buildAttachScript(plan);
+    const s = buildAttachScript(plan, 'ta');
     const lines = s.split('\n');
     const firstNew = lines.findIndex((l) => l.includes('keystroke "t" using command down'));
     expect(lines.slice(0, firstNew).some((l) => l.includes('click radio button 1'))).toBe(true);
@@ -201,7 +201,7 @@ describe('buildAttachScript', () => {
 
   it('escapes double quotes and backslashes in session names', () => {
     const plan = planTabAttach({ sessions: ['loom-a"b\\c'], tabs: [], attached: [] });
-    expect(buildAttachScript(plan)).toContain('keystroke "ta loom-a\\"b\\\\c"');
+    expect(buildAttachScript(plan, 'ta')).toContain('keystroke "ta loom-a\\"b\\\\c"');
   });
 });
 
@@ -213,7 +213,7 @@ describe('buildAttachScript window addressing', () => {
     // Read-time z-order: loom-c's window in front, loom-e's second, loom-a's third.
     const tabs = [tab('loom-c', 1, 1), tab('loom-e', 1, 2), tab('loom-a', 1, 3), tab('~', 2, 3)];
     const plan = planTabAttach({ sessions: ['loom-a', 'loom-b', 'loom-c', 'loom-e'], tabs, saved, attached: [] });
-    const s = buildAttachScript(plan);
+    const s = buildAttachScript(plan, 'ta');
     // [1,2,3] -raise 3-> [3,1,2] -raise live1 (now at 2)-> [1,3,2] -raise live2 (now at 3)-> [2,1,3]
     expect(s.match(/AXRaise" of window \d+/g)).toEqual([
       'AXRaise" of window 3',
@@ -231,7 +231,7 @@ describe('buildAttachScript window addressing', () => {
     const tabs = [tab('loom-x', 1, 1), tab('loom-a', 2, 1)];
     const plan = planTabAttach({ sessions: ['loom-new', 'loom-a'], tabs, saved, attached: ['loom-x'] });
     expect(plan.windows[0].window).toBeNull();
-    const s = buildAttachScript(plan);
+    const s = buildAttachScript(plan, 'ta');
     // the live window was index 1 at read time; after Cmd-N it is index 2
     expect(s.indexOf('keystroke "n" using command down')).toBeLessThan(s.indexOf('AXRaise'));
     expect(s).toContain('AXRaise" of window 2');
@@ -247,6 +247,6 @@ describe('attachGhosttyTabs', () => {
   it('dry-run returns the script and the reuse counts without running osascript', () => {
     const r = attachGhosttyTabs(['loom-x', 'loom-y'], { dryRun: true, tabs: [tab('loom-x', 1)], attached: [] });
     expect(r).toMatchObject({ ok: true, reused: 1, opened: 1, leftover: 0 });
-    expect(r.script).toContain('keystroke "ta loom-x"');
+    expect(r.script).toContain('keystroke "tmux attach -t loom-x"');
   });
 });

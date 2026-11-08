@@ -1,8 +1,8 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, type Rectangle } from 'electron';
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, type Rectangle } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import readline from 'node:readline';
-import { pickedThread } from '../src/slackgoto.ts';
+import { pickedThread, parseSlackThread } from '../src/slackgoto.ts';
 
 // Pick mode for "open the chat for this Slack thread", shaped like the macOS
 // screenshot crosshairs: the hotkey covers every display with a transparent,
@@ -17,7 +17,7 @@ import { pickedThread } from '../src/slackgoto.ts';
 
 export interface AxRect { x: number; y: number; w: number; h: number }
 type HitReply =
-  | { ok: true; url: string; rect: AxRect; inThread: boolean; rootUrl: string | null }
+  | { ok: true; url: string; rect: AxRect; inThread: boolean; rootUrl: string | null; text?: string; author?: string }
   | { ok: false; reason: 'not_message' | 'covered' | 'no_slack' | 'untrusted' | 'bad_request' | 'helper_down' };
 
 const HIT_EVERY_MS = 100; // ~10 hit-tests a second while the mouse moves
@@ -88,7 +88,8 @@ const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
     background:rgba(0,0,0,0.01)}
   #box{position:fixed;display:none;border:2px solid #4c8dff;border-radius:6px;
     background:rgba(76,141,255,0.14);box-shadow:0 0 0 1px rgba(0,0,0,0.35);pointer-events:none}
-  #hint{position:fixed;top:14px;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:8px;
+  /* bottom, not top: top-center is under the camera notch on MacBooks */
+  #hint{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:8px;
     font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:rgba(20,22,30,0.88);pointer-events:none}
 </style></head><body><div id="box"></div><div id="hint"></div><script>
   const { ipcRenderer } = require('electron');
@@ -180,7 +181,85 @@ async function track(): Promise<void> {
 
 export interface PickDeps {
   notify: (body: string) => void;
-  goto: (url: string) => Promise<void>; // POST the parent permalink to the server
+  goto: (url: string, picked?: { text?: string; author?: string }) => Promise<void>; // POST the parent permalink (and the clicked message) to the server
+  /** slack_paste_fallback: when the message cannot be read, offer a field to paste its link. */
+  pasteFallback?: () => boolean;
+}
+
+/**
+ * Whether the Slack reader may use Accessibility right now, without prompting.
+ * The grant belongs to the helper, not to Loom.app, so this asks the helper.
+ * `helper_down` means it could not start (not built, or killed).
+ */
+export async function axTrusted(): Promise<{ trusted: boolean; helperDown: boolean }> {
+  const t = await ask<{ trusted?: boolean; reason?: string }>({ op: 'trust' });
+  return { trusted: t.trusted === true, helperDown: t.reason === 'helper_down' };
+}
+
+/* ------------------------------------------------------------ paste-the-link fallback */
+
+const PASTE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
+  body{margin:0;padding:18px;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#e8eaf0;background:#161a24}
+  p{margin:0 0 10px;line-height:1.4} input{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #3a4258;background:#0d0f15;color:inherit;font:inherit}
+  #err{color:#ff8a8a;min-height:16px;margin:6px 0} .row{display:flex;gap:8px;justify-content:flex-end}
+  button{padding:6px 14px;border-radius:6px;border:1px solid #3a4258;background:#222a3b;color:inherit;font:inherit} button.p{background:#4c8dff;border-color:#4c8dff;color:#fff}
+</style></head><body><p id="why"></p><input id="u" placeholder="https://workspace.slack.com/archives/C.../p..." autofocus><div id="err"></div>
+<div class="row"><button id="c">Cancel</button><button id="ok" class="p">Open chat</button></div><script>
+  const { ipcRenderer } = require('electron');
+  const init = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+  const u = document.getElementById('u'); u.value = init.prefill || '';
+  document.getElementById('why').textContent = init.why;
+  const send = () => ipcRenderer.send('loom-paste-link', u.value.trim());
+  document.getElementById('ok').onclick = send;
+  document.getElementById('c').onclick = () => ipcRenderer.send('loom-paste-link', '');
+  u.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); if (e.key === 'Escape') ipcRenderer.send('loom-paste-link', ''); });
+  ipcRenderer.on('err', (_e, t) => { document.getElementById('err').textContent = t; });
+</script></body></html>`;
+
+let pasteWin: BrowserWindow | null = null;
+
+/**
+ * Ask for a Slack message link in a small focusable window, prefilled when the
+ * clipboard already holds one. Resolves to the thread permalink, or null when
+ * cancelled. Only a Slack message link is accepted.
+ */
+export function askPasteLink(why: string): Promise<string | null> {
+  if (pasteWin && !pasteWin.isDestroyed()) pasteWin.destroy();
+  const clip = clipboard.readText();
+  const prefill = parseSlackThread(clip) ? clip.trim() : '';
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({
+      width: 460, height: 190, title: 'Paste the thread link', resizable: false, minimizable: false, maximizable: false,
+      alwaysOnTop: true, show: false, webPreferences: { nodeIntegration: true, contextIsolation: false },
+    });
+    pasteWin = w;
+    let done = false;
+    const finish = (v: string | null) => {
+      if (done) return;
+      done = true;
+      ipcMain.removeListener('loom-paste-link', onLink);
+      if (!w.isDestroyed()) w.destroy();
+      resolve(v);
+    };
+    const onLink = (e: Electron.IpcMainEvent, text: string) => {
+      if (e.sender !== w.webContents) return;
+      if (!text) return finish(null);
+      const ref = parseSlackThread(text);
+      if (!ref) return void w.webContents.send('err', 'That is not a Slack message link.');
+      finish(ref.url);
+    };
+    ipcMain.on('loom-paste-link', onLink);
+    w.on('closed', () => finish(null));
+    w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PASTE_HTML) + '#' + encodeURIComponent(JSON.stringify({ why, prefill })));
+    w.once('ready-to-show', () => { w.show(); w.focus(); });
+  });
+}
+
+async function pasteInstead(deps: PickDeps, why: string): Promise<boolean> {
+  if (!deps.pasteFallback?.()) return false;
+  const url = await askPasteLink(why);
+  if (url) await deps.goto(url, {});
+  return true;
 }
 
 let helperUntrusted = false; // the helper's last trust answer was no
@@ -204,12 +283,16 @@ export async function startPick(deps: PickDeps): Promise<void> {
   if (helperUntrusted) stopHelper();
   const t = await ask<{ trusted?: boolean; ok?: boolean; reason?: string }>({ op: 'trust' });
   if (t.trusted !== true) {
-    if (t.reason === 'helper_down') return deps.notify('The Slack reader (slack-ax) failed to start');
+    if (t.reason === 'helper_down') {
+      if (await pasteInstead(deps, 'The Slack reader could not start. Copy the message link in Slack (right-click, Copy link) and paste it here.')) return;
+      return deps.notify('The Slack reader (slack-ax) failed to start');
+    }
     helperUntrusted = true;
     // The prompt adds slack-ax to the list (switched off) and shows the system
     // dialog that links to it. Once per run: after that the row exists.
     if (!prompted) await ask({ op: 'trust', prompt: true });
     prompted = true;
+    if (await pasteInstead(deps, 'Loom cannot read Slack without Accessibility access. Copy the message link in Slack and paste it here.')) return;
     return deps.notify('Loom reads Slack through its helper, slack-ax. ' + GRANT_HINT);
   }
   helperUntrusted = false;
@@ -229,17 +312,22 @@ async function onClick(): Promise<void> {
     if (r.reason === 'not_message') return broadcast('hint', 'Not a Slack message. Click a message, or press Esc.');
     if (r.reason === 'covered') return broadcast('hint', 'Slack is behind another window there.');
     closeOverlays();
+    if (r.reason === 'untrusted') helperUntrusted = true;
+    const why = r.reason === 'no_slack' ? 'Slack is not running. Copy the message link and paste it here.' : r.reason === 'untrusted' ? 'Loom cannot read Slack without Accessibility access. Copy the message link and paste it here.' : 'Loom could not read that message. Copy its link in Slack and paste it here.';
+    if (await pasteInstead(deps, why)) return;
     if (r.reason === 'no_slack') return deps.notify('Slack is not running');
-    if (r.reason === 'untrusted') {
-      helperUntrusted = true;
-      return deps.notify(GRANT_HINT);
-    }
+    if (r.reason === 'untrusted') return deps.notify(GRANT_HINT);
     return deps.notify('Could not read Slack (' + r.reason + ')');
   }
   const ref = pickedThread(r);
-  if (!ref) return broadcast('hint', 'That message has no permalink.');
+  if (!ref) {
+    // No permalink to read: only now is the paste field better than another click.
+    closeOverlays();
+    if (await pasteInstead(deps, 'That message has no permalink. Copy its link in Slack and paste it here.')) return;
+    return deps.notify('That message has no permalink.');
+  }
   closeOverlays();
-  await deps.goto(ref.url);
+  await deps.goto(ref.url, { text: r.text, author: r.author });
 }
 
 ipcMain.on('loom-pick-click', () => void onClick());

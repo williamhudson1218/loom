@@ -21,7 +21,7 @@ die()  { printf '\033[1;31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 # ── Prerequisite checks ────────────────────────────────────────────────
 say "Checking prerequisites"
 
-[ "$(uname -s)" = "Darwin" ] || die "Loom is macOS-only (needs osascript / Ghostty / System Events)."
+[ "$(uname -s)" = "Darwin" ] || die "Loom is macOS-only (needs osascript / System Events)."
 
 command -v node >/dev/null || die "node not found. Install Node 20+ (see .nvmrc)."
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
@@ -32,8 +32,21 @@ command -v yarn >/dev/null || die "yarn not found. Install it: npm i -g yarn (or
 echo "  yarn $(yarn -v)"
 
 command -v claude >/dev/null || warn "claude CLI not on PATH — Loom needs it (logged in) to summarize and resume sessions."
-command -v tmux   >/dev/null || warn "tmux not found — live detection, jump, resume, branch and restore all need tmux."
-command -v ghostty >/dev/null 2>&1 || warn "Ghostty not found — click-to-focus needs it; the rest works in any terminal."
+# tmux is required: it is what keeps chats alive when Loom quits, and what Loom
+# types into. Install it with Homebrew if it is missing.
+if ! command -v tmux >/dev/null; then
+  if command -v brew >/dev/null; then
+    say "Installing tmux (Homebrew)"
+    brew install tmux
+  else
+    die "tmux not found and Homebrew isn't installed. Install tmux (https://github.com/tmux/tmux/wiki/Installing) and re-run."
+  fi
+fi
+TMUX_VERSION="$(tmux -V | awk '{print $2}')"
+echo "  tmux $TMUX_VERSION"
+# 3.6a's server aborts (SIGABRT) in copy-mode, and with mouse on every scroll
+# goes through copy-mode: one crash takes every session with it.
+[ "$TMUX_VERSION" = "3.6a" ] && warn "tmux 3.6a crashes in copy-mode and takes every session down. Upgrade: brew upgrade tmux"
 
 # ── Install + test the CLI/backend ─────────────────────────────────────
 say "Installing backend dependencies (root)"
@@ -41,6 +54,50 @@ yarn install
 
 say "Running tests"
 yarn test
+
+# ── Loom's tmux ────────────────────────────────────────────────────────
+# Loom's data dir, resolved exactly as src/paths.ts and the placement hook do.
+if [ -n "${LOOM_HOME:-}" ]; then LOOM_DIR="$LOOM_HOME"
+elif [ -d "$HOME/.claude/tools/chat-manager" ]; then LOOM_DIR="$HOME/.claude/tools/chat-manager"
+else LOOM_DIR="$HOME/.loom"; fi
+mkdir -p "$LOOM_DIR"
+
+say "Installing Loom's tmux config"
+# Only the server on Loom's own socket loads this; your ~/.tmux.conf is untouched.
+# An existing copy is yours to edit, so it is never overwritten.
+if [ -f "$LOOM_DIR/tmux.conf" ]; then
+  echo "  kept existing $LOOM_DIR/tmux.conf"
+else
+  cp "$ROOT/app/assets/tmux.conf" "$LOOM_DIR/tmux.conf"
+  echo "  wrote $LOOM_DIR/tmux.conf"
+fi
+
+# Loom's settings: nothing is written here. The first time Loom opens its
+# database it decides (src/migrate.ts): a brand-new install gets the new-user
+# defaults and the setup wizard (Loom's own tmux server, normal permissions, the
+# orchestrator and watchers off); an existing install keeps every value it has,
+# written out explicitly, with a backup of manager.db made first.
+#
+# The orchestrator's folder is NOT pre-trusted in ~/.claude.json any more: the
+# wizard's orchestrator step (or Settings › Orchestrator) asks first.
+#
+# The placement hook: Claude Code gets it from the Loom plugin, installed from
+# the wizard or Settings › Helpers, so ~/.claude/settings.json is never edited.
+# Codex has no plugin, so it gets the hook in ~/.codex/hooks.json, and only after
+# you have seen the exact change and said yes.
+say "Codex placement hook"
+if [ ! -d "$HOME/.codex" ]; then
+  echo "  Codex is not installed: skipped"
+else
+  node "$ROOT/scripts/install-hook.mjs" "$ROOT/hooks/record-placement.sh"
+  if [ -t 0 ] && ! node -e "process.exit(require('fs').readFileSync(process.env.HOME + '/.codex/hooks.json', 'utf-8').includes('record-placement.sh') ? 0 : 1)" 2>/dev/null; then
+    read -r -p "  Make this change to ~/.codex/hooks.json? [y/N] " ANSWER
+    case "$ANSWER" in
+      [yY]*) node "$ROOT/scripts/install-hook.mjs" "$ROOT/hooks/record-placement.sh" --yes ;;
+      *) echo "  left ~/.codex/hooks.json unchanged (Settings › Helpers can add it later)" ;;
+    esac
+  fi
+fi
 
 # ── Build the macOS app ────────────────────────────────────────────────
 say "Installing app dependencies"
@@ -56,27 +113,22 @@ say "Built $APP"
 
 if [ "$INSTALL" = "1" ]; then
   say "Installing to /Applications"
-  rm -rf "/Applications/Loom.app"
-  cp -R "$APP" "/Applications/Loom.app"
-  echo "  copied to /Applications/Loom.app"
+  # Never rm -rf + cp over a live bundle: a Loom launched mid-copy crashes (see the script).
+  "$ROOT/scripts/install-app.sh" "$APP" --no-open
 fi
 
 # ── Next steps ─────────────────────────────────────────────────────────
 say "Done. Remaining manual steps (see SETUP.md):"
 cat <<EOF
-  1. Register the placement hook under BOTH SessionStart and UserPromptSubmit,
-     for every agent you use — Claude in ~/.claude/settings.json, Codex in
-     ~/.codex/hooks.json (same hook schema):
+  1. Launch Loom.app. On first run, grant macOS permissions when prompted
+     (System Settings > Privacy & Security):
+       - Accessibility: only for the Slack hotkey (reads the message under the
+         cursor) and for Ghostty tab focus, if you use Ghostty
+       - Automation: only if you jump into Ghostty, iTerm2 or Terminal.app
 
-       { "type": "command", "command": "$ROOT/hooks/record-placement.sh", "timeout": 5 }
-
-     An agent without this hook still gets indexed, but its chats never show
-     as live.
-
-  2. Launch Loom.app. On first run, grant macOS permissions when prompted
-     (System Settings › Privacy & Security):
-       • Accessibility  — for Ghostty tab focus / pane jumping
-       • Automation     — to let Loom control Ghostty & System Events
+  2. Loom opens its setup wizard on first launch: it installs the Loom plugin
+     (the placement hook and helpers) and asks before changing anything outside
+     Loom's own data folder.
 
   3. Data lives in ~/.loom by default (override with \$LOOM_HOME). Nothing is
      written into this repo. Port 4317 must be free.

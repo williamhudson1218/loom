@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { DEFAULT_SOCKET, tmuxSocket } from './tmux.ts';
 
 export interface OpenTabsResult {
   ok: boolean;
@@ -310,8 +311,20 @@ export function planTabAttach(input: {
   };
 }
 
-function typeAttach(lines: string[], session: string): void {
-  lines.push(`  keystroke "ta ${esc(session)}"`);
+export const DEFAULT_ATTACH_CMD = 'tmux attach -t';
+
+// The command a Ghostty tab types is the `ghostty_attach_cmd` setting (a shell
+// alias works too). It only means something on the default tmux socket; on
+// Loom's own socket it would reach the wrong server, so spell the attach out.
+export function attachCommand(session: string, attachCmd: string = DEFAULT_ATTACH_CMD): string {
+  const socket = tmuxSocket();
+  const base = attachCmd.trim() || DEFAULT_ATTACH_CMD;
+  return socket === DEFAULT_SOCKET ? `${base} ${session}` : `tmux -L ${socket} attach -t ${session}`;
+}
+
+function typeAttach(lines: string[], session: string, attachCmd?: string): void {
+  const cmd = attachCommand(session, attachCmd);
+  lines.push(`  keystroke "${esc(cmd)}"`);
   lines.push('  delay 0.1');
   lines.push('  key code 36'); // Return
   lines.push('  delay 0.25');
@@ -345,7 +358,7 @@ function newTab(lines: string[]): void {
 // then, if it needs new tabs, its last tab is selected before Cmd-T because
 // Ghostty inserts a new tab next to the active one — without that they
 // interleave with the tabs already there instead of appending in order.
-export function buildAttachScript(plan: TabPlan): string {
+export function buildAttachScript(plan: TabPlan, attachCmd?: string): string {
   const lines: string[] = [
     'tell application "Ghostty" to activate',
     'delay 0.4',
@@ -368,14 +381,14 @@ export function buildAttachScript(plan: TabPlan): string {
       const fresh = wp.assignments.filter((a) => !a.reuse);
       for (const a of reused) {
         clickTab(lines, a.reuse!);
-        typeAttach(lines, a.session);
+        typeAttach(lines, a.session, attachCmd);
       }
       if (fresh.length) {
         const last = wp.window.tabs[wp.window.tabs.length - 1];
         if (last) clickTab(lines, last);
         for (const a of fresh) {
           newTab(lines);
-          typeAttach(lines, a.session);
+          typeAttach(lines, a.session, attachCmd);
         }
       }
     } else {
@@ -390,7 +403,7 @@ export function buildAttachScript(plan: TabPlan): string {
       }
       wp.assignments.forEach((a, i) => {
         if (i > 0) newTab(lines);
-        typeAttach(lines, a.session);
+        typeAttach(lines, a.session, attachCmd);
       });
     }
   }
@@ -414,6 +427,7 @@ export interface AttachOpts {
   saved?: SavedGhosttyWindow[]; // remembered window grouping (restore's `windows`)
   tabs?: GhosttyTab[]; // injectable for tests / dry-run (grouped by window_index)
   windows?: GhosttyWindow[]; // injectable live windows; wins over `tabs`
+  attachCmd?: string; // the ghostty_attach_cmd setting; default `tmux attach -t`
 }
 
 // Attach each session to a Ghostty tab in the window it was saved in, reusing
@@ -438,7 +452,7 @@ export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): Op
   const windows =
     opts.windows ?? (opts.tabs ? windowsFromTabs(opts.tabs) : opts.dryRun ? [] : readGhosttyWindows());
   const plan = planTabAttach({ sessions, windows, saved: opts.saved, attached: opts.attached ?? [] });
-  const script = buildAttachScript(plan);
+  const script = buildAttachScript(plan, opts.attachCmd);
   const reused = plan.assignments.filter((a) => a.reuse).length;
   const opened = plan.assignments.length - reused;
   const newWindows = plan.windows.filter((w) => !w.window).length;

@@ -46,6 +46,8 @@ export const COMPACT_OFF_PATH = path.join(TOOL_DIR, 'compact.off');
 // set it to an empty string to include every session.
 export const SESSION_PREFIX = process.env.LOOM_SESSION_PREFIX?.trim() ?? 'loom-';
 
+// Built-in values from before these were settings (the legacy defaults of analyze_cap,
+// analyze_concurrency and active_window_days). Live reads go through the settings registry.
 export const ANALYZE_CAP = 25;
 export const ANALYZE_CONCURRENCY = 3;
 export const MIN_MESSAGES_FOR_LLM = 3;
@@ -55,14 +57,14 @@ export const TRANSCRIPT_CHAR_CAP = 60_000;
 // Older sessions are pruned from the DB (deep archive search lives in find-chat).
 export const ACTIVE_WINDOW_DAYS = 7;
 
-// The find-chat CLI backs Loom's archive search — everything older than the
-// ACTIVE_WINDOW_DAYS board. We shell out to its `bin` wrapper rather than import
-// it: the wrapper resolves its own real dir and exec's find-chat's *local* tsx,
-// so Loom needs no global tsx and no knowledge of find-chat's internals.
-// Override with $FIND_CHAT_BIN if find-chat moves.
-export const FIND_CHAT_BIN =
-  process.env.FIND_CHAT_BIN?.trim() ||
-  path.join(CLAUDE_HOME, 'tools', 'find-chat', 'bin', 'find-chat');
+// Where find-chat (the archive search CLI) is looked for when the `find_chat_bin`
+// setting and $FIND_CHAT_BIN are empty. findchat.ts does the detecting.
+export const FIND_CHAT_CANDIDATES = [
+  path.join(CLAUDE_HOME, 'tools', 'find-chat', 'bin', 'find-chat'),
+  path.join(os.homedir(), '.local', 'bin', 'find-chat'),
+  '/opt/homebrew/bin/find-chat',
+  '/usr/local/bin/find-chat',
+];
 
 // First line of the analyzer prompt. Used both to build the prompt AND to detect
 // (and exclude) chat-manager's own headless `claude -p` summarization sessions,

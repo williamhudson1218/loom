@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { tmux as runTmux } from './tmux.ts';
 import { readLayout, savedWindowsOf, type PaneSnap, type Layout } from './snapshot.ts';
 import { LAYOUT_PATH } from './paths.ts';
 import { attachedSessions } from './placements.ts';
@@ -30,7 +30,7 @@ function paneCommand(p: PaneSnap): { text: string; run: boolean } | null {
 function existingSessions(): Set<string> {
   try {
     return new Set(
-      execFileSync('tmux', ['list-sessions', '-F', '#{session_name}'], { encoding: 'utf-8' })
+      runTmux(['list-sessions', '-F', '#{session_name}'])
         .split('\n')
         .filter(Boolean),
     );
@@ -82,7 +82,7 @@ export function restore(
       log.push('tmux ' + args.map((a) => (/\s/.test(a) ? shq(a) : a)).join(' '));
       return '';
     }
-    return execFileSync('tmux', args, { encoding: 'utf-8' }).trim();
+    return runTmux(args).trim();
   };
 
   // Loom's namer may be ticking while a CLI restore runs, and can hand a

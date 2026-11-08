@@ -84,7 +84,7 @@ describe('liveSessionsFrom', () => {
   // the pane is actually running.
   it('binds an agent-less legacy row to the agent running in its pane', () => {
     const panes: TmuxPane[] = [
-      { pane_id: '%10', tmux_session: 'loom-tp-2', window_index: '1', pane_index: '1', pane_pid: '10', command: 'codex', cwd: '/tp', left: 0, top: 0, title: 'tax-pilot-app' },
+      { pane_id: '%10', tmux_session: 'loom-tp-2', window_index: '1', pane_index: '1', pane_pid: '10', command: 'codex', cwd: '/tp', left: 0, top: 0, title: 'acme-app' },
     ];
     const placements = new Map([
       ['?:019f9db7-6176', { agent: null, session_id: '019f9db7-6176', pane_id: '%10', tmux_session: 'loom-tp-2', window_index: '1', pane_index: '1', cwd: '/tp', ts: 1 }],

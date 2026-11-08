@@ -4,6 +4,7 @@ app/node_modules/
 app/dist/
 app/release/
 app/build-native/
+app/build-plugin/
 *.tsbuildinfo
 
 # ── Runtime data — PRIVATE: embeds your indexed chat content ──

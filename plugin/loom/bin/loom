@@ -1,0 +1,595 @@
+#!/usr/bin/env python3
+"""loom: the command line Claude Code chats use to talk to Loom. Needs python3 (3.9+), nothing else.
+
+  loom outbox add --thread <url> | --channel <id|#name|@user>  --text-file <p> [--text-file <p> ...]
+  loom outbox update <id> --text-file <p> [...]      revise a pending draft in place
+  loom outbox supersede <id>                         retire a pending draft a newer one replaces
+  loom outbox list [--json] [--all] | show <id>
+  loom thread claim <url> | started <url|key> | release <url> | list [filter]
+  loom thread open <url> [--ack] [--eyes]            mark a ticket looking (eyes only on a channel's top-level post)
+  loom thread stage <url> looking|blocked|done [note...] [--react]
+  loom ship-label "<label>" [--repo <path>] | --show | --clear
+  loom ship-lock acquire | release | status | wait   (local file in the git common dir, no Loom needed)
+  loom route list | send <name> <text...>
+  loom test-links add <url> [--label "<what to check>"] | list [--json] | clear [<url>]
+  loom trees prune [--repo <dir>] [--dry-run] [--json]   remove worktrees that are merged, clean and unused
+  loom whoami
+
+Writes are atomic event files in $LOOM_HOME/events/, so they survive Loom being down. Reads and Slack
+actions go over HTTP to 127.0.0.1 with the CLI token. The Slack token never reaches this process.
+The session is $CLAUDE_CODE_SESSION_ID (override with --session on outbox add).
+"""
+import json
+import os
+import random
+import re
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "hooks"))
+import _common as c  # noqa: E402
+
+STAGES = {
+    "looking": "eyes",
+    "blocked": "no_entry",
+    "done": "white_check_mark",
+}
+SUPERSEDES = dict((k, [e for j, e in STAGES.items() if j != k]) for k in STAGES)
+ACKS = [
+    "Checking this out now",
+    "Let me have a look",
+    "Looking into it",
+    "Taking a look",
+    "Looking into this now",
+    "I'll take a look",
+    "Let me dig into this",
+    "Let me check on this",
+    "On it, taking a look now",
+    "Having a look now",
+]
+LABEL_MAX = 80
+TTL_SECONDS = 300
+
+
+def die(msg, code=1):
+    print("loom: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def opts(args, multi=(), flags=()):
+    """--flag value pairs; names in `multi` repeat into a list, names in `flags` take no value."""
+    out, rest, i = {}, [], 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--"):
+            key = a[2:].replace("-", "_")
+            if key in flags or i + 1 >= len(args) or args[i + 1].startswith("--"):
+                val, i = True, i + 1
+            else:
+                val, i = args[i + 1], i + 2
+            if key in multi:
+                out.setdefault(key, []).append(val)
+            else:
+                out[key] = val
+        else:
+            rest.append(a)
+            i += 1
+    return out, rest
+
+
+def need_session(o=None):
+    sid = (o or {}).get("session") or c.session_id()
+    if not sid:
+        die("no session id: run inside a Claude session (CLAUDE_CODE_SESSION_ID)", 2)
+    return sid
+
+
+def get(path):
+    try:
+        return c.http("GET", path)
+    except c.LoomUnavailable as e:
+        die("Loom is not reachable (%s). Is it running?" % e, 3)
+    except c.LoomError as e:
+        die(str(e), 4)
+
+
+def to_key(arg):
+    keys = c.thread_keys(arg)
+    if not keys and re.fullmatch(r"[A-Z0-9]+/\d{10}\.\d{6}", arg or ""):
+        keys = {arg: url_for_key(arg, {})}
+    if not keys:
+        die("not a Slack thread URL", 2)
+    return keys
+
+
+def url_for_key(key, urls):
+    if urls.get(key) and urls[key] != key:
+        return urls[key]
+    channel, ts = key.split("/")
+    return "https://app.slack.com/archives/%s/p%s" % (channel, ts.replace(".", ""))
+
+
+# ---------- outbox ----------
+
+def read_messages(files):
+    out = []
+    for p in files:
+        try:
+            with open(p) as f:
+                text = f.read().strip()
+        except OSError as e:
+            die("cannot read %s: %s" % (p, e), 2)
+        if not text:
+            die("%s is empty" % p, 2)
+        out.append(text)
+    return out
+
+
+def outbox_add(args):
+    o, _ = opts(args, multi=("text_file",))
+    sid = need_session(o)
+    if bool(o.get("thread")) == bool(o.get("channel")):
+        die("outbox add: exactly one of --thread <url> or --channel <id> is required", 2)
+    if not o.get("text_file"):
+        die("outbox add: --text-file <path> is required", 2)
+    ev = {"session": sid, "messages": read_messages(o["text_file"])}
+    if o.get("thread"):
+        keys = c.thread_keys(o["thread"])
+        if not keys:
+            die("outbox add: --thread is not a Slack thread URL", 2)
+        key, url = next(iter(keys.items()))
+        ev["channel"], ev["thread_ts"] = key.split("/")
+        ev["thread_url"] = url
+    else:
+        ev["channel"] = o["channel"]
+        try:
+            mine = [t for t in (c.http("GET", "/api/cli/threads?session=" + sid, timeout=1.5).get("threads") or [])
+                    if str(t.get("key", "")).startswith(str(o["channel"]) + "/")]
+            if mine:
+                print("outbox add: this chat owns thread %s in %s. If this is a reply, re-record it with "
+                      "--thread <url> so Loom can watch for the answer." % (mine[0]["key"], o["channel"]),
+                      file=sys.stderr)
+        except (c.LoomUnavailable, c.LoomError):
+            pass
+    n = int(time.time() * 1000)
+    ev["id"] = "d%x" % n + "%02x" % random.randrange(256)
+    # Loom supersedes this session's pending draft for the same destination when it ingests this.
+    c.write_event("outbox.add", **ev)
+    print(ev["id"])
+
+
+def outbox_update(args):
+    o, rest = opts(args, multi=("text_file",))
+    if not rest or not o.get("text_file"):
+        die("usage: loom outbox update <id> --text-file <path> [...]", 2)
+    c.write_event("outbox.update", session=c.session_id(), id=rest[0], messages=read_messages(o["text_file"]))
+    print(rest[0])
+
+
+def outbox_supersede(args):
+    _, rest = opts(args)
+    if not rest:
+        die("usage: loom outbox supersede <id>", 2)
+    c.write_event("outbox.supersede", session=c.session_id(), id=rest[0])
+    print(rest[0])
+
+
+def outbox_list(args):
+    o, _ = opts(args, flags=("json", "all"))
+    r = get("/api/cli/outbox" + ("?all=1" if o.get("all") else ""))
+    drafts = r.get("drafts") or []
+    if o.get("json"):
+        print(json.dumps(drafts, indent=2))
+        return
+    for d in drafts:
+        dest = d.get("channel", "") + (" thread " + d["thread_ts"] if d.get("thread_ts") else "")
+        first = (d.get("messages") or [""])[0].replace("\n", " ")
+        print("%s  %-10s %s  %-36s  %s" % (d.get("id"), d.get("status"), str(d.get("session_id", ""))[:8], dest, first[:70]))
+    if not drafts:
+        print("no drafts")
+
+
+def outbox_show(args):
+    _, rest = opts(args)
+    if not rest:
+        die("usage: loom outbox show <id>", 2)
+    r = get("/api/cli/outbox/" + rest[0])
+    print(json.dumps(r.get("draft") or r, indent=2))
+
+
+def cmd_outbox(args):
+    subs = {"add": outbox_add, "update": outbox_update, "supersede": outbox_supersede,
+            "list": outbox_list, "show": outbox_show}
+    if not args or args[0] not in subs:
+        die("usage: loom outbox add|update|supersede|list|show", 2)
+    subs[args[0]](args[1:])
+
+
+# ---------- threads ----------
+
+def thread_state(key):
+    try:
+        r = c.http("GET", "/api/cli/threads?key=" + key.replace("/", "%2F"), timeout=2.0)
+    except (c.LoomUnavailable, c.LoomError):
+        return {}
+    ts = r.get("threads") or []
+    return ts[0] if ts else {}
+
+
+def slack_direct():
+    return c.read_plugin_state().get("slack_mode") == "direct"
+
+
+def slack_post(path, body):
+    """POST a Slack action through Loom. Returns True on success; failures are reported, never fatal."""
+    try:
+        c.http("POST", path, body, timeout=8.0)
+        return True
+    except c.LoomError as e:
+        if e.status == 409:
+            print("loom: Slack is not connected in direct mode; skipped", file=sys.stderr)
+        else:
+            print("loom: Slack action failed: %s" % e, file=sys.stderr)
+    except c.LoomUnavailable as e:
+        print("loom: Loom is not reachable, Slack action skipped (%s)" % e, file=sys.stderr)
+    return False
+
+
+def advance(key, url, stage, note=None, react=True):
+    c.write_event("thread.stage", session=c.session_id(), key=key, url=url, stage=stage, note=note, react=bool(react))
+    shown = False
+    if react and slack_direct():
+        channel, ts = key.split("/")
+        shown = slack_post("/api/cli/slack/react",
+                           {"channel": channel, "ts": ts, "add": STAGES[stage], "remove": SUPERSEDES[stage]})
+    return shown
+
+
+def thread_claim(args):
+    sid = need_session()
+    for key, url in to_key(args[0] if args else "").items():
+        prev = thread_state(key).get("session_id")
+        c.write_event("thread.claim", session=sid, key=key, url=url, cwd=os.getcwd(), mode="force")
+        print("%s -> %s%s" % (url, sid, " (was %s)" % prev if prev and prev != sid else ""))
+
+
+def thread_started(args):
+    sid = need_session()
+    claimed = []
+    for key, url in to_key(args[0] if args else "").items():
+        if key.startswith("D"):
+            continue
+        c.write_event("thread.claim", session=sid, key=key, url=url, cwd=os.getcwd(),
+                      mode="if_unowned", started=True)
+        claimed.append(key)
+    print(" ".join(claimed) if claimed else "nothing to claim")
+
+
+def thread_release(args):
+    for key in to_key(args[0] if args else ""):
+        c.write_event("thread.release", session=c.session_id(), key=key)
+        print("released " + key)
+
+
+def thread_list(args):
+    r = get("/api/cli/threads")
+    filt = (args[0] if args else "").lower()
+    n = 0
+    for t in r.get("threads") or []:
+        line = "%s  %-8s %s  %s" % (t.get("key"), t.get("stage") or "-", str(t.get("session_id", ""))[:8], t.get("url", ""))
+        if not filt or filt in line.lower():
+            print(line)
+            n += 1
+    if not n:
+        print("no threads")
+
+
+def thread_open(args):
+    o, rest = opts(args, flags=("ack", "eyes"))
+    if not rest:
+        die("usage: loom thread open <url> [--ack] [--eyes]", 2)
+    keys = to_key(rest[0])
+    tops = c.top_level_keys(rest[0])
+    for key, url in keys.items():
+        # Eyes only on a channel's top-level post, unless forced. A DM or reply link is still
+        # recorded as looking, just not shown.
+        eyes = bool(o.get("eyes")) or key in tops
+        shown = advance(key, url, "looking", react=eyes)
+        print("%s -> looking%s" % (key, " :eyes:" if shown else " (no reaction)"))
+        if not o.get("ack"):
+            continue
+        t = thread_state(key)
+        if t.get("ack"):
+            print("already acked: %r" % (t["ack"].get("text") if isinstance(t["ack"], dict) else t["ack"],))
+            continue
+        if not slack_direct():
+            print("loom: ack skipped: Slack is not connected in direct mode", file=sys.stderr)
+            continue
+        recent = t.get("recent_acks") or []
+        pool = [a for a in ACKS if a not in recent[-6:]] or ACKS
+        text = random.choice(pool)
+        channel, ts = key.split("/")
+        if slack_post("/api/cli/slack/reply", {"channel": channel, "thread_ts": ts, "text": text, "ack": True}):
+            c.write_event("thread.ack", session=c.session_id(), key=key, text=text)
+            print("acked: %r" % text)
+
+
+def thread_stage(args):
+    o, rest = opts(args, flags=("react",))
+    if len(rest) < 2 or rest[1] not in STAGES:
+        die("usage: loom thread stage <url> looking|blocked|done [note...] [--react]", 2)
+    stage, note = rest[1], " ".join(rest[2:]) or None
+    tops = c.top_level_keys(rest[0])
+    for key, url in to_key(rest[0]).items():
+        react = True
+        if stage == "done" and not o.get("react"):
+            # The check mark follows the eyes: shown where `open` showed them, else where the link was top-level.
+            remembered = thread_state(key).get("react")
+            react = remembered if remembered is not None else key in tops
+        shown = advance(key, url, stage, note, react=react)
+        print("%s -> %s%s" % (key, stage, " :%s:" % STAGES[stage] if shown else " (no reaction)"))
+
+
+def cmd_thread(args):
+    subs = {"claim": thread_claim, "started": thread_started, "release": thread_release,
+            "list": thread_list, "open": thread_open, "stage": thread_stage}
+    if not args or args[0] not in subs:
+        die("usage: loom thread claim|started|release|list|open|stage", 2)
+    subs[args[0]](args[1:])
+
+
+# ---------- ship label ----------
+
+def toplevel(cwd):
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    except OSError:
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def cmd_ship_label(args):
+    sid = need_session()
+    repo, mode, words, i = None, "set", [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--repo" and i + 1 < len(args):
+            repo, i = args[i + 1], i + 1
+        elif a in ("--show", "--clear"):
+            mode = a[2:]
+        elif a in ("-h", "--help"):
+            print(__doc__)
+            return
+        else:
+            words.append(a)
+        i += 1
+    if mode == "show":
+        entry = c.ship_labels(sid).get(sid)
+        if not entry or not entry.get("label"):
+            sys.exit(1)
+        print(entry["label"])
+        return
+    if mode == "clear":
+        c.write_event("ship.label", session=sid, clear=True)
+        return
+    one = " ".join(" ".join(words).split())
+    label = one if len(one) <= LABEL_MAX else one[: LABEL_MAX - 1].rstrip() + "…"
+    if not label:
+        die('usage: loom ship-label "<label>" [--repo <path>] | --show | --clear', 2)
+    root = toplevel(os.path.expanduser(repo) if repo else os.getcwd())
+    if not root:
+        root = os.path.abspath(os.path.expanduser(repo)) if repo else os.getcwd()
+    c.write_event("ship.label", session=sid, label=label, repo=root)
+    print("ship-label: " + label)
+
+
+# ---------- ship lock ----------
+
+def lock_path():
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        die("ship-lock: not inside a git repository", 2)
+    return os.path.join(r.stdout.strip(), "ship.lock")
+
+
+def read_lock(path):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def pane_phrase(d):
+    return " in tmux pane %s" % d["tmux_pane"] if d.get("tmux_pane") else ""
+
+
+def cmd_ship_lock(args):
+    sub = args[0] if args else "status"
+    path = lock_path()
+    me = os.environ.get("AGENT_SESSION_ID") or c.session_id() or os.environ.get("CODEX_THREAD_ID") or "unknown"
+    cur = read_lock(path)
+
+    def age(d):
+        return int(time.time()) - int(d.get("acquired_at") or 0) if d else 999999
+
+    def stale(d):
+        return age(d) > TTL_SECONDS
+
+    if sub == "acquire":
+        if cur and cur.get("session_id") != me and not stale(cur):
+            print("ship-lock: held by another session (%s%s, %ds ago); not acquiring"
+                  % (cur.get("session_id"), pane_phrase(cur), age(cur)), file=sys.stderr)
+            sys.exit(1)
+        pane = ""
+        if os.environ.get("TMUX_PANE"):
+            r = subprocess.run(["tmux", "display-message", "-p", "-t", os.environ["TMUX_PANE"],
+                                "#{session_name}:#{window_index}.#{pane_index}"], capture_output=True, text=True)
+            pane = r.stdout.strip() if r.returncode == 0 else ""
+        tmp = path + ".%d.tmp" % os.getpid()
+        with open(tmp, "w") as f:
+            json.dump({"session_id": me, "acquired_at": int(time.time()), "tmux_pane": pane}, f)
+        os.replace(tmp, path)
+        print("ship-lock: acquired by " + me)
+    elif sub == "release":
+        # Only the holder (or anyone, once stale) may release; releasing someone else's live lock is the bug this prevents.
+        if cur and cur.get("session_id") != me and not stale(cur):
+            print("ship-lock: held by another session (%s); not releasing" % cur.get("session_id"), file=sys.stderr)
+            sys.exit(1)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        print("ship-lock: released")
+    elif sub == "wait":
+        while True:
+            cur = read_lock(path)
+            if not cur or cur.get("session_id") == me or stale(cur):
+                break
+            time.sleep(5)
+        print("ship-lock: clear; retry git add")
+    elif sub == "status":
+        if cur:
+            print("ship-lock: held by %s%s, %ds ago%s" % (cur.get("session_id"), pane_phrase(cur), age(cur),
+                                                         " (stale)" if stale(cur) else ""))
+        else:
+            print("ship-lock: unlocked")
+    else:
+        die("usage: loom ship-lock acquire | release | status | wait", 2)
+
+
+# ---------- test links ----------
+
+TEST_LINKS_MAX = 10
+
+
+def cmd_test_links(args):
+    sub = args[0] if args else ""
+    o, rest = opts(args[1:], flags=("json",))
+    sid = need_session(o)
+    if sub == "add":
+        if len(rest) != 1:
+            die('usage: loom test-links add <url> [--label "<what to check>"]', 2)
+        url = rest[0].strip()
+        if not re.match(r"https?://[^\s/]+", url, re.I) or len(url) > 2000:
+            die("test-links add: only http(s) URLs are allowed", 2)
+        label = o.get("label")
+        c.write_event("testlinks.add", session=sid, url=url, label=label if isinstance(label, str) else "")
+        print("test link recorded (newest %d kept per chat)" % TEST_LINKS_MAX)
+    elif sub == "list":
+        r = get("/api/cli/test-links?session=" + sid)
+        links = r.get("links") or []
+        if o.get("json"):
+            print(json.dumps(links, indent=2))
+            return
+        for l in links:
+            print("%s  %s" % (l.get("url"), l.get("label") or ""))
+        if not links:
+            print("no test links")
+    elif sub == "clear":
+        if len(rest) > 1:
+            die("usage: loom test-links clear [<url>]", 2)
+        c.write_event("testlinks.clear", session=sid, **({"url": rest[0]} if rest else {}))
+        print("cleared" if not rest else "cleared " + rest[0])
+    else:
+        die("usage: loom test-links add <url> [--label ...] | list | clear [<url>]", 2)
+
+
+# ---------- trees ----------
+
+PRUNE_TIMEOUT = 600.0
+
+
+def cmd_trees(args):
+    sub = args[0] if args else ""
+    if sub != "prune":
+        die("usage: loom trees prune [--repo <dir>] [--dry-run] [--json]", 2)
+    o, rest = opts(args[1:], flags=("dry_run", "json"))
+    if rest or o.get("repo") is True:
+        die("usage: loom trees prune [--repo <dir>] [--dry-run] [--json]", 2)
+    repo = os.path.abspath(os.path.expanduser(o.get("repo") or os.getcwd()))
+    dry = bool(o.get("dry_run"))
+    try:
+        r = c.http("POST", "/api/cli/trees/prune", {"repo": repo, "dry_run": dry}, timeout=PRUNE_TIMEOUT)
+    except c.LoomUnavailable as e:
+        die("Loom is not reachable (%s). Is it running?" % e, 3)
+    except c.LoomError as e:
+        die(str(e), 4)
+    results = r.get("results") or []
+    if o.get("json"):
+        print(json.dumps(results, indent=2))
+        return
+    failed = False
+    for res in results:
+        if res.get("error"):
+            failed = True
+            print("%s: %s" % (res.get("repo"), res.get("error")))
+            continue
+        verb = "would remove" if dry else "removed"
+        for w in res.get("removed") or []:
+            branch = "branch deleted" if w.get("branchDeleted") else (w.get("branchNote") or "branch kept")
+            print("%s  %s  [%s, %s]  %s" % (verb, w.get("path"), w.get("branch"), w.get("merge"), branch))
+        for s in res.get("skipped") or []:
+            if s.get("reason") == "the primary checkout":
+                continue
+            print("kept  %s  %s" % (s.get("path"), s.get("reason")))
+        print(res.get("summary") or "")
+    if failed:
+        sys.exit(1)
+
+
+# ---------- route / whoami ----------
+
+def cmd_route(args):
+    sub = args[0] if args else ""
+    if sub == "list":
+        r = get("/api/cli/route")
+        for p in r.get("panes") or []:
+            print("%s  %-18s %-24s %-12s %s" % (p.get("pane_id", ""), p.get("name", ""), p.get("target", ""),
+                                                p.get("command", ""), p.get("topic", "")))
+        if not r.get("panes"):
+            print("no named panes")
+    elif sub == "send":
+        if len(args) < 3:
+            die("usage: loom route send <name> <text...>", 2)
+        try:
+            r = c.http("POST", "/api/cli/route/send",
+                       {"to": args[1], "text": " ".join(args[2:]), "pane": os.environ.get("TMUX_PANE", ""),
+                        "session": c.session_id()}, timeout=10.0)
+        except c.LoomUnavailable as e:
+            die("Loom is not reachable (%s). Is it running?" % e, 3)
+        except c.LoomError as e:
+            die(str(e), 4)
+        print(r.get("detail") or "delivered")
+    else:
+        die("usage: loom route list | send <name> <text...>", 2)
+
+
+def cmd_whoami(_args):
+    r = get("/api/cli/whoami?pane=%s&session=%s" % (os.environ.get("TMUX_PANE", ""), c.session_id()))
+    for k in ("name", "pane_id", "session", "project"):
+        print("%s: %s" % (k, r.get(k) or ""))
+
+
+COMMANDS = {
+    "outbox": cmd_outbox, "thread": cmd_thread, "ship-label": cmd_ship_label, "ship-lock": cmd_ship_lock,
+    "route": cmd_route, "whoami": cmd_whoami, "test-links": cmd_test_links, "trees": cmd_trees,
+}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0 if argv else 2
+    fn = COMMANDS.get(argv[0])
+    if not fn:
+        die("unknown command %r (see loom --help)" % argv[0], 2)
+    fn(argv[1:])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

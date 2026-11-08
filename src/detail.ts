@@ -1,4 +1,5 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { tmux } from './tmux.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { defaultGitAsync, parseAheadBehind, resolveBaseRefAsync, type AsyncGitRunner } from './git.ts';
@@ -8,6 +9,7 @@ import { runningBackground, scanTranscript, type BackgroundTask, type Todo } fro
 import { readTranscript } from './transcript.ts';
 import type { ChatView, LiveLoc } from './dashboard.ts';
 import { threadsFor, type OwnedThread } from './slack.ts';
+import { chatThreadList, type ChatThread } from './slackthreads.ts';
 import { nudgePipeline, parsePrRef, wantPipeline, type Pipeline } from './pipeline.ts';
 
 // The board's detail panel: everything about ONE chat that is too expensive for
@@ -66,6 +68,7 @@ export interface Detail {
   todos: Todo[];
   background: BackgroundTask[];
   slack: OwnedThread[];
+  slackAll: ChatThread[]; // every thread the chat is tied to, deduped, best first
   // The PR's road to prod. Served from the pipeline store; null until its first fetch lands.
   pipeline: Pipeline | null;
   pipelineRef: { repo: string; number: number } | null;
@@ -176,8 +179,7 @@ export function parsePrUrl(url: string): { repo: string; number: number } | null
 
 export function paneLabels(paneId: string): PaneLabels {
   try {
-    const out = execFileSync('tmux', ['display-message', '-p', '-t', paneId, `#{@topic}${SEP}#{@stage}${SEP}#{@name}`], {
-      encoding: 'utf-8',
+    const out = tmux(['display-message', '-p', '-t', paneId, `#{@topic}${SEP}#{@stage}${SEP}#{@name}`], {
       timeout: 1000,
     }).trim();
     const [topic = '', stage = '', name = ''] = out.split(SEP);
@@ -317,6 +319,7 @@ export async function buildDetail(view: ChatView, live: LiveLoc | undefined, git
   if (pipelineRef && !pipeline) nudgePipeline(pipelineRef.repo, pipelineRef.number);
 
   const slack = threadsFor(view.session_id);
+  const slackAll = chatThreadList(view, slack);
   return {
     ok: true,
     agent: view.agent,
@@ -330,9 +333,10 @@ export async function buildDetail(view: ChatView, live: LiveLoc | undefined, git
     todos: scan?.todos ?? [],
     background: scan ? runningBackground(scan) : [],
     slack,
+    slackAll,
     pipeline,
     pipelineRef,
-    pending: !!(pr && pr.loading) || (!!pipelineRef && !pipeline) || slack.some((t) => t.preview === null),
+    pending: !!(pr && pr.loading) || (!!pipelineRef && !pipeline) || slack.some((t) => t.preview === null) || slackAll.some((t) => t.pending),
   };
 }
 

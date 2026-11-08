@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { tmux } from './tmux.ts';
 import type { LiveInfo } from './placements.ts';
 
 // Tint every pane running a chat by how stale that chat is, so a workspace of two
@@ -29,6 +29,27 @@ export const TINT_BG: Record<Exclude<Staleness, 'fresh'>, string> = {
   yesterday: '#332a15', // amber — yesterday, clearly readable
   older: '#3a1d1f', // red — older still, probably closable
 };
+
+// Base-relative palette. The three tints above are offsets from the default base,
+// so the `pane_tint_base` setting moves the whole ramp with the user's terminal
+// background and the default base reproduces TINT_BG exactly.
+export const DEFAULT_TINT_BASE = '#1e1e2e';
+
+function rgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+const toHex = (c: [number, number, number]): string =>
+  '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+
+export function tintPalette(base: string = DEFAULT_TINT_BASE): Record<Exclude<Staleness, 'fresh'>, string> {
+  if (!/^#[0-9a-fA-F]{6}$/.test(base) || base.toLowerCase() === DEFAULT_TINT_BASE) return { ...TINT_BG };
+  const b = rgb(base);
+  const d = rgb(DEFAULT_TINT_BASE);
+  const shift = (hex: string) => toHex(rgb(hex).map((v, i) => b[i] + (v - d[i])) as [number, number, number]);
+  return { today: shift(TINT_BG.today), yesterday: shift(TINT_BG.yesterday), older: shift(TINT_BG.older) };
+}
 
 // The same palette in the form tmux wants. Derived, so the hexes live in one place.
 export const TINT_STYLE = Object.fromEntries(
@@ -68,7 +89,7 @@ export function staleness(lastActiveMs: number, now: number): Staleness {
 //
 // Recomputed from scratch every tick rather than maintained by transition,
 // because the transition Loom most needs to catch is the one it cannot observe:
-// Will types /quit, the pane drops out of this map with no event anywhere, and a
+// the user types /quit, the pane drops out of this map with no event anywhere, and a
 // paint-only tick would leave yesterday's colour sitting on precisely the pane
 // whose staleness the feature exists to report.
 export function desiredTints(
@@ -76,8 +97,12 @@ export function desiredTints(
   lastActiveByKey: Map<string, number>,
   now: number,
   prefix: string,
+  opts: { enabled?: boolean; base?: string } = {},
 ): Map<string, string> {
   const desired = new Map<string, string>();
+  // pane_tint off: nothing is desired, so PaneTints.apply resets every pane it painted.
+  if (opts.enabled === false) return desired;
+  const palette = opts.base ? tintPalette(opts.base) : TINT_BG;
   for (const [key, info] of live) {
     // Paint is scoped to the workspace prefix, and the clear sweeps the same
     // prefix. They must agree: a tint painted outside it is one nothing cleans up.
@@ -86,7 +111,7 @@ export function desiredTints(
     if (lastActive === undefined) continue; // no transcript -> no date -> no guess
     const bucket = staleness(lastActive, now);
     if (bucket === 'fresh') continue; // a live chat is left looking like a shell
-    desired.set(info.pane_id, TINT_STYLE[bucket]);
+    desired.set(info.pane_id, `bg=${palette[bucket]}`);
   }
   return desired;
 }
@@ -118,9 +143,7 @@ export const realTintTmux: TintTmux = {
   clearWindows(prefix) {
     let out: string;
     try {
-      out = execFileSync('tmux', ['list-windows', '-a', '-F', '#{session_name}:#{window_index}'], {
-        encoding: 'utf-8',
-      });
+      out = tmux(['list-windows', '-a', '-F', '#{session_name}:#{window_index}']);
     } catch {
       return 0; // tmux not running -> nothing to clear
     }
@@ -137,7 +160,7 @@ export const realTintTmux: TintTmux = {
 
 function tmuxQuiet(args: string[]): void {
   try {
-    execFileSync('tmux', args, { stdio: 'ignore' });
+    tmux(args, { stdio: 'ignore' });
   } catch {
     /* pane or window vanished between listing it and writing to it */
   }
