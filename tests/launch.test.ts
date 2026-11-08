@@ -42,7 +42,7 @@ function legacyDb() {
 function migratedDb() {
   const db = openDb(':memory:');
   // What the migration writes for an existing install: explicit rows, schema 2.
-  for (const [k, v] of [['perm_chats', 'skip'], ['perm_watchers', 'skip'], ['perm_orchestrator', 'skip'], ['rc_watchers', true], ['rc_orchestrator', true], ['orchestrator_enabled', '1'], ['settings_schema', '2']] as const) {
+  for (const [k, v] of [['perm_chats', 'skip'], ['perm_watchers', 'skip'], ['perm_orchestrator', 'skip'], ['rc_watchers', true], ['orchestrator_enabled', '1'], ['settings_schema', '2']] as const) {
     const r = setSetting(db, k as never, v as never);
     if (!r.ok && k !== 'settings_schema') throw new Error(r.detail);
   }
@@ -96,7 +96,7 @@ describe('settings resolve to those same flags', () => {
   });
 });
 
-describe('a new user’s commands carry no skip-permissions and no Remote Control', () => {
+describe('a new user’s commands carry no skip-permissions, and Remote Control only on the orchestrator', () => {
   const S = readLaunchSettings(newUserDb());
   const all = [
     buildLaunchCommand({ ...base, sessionId: 'abc', fresh: true, prompt: 'hi' }, S),
@@ -106,18 +106,19 @@ describe('a new user’s commands carry no skip-permissions and no Remote Contro
     buildOrchestratorCommand({ files, sessionId: 'abc', resume: false }, S),
     buildOrchestratorCommand({ files, sessionId: 'abc', resume: true }, S),
   ];
-  it('never mentions either flag', () => {
-    for (const c of all) {
+  it('never skips permissions; only the orchestrator has Remote Control', () => {
+    all.forEach((c, i) => {
       expect(c).not.toContain('--dangerously-skip-permissions');
-      expect(c).not.toContain('--remote-control');
-    }
+      if (i >= 4) expect(c).toContain("--remote-control 'Loom orchestrator'");
+      else expect(c).not.toContain('--remote-control');
+    });
   });
   it('keeps everything else', () => {
     expect(all[0]).toBe("cd '/p q' && claude --session-id 'abc' $'hi'");
     expect(all[1]).toBe(`cd '/p q' && ${RESUME_ENV} claude --resume 's'`);
     expect(all[2]).toBe(`cd '/p q' && ${RESUME_ENV} claude --resume 's' --fork-session ${SEED}`);
     expect(all[3]).toBe(`cd '/p' && claude "$(cat '/b.md')"`);
-    expect(all[4]).toBe(`cd '/Users/x/.loom/orchestrator' && claude --session-id 'abc' --name 'Loom orchestrator' --mcp-config '/m.json' --append-system-prompt "$(cat '/p.md')" ${KICK_NEW}`);
+    expect(all[4]).toBe(`cd '/Users/x/.loom/orchestrator' && claude --session-id 'abc' --remote-control 'Loom orchestrator' --name 'Loom orchestrator' --mcp-config '/m.json' --append-system-prompt "$(cat '/p.md')" ${KICK_NEW}`);
   });
 });
 
@@ -130,7 +131,7 @@ describe('each kind follows its own setting', () => {
     const watchers = { ...SAFE_LAUNCH_SETTINGS, skipWatchers: true, rcWatchers: true };
     expect(claudeCommand({ kind: 'watcher', dir: '/p', promptFile: '/b', name: 'n' }, watchers)).toBe(`cd '/p' && claude --dangerously-skip-permissions --remote-control 'n' "$(cat '/b')"`);
     expect(claudeCommand({ kind: 'chat', dir: '/p' }, watchers)).not.toContain('--dangerously-skip-permissions');
-    const orch = { ...SAFE_LAUNCH_SETTINGS, rcOrchestrator: true };
+    const orch = { ...SAFE_LAUNCH_SETTINGS };
     expect(claudeCommand({ kind: 'orch', dir: '/p', sid: 's', name: 'n' }, orch)).toContain("--remote-control 'n' --name 'n'");
     expect(claudeCommand({ kind: 'orch', dir: '/p', sid: 's', name: 'n' }, orch)).not.toContain('--dangerously-skip-permissions');
   });
@@ -205,7 +206,7 @@ describe('orchestrator opt-in', () => {
     // ...and with no skip/RC flags in the line it typed.
     const sent = noConsent.calls.find((c) => c[0] === 'send-keys')![3];
     expect(sent).not.toContain('--dangerously-skip-permissions');
-    expect(sent).not.toContain('--remote-control');
+    expect(sent).toContain('--remote-control'); // the orchestrator always has Remote Control
 
     const consent = rig(newUserDb());
     setSetting(consent.db, 'orchestrator_enabled', '1');

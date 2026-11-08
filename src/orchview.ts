@@ -31,6 +31,8 @@ export const ORCH_VIEW_CSS = String.raw`
   #oconvo { flex:999 1 460px; min-width:0; min-height:0; display:flex; flex-direction:column; border-right:1px solid #232634; }
   #omsgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:9px; }
   #omsgs .msg { max-width:88%; flex:none; }
+  /* display:flex above beats the hidden attribute: without this the messages stay up and squeeze the terminal. */
+  #omsgs[hidden], #oterm[hidden] { display:none; }
   #oterm { flex:1 1 auto; min-height:0; margin:14px 20px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
   .olog { align-self:center; max-width:92%; font-size:11.5px; line-height:1.45; color:#8a90a2; text-align:center; overflow-wrap:anywhere; }
   .olog b { color:#c4ccdc; font-weight:600; }

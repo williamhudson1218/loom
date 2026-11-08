@@ -13,7 +13,7 @@ import { pretrustFolder } from './orchstart.ts';
 
 // The orchestrator session (design §8): one normal, interactive Claude Code
 // session in a Loom-managed window, started when Loom starts and restarted when
-// it dies, with Remote Control on when rc_orchestrator is set, so it can be reached from a phone. It sees
+// it dies, always with Remote Control on, so it can be reached from a phone. It sees
 // every other chat through the `loom` MCP server (src/orchmcp.ts) and hears about
 // changes from Loom's event batches (src/orchestrator.ts); it never polls.
 //
@@ -109,7 +109,7 @@ export const KICKOFF_NEW =
 export const KICKOFF_RESTART =
   'Loom restarted you (the session had exited). Re-read list_items and list_chats, fix any item that is stale, reply with one line, then wait.';
 
-/** The shell line typed into the orchestrator's window. Flags follow perm_orchestrator / rc_orchestrator (src/launch.ts). */
+/** The shell line typed into the orchestrator's window. Flags follow perm_orchestrator; Remote Control is always on (src/launch.ts). */
 export function buildOrchestratorCommand(o: { files: OrchFiles; sessionId: string; resume: boolean }, settings?: LaunchSettings): string {
   return claudeCommand(
     {

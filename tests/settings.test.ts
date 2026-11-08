@@ -44,7 +44,7 @@ const DESIGN_KEYS = [
   'default_agent', 'summary_model', 'analyze_cap', 'analyze_concurrency', 'active_window_days', 'new_thread_dir', 'notify_sound',
   'claude_bin', 'extra_path', 'codex_visible',
   'terminal', 'launch_target', 'lane_view', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
-  'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'rc_orchestrator', 'review_skill', 'voice_skill',
+  'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill',
   'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_poll_parked', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_ax_last_result',
   'outbox_primary', 'outbox_confirm', 'auto_resume_parked', 'outbox_slack_drafts', 'outbox_chat_drafts', 'outbox_keep_days',
   'orchestrator_enabled', 'orchestrator_autostart', 'orchestrator_notify', 'orchestrator_trust', 'orchestrator_session_id', 'orchestrator_pane_id',
@@ -83,7 +83,6 @@ const TODAY: Record<string, unknown> = {
   perm_watchers: 'skip', // watchers.ts
   perm_orchestrator: 'skip', // orchsession.ts
   rc_watchers: true, // watchers.ts --remote-control
-  rc_orchestrator: true, // orchsession.ts --remote-control
   review_skill: 'loom:review', // nothing read it; the migration takes an install's own from its briefs
   voice_skill: '', // likewise
   slack_mode: 'direct', // Slack ran whenever its CLI was present
@@ -136,7 +135,7 @@ const NEW_USER: Record<string, unknown> = {
   notify_sound: 'system', claude_bin: '', extra_path: [], codex_visible: 'auto',
   terminal: 'inside', launch_target: 'managed', lane_view: 'zoom', ghostty_rehome: false, ghostty_attach_cmd: 'tmux attach -t', pane_labels: true,
   pane_label_model: 'haiku', pane_tint: false, pane_tint_base: '#1e1e2e',
-  perm_chats: 'normal', perm_watchers: 'normal', perm_orchestrator: 'normal', rc_watchers: false, rc_orchestrator: false,
+  perm_chats: 'normal', perm_watchers: 'normal', perm_orchestrator: 'normal', rc_watchers: false,
   review_skill: 'loom:review', voice_skill: '',
   slack_mode: 'off', slack_poll_parked: true, channel_projects: {}, slack_goto_hotkey: 'Command+Shift+L', slack_paste_fallback: true,
   outbox_primary: 'send', outbox_confirm: true, auto_resume_parked: false, outbox_slack_drafts: false, outbox_chat_drafts: true, outbox_keep_days: 14,

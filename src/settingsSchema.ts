@@ -293,10 +293,6 @@ export const SETTINGS = [
     key: 'rc_watchers', section: 'agents', label: 'Remote Control for watcher workers', help: 'Start watcher workers with --remote-control.',
     defaultNew: false, legacyUnset: true, restart: false,
   }),
-  boolDef({
-    key: 'rc_orchestrator', section: 'agents', label: 'Remote Control for the orchestrator', help: 'Start the orchestrator with --remote-control.',
-    defaultNew: false, legacyUnset: true, restart: false,
-  }),
   // An existing install's values are read from its own watcher briefs by the
   // migration (src/migrations/settings.ts), so the legacy defaults are generic.
   strDef((s) => (s === 'none' || SKILL_NAME.test(s) ? null : 'must be a skill name or none'), {

@@ -306,7 +306,6 @@ function sxShip(){var sh=SX.data.ship;if(!sh)return '<p class="sxempty">loadingâ
    sxNote('The Ship button runs the ship command in a new chat. A new row defaults to <code>'+sxEsc(sh.defaultCommand||'/loom:ship')+'</code>. There is no force option.');}
 function sxOrch(){return sxKey('orchestrator_enabled',{kind:'toggle01',title:'Orchestrator',help:'A chat that supervises your other chats.'})+
    sxKey('perm_orchestrator',{kind:'seg',title:'Permission mode',help:'Same trade-off as chats.'})+
-   sxKey('rc_orchestrator',{title:'Remote Control',help:'Drive it from the Claude app. Needs a supported account.'})+
    sxKey('orchestrator_notify',{kind:'select',title:'Notify me',help:'When the orchestrator pings you.',labels:{needs_you:'Only when it asks a question',all:'On every report',off:'Never'}})+
    sxKey('orchestrator_autostart',{title:'Start at launch',help:'Start it whenever Loom starts. Only matters when it is enabled.'})+
    sxPromptBlock();}

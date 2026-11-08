@@ -8,7 +8,7 @@ import { getSetting } from './settingsSchema.ts';
 // permission flag, Remote Control and the binary path each have a single owner:
 //
 //   --dangerously-skip-permissions   only when that kind's perm_* setting is `skip`
-//   --remote-control <name>          only when rc_* is on (watcher and orchestrator)
+//   --remote-control <name>          watchers when rc_watchers is on; the orchestrator always
 //   claude                           or the claude_bin setting
 //
 // Codex commands are not built here (they take neither flag).
@@ -57,7 +57,6 @@ export interface LaunchSettings {
   skipWatchers: boolean;
   skipOrchestrator: boolean;
   rcWatchers: boolean;
-  rcOrchestrator: boolean;
 }
 
 /** A new install: normal permission mode, no Remote Control. */
@@ -67,7 +66,6 @@ export const SAFE_LAUNCH_SETTINGS: LaunchSettings = {
   skipWatchers: false,
   skipOrchestrator: false,
   rcWatchers: false,
-  rcOrchestrator: false,
 };
 
 /** What an install from before settings schema 2 resolves to: skip-permissions everywhere, Remote Control on. */
@@ -77,7 +75,6 @@ export const LEGACY_LAUNCH_SETTINGS: LaunchSettings = {
   skipWatchers: true,
   skipOrchestrator: true,
   rcWatchers: true,
-  rcOrchestrator: true,
 };
 
 export function readLaunchSettings(db: Database.Database): LaunchSettings {
@@ -87,7 +84,6 @@ export function readLaunchSettings(db: Database.Database): LaunchSettings {
     skipWatchers: getSetting(db, 'perm_watchers') === 'skip',
     skipOrchestrator: getSetting(db, 'perm_orchestrator') === 'skip',
     rcWatchers: getSetting(db, 'rc_watchers'),
-    rcOrchestrator: getSetting(db, 'rc_orchestrator'),
   };
 }
 
@@ -175,7 +171,8 @@ export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSetting
       const name = input.name ?? '';
       const flags =
         (settings.skipOrchestrator ? skip : '') +
-        (settings.rcOrchestrator ? ` --remote-control ${shq(name)}` : '') +
+        // Always on: the orchestrator is the one session meant to be reached from a phone.
+        ` --remote-control ${shq(name)}` +
         ` --name ${shq(name)}` +
         (input.mcpConfig ? ` --mcp-config ${shq(input.mcpConfig)}` : '') +
         (input.systemPromptFile ? ` --append-system-prompt "$(cat ${shq(input.systemPromptFile)})"` : '');
