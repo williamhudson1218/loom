@@ -60,6 +60,12 @@ describe('turn-boundary stamps', () => {
 });
 
 describe('pinOrder (stable reorder)', () => {
+  it('closing a row while everything is pinned closes the gap; the last row never jumps up', () => {
+    const prev = ['a', 'b', 'x', 'c', 'old'];
+    const want = ['a', 'b', 'c', 'old'];
+    const all = { a: 1, b: 1, c: 1, old: 1 };
+    expect(api.pinOrder(prev, want, all)).toEqual(['a', 'b', 'c', 'old']);
+  });
   it('is the wanted order when nothing is pinned', () => {
     expect(api.pinOrder(['a', 'b', 'c'], ['c', 'a', 'b'], {})).toEqual(['c', 'a', 'b']);
   });

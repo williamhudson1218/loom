@@ -39,9 +39,13 @@ function sortAgeTip(startedAt,freshMs,relf){return (startedAt?'Started '+relf(st
 function isFlatList(mode,groupBy,tab){return mode==='recent'&&groupBy==='status'&&tab!=='saved';}
 // Re-order want (keys, the order we would like) but keep every pinned key at the
 // slot it held in prev. Unpinned keys fill the remaining slots in want order.
+// A row that left the list (closed, hidden, filtered out) is dropped from prev first,
+// so the rows below it close the gap by one: otherwise the last row's slot no longer
+// exists and it was placed in the gap, lifting the oldest chat into the middle.
 function pinOrder(prev,want,pinned){
   var n=want.length,out=new Array(n),inWant={},i;
   for(i=0;i<n;i++)inWant[want[i]]=1;
+  prev=prev.filter(function(k){return inWant[k];});
   var used={};
   for(i=0;i<prev.length;i++){var k=prev[i];if(!pinned[k]||!inWant[k])continue;
     var slot=Math.min(i,n-1);while(slot<n&&out[slot]!==undefined)slot++;
