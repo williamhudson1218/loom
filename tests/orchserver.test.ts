@@ -3,9 +3,11 @@ import type http from 'node:http';
 import { openDb } from '../src/db.ts';
 import type { ChatView, LiveLoc } from '../src/dashboard.ts';
 import { RELAY_PREFIX, orchSettings, queuedRelays, recentLog, relayToChat } from '../src/orchestrator.ts';
-import { askAboutText, chatInfos, observations, orchTick, type Snap } from '../src/orchserver.ts';
+import { askAboutText, chatInfos, observations, orchHistory, orchTick, type Snap } from '../src/orchserver.ts';
 import { termToken } from '../src/ptybridge.ts';
-import { ensureOrchToken, orchDir } from '../src/orchsession.ts';
+import { ensureOrchToken, orchDir, orchTranscriptPath } from '../src/orchsession.ts';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createServer } from '../src/server.ts';
 
 const T0 = 1_700_000_000_000;
@@ -191,5 +193,45 @@ describe('orchestrator routes', () => {
   it('puts the badge count and the orchestrator session on /api/data', async () => {
     const r = await request('GET', '/api/data');
     expect(r.body.orch).toMatchObject({ needsYou: expect.any(Number), enabled: true, live: false });
+  });
+});
+
+describe('orchestrator history paging', () => {
+  const SID = 'orch-history-test-0001';
+  const file = () => orchTranscriptPath(orchDir(), SID);
+  let prev: string;
+  beforeAll(() => {
+    const db = openDb();
+    prev = orchSettings.sessionId(db);
+    orchSettings.setSessionId(db, SID);
+    db.close();
+    fs.mkdirSync(path.dirname(file()), { recursive: true });
+    // 10 turns, 1 s apart, alternating roles.
+    const lines = Array.from({ length: 10 }, (_, i) => JSON.stringify(
+      i % 2 === 0
+        ? { type: 'user', timestamp: new Date(T0 + i * 1000).toISOString(), message: { role: 'user', content: `turn ${i}` } }
+        : { type: 'assistant', timestamp: new Date(T0 + i * 1000).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: `turn ${i}` }] } },
+    ));
+    fs.writeFileSync(file(), lines.join('\n') + '\n');
+  });
+  afterAll(() => {
+    fs.rmSync(file(), { force: true });
+    const db = openDb();
+    if (prev) orchSettings.setSessionId(db, prev);
+    else db.prepare(`DELETE FROM settings WHERE key = 'orchestrator_session_id'`).run();
+    db.close();
+  });
+
+  it('returns the turns before the cursor, oldest first, and says whether more remain', () => {
+    const a = orchHistory(T0 + 8000, 3);
+    expect(a.messages.map((m) => m.text)).toEqual(['turn 5', 'turn 6', 'turn 7']);
+    expect(a.more).toBe(true);
+    const b = orchHistory(T0 + 5000, 3);
+    expect(b.messages.map((m) => m.text)).toEqual(['turn 2', 'turn 3', 'turn 4']);
+    expect(b.more).toBe(true);
+    const c = orchHistory(T0 + 3000, 10);
+    expect(c.messages.map((m) => m.text)).toEqual(['turn 0', 'turn 1', 'turn 2']);
+    expect(c.more).toBe(false);
+    expect(orchHistory(T0, 5)).toEqual({ ok: true, messages: [], more: false });
   });
 });

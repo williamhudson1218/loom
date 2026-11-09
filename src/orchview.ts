@@ -31,8 +31,14 @@ export const ORCH_VIEW_CSS = String.raw`
   #oconvo { flex:999 1 460px; min-width:0; min-height:0; display:flex; flex-direction:column; border-right:1px solid #232634; }
   #omsgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:9px; }
   #omsgs .msg { max-width:88%; flex:none; }
+  #ofilt { flex:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 20px 0; }
+  #ofilt .ochip { height:26px; padding:0 10px; border-radius:13px; border:1px solid #2b2f40; background:transparent; color:#8a90a2; font:inherit; font-size:12px; cursor:pointer; }
+  #ofilt .ochip.on { background:#1b2440; border-color:#3a4f8f; color:#c9d6ff; }
+  #ofilt .ochip i { font-style:normal; opacity:.7; margin-left:4px; }
+  #osearch { flex:1 1 120px; min-width:90px; max-width:220px; height:26px; padding:0 10px; border-radius:13px; border:1px solid #2b2f40; background:#0c0e15; color:#c4ccdc; font:inherit; font-size:12px; }
+  #omsgs .oearlier { align-self:center; flex:none; }
   /* display:flex above beats the hidden attribute: without this the messages stay up and squeeze the terminal. */
-  #omsgs[hidden], #oterm[hidden] { display:none; }
+  #omsgs[hidden], #oterm[hidden], #ofilt[hidden] { display:none; }
   #oterm { flex:1 1 auto; min-height:0; margin:14px 20px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
   .olog { align-self:center; max-width:92%; font-size:11.5px; line-height:1.45; color:#8a90a2; text-align:center; overflow-wrap:anywhere; }
   .olog b { color:#c4ccdc; font-weight:600; }
@@ -72,6 +78,7 @@ export const ORCH_VIEW_HTML = String.raw`<div id="orchview" aria-label="Orchestr
   <div id="obanner"></div>
   <div class="obody">
     <section id="oconvo" aria-label="Conversation">
+      <div id="ofilt"><span id="ochips"></span><input id="osearch" type="search" autocomplete="off" placeholder="Search the feed" aria-label="Search the feed"/></div>
       <div id="omsgs"></div>
       <div id="oterm" hidden></div>
       <div class="oinput"><label for="oinput" class="ovh">Message the orchestrator</label><input id="oinput" type="text" autocomplete="off" placeholder="Ask where anything stands, or tell an agent what to do"/><button type="button" class="mbtn pri" id="osend">Send</button></div>
@@ -82,7 +89,9 @@ export const ORCH_VIEW_HTML = String.raw`<div id="orchview" aria-label="Orchestr
 
 export const ORCH_VIEW_JS = String.raw`
 // ---- Orchestrator ----------------------------------------------------------------
-var orchSel=false,ORCH=null,orchTimer=null,OMSG_SIG='',orchTermOn=false;
+var orchSel=false,ORCH=null,orchTimer=null,OMSG_SIG='',orchTermOn=false,ORCH_STORE=[],ORCH_KEYS={},ORCH_MORE=null,ORCH_LOADING=false;
+var ORCH_F={conv:true,relay:false,ev:false,sys:false,q:''};try{const sv=JSON.parse(localStorage.getItem('loom.orchFilt')||'{}');['conv','relay','ev','sys'].forEach(k=>{if(typeof sv[k]==='boolean')ORCH_F[k]=sv[k];});}catch(e){}
+var ORCH_PAGE=120;
 var ORCH_SVG='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8fb4ff" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><circle cx="4" cy="5" r="1.6"></circle><circle cx="20" cy="5" r="1.6"></circle><circle cx="4" cy="19" r="1.6"></circle><circle cx="20" cy="19" r="1.6"></circle><path d="M5.3 6.2l4.6 4M18.7 6.2l-4.6 4M5.3 17.8l4.6-4M18.7 17.8l-4.6-4"></path></svg>';
 var PHONE_SVG='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"></rect><path d="M11 18h2"></path></svg>';
 function orchInfo(){return DATA.orch||{};}
@@ -95,12 +104,15 @@ function selectOrch(){leaveTerminal();if(tab!=='board'&&tab!=='saved'){tab='boar
   if(sel)deselect();orchSel=true;OMSG_SIG='';$('#ohead').dataset.sig='';$('#orail').dataset.sig='';renderOrchPin();renderMain();loadOrch(true);
   clearInterval(orchTimer);orchTimer=setInterval(()=>{if(!document.hidden)loadOrch(false);},4000);setTimeout(()=>{const i=$('#oinput');if(i&&!orchTermOn)i.focus();},0);}
 function leaveOrch(){if(!orchSel)return;orchSel=false;clearInterval(orchTimer);orchTimer=null;if(termKey.indexOf('orch|')===0)closeTerm();orchTermOn=false;renderOrchPin();}
-function loadOrch(toBottom){fetch('/api/orch').then(r=>r.json()).then(j=>{if(!orchSel||!j.ok)return;ORCH=j;DATA.orch=Object.assign({},DATA.orch||{},{needsYou:j.needsYou,live:j.live,enabled:j.enabled,sessionId:j.sessionId});renderOrchPin();renderOrch(toBottom);}).catch(()=>{});}
+function loadOrch(toBottom){fetch('/api/orch').then(r=>r.json()).then(j=>{if(!orchSel||!j.ok)return;ORCH=j;orchMerge(ORCH_STORE,ORCH_KEYS,j.messages);if(ORCH_MORE===null)ORCH_MORE=(j.messages||[]).length>=ORCH_PAGE;DATA.orch=Object.assign({},DATA.orch||{},{needsYou:j.needsYou,live:j.live,enabled:j.enabled,sessionId:j.sessionId});renderOrchPin();renderOrch(toBottom);}).catch(()=>{});}
 function hhmm(ms){if(!ms)return '';const d=new Date(ms);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
 // Conversation + Loom's own log, by time. An event batch is already in the
 // transcript as a user turn, so its log row is skipped; it renders as a line.
 var OLOG_TXT={relay:'Sent to',queued:'Queued for',delivered:'Delivered to',failed:'Not sent to',started:'',ask:''};
-function orchTimeline(o){const out=[];(o.messages||[]).forEach((m,i)=>out.push({t:m.at||0,i:i,m:m}));
+// The client keeps every turn it has seen (the 4 s tail plus any pages loaded on demand), so a
+// tail that slides forward never leaves a gap behind an earlier page.
+function orchMerge(store,keys,msgs){let n=0;(msgs||[]).forEach(m=>{const k=(m.at||0)+'|'+m.role+'|'+(m.text||'').length+'|'+(m.text||'').slice(0,40);if(keys[k])return;keys[k]=1;store.push(m);n++;});if(n)store.sort((a,b)=>(a.at||0)-(b.at||0));return n;}
+function orchTimeline(o,store){const out=[];(store||o.messages||[]).forEach((m,i)=>out.push({t:m.at||0,i:i,m:m}));
   (o.log||[]).forEach(l=>{if(l.kind==='events'||l.kind==='ask')return;out.push({t:l.at,i:1e6+l.id,l:l});});
   out.sort((a,b)=>(a.t-b.t)||(a.i-b.i));return out;}
 function orchMsgHtml(x){if(x.l){const l=x.l;
@@ -110,6 +122,19 @@ function orchMsgHtml(x){if(x.l){const l=x.l;
   if(m.role==='user'&&t.indexOf('[Loom events]')===0)return '<div class="olog ev">'+esc(t.replace('[Loom events]','Loom events ·').split(' -- ')[0])+'</div>';
   if(m.role==='user'&&(t.indexOf('Loom started you')===0||t.indexOf('Loom restarted you')===0))return '<div class="olog">'+hhmm(m.at)+' · '+esc(t.split('.')[0])+'</div>';
   return '<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':'Orchestrator')+(m.at?' · '+hhmm(m.at):'')+'</div>'+esc(t)+'</div>';}
+// Which filter chip a feed row belongs to. Failed relays are problems, so they ignore the chips.
+function orchRowKind(x){if(x.l){const k=x.l.kind;return k==='failed'?'failed':k==='started'?'sys':'relay';}
+  const m=x.m,t=m.text||'';if(m.role==='user'&&t.indexOf('[Loom events]')===0)return 'ev';
+  if(m.role==='user'&&(t.indexOf('Loom started you')===0||t.indexOf('Loom restarted you')===0))return 'sys';return 'conv';}
+function orchRowText(x){return x.l?((x.l.target||'')+' '+(x.l.text||'')):(x.m.text||'');}
+function orchRowShown(x,f){const k=orchRowKind(x);if(k!=='failed'&&!f[k])return false;
+  const q=(f.q||'').trim().toLowerCase();return !q||orchRowText(x).toLowerCase().indexOf(q)>=0;}
+function orchCounts(tl){const c={conv:0,relay:0,ev:0,sys:0,failed:0};tl.forEach(x=>{c[orchRowKind(x)]++;});return c;}
+function orchChipsHtml(c,f){const chip=(k,label,n)=>'<button type="button" class="ochip'+(f[k]?' on':'')+'" data-ofilt="'+k+'" aria-pressed="'+(f[k]?'true':'false')+'">'+label+'<i>'+n+'</i></button>';
+  return chip('conv','Conversation',c.conv)+chip('relay','Relays',c.relay)+chip('ev','Loom events',c.ev)+chip('sys','System',c.sys)+(c.failed?'<span class="olog bad" style="align-self:center">'+c.failed+' failed relay'+(c.failed>1?'s':'')+' always shown</span>':'');}
+function orchSaveFilt(){try{localStorage.setItem('loom.orchFilt',JSON.stringify({conv:ORCH_F.conv,relay:ORCH_F.relay,ev:ORCH_F.ev,sys:ORCH_F.sys}));}catch(e){}}
+function orchLoadEarlier(){if(ORCH_LOADING||!ORCH_STORE.length)return;const first=ORCH_STORE.find(m=>m.at);if(!first)return;ORCH_LOADING=true;
+  fetch('/api/orch?before='+first.at+'&limit='+ORCH_PAGE).then(r=>r.json()).then(j=>{ORCH_LOADING=false;if(!j.ok)return;orchMerge(ORCH_STORE,ORCH_KEYS,j.messages);ORCH_MORE=!!j.more;const w=$('#omsgs'),h=w.scrollHeight,t=w.scrollTop;OMSG_SIG='';renderOrch(false);w.scrollTop=t+(w.scrollHeight-h);}).catch(()=>{ORCH_LOADING=false;});}
 function orchJumpLabel(i){return i.ref_type==='chat'?'Open chat':i.ref_type==='pr'?'Open PR':i.ref_type==='slack'?'Open Slack thread':'';}
 function orchItemChat(i){if(i.ref_type!=='chat')return null;const k=i.ref_id;const c=DATA.chats.find(x=>chatKey(x)===k||x.session_id===k);return c||null;}
 function orchRailHtml(o){const items=o.items||[];const open=items.filter(i=>!i.resolved_at);
@@ -139,12 +164,15 @@ function renderOrch(toBottom){const o=ORCH;if(!o){$('#omsgs').innerHTML='<p clas
   const b=orchBannerHtml(o);if($('#obanner').dataset.sig!==b){$('#obanner').dataset.sig=b;$('#obanner').innerHTML=b;}
   const r=orchRailHtml(o);if($('#orail').dataset.sig!==r){$('#orail').dataset.sig=r;$('#orail').innerHTML=r;}
   const showTerm=orchTermOn&&o.paneExists&&TERM_TOKEN&&o.paneId;
-  $('#oterm').hidden=!showTerm;$('#omsgs').hidden=!!showTerm;
+  $('#oterm').hidden=!showTerm;$('#omsgs').hidden=!!showTerm;$('#ofilt').hidden=!!showTerm;
   if(showTerm){const k='orch|'+o.paneId;if(termKey!==k){openTerm(o.paneId,$('#oterm'));termKey=k;}return;}
   if(termKey.indexOf('orch|')===0)closeTerm();
-  const tl=orchTimeline(o);const last=tl.length?tl[tl.length-1]:null;const sig=tl.length+':'+(last?(last.l?last.l.id:(last.m.text||'').length):0);
+  const tl=orchTimeline(o,ORCH_STORE);const last=tl.length?tl[tl.length-1]:null;const f=ORCH_F;
+  const ch=orchChipsHtml(orchCounts(tl),f);if($('#ochips').dataset.sig!==ch){$('#ochips').dataset.sig=ch;$('#ochips').innerHTML=ch;}
+  const sig=tl.length+':'+(last?(last.l?last.l.id:(last.m.text||'').length):0)+'|'+(f.conv?1:0)+(f.relay?1:0)+(f.ev?1:0)+(f.sys?1:0)+f.q+'|'+(ORCH_MORE?1:0);
   const wrap=$('#omsgs');const atBottom=wrap.scrollTop+wrap.clientHeight>=wrap.scrollHeight-50;
-  if(sig!==OMSG_SIG||toBottom){OMSG_SIG=sig;wrap.innerHTML=tl.map(orchMsgHtml).join('')||'<p class="muted">'+(o.live?'No messages yet. Ask it where things stand.':'No conversation yet.')+'</p>';}
+  if(sig!==OMSG_SIG||toBottom){OMSG_SIG=sig;const shown=tl.filter(x=>orchRowShown(x,f));
+    wrap.innerHTML=(ORCH_MORE?'<button type="button" class="mbtn oearlier" data-oearlier="1">Load earlier</button>':'')+(shown.map(orchMsgHtml).join('')||'<p class="muted">'+(tl.length?'Nothing matches these filters.':(o.live?'No messages yet. Ask it where things stand.':'No conversation yet.'))+'</p>');}
   if(toBottom||atBottom)wrap.scrollTop=wrap.scrollHeight;}
 function orchSend(){const i=$('#oinput');const t=i.value.trim();if(!t)return;i.value='';
   postJ('/api/orch/send',{text:t}).then(j=>{if(!j.ok){i.value=t;toast(j.detail||'could not send','#8a2b2e');return;}setTimeout(()=>loadOrch(true),600);setTimeout(()=>loadOrch(true),2500);}).catch(()=>{i.value=t;toast('server off','#8a2b2e');});}
@@ -156,6 +184,9 @@ function orchJump(i){if(!i)return;
 function askOrchestrator(c){postJ('/api/orch/ask',{session:c.session_id,agent:c.agent}).then(j=>{if(!j.ok){toast(j.detail||'could not ask','#8a2b2e');return;}toast('asked the orchestrator');selectOrch();}).catch(()=>toast('server off','#8a2b2e'));}
 function wireOrch(){
   $('#orchpin').addEventListener('click',e=>{if(e.target.closest('[data-orch]'))selectOrch();});
+  $('#ofilt').addEventListener('click',e=>{const b=e.target.closest('[data-ofilt]');if(!b)return;const k=b.dataset.ofilt;ORCH_F[k]=!ORCH_F[k];orchSaveFilt();if(ORCH)renderOrch(false);});
+  $('#osearch').addEventListener('input',e=>{ORCH_F.q=e.target.value;if(ORCH)renderOrch(false);});
+  $('#omsgs').addEventListener('click',e=>{if(e.target.closest('[data-oearlier]'))orchLoadEarlier();});
   $('#osend').onclick=orchSend;$('#oinput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();orchSend();}});
   [$('#ohead'),$('#obanner')].forEach(el=>el.addEventListener('click',e=>{const b=e.target.closest('button[data-oa]');if(!b||b.disabled||!ORCH)return;const a=b.dataset.oa;
     if(a==='notify'){const mode=ORCH.notify==='off'?'needs_you':'off';postJ('/api/orch/notify',{mode}).then(j=>{if(j.ok){ORCH.notify=j.notify;renderOrch(false);toast(j.notify==='off'?'notifications off':'notifying on Needs you only');}}).catch(()=>toast('server off','#8a2b2e'));}

@@ -8,7 +8,7 @@ import type { ChatView, LiveLoc } from './dashboard.ts';
 import { agentSessionKey } from './placements.ts';
 import { defaultRun, focusedPaneFrom, readWorld, type TmuxRunner } from './compact.ts';
 import { sendToPane } from './goto.ts';
-import { readTranscript } from './transcript.ts';
+import { readTranscript, type Msg } from './transcript.ts';
 import { readAllThreads, type ThreadRec } from './slack.ts';
 import { parseSlackThread } from './slackref.ts';
 import { cachedPipeline, parsePrRef } from './pipeline.ts';
@@ -357,6 +357,26 @@ export function orchView(snap: Snap, now: number = Date.now(), run: TmuxRunner =
   });
 }
 
+/** One page of earlier turns: the `limit` turns before `before` (a turn time, ms), oldest first.
+ *  A restart resumes the same session id (and so the same transcript), so one file holds the whole history. */
+export function orchHistory(before: number, limit: number): { ok: true; messages: Msg[]; more: boolean } {
+  return withDb((db) => {
+    const sid = orchSettings.sessionId(db);
+    const dir = files?.dir ?? orchDir();
+    const transcript = sid ? orchTranscriptPath(dir, sid) : '';
+    let size = 0;
+    try {
+      size = transcript ? fs.statSync(transcript).size : 0;
+    } catch {
+      /* no transcript yet */
+    }
+    const n = Math.min(Math.max(1, Math.floor(limit) || 120), 500);
+    const all = size ? readTranscript('claude', transcript, { limit: Number.MAX_SAFE_INTEGER, withTime: true, bytes: size + 1 }) : [];
+    const older = all.filter((m) => (m.at ?? 0) > 0 && (m.at as number) < before);
+    return { ok: true as const, messages: older.slice(-n), more: older.length > n };
+  });
+}
+
 /** For /api/data: the sidebar entry's badge and the session to hide from the list. */
 export function orchSummary(live: Record<string, LiveLoc> = {}): { sessionId: string; needsYou: number; enabled: boolean; live: boolean } {
   try {
@@ -388,6 +408,11 @@ export function handleOrchRoute(req: http.IncomingMessage, res: http.ServerRespo
   if (p !== '/api/orch' && !p.startsWith('/api/orch/')) return false;
 
   if (p === '/api/orch' && req.method === 'GET') {
+    const before = Number(url.searchParams.get('before'));
+    if (Number.isFinite(before) && before > 0) {
+      json(res, 200, orchHistory(before, Number(url.searchParams.get('limit'))));
+      return true;
+    }
     json(res, 200, orchView(getSnap()));
     return true;
   }

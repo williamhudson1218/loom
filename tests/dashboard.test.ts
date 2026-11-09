@@ -417,13 +417,76 @@ describe('dashboard script', () => {
   });
 });
 
+describe('orchestrator feed filters', () => {
+  const load = async () => {
+    const { ORCH_VIEW_JS } = await import('../src/orchview.ts');
+    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${ORCH_VIEW_JS}; return { orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
+      (s: string) => s, () => '', { chats: [], live: {} }, () => '',
+    ) as Record<string, (...a: any[]) => any>;
+  };
+  const m = (role: string, text: string, at = 1) => ({ t: at, i: 0, m: { role, text, at } });
+  const l = (kind: string, text = 'x', target = 'blue-vanilla') => ({ t: 1, i: 0, l: { id: 1, kind, text, target, at: 1 } });
+  const defaults = { conv: true, relay: false, ev: false, sys: false, q: '' };
+
+  it('classifies every row kind', async () => {
+    const v = await load();
+    expect(v.orchRowKind(m('user', 'hi'))).toBe('conv');
+    expect(v.orchRowKind(m('assistant', 'hello'))).toBe('conv');
+    expect(v.orchRowKind(m('user', '[Loom events] a -- b'))).toBe('ev');
+    expect(v.orchRowKind(m('user', 'Loom started you. x'))).toBe('sys');
+    expect(v.orchRowKind(m('user', 'Loom restarted you. x'))).toBe('sys');
+    for (const k of ['relay', 'queued', 'delivered']) expect(v.orchRowKind(l(k))).toBe('relay');
+    expect(v.orchRowKind(l('failed'))).toBe('failed');
+    expect(v.orchRowKind(l('started'))).toBe('sys');
+  });
+
+  it('shows only the conversation by default, and each chip adds its kind', async () => {
+    const v = await load();
+    expect(v.orchRowShown(m('user', 'hi'), defaults)).toBe(true);
+    expect(v.orchRowShown(l('relay'), defaults)).toBe(false);
+    expect(v.orchRowShown(m('user', '[Loom events] a'), defaults)).toBe(false);
+    expect(v.orchRowShown(l('started'), defaults)).toBe(false);
+    expect(v.orchRowShown(l('delivered'), { ...defaults, relay: true })).toBe(true);
+    expect(v.orchRowShown(m('user', '[Loom events] a'), { ...defaults, ev: true })).toBe(true);
+    expect(v.orchRowShown(l('started'), { ...defaults, sys: true })).toBe(true);
+    expect(v.orchRowShown(m('user', 'hi'), { ...defaults, conv: false })).toBe(false);
+  });
+
+  it('always shows a failed relay, whatever the chips', async () => {
+    const v = await load();
+    expect(v.orchRowShown(l('failed'), { conv: false, relay: false, ev: false, sys: false, q: '' })).toBe(true);
+  });
+
+  it('searches case-insensitively across the visible rows, including relay targets', async () => {
+    const v = await load();
+    expect(v.orchRowShown(m('assistant', 'NE 501N rollup'), { ...defaults, q: 'ne 501n' })).toBe(true);
+    expect(v.orchRowShown(m('assistant', 'NE 501N rollup'), { ...defaults, q: 'ach' })).toBe(false);
+    expect(v.orchRowShown(l('delivered', 'stop', 'Blue-Vanilla'), { ...defaults, relay: true, q: 'blue-van' })).toBe(true);
+    expect(v.orchRowShown(l('failed', 'stop'), { ...defaults, q: 'nomatch' })).toBe(false);
+  });
+
+  it('counts rows per kind', async () => {
+    const v = await load();
+    expect(v.orchCounts([m('user', 'a'), m('assistant', 'b'), l('relay'), l('failed'), l('started'), m('user', '[Loom events] z')])).toEqual({ conv: 2, relay: 1, ev: 1, sys: 1, failed: 1 });
+  });
+
+  it('merges pages without duplicating turns and keeps time order', async () => {
+    const v = await load();
+    const store: any[] = [];
+    const keys = {};
+    expect(v.orchMerge(store, keys, [{ role: 'user', text: 'b', at: 20 }, { role: 'user', text: 'c', at: 30 }])).toBe(2);
+    expect(v.orchMerge(store, keys, [{ role: 'user', text: 'a', at: 10 }, { role: 'user', text: 'b', at: 20 }])).toBe(1);
+    expect(store.map((x) => x.text)).toEqual(['a', 'b', 'c']);
+  });
+});
+
 describe('orchestrator view', () => {
   const load = async () => {
     const { ORCH_VIEW_JS } = await import('../src/orchview.ts');
     const esc = (s: string) => (s || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]!);
     const rel = () => '6m ago';
     const DATA = { chats: [{ agent: 'claude', session_id: 's1' }], live: {} };
-    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${ORCH_VIEW_JS}; return { orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml };`)(
+    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${ORCH_VIEW_JS}; return { orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml, orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
       esc, rel, DATA, (c: { agent: string; session_id: string }) => c.agent + ':' + c.session_id,
     ) as Record<string, (...a: unknown[]) => any>;
   };
