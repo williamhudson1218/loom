@@ -210,3 +210,12 @@ export function nameNewPanes(prefix: string = SESSION_PREFIX): number {
     return 0;
   }
 }
+
+/** Remember each live chat's pane name on its row, so search still finds it once the pane is gone. */
+export function rememberPaneNames(
+  db: import('better-sqlite3').Database,
+  entries: { agent: string; session_id: string; name?: string }[],
+): void {
+  const st = db.prepare(`UPDATE chats SET last_pane_name = ? WHERE agent = ? AND session_id = ? AND last_pane_name <> ?`);
+  for (const e of entries) if (e.name && e.session_id) st.run(e.name, e.agent, e.session_id, e.name);
+}

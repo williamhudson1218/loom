@@ -4,9 +4,10 @@ import { renderDashboard } from '../src/dashboard.ts';
 
 type C = { session_id: string; last_active_at: number; live?: boolean; done?: boolean };
 type H = { session_id: string; ended_at: number };
-const api = new Function(`${SIDESEARCH_JS}; return {splitMatches,archiveWanted};`)() as {
+const api = new Function(`${SIDESEARCH_JS}; return {splitMatches,archiveWanted,searchHay};`)() as {
   splitMatches: (m: C[], o: (c: C) => boolean, h: H[], ids: string[]) => { open: C[]; archivedBoard: C[]; archiveHits: H[]; archivedCount: number };
   archiveWanted: (q: string) => boolean;
+  searchHay: (c: Record<string, string>, liveName?: string) => string;
 };
 const chats: C[] = [
   { session_id: 'a', last_active_at: 10, live: true },
@@ -41,6 +42,14 @@ describe('sidebar search sections', () => {
     expect(api.archiveWanted('a')).toBe(false);
     expect(api.archiveWanted(' a ')).toBe(false);
     expect(api.archiveWanted('ab')).toBe(true);
+  });
+  it('matches session id (full or prefix) and pane name, live name winning over the remembered one', () => {
+    const c = { title: 'Filing readiness', overview: '', first_message: '', session_id: '8d2d228c-632f-4477-9904-f147f0578736', pane_name: 'snowy-emblem' };
+    expect(api.searchHay(c).includes('8d2d228c')).toBe(true);
+    expect(api.searchHay(c).includes('9904-f147')).toBe(true);
+    expect(api.searchHay(c).includes('snowy-emblem')).toBe(true);
+    expect(api.searchHay(c, 'cozy-donut').includes('cozy-donut')).toBe(true);
+    expect(api.searchHay(c, 'cozy-donut').includes('snowy-emblem')).toBe(false);
   });
   it('wires the page: debounce, placeholder, sections, and no separate link', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');

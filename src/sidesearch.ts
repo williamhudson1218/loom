@@ -18,6 +18,9 @@ function splitMatches(matches,isOpen,hits,boardIds){
   fresh.sort(function(a,b){return (b.ended_at||0)-(a.ended_at||0);});
   return {open:open,archivedBoard:closed,archiveHits:fresh,archivedCount:closed.length+fresh.length};
 }
+// What a typed query is matched against: text, session id (full or prefix) and pane name.
+// liveName is the running pane's @name; otherwise the last one remembered for the chat.
+function searchHay(c,liveName){return [c.title,c.overview,c.first_message,c.session_id,liveName||c.pane_name||''].join(' ').toLowerCase();}
 // Archive search runs on its own once the query is long enough; shorter ones only wait.
 function archiveWanted(q){return String(q||'').trim().length>=2;}
 `;

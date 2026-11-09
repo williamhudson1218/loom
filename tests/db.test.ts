@@ -138,3 +138,20 @@ describe('openDb', () => {
     db.close();
   });
 });
+
+describe('last_pane_name', () => {
+  it('is added by the schema, remembered from live panes, and exposed on the chat view', async () => {
+    const { rememberPaneNames } = await import('../src/panenames.ts');
+    const { toChatViews } = await import('../src/dashboard.ts');
+    const db = new Database(':memory:');
+    applySchema(db);
+    db.prepare(
+      `INSERT INTO chats (agent, session_id, project_dir, jsonl_path, started_at, ended_at, last_active_at, message_count, activity_json, jsonl_mtime, last_indexed_at) VALUES ('claude', 's1', '/p', '/p/s1.jsonl', 1, 1, 1, 1, '{}', 1, 1)`,
+    ).run();
+    expect(toChatViews(db)[0].pane_name).toBe('');
+    rememberPaneNames(db, [{ agent: 'claude', session_id: 's1', name: 'snowy-emblem' }, { agent: 'claude', session_id: 's1' }]);
+    expect(toChatViews(db)[0].pane_name).toBe('snowy-emblem');
+    rememberPaneNames(db, [{ agent: 'claude', session_id: 's1', name: 'cozy-donut' }]);
+    expect(toChatViews(db)[0].pane_name).toBe('cozy-donut');
+  });
+});

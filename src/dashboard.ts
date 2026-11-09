@@ -47,6 +47,7 @@ export interface ChatView {
   saved: boolean;
   saved_at: number;
   tags: string[]; // tag names, name order
+  pane_name?: string; // the last pane @name seen for this chat (live name wins client-side)
   done?: boolean; // ended by Send & close: off the board, still in All history
 }
 
@@ -88,6 +89,7 @@ export function toChatViews(db: Database.Database): ChatView[] {
     saved_at: r.saved_at,
     done: r.done_flag === 1,
     tags: tagsByChat.get(`${r.agent}:${r.session_id}`) ?? [],
+    pane_name: r.last_pane_name || '',
   }));
 }
 
@@ -1213,7 +1215,7 @@ function wireSideTop(){$('#sort').value=sortMode;
 function matchFilter(c){if(fDraft&&!hasDrafts(c))return false;if(fIssue){const s=st(c);if(!(s==='warning'||s==='error'))return false;}return true;}
 function render(){renderTabs();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
-const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q));
+const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||searchHay(c,(DATA.live[chatKey(c)]||{}).name).includes(q));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
 if(searching!==termSearchState){termSearchState=searching;renderTermList();}
 const tmatch=searching?termMatches(q):[];

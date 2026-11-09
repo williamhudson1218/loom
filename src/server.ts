@@ -17,7 +17,7 @@ import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath, findChatFromSettings, setFindChatBin } from './findchat.ts';
 import { startPluginStateSync } from './pluginmgr.ts';
 import { SESSION_PREFIX } from './paths.ts';
-import { paneNameMap } from './panenames.ts';
+import { paneNameMap, rememberPaneNames } from './panenames.ts';
 import { realTopicDeps } from './panetopics.ts';
 import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
 import { agentSessionKey } from './placements.ts';
@@ -676,6 +676,23 @@ function buildSnapshot(): Snap {
     const ps = stages.get(info.pane_id);
     const stage = ps && ps.sid === info.session_id && ps.stage ? ps.stage : '';
     live[key] = { ...info, working, ...(name ? { name } : {}), ...(stage ? { stage } : {}) };
+  }
+  try {
+    const named = Object.values(live).filter((l) => l.name);
+    if (named.length) {
+      const wdb = openDb();
+      try {
+        rememberPaneNames(wdb, named);
+      } finally {
+        wdb.close();
+      }
+    }
+  } catch {
+    /* best effort: search just falls back to the live name */
+  }
+  for (const v of views) {
+    const n = live[agentSessionKey(v.agent, v.session_id)]?.name;
+    if (n) v.pane_name = n;
   }
   if (process.env.LOOM_DEBUG) {
     const panes = listTmuxPanes();

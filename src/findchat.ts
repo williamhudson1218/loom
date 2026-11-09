@@ -97,6 +97,79 @@ function isHit(h: unknown): h is ArchiveHit {
  * Never throws: every failure maps to {ok:false, detail} so a missing or broken
  * find-chat degrades to a note in the UI instead of breaking the dashboard.
  */
+/** True for a full session id or a prefix of one (6+ hex chars). */
+export const SESSION_ID_QUERY = /^[0-9a-f]{6,}(-[0-9a-f-]*)?$/i;
+
+/**
+ * Archive hits whose transcript filename starts with the typed session id. find-chat
+ * indexes text, not ids, so an id query would never find a chat that is off the board.
+ */
+export function sessionIdHits(q: string, exclude: string[] = [], root: string = CLAUDE_PROJECTS_DIR): ArchiveHit[] {
+  const id = q.trim().toLowerCase();
+  if (!SESSION_ID_QUERY.test(id)) return [];
+  const skip = new Set(exclude);
+  const out: ArchiveHit[] = [];
+  let dirs: string[] = [];
+  try {
+    dirs = fs.readdirSync(root);
+  } catch {
+    return [];
+  }
+  for (const d of dirs) {
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(path.join(root, d));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl') || !f.toLowerCase().startsWith(id)) continue;
+      const sid = f.slice(0, -'.jsonl'.length);
+      if (skip.has(sid)) continue;
+      const jsonl_path = path.join(root, d, f);
+      let mtime = 0;
+      let head = '';
+      try {
+        mtime = fs.statSync(jsonl_path).mtimeMs;
+        const fd = fs.openSync(jsonl_path, 'r');
+        try {
+          const buf = Buffer.alloc(65536);
+          head = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, buf.length, 0));
+        } finally {
+          fs.closeSync(fd);
+        }
+      } catch {
+        continue;
+      }
+      let cwd = '';
+      let first = '';
+      for (const line of head.split('\n')) {
+        try {
+          const o = JSON.parse(line);
+          if (!cwd && typeof o.cwd === 'string') cwd = o.cwd;
+          const c = o.message?.content;
+          if (!first && o.type === 'user' && typeof c === 'string') first = cleanText(c);
+        } catch {
+          /* partial last line */
+        }
+        if (cwd && first) break;
+      }
+      out.push({
+        session_id: sid,
+        project_dir: cwd,
+        jsonl_path,
+        started_at: 0,
+        ended_at: mtime,
+        message_count: 0,
+        title: first.slice(0, 120) || sid,
+        snippet: '',
+        score: 1,
+      });
+    }
+  }
+  return out;
+}
+
 export async function searchArchive(
   query: string,
   exclude: string[] = [],
@@ -104,6 +177,7 @@ export async function searchArchive(
 ): Promise<ArchiveResult> {
   const q = query.trim();
   if (!q) return { ok: true, results: [] };
+  const idHits = sessionIdHits(q, exclude);
 
   const args: string[] = [];
   for (const sid of exclude) args.push('--exclude', sid);
@@ -114,6 +188,7 @@ export async function searchArchive(
     stdout = await runner(args);
   } catch (e) {
     const err = e as NodeJS.ErrnoException & { killed?: boolean };
+    if (idHits.length) return { ok: true, results: idHits };
     if (err.code === 'ENOENT') return { ok: false, detail: 'find-chat not installed' };
     if (err.killed) return { ok: false, detail: 'search timed out' };
     return { ok: false, detail: `find-chat failed: ${err.message}` };
@@ -134,13 +209,12 @@ export async function searchArchive(
   // they must never render as a card. find-chat prunes such rows on refresh now,
   // but this stays as the guarantee — Loom shouldn't trust an index it doesn't own.
   // Cheap: at most TOP_N stats.
-  return {
-    ok: true,
-    results: results
-      .filter(isHit)
-      .filter((h) => fs.existsSync(h.jsonl_path))
-      .map(cleanHit),
-  };
+  const found = results
+    .filter(isHit)
+    .filter((h) => fs.existsSync(h.jsonl_path))
+    .map(cleanHit);
+  const have = new Set(idHits.map((h) => h.session_id));
+  return { ok: true, results: [...idHits, ...found.filter((h) => !have.has(h.session_id))] };
 }
 
 // find-chat indexes raw transcript text, so a chat that opened with a slash command

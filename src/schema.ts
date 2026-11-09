@@ -433,6 +433,11 @@ export function applySchema(db: Database.Database): void {
     db.exec(`ALTER TABLE chats ADD COLUMN last_turn_at INTEGER NOT NULL DEFAULT 0`);
     db.exec(`UPDATE chats SET jsonl_mtime = 0`);
   }
+  // last_pane_name: the tmux pane's @name last seen for this chat, so search can
+  // find a chat by its pane name after the pane is gone.
+  if (!cols2.some((c) => c.name === 'last_pane_name')) {
+    db.exec(`ALTER TABLE chats ADD COLUMN last_pane_name TEXT NOT NULL DEFAULT ''`);
+  }
   // Created after the ALTERs above: on a pre-existing DB the `saved` column only
   // exists once the migration has added it, so this index can't live in the
   // CREATE-TABLE block (which is a no-op when the table already exists).

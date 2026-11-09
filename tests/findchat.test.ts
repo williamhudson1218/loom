@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   searchArchive,
+  sessionIdHits,
   isValidProjectDir,
   isValidTranscriptPath,
   type FindChatRunner,
@@ -212,5 +213,25 @@ describe('isValidTranscriptPath', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('sessionIdHits', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-fc-ids-'));
+  fs.mkdirSync(path.join(root, '-proj'));
+  const sid = '8d2d228c-632f-4477-9904-f147f0578736';
+  fs.writeFileSync(
+    path.join(root, '-proj', `${sid}.jsonl`),
+    JSON.stringify({ type: 'user', cwd: '/work/proj', message: { content: 'filing readiness widget' } }) + '\n',
+  );
+  it('finds a transcript by full id or prefix', () => {
+    expect(sessionIdHits('8d2d228c', [], root).map((h) => h.session_id)).toEqual([sid]);
+    expect(sessionIdHits(sid, [], root)[0].title).toBe('filing readiness widget');
+    expect(sessionIdHits(sid, [], root)[0].project_dir).toBe('/work/proj');
+  });
+  it('ignores non-id queries, short prefixes and excluded ids', () => {
+    expect(sessionIdHits('snowy-emblem', [], root)).toEqual([]);
+    expect(sessionIdHits('8d2d2', [], root)).toEqual([]);
+    expect(sessionIdHits('8d2d228c', [sid], root)).toEqual([]);
   });
 });

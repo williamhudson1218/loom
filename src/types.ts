@@ -76,6 +76,7 @@ export interface ChatRow {
   summary_at: number;
   last_tmux_session: string;
   last_pane_id: string;
+  last_pane_name?: string;
   saved: number;
   saved_at: number;
   jsonl_mtime: number;
