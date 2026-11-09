@@ -185,3 +185,126 @@ describe('acquirePaneAuto: lanes keep today\'s picker, no lanes means a managed 
     }
   });
 });
+
+describe('launch confirmation', () => {
+  const quiet = () => {};
+  const mk = (over: Record<string, unknown> = {}) => {
+    const input = { prompt: 'fix the thing '.repeat(30), projectDir: '/tmp', agent: 'claude' as const, ...over };
+    return input;
+  };
+  const world = (cmd: string, inMode = '0', screen = 'prompt $') => {
+    const sent: string[][] = [];
+    const state = { cmd, inMode, screen };
+    const run = (args: string[]) => {
+      sent.push(args);
+      const a = args.join(' ');
+      if (args[0] === 'list-panes' && args.includes('-a')) {
+        const fmt = String(args[args.indexOf('-F') + 1]);
+        if (fmt.includes('#{pane_width}')) return '%1 loom-tp-2 80 24';
+        if (fmt.includes('#{pane_pid}')) return ['%1', 'loom-tp-2', '1', '0', '999999', 'zsh', '', ''].join('~|LOOM|~');
+        return ['%1', 'loom-tp-2', ''].join('~|LOOM|~');
+      }
+      if (a.includes('display-message') && a.includes('session_name')) return 'loom-tp-2 · pane 0';
+      if (a.includes('#{pane_current_command}')) return state.cmd;
+      if (a.includes('#{pane_in_mode}')) return state.inMode;
+      if (args[0] === 'capture-pane') return state.screen;
+      if (a.includes('-X cancel')) { state.inMode = '0'; return ''; }
+      return '';
+    };
+    return { run, sent, state };
+  };
+  const startOne = async () => {
+    const { startThread, recentLaunches } = await import('../src/newthread.ts');
+    const w = world('zsh');
+    const r = startThread(mk(), w.run, { launch: () => ({ ok: true, detail: 'started' }), ready: () => true });
+    return { r, recentLaunches, w };
+  };
+
+  it('keeps the full prompt and marks a typed launch as starting', async () => {
+    const { r, recentLaunches } = await startOne();
+    expect(r.ok).toBe(true);
+    const l = recentLaunches().find((x) => x.fullPrompt?.startsWith('fix the thing'))!;
+    expect(l.status).toBe('starting');
+    expect(l.prompt.length).toBe(200);
+    expect(l.fullPrompt!.length).toBeGreaterThan(200);
+  });
+
+  it('started as soon as the agent process runs, with no transcript yet', async () => {
+    const { confirmLaunches, recentLaunches } = await import('../src/newthread.ts');
+    const l = recentLaunches().find((x) => x.status === 'starting')!;
+    const w = world('2.1.319');
+    confirmLaunches({}, w.run, l.at + 1000, quiet);
+    expect(l.status).toBe('started');
+  });
+
+  it('started when the placement hook tied a session to the pane', async () => {
+    const { startThread, confirmLaunches, recentLaunches, dismissLaunch } = await import('../src/newthread.ts');
+    const w = world('zsh');
+    w.run(['noop']);
+    startThread(mk({ prompt: 'tied one' }), w.run, { launch: () => ({ ok: true, detail: 'x' }), ready: () => true });
+    const l = recentLaunches().find((x) => x.fullPrompt === 'tied one')!;
+    confirmLaunches({ k: { agent: 'claude', session_id: 's', pane_id: l.pane_id } }, w.run, l.at + 1000, quiet);
+    expect(l.status).toBe('started');
+    dismissLaunch(l.id);
+  });
+
+  it('is not failed before the timeout, and fails after it with the pane tail', async () => {
+    const { startThread, confirmLaunches, recentLaunches, LAUNCH_CONFIRM_MS } = await import('../src/newthread.ts');
+    const screen = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n') + '\n\n';
+    const w = world('cat', '0', screen);
+    startThread(mk({ prompt: 'doomed' }), w.run, { launch: () => ({ ok: true, detail: 'x' }), ready: () => true });
+    const l = recentLaunches().find((x) => x.fullPrompt === 'doomed')!;
+    const notes: string[] = [];
+    confirmLaunches({}, w.run, l.at + LAUNCH_CONFIRM_MS - 1, (x) => notes.push(x.id));
+    expect(l.status).toBe('starting');
+    confirmLaunches({}, w.run, l.at + LAUNCH_CONFIRM_MS + 1, (x) => notes.push(x.id));
+    expect(l.status).toBe('failed');
+    expect(l.lines).toHaveLength(15);
+    expect(l.lines!.at(-1)).toBe('line 30');
+    expect(notes).toEqual([l.id]);
+    confirmLaunches({}, w.run, l.at + LAUNCH_CONFIRM_MS * 3, (x) => notes.push(x.id));
+    expect(notes).toHaveLength(1); // notified once
+    // survives the 5-minute TTL, and carries its full prompt to the board
+    const { launchView } = await import('../src/newthread.ts');
+    expect(recentLaunches(l.at + 3_600_000).some((x) => x.id === l.id)).toBe(true);
+    expect(launchView(l).fullPrompt).toBe('doomed');
+  });
+
+  it('leaves copy mode before typing, and types only after', async () => {
+    const { startThread } = await import('../src/newthread.ts');
+    const w = world('zsh', '1');
+    let typedWhileInMode: string | null = null;
+    startThread(mk({ prompt: 'scrolled' }), w.run, { launch: () => { typedWhileInMode = w.state.inMode; return { ok: true, detail: 'x' }; }, ready: () => true });
+    expect(w.sent.some((a) => a.join(' ').includes('-X cancel'))).toBe(true);
+    expect(typedWhileInMode).toBe('0');
+  });
+
+  it('refuses to type into a pane stuck in copy mode or without a ready shell', async () => {
+    const { startThread, prepareForTyping } = await import('../src/newthread.ts');
+    let typed = false;
+    const launch = () => { typed = true; return { ok: true as const, detail: 'x' }; };
+    const stuck = world('zsh', '1');
+    const stubborn = (args: string[]) => (args.join(' ').includes('-X cancel') ? '' : stuck.run(args));
+    const r1 = startThread(mk(), stubborn, { launch, ready: () => true });
+    expect(r1.ok).toBe(false);
+    expect(r1.detail).toMatch(/copy mode/);
+    const w = world('zsh');
+    const r2 = startThread(mk(), w.run, { launch, ready: () => false });
+    expect(r2.ok).toBe(false);
+    expect(r2.detail).toMatch(/no shell ready/);
+    expect(typed).toBe(false);
+    expect(prepareForTyping('%1', w.run, () => true).ok).toBe(true);
+  });
+});
+
+describe('failed launch card', () => {
+  it('renders red with the pane lines, Retry and Edit in composer, and wires them', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).toContain('Chat didn’t start in ');
+    expect(html).toContain('data-lact="retry"');
+    expect(html).toContain('data-lact="edit"');
+    expect(html).toContain('class="lpane"');
+    expect(html).toContain("fullPrompt||g.prompt");
+    expect(html).toContain('/api/new-thread/');
+  });
+});

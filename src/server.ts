@@ -42,7 +42,7 @@ import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
 import { EMOJI_MAP } from './emojimap.ts';
-import { indexFreshLaunches, recentLaunches, startThread, waitForShellReady } from './newthread.ts';
+import { confirmLaunches, dismissLaunch, indexFreshLaunches, launchById, launchView, recentLaunches, startThread, waitForShellReady } from './newthread.ts';
 import { acquireManagedPane, pickStrategy, startManagedTicks } from './managed.ts';
 import { readThreads } from './slack.ts';
 import { claimThread, dismissStart, getChannelProjects, recentStarts, replaceStart, setChannelProject, setLastProject } from './slackowner.ts';
@@ -941,11 +941,13 @@ export function createServer(): http.Server {
 
     if (url.pathname === '/api/data') {
       const { defaultAgent, views, live } = snapshot();
-      const launches = recentLaunches();
+      let launches = recentLaunches();
       if (launches.length) {
+        confirmLaunches(live);
         const have = new Set(views.map((v) => agentSessionKey(v.agent, v.session_id)));
         indexFreshLaunches(launches, live, (agent, sid) => have.has(`${agent}:${sid}`));
       }
+      launches = launches.map(launchView) as typeof launches;
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
       const chats = [...views, ...provisionalForLive(views, live)];
@@ -1487,8 +1489,30 @@ export function createServer(): http.Server {
           prefer: typeof b.prefer === 'string' ? b.prefer : '',
           focus: b.focus === true,
           images,
-        });
+        }, undefined, { liveByPane: () => snapshot().live });
         if (r.ok) rememberProject(typeof b.project === 'string' ? b.project : '');
+        return json(res, r.ok ? 200 : 409, r);
+      });
+      return;
+    }
+
+    // A launch that never started: Retry relaunches its prompt (images are already in
+    // it as paths) into a different pane; Dismiss drops the red card.
+    if ((url.pathname === '/api/new-thread/retry' || url.pathname === '/api/new-thread/dismiss') && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (chunk: Buffer) => { raw += chunk; });
+      req.on('end', () => {
+        let id = '';
+        try {
+          id = String((JSON.parse(raw) as { id?: unknown }).id ?? '');
+        } catch {
+          return json(res, 400, { ok: false, detail: 'invalid body' });
+        }
+        const l = launchById(id);
+        if (!l || l.status !== 'failed') return json(res, 404, { ok: false, detail: 'no such failed launch' });
+        if (url.pathname.endsWith('/dismiss')) return json(res, 200, { ok: dismissLaunch(id), detail: 'dismissed' });
+        const r = startThread({ prompt: l.fullPrompt ?? l.prompt, projectDir: l.projectDir, agent: l.agent, exclude: [l.pane_id] }, undefined, { liveByPane: () => snapshot().live });
+        if (r.ok) dismissLaunch(id);
         return json(res, r.ok ? 200 : 409, r);
       });
       return;

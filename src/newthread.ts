@@ -12,6 +12,7 @@ import { nameNewPanes } from './panenames.ts';
 import { isValidProjectDir } from './findchat.ts';
 import { acquireManagedPane, pickStrategy } from './managed.ts';
 import { currentTerminal } from './terminal.ts';
+import { notifyUser } from './notify.ts';
 import type { Agent } from './types.ts';
 
 // The board's "New thread" composer: start a fresh agent session in a pane with
@@ -40,6 +41,7 @@ export interface NewThreadInput {
   prefer?: string; // the lane the composer used last; tried first for 'next'
   focus?: boolean;
   images?: ImageIn[];
+  exclude?: string[]; // pane ids not to pick (a retry avoids the pane that just failed)
 }
 
 /** Save images to ~/.loom/inbox/<id>/ and return their absolute paths. */
@@ -125,6 +127,8 @@ export function readGeometry(run: TmuxRunner = defaultRun): PaneGeom[] {
   }
 }
 
+export type LaunchStatus = 'starting' | 'started' | 'failed';
+
 export interface Launched {
   id: string;
   pane_id: string;
@@ -132,9 +136,17 @@ export interface Launched {
   project: string;
   projectDir: string;
   agent: Agent;
-  prompt: string;
+  prompt: string; // a 200-char slice for the placeholder card
   at: number;
+  status?: LaunchStatus; // absent = a launch made elsewhere (Slack auto-start): never judged
+  fullPrompt?: string; // the whole prompt, images included, kept server-side for Retry / Edit
+  lines?: string[]; // the pane's last lines, captured when the launch failed
 }
+
+/** How long a launch may show neither the agent process nor a transcript before it counts as failed. */
+export const LAUNCH_CONFIRM_MS = 20_000;
+const CAPTURE_LINES = 15;
+const MAX_FAILED_KEPT = 20;
 
 // Launches the board has not yet seen a chat for. The card appears the moment
 // the launch returns, as a placeholder, and gives way to the real card once the
@@ -147,8 +159,82 @@ export function noteLaunch(l: Omit<Launched, 'id' | 'at'>): void {
 }
 
 export function recentLaunches(now: number = Date.now()): Launched[] {
-  while (recent.length && now - recent[0].at > LAUNCH_TTL_MS) recent.shift();
+  // A failed launch stays until dismissed; the rest age out.
+  for (let i = recent.length - 1; i >= 0; i--) if (recent[i].status !== 'failed' && now - recent[i].at > LAUNCH_TTL_MS) recent.splice(i, 1);
   return [...recent];
+}
+
+/** What the board receives: the full prompt only for a failed launch, which Edit in composer needs. */
+export function launchView(l: Launched): Omit<Launched, 'fullPrompt'> & { fullPrompt?: string } {
+  const { fullPrompt, ...rest } = l;
+  return l.status === 'failed' ? { ...rest, fullPrompt } : rest;
+}
+
+export function dismissLaunch(id: string): boolean {
+  const i = recent.findIndex((l) => l.id === id);
+  if (i < 0) return false;
+  recent.splice(i, 1);
+  return true;
+}
+
+export function launchById(id: string): Launched | undefined {
+  return recent.find((l) => l.id === id);
+}
+
+const AGENT_COMMAND = /^(\d+\.\d+\.\d+\S*|claude|node|codex)$/;
+
+/** Is the agent process running in the pane? Claude shows its version as the command. */
+export function agentRunningIn(paneId: string, run: TmuxRunner = defaultRun): boolean {
+  try {
+    return AGENT_COMMAND.test(run(['display-message', '-p', '-t', paneId, '#{pane_current_command}']).trim());
+  } catch {
+    return false;
+  }
+}
+
+export function capturePaneLines(paneId: string, run: TmuxRunner = defaultRun, n = CAPTURE_LINES): string[] {
+  try {
+    const lines = run(['capture-pane', '-p', '-t', paneId]).split('\n').map((l) => l.replace(/\s+$/, ''));
+    while (lines.length && !lines[lines.length - 1]) lines.pop();
+    return lines.slice(-n);
+  } catch {
+    return ['(the pane is gone)'];
+  }
+}
+
+type LiveMap = Record<string, { agent: string; session_id: string; pane_id: string }>;
+
+/**
+ * Settle each launch still `starting`. Started the moment the agent process is
+ * running in its pane or the placement hook has tied a session to it (a slow
+ * start, a trust dialog, no transcript yet: all fine). Failed only when neither
+ * has happened LAUNCH_CONFIRM_MS after the launch; the pane's tail and the full
+ * prompt stay on the record, and the user is notified once.
+ */
+export function confirmLaunches(
+  live: LiveMap,
+  run: TmuxRunner = defaultRun,
+  now: number = Date.now(),
+  notify: (l: Launched) => void = notifyLaunchFailed,
+): void {
+  for (const l of [...recent]) {
+    if (l.status !== 'starting') continue;
+    const tied = Object.values(live).some((x) => x.pane_id === l.pane_id && x.agent === l.agent);
+    if (tied || agentRunningIn(l.pane_id, run)) {
+      l.status = 'started';
+      continue;
+    }
+    if (now - l.at < LAUNCH_CONFIRM_MS) continue;
+    l.status = 'failed';
+    l.lines = capturePaneLines(l.pane_id, run);
+    notify(l);
+    const failed = recent.filter((x) => x.status === 'failed');
+    for (const old of failed.slice(0, Math.max(0, failed.length - MAX_FAILED_KEPT))) dismissLaunch(old.id);
+  }
+}
+
+function notifyLaunchFailed(l: Launched): void {
+  notifyUser({ title: "Chat didn't start", body: `${l.where}: ${l.prompt.split('\n')[0].slice(0, 80)}` });
 }
 
 /**
@@ -235,8 +321,10 @@ export function acquirePane(
   lane: string,
   prefer: string,
   run: TmuxRunner = defaultRun,
+  exclude: string[] = [],
 ): { ok: true; paneId: string; split: boolean } | { ok: false; detail: string } {
-  const target = chooseTarget(readWorld(run), readGeometry(run), lane, prefer);
+  const world = readWorld(run);
+  const target = chooseTarget(exclude.length ? { ...world, panes: world.panes.filter((p) => !exclude.includes(p.pane_id)) } : world, readGeometry(run), lane, prefer);
   if (!target) return { ok: false, detail: lane ? `no loom-${lane}-N session to split` : 'no lane sessions found' };
   if (!target.split) return { ok: true, paneId: target.pane_id, split: false };
   let paneId: string;
@@ -256,16 +344,47 @@ export type AcquiredPane = { ok: true; paneId: string; split: boolean; managed: 
  * Where a new chat goes. With lane sessions (the owner's workflow) this is
  * acquirePane exactly as before. With none, it is a fresh Loom-managed window.
  */
-export function acquirePaneAuto(projectDir: string, lane: string, prefer: string, run: TmuxRunner = defaultRun): AcquiredPane {
+export function acquirePaneAuto(projectDir: string, lane: string, prefer: string, run: TmuxRunner = defaultRun, exclude: string[] = []): AcquiredPane {
   if (pickStrategy(readWorld(run)) === 'lanes') {
-    const r = acquirePane(projectDir, lane, prefer, run);
+    const r = acquirePane(projectDir, lane, prefer, run, exclude);
     return r.ok ? { ...r, managed: false } : r;
   }
   const m = acquireManagedPane(projectDir, { run, ready: (id) => waitForShellReady(id, run) });
   return m.ok ? { ok: true, paneId: m.paneId, split: false, managed: true } : m;
 }
 
-export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun): GotoResult & { pane_id?: string; where?: string; images?: string[] } {
+/**
+ * Make a pane safe to type into: leave copy/scroll mode (it swallows keys), and
+ * require a shell that has finished starting. Typing into anything else lost a
+ * whole prompt once, silently.
+ */
+export function prepareForTyping(paneId: string, run: TmuxRunner = defaultRun, ready: (id: string) => boolean = (id) => waitForShellReady(id, run)): { ok: true } | { ok: false; detail: string } {
+  const inMode = () => {
+    try {
+      return run(['display-message', '-p', '-t', paneId, '#{pane_in_mode}']).trim() === '1';
+    } catch {
+      return false;
+    }
+  };
+  if (inMode()) {
+    try {
+      run(['send-keys', '-t', paneId, '-X', 'cancel']);
+    } catch {
+      /* rechecked below */
+    }
+    if (inMode()) return { ok: false, detail: `pane ${paneId} is stuck in copy mode; nothing was typed` };
+  }
+  if (!ready(paneId)) return { ok: false, detail: `pane ${paneId} has no shell ready; nothing was typed` };
+  return { ok: true };
+}
+
+export interface StartDeps {
+  launch?: typeof launchInPane;
+  ready?: (paneId: string) => boolean;
+  liveByPane?: () => LiveMap;
+}
+
+export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun, deps: StartDeps = {}): GotoResult & { pane_id?: string; where?: string; images?: string[] } {
   if (!isValidProjectDir(input.projectDir)) return { ok: false, detail: 'invalid project dir' };
   if (!input.prompt.trim() && !input.images?.length) return { ok: false, detail: 'empty prompt' };
   const id = newId();
@@ -275,11 +394,13 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun)
   } catch (e) {
     return { ok: false, detail: (e as Error).message };
   }
-  const pane = acquirePaneAuto(input.projectDir, input.lane ?? '', input.prefer ?? '', run);
+  const pane = acquirePaneAuto(input.projectDir, input.lane ?? '', input.prefer ?? '', run, input.exclude ?? []);
   if (!pane.ok) return pane;
   const { paneId, split, managed } = pane;
   const prompt = promptWithImages(input.prompt, images);
-  const r = launchInPane({
+  const prep = prepareForTyping(paneId, run, deps.ready ?? ((id) => waitForShellReady(id, run)));
+  if (!prep.ok) return prep;
+  const r = (deps.launch ?? launchInPane)({
     paneId,
     projectDir: input.projectDir,
     sessionId: '',
@@ -296,6 +417,9 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun)
   } catch {
     /* the id is still a usable address */
   }
-  recent.push({ id, pane_id: paneId, where, project: path.basename(input.projectDir), projectDir: input.projectDir, agent: input.agent, prompt: prompt.slice(0, 200), at: Date.now() });
+  recent.push({ id, pane_id: paneId, where, project: path.basename(input.projectDir), projectDir: input.projectDir, agent: input.agent, prompt: prompt.slice(0, 200), at: Date.now(), status: 'starting', fullPrompt: prompt });
+  // Judge it even when no board is open to poll: a silent failure is what this exists to catch.
+  const timer = setTimeout(() => confirmLaunches(deps.liveByPane?.() ?? {}, run), LAUNCH_CONFIRM_MS + 1000);
+  timer.unref?.();
   return { ...r, pane_id: paneId, where, images, detail: r.detail + (split ? ' (split a new pane)' : '') };
 }
