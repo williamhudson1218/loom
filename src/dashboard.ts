@@ -530,14 +530,13 @@ ${PRUNE_VIEW_CSS}
   .card.saved { border-left-color:#e3d08a; background:#191712; }
   .card.saved:hover { background:#1e1b14; }
   /* Archive search — chats older than the board window, surfaced via find-chat */
-  .deeplink { display:none; margin-top:9px; color:#79b1ff; font-size:12.5px; cursor:pointer;
-    border-bottom:1px dashed #3a4a63; width:fit-content; }
-  .deeplink:hover { color:#a8ccff; border-bottom-color:#79b1ff; }
-  #archive { padding:0 20px 26px; max-width:1100px; display:grid; gap:11px; }
+  #archive { padding:0 0 26px; }
   #archive:empty { display:none; }
   .ahead { display:flex; align-items:center; gap:10px; margin-top:4px;
     color:#8b93a7; font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
   .ahead::after { content:''; flex:1; height:1px; background:#232634; }
+  #sidelist .ahead { margin:0; padding:12px 16px 6px; font-weight:600; letter-spacing:.06em; color:#8a90a2; }
+  #sidelist .ahead .cnt { margin-left:0; }
   /* Dashed + dimmer than a board card: no live pane, no AI summary — a different class of thing */
   .card.arch { border-left-style:dashed; border-left-color:#3a4258; background:#141720; }
   .card.arch:hover { background:#181c27; }
@@ -702,7 +701,6 @@ ${PRUNE_VIEW_CSS}
   .sidetop .two { display:flex; gap:6px; }
   .sidetop #row3 { display:flex; flex-direction:column; gap:6px; margin:0; }
   .sidetop .seg { margin-left:0; align-self:flex-start; }
-  .sidetop .deeplink { margin-top:0; }
   #sidelist { flex:1; min-height:0; overflow-y:auto; padding:2px 0 12px; }
   #archive { padding:0; max-width:none; display:block; }
   .sidehint { padding:14px 16px 4px; font-size:11px; color:#6f778a; }
@@ -1217,10 +1215,12 @@ function render(){renderTabs();renderOrchPin();syncControls();if(tab==='trees'){
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
+if(searching!==termSearchState){termSearchState=searching;renderTermList();}
+const tmatch=searching?termMatches(q):[];
 if(searching){SPLIT=splitMatches(rows,isOpenChat,archHits,DATA.chats.map(c=>c.session_id));rows=SPLIT.open;}else SPLIT=null;
 // Order inside each group is the chosen sort; the groups (Working, Your turn, ...) only
 // decide which heading a row sits under.
-CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(searching?'<div class="ahead">Open · '+rows.length+'</div>'+(sidebarRows(rows)||'<p class="muted">no open matches</p>'):(sidebarRows(rows)||empty));wireShips(list);flipPlay(flipBefore);renderArchive();renderMain();}
+CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));wireShips(list);flipPlay(flipBefore);renderArchive();renderMain();}
 // ---- Sidebar rows ------------------------------------------------------------
 // One row per chat: state dot, title, project and pane name, age, PR / Slack /
 // draft chips. Click selects it into the main area; right-click opens the action
@@ -1288,6 +1288,8 @@ function ghostRows(){if(tab!=='board')return '';const L=DATA.launches||[];return
   '<div class="srow ghost"><span class="sdot d-working"></span><span class="sbody"><span class="stitle">'+esc((g.prompt||'').split(NL)[0].slice(0,90)||'New thread')+'</span><span class="ssub">'+esc(g.project)+' · '+esc(g.where)+'</span></span><span class="sright"><span class="sage">Starting…</span></span></div>').join('');}
 function rowChat(r){if(r.classList.contains('ghost'))return null;if(r.dataset.jsonl){const h=archHits.find(x=>x.session_id===r.dataset.sid);return h?archChat(h):null;}return DATA.chats.find(c=>c.agent===r.dataset.agent&&c.session_id===r.dataset.sid)||null;}
 function wireSidebar(){const sl=$('#sidelist');
+  $('#list').addEventListener('click',e=>{const r=e.target.closest('.tsrow');if(r)selectTerminal(r.dataset.term,r.dataset.win);});
+  $('#list').addEventListener('keydown',e=>{const r=e.target.closest&&e.target.closest('.tsrow');if(r&&e.key==='Enter'){e.preventDefault();selectTerminal(r.dataset.term,r.dataset.win);}});
   sl.addEventListener('click',e=>{const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);return;}const r=e.target.closest('.srow[data-sid]');if(!r||e.target.closest('button,a'))return;const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const r=e.target.closest&&e.target.closest('.srow[data-sid]');if(!r||e.target!==r)return;e.preventDefault();const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('contextmenu',e=>{const r=e.target.closest('.srow[data-sid]');if(!r)return;const c=rowChat(r);if(!c)return;e.preventDefault();openCtx(c,e.clientX,e.clientY,null);});}
@@ -1719,7 +1721,11 @@ var hoverT=0;function wireHoverPrefetch(){const sl=$('#sidelist');if(!sl)return;
 // a window picker in the header. Server: src/terminals.ts.
 var TERMS=[],tsel=null;
 function loadTerminals(){fetch('/api/terminals').then(r=>r.json()).then(j=>{if(!j.ok)return;const sig=JSON.stringify(j.sessions);if(sig===JSON.stringify(TERMS))return;TERMS=j.sessions;renderTermList();if(tsel)renderMain();}).catch(()=>{});}
-function renderTermList(){const el=$('#termlist');const rows=TERMS.map(t=>{const w=t.windows.find(x=>x.active)||t.windows[0];const on=tsel&&tsel.session===t.session;return '<div class="srow tsrow'+(on?' sel':'')+'" tabindex="0" data-term="'+esc(t.session)+'" data-win="'+esc(w.index)+'"><span class="sdot d-stale"></span><div class="sbody"><div class="stitle">'+esc(t.session)+'</div><div class="ssub">'+(t.windows.length>1?t.windows.length+' windows':esc(w.name))+' · '+w.panes+(w.panes===1?' pane':' panes')+'</div></div></div>';}).join('');
+function termRow(t){const w=t.windows.find(x=>x.active)||t.windows[0];const on=tsel&&tsel.session===t.session;return '<div class="srow tsrow'+(on?' sel':'')+'" tabindex="0" data-term="'+esc(t.session)+'" data-win="'+esc(w.index)+'"><span class="sdot d-stale"></span><div class="sbody"><div class="stitle">'+esc(t.session)+'</div><div class="ssub">'+(t.windows.length>1?t.windows.length+' windows':esc(w.name))+' · '+w.panes+(w.panes===1?' pane':' panes')+'</div></div></div>';}
+// While searching, terminals that match the query join the Open section and the group itself is hidden.
+var termSearchState=false;
+function termMatches(q){return TERMS.filter(t=>(t.session+' '+t.windows.map(w=>w.name).join(' ')).toLowerCase().includes(q));}
+function renderTermList(){const el=$('#termlist');if(termSearchState){el.innerHTML='';return;}const rows=TERMS.map(termRow).join('');
   el.innerHTML='<div class="sgrp"><span>Terminals <span class="cnt">'+TERMS.length+'</span></span>'+(TERM_TOKEN?'<button class="tnew" id="tnew" title="New terminal session">+</button>':'')+'</div>'+(rows||'<p class="meta sidehint">No terminal sessions.</p>');
   el.querySelectorAll('.tsrow').forEach(r=>{r.onclick=()=>selectTerminal(r.dataset.term,r.dataset.win);r.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectTerminal(r.dataset.term,r.dataset.win);}};});
   if($('#tnew'))$('#tnew').onclick=openTermBox;}
@@ -1743,7 +1749,7 @@ loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
 function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{});}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.archiveSearch=!!d.archiveSearch;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{pollFailed=true;renderStale();});}
@@ -1757,8 +1763,8 @@ $('#restorebtn').onclick=restoreWorkspace;
 var archHits=[], archQuery='', archState='idle', archErr='', archTimer=null;
 // Typing runs the archive search by itself once it settles (400 ms, 2+ chars); Enter runs it now.
 // Hits are only shown for the query they answered, so an older response never lands on a newer one.
-function queryInput(){clearTimeout(archTimer);const q=$('#q').value.trim();if(!archiveWanted(q)||!DATA.archiveSearch){archState='idle';archQuery='';archHits=[];renderArchive();return;}if(q!==archQuery)archState='searching';archTimer=setTimeout(runArchive,400);}
-function runArchive(){clearTimeout(archTimer);const q=$('#q').value.trim();if(!archiveWanted(q)||!DATA.archiveSearch)return;archQuery=q;archState='searching';archErr='';renderArchive();fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(j=>{if(archQuery!==q)return;if(j.ok){archHits=j.results||[];archState='results';}else{archErr=j.detail||'search failed';archState='error';}render();}).catch(()=>{if(archQuery!==q)return;archErr='server off?';archState='error';renderArchive();});}
+function queryInput(){clearTimeout(archTimer);const q=$('#q').value.trim();if(!archiveWanted(q)||DATA.archiveSearch===false){archState='idle';archQuery='';archHits=[];renderArchive();return;}if(q!==archQuery)archState='searching';archTimer=setTimeout(runArchive,400);}
+function runArchive(){clearTimeout(archTimer);const q=$('#q').value.trim();if(!archiveWanted(q)||DATA.archiveSearch===false)return;archQuery=q;archState='searching';archErr='';renderArchive();fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(j=>{if(archQuery!==q)return;if(j.ok){archHits=j.results||[];archState='results';}else{archErr=j.detail||'search failed';archState='error';}render();}).catch(()=>{if(archQuery!==q)return;archErr='server off?';archState='error';renderArchive();});}
 function adisp(h){const t=(h.title||h.snippet||'Untitled').trim();return t.length>90?t.slice(0,90)+'…':t;}
 // Archive hits are chats the board has no row for. They render as sidebar rows and
 // select into the main area on the Transcript tab, where Resume / Branch live.
@@ -1766,8 +1772,8 @@ function archChat(h){const pname=(h.project_dir||'').split('/').filter(Boolean).
 function renderArchive(){const box=$('#archive');if(!SPLIT||!searchActive()){box.innerHTML='';return;}const q=$('#q').value.trim();const cur=archQuery===q;
   const rowsHtml=SPLIT.archivedBoard.map(srow).join('')+(cur&&archState==='results'?SPLIT.archiveHits.map(h=>srow(archChat(h))).join(''):'');
   const n=SPLIT.archivedBoard.length+(cur&&archState==='results'?SPLIT.archiveHits.length:0);
-  let note='';if(archiveWanted(q)&&DATA.archiveSearch){if(!cur||archState==='searching')note='<p class="muted">searching all history…</p>';else if(archState==='error')note='<p class="muted">'+esc(archErr)+'</p>';}
-  if(!rowsHtml&&!note)note='<p class="muted">no archived matches</p>';
+  let note='';if(archiveWanted(q)&&DATA.archiveSearch!==false){if(!cur||archState==='searching')note='<p class="meta sidehint">searching all history…</p>';else if(archState==='error')note='<p class="meta sidehint">'+esc(archErr)+'</p>';}
+  if(!rowsHtml&&!note)note='<p class="meta sidehint">no archived matches</p>';
   box.innerHTML='<div class="ahead">Archived · '+n+'</div>'+rowsHtml+note;}
 // ---- Watchers ----------------------------------------------------------------
 // Slack channels the Loom server polls itself every 60s. A match starts a Claude
