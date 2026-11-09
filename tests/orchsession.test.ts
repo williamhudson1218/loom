@@ -106,7 +106,7 @@ describe('orchestrator supervision', () => {
       uuid: () => '11111111-2222-3333-4444-555555555555',
     };
     const memo: SuperviseMemo = { launches: [] };
-    const sends = () => calls.filter((c) => c[0] === 'send-keys');
+    const sends = () => calls.filter((c) => c[0] === 'send-keys' && c[3] === '-l');
     return { db, files, deps, memo, calls, world, role, sends, acquired: () => acquired, tick: (ms: number) => { now += ms; } };
   }
 
@@ -119,7 +119,7 @@ describe('orchestrator supervision', () => {
     expect(r.calls).toContainEqual(['set-option', '-p', '-t', '%41', '@loom_role', ORCH_ROLE]);
     expect(r.calls).toContainEqual(['set-option', '-p', '-t', '%41', '@name', 'orchestrator']);
     expect(r.sends()).toHaveLength(1);
-    expect(r.sends()[0][3]).toContain("--session-id '11111111-2222-3333-4444-555555555555'");
+    expect(r.sends()[0][4]).toContain("--session-id '11111111-2222-3333-4444-555555555555'");
     expect(recentLog(r.db, 0).map((l) => l.kind)).toEqual(['started']);
   });
 
@@ -136,7 +136,8 @@ describe('orchestrator supervision', () => {
     orchSettings.setSessionId(r.db, 'sid-1');
     expect(superviseOrchestrator(r.db, r.files, r.deps, r.memo)).toMatchObject({ action: 'restarted', paneId: '%9' });
     expect(r.acquired()).toBe(0);
-    expect(r.sends()[0]).toEqual(['send-keys', '-t', '%9', expect.stringContaining("claude --resume 'sid-1'"), 'Enter']);
+    expect(r.sends()[0]).toEqual(['send-keys', '-t', '%9', '-l', expect.stringContaining("claude --resume 'sid-1'")]);
+    expect(r.calls.filter((c) => c[0] === 'send-keys').pop()).toEqual(['send-keys', '-t', '%9', 'Enter']);
   });
 
   it('never mistakes a reused pane id for its window (a new tmux server restarts the numbering)', () => {

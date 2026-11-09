@@ -2200,7 +2200,7 @@ function launchThread(){if(composerBusy)return;const prompt=$('#cprompt').value;
     if(!j.ok){$('#cmsg').textContent='✕ '+(j.detail||'failed');return;}
     lsSet('loom.lastProject',body.project);const m=/^loom-(.+)-\\d+ /.exec(j.where||'');if(m)lsSet('loom.lastLane',m[1]);
     $('#cmsg').textContent='✓ started in '+(j.where||j.pane_id);resetComposer();refresh();setTimeout(refresh,2000);setTimeout(refresh,5000);setTimeout(closeComposer,1100);
-  }).catch(()=>{$('#cmsg').textContent='✕ server off?';}).finally(()=>{composerBusy=false;$('#claunch').disabled=false;});}
+  }).catch(e=>{$('#cmsg').textContent='✕ launch failed ('+((e&&e.message)||'server off?')+') \\u2014 your text is kept';}).finally(()=>{composerBusy=false;$('#claunch').disabled=false;});}
 $('#newbtn').onclick=()=>openComposer();
 $('#ccancel').onclick=closeComposer;
 $('#claunch').onclick=launchThread;

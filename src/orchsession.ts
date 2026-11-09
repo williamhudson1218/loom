@@ -231,7 +231,8 @@ export function superviseOrchestrator(db: Database.Database, files: OrchFiles, d
   }
   const cmd = buildOrchestratorCommand({ files, sessionId: sid, resume });
   try {
-    deps.run(['send-keys', '-t', paneId, cmd, 'Enter']);
+    deps.run(['send-keys', '-t', paneId, '-l', cmd]);
+    deps.run(['send-keys', '-t', paneId, 'Enter']);
   } catch (e) {
     return { action: 'refused', detail: 'send-keys failed: ' + (e as Error).message };
   }

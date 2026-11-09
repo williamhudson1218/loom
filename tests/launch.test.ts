@@ -204,7 +204,7 @@ describe('orchestrator opt-in', () => {
     expect(superviseOrchestrator(noConsent.db, noConsent.f, noConsent.deps, { launches: [] })).toMatchObject({ action: 'started' });
     expect(noConsent.trusted()).toBe(0);
     // ...and with no skip/RC flags in the line it typed.
-    const sent = noConsent.calls.find((c) => c[0] === 'send-keys')![3];
+    const sent = noConsent.calls.find((c) => c[0] === 'send-keys' && c[3] === '-l')![4];
     expect(sent).not.toContain('--dangerously-skip-permissions');
     expect(sent).toContain('--remote-control'); // the orchestrator always has Remote Control
 
@@ -239,5 +239,39 @@ describe('orchestrator prompt', () => {
       now: () => 1, exists: () => false, uuid: () => 'u', pretrust: () => {},
     }, { launches: [] });
     expect(fs.readFileSync(f.promptFile, 'utf-8')).toBe('Second edit.\n');
+  });
+});
+
+describe('long prompts ride in a file, not the command line', () => {
+  const tricky = 'line one\nit\'s "quoted" $HOME `date` $(id) \\n \\\\ \ttab é中😀\n';
+  const big = (tricky.repeat(Math.ceil(50_000 / tricky.length))).trimEnd();
+  const settings = SAFE_LAUNCH_SETTINGS;
+
+  for (const kind of ['chat', 'resume', 'branch', 'orch'] as const) {
+    it(`${kind}: a ${big.length}-char prompt keeps the command short and the file exact`, async () => {
+      const { promptsDir } = await import('../src/launch.ts');
+      const cmd = claudeCommand({ kind, dir: '/tmp/x', sid: 's1', name: 'n', prompt: big }, settings);
+      expect(cmd.length).toBeLessThan(2000);
+      const m = /"\$\(cat '([^']+)'\)"/.exec(cmd);
+      expect(m).toBeTruthy();
+      expect(path.dirname(m![1])).toBe(promptsDir());
+      expect(fs.readFileSync(m![1], 'utf8')).toBe(big);
+      expect(fs.statSync(m![1]).mode & 0o777).toBe(0o600);
+    });
+  }
+
+  it('a short prompt stays inline', () => {
+    expect(claudeCommand({ kind: 'chat', dir: '/tmp/x', prompt: 'hi' }, settings)).not.toContain('$(cat');
+  });
+
+  it('removes prompt files older than a week on the next long launch', async () => {
+    const { promptsDir } = await import('../src/launch.ts');
+    fs.mkdirSync(promptsDir(), { recursive: true });
+    const old = path.join(promptsDir(), 'old.txt');
+    fs.writeFileSync(old, 'x');
+    const t = Date.now() / 1000 - 8 * 86400;
+    fs.utimesSync(old, t, t);
+    claudeCommand({ kind: 'chat', dir: '/tmp/x', prompt: big }, settings);
+    expect(fs.existsSync(old)).toBe(false);
   });
 });

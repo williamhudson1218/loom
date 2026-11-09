@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
-import { DB_PATH } from './paths.ts';
+import { DB_PATH, TOOL_DIR } from './paths.ts';
 import { getSetting } from './settingsSchema.ts';
 
 // The one place a `claude` command line is built. Chats (fresh, resume, branch),
@@ -36,6 +38,54 @@ export function ansiQuote(s: string): string {
     else out += ch;
   }
   return out + "'";
+}
+
+/**
+ * tmux rejects a send-keys command over ~16 KB ("command too long"), and
+ * ansiQuote only inflates the text. A prompt whose quoted form passes this many
+ * characters rides in a file instead, read back with "$(cat file)".
+ */
+export const MAX_INLINE_PROMPT = 4000;
+const PROMPT_TTL_MS = 7 * 24 * 3600 * 1000;
+
+export function promptsDir(): string {
+  return path.join(TOOL_DIR, 'prompts');
+}
+
+function prunePromptFiles(dir: string, now = Date.now()): void {
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      try {
+        if (now - fs.statSync(fp).mtimeMs > PROMPT_TTL_MS) fs.unlinkSync(fp);
+      } catch {
+        /* raced with another prune */
+      }
+    }
+  } catch {
+    /* no dir yet */
+  }
+}
+
+/**
+ * One shell word carrying `text` as a command argument: inline ANSI-C quoting
+ * when short, else a 0600 file under <TOOL_DIR>/prompts read by "$(cat …)".
+ * (Command substitution drops trailing newlines, which a trimmed prompt has none of.)
+ * Falls back to inline if the file cannot be written.
+ */
+export function promptArg(text: string, quote: (s: string) => string = ansiQuote): string {
+  const inline = quote(text);
+  if (inline.length <= MAX_INLINE_PROMPT) return inline;
+  const dir = promptsDir();
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    prunePromptFiles(dir);
+    const file = path.join(dir, crypto.randomUUID() + '.txt');
+    fs.writeFileSync(file, text.replace(/\n+$/, ''), { mode: 0o600 });
+    return `"$(cat ${shq(file)})"`;
+  } catch {
+    return inline;
+  }
 }
 
 // Resuming a long-running session pops a "resume from a summary, or the full
@@ -152,13 +202,13 @@ export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSetting
   switch (input.kind) {
     case 'chat': {
       const sid = input.sid ? ` --session-id ${shq(input.sid)}` : '';
-      const prompt = input.prompt?.trim() ? ' ' + ansiQuote(input.prompt) : '';
+      const prompt = input.prompt?.trim() ? ' ' + promptArg(input.prompt) : '';
       return cd + `${claude}${settings.skipChats ? skip : ''}${sid}${prompt}`;
     }
     case 'resume':
     case 'branch': {
       const fork = input.kind === 'branch' ? ' --fork-session' : '';
-      const prompt = !input.prompt?.trim() ? '' : input.kind === 'branch' ? ' ' + shq(input.prompt) : ' ' + ansiQuote(input.prompt);
+      const prompt = !input.prompt?.trim() ? '' : input.kind === 'branch' ? ' ' + promptArg(input.prompt, shq) : ' ' + promptArg(input.prompt);
       return cd + `${RESUME_FULL_ENV} ${claude} --resume ${shq(input.sid ?? '')}${fork}${settings.skipChats ? skip : ''}${prompt}`;
     }
     case 'watcher': {
@@ -176,7 +226,7 @@ export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSetting
         ` --name ${shq(name)}` +
         (input.mcpConfig ? ` --mcp-config ${shq(input.mcpConfig)}` : '') +
         (input.systemPromptFile ? ` --append-system-prompt "$(cat ${shq(input.systemPromptFile)})"` : '');
-      const prompt = input.prompt?.trim() ? ' ' + ansiQuote(input.prompt) : '';
+      const prompt = input.prompt?.trim() ? ' ' + promptArg(input.prompt) : '';
       if (input.resume) return cd + `${RESUME_FULL_ENV} ${claude} --resume ${shq(input.sid ?? '')}${flags}${prompt}`;
       return cd + `${claude} --session-id ${shq(input.sid ?? '')}${flags}${prompt}`;
     }

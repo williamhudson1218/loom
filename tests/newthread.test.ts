@@ -88,6 +88,18 @@ describe('composer shell', () => {
     expect(html).toContain("fetch('/api/new-thread'");
     expect(html).toContain("fetch('/api/lanes?all=1')");
   });
+
+  it('keeps the typed prompt when a launch fails, and clears it only on success', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    const js = html.slice(html.indexOf('function launchThread'), html.indexOf("$('#newbtn').onclick"));
+    const fail = js.slice(js.indexOf('if(!j.ok){'), js.indexOf('lsSet('));
+    expect(fail).toContain("'✕ '");
+    expect(fail).not.toContain('resetComposer');
+    expect(fail).not.toContain('closeComposer');
+    // the catch path (non-JSON / 5xx / network) must not clear either
+    expect(js.slice(js.indexOf('.catch('))).not.toContain('resetComposer');
+    expect(js.indexOf('resetComposer()')).toBeGreaterThan(js.indexOf('✓ started'));
+  });
 });
 
 describe('dashboard script', () => {

@@ -1,7 +1,7 @@
 import { tmux } from './tmux.ts';
 import type { Agent } from './types.ts';
 import { recordPlacement } from './placements.ts';
-import { RESUME_FULL_ENV, ansiQuote, claudeCommand, shq, type LaunchSettings } from './launch.ts';
+import { RESUME_FULL_ENV, ansiQuote, claudeCommand, promptArg, shq, type LaunchSettings } from './launch.ts';
 import { currentTerminal, jumpWith, realJumpDeps, type GotoResult, type JumpDeps, type TerminalKind } from './terminal.ts';
 
 export type { GotoResult };
@@ -109,8 +109,8 @@ export function buildLaunchCommand(input: LaunchInput, settings?: LaunchSettings
   const cd = `cd ${shq(input.projectDir)} && `;
   if (input.fresh) {
     if (input.selectedAgent === 'codex') {
-      const promptArg = input.prompt?.trim() ? ' ' + ansiQuote(input.prompt) : '';
-      return cd + `codex${promptArg}`;
+      const arg = input.prompt?.trim() ? ' ' + promptArg(input.prompt) : '';
+      return cd + `codex${arg}`;
     }
     // A fresh Claude chat can be given its session id up front (--session-id), so
     // whoever starts it knows which transcript is theirs before it exists.
@@ -125,7 +125,7 @@ export function buildLaunchCommand(input: LaunchInput, settings?: LaunchSettings
     // Codex forks through its own subcommand rather than a resume flag, and both
     // `resume` and `fork` take an optional prompt as their second positional arg.
     const verb = input.fork ? 'fork' : 'resume';
-    const seedArg = input.fork ? ' ' + shq(seed!) : seed?.trim() ? ' ' + ansiQuote(seed) : '';
+    const seedArg = input.fork ? ' ' + promptArg(seed!, shq) : seed?.trim() ? ' ' + promptArg(seed) : '';
     return cd + `codex ${verb} ${shq(input.sessionId)}${seedArg}`;
   }
   return claudeCommand({ kind: input.fork ? 'branch' : 'resume', dir: input.projectDir, sid: input.sessionId, prompt: seed }, settings);
@@ -150,7 +150,8 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
   }
   const cmd = buildLaunchCommand(input);
   try {
-    tmux(['send-keys', '-t', input.paneId, cmd, 'Enter']);
+    tmux(['send-keys', '-t', input.paneId, '-l', cmd]);
+    tmux(['send-keys', '-t', input.paneId, 'Enter']);
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };
   }
