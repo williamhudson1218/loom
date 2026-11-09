@@ -8,6 +8,7 @@ import { TERMDROP_JS } from './termdrop.ts';
 import { TERMWARM_JS } from './termwarm.ts';
 import { GROUPING_JS } from './grouping.ts';
 import { SIDESORT_JS } from './sidesort.ts';
+import { SIDESEARCH_JS } from './sidesearch.ts';
 import { chatTagMap, listTags, type TagInfo } from './tags.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
@@ -953,7 +954,7 @@ ${OUTBOX_VIEW_CSS}
   <div class="sidetop" data-tour="filters">
     <div class="controls">
       <div class="searchrow">
-        <input id="q" placeholder="filter, Enter searches all history"/>
+        <input id="q" placeholder="Search open and archived chats"/>
         <button type="button" id="fbtn" class="fbtn" aria-haspopup="true" aria-expanded="false" aria-controls="fpop" title="Filters"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4h12M4 8h8M6.5 12h3"/></svg><span class="pip" hidden></span></button>
       </div>
     </div>
@@ -972,7 +973,6 @@ ${OUTBOX_VIEW_CSS}
       <div id="row3"><label>Show</label><div class="seg" id="livetoggle" role="group" aria-label="Show live chats or all chats"></div></div>
       <div class="fchecks"><label class="fck"><input type="checkbox" id="fdraft"/> Has a draft</label><label class="fck"><input type="checkbox" id="fissue"/> Has issues</label></div>
     </div>
-    <div class="deeplink" id="deep" title="search every chat on disk, including those older than the board"></div>
   </div>
   <div id="sidelist">
     <div id="orchpin"></div>
@@ -1069,6 +1069,7 @@ ${TERMDROP_JS}
 ${TERMWARM_JS}
 ${GROUPING_JS}
 ${SIDESORT_JS}
+${SIDESEARCH_JS}
 ${ORCH_VIEW_JS}
 ${WIZARD_VIEW_JS}
 ${TOUR_VIEW_JS}
@@ -1118,6 +1119,9 @@ function isSaved(c){return !!c.saved;}
 // (the bookmark list). scoped() returns whichever the active tab is showing, so
 // the filters/chips below operate on the right set.
 // Send & close takes a chat off the board; it shows again in All history, and while a search is typed.
+function isOpenChat(c){return isLive(c)||!!parkedOf(c);}
+var SPLIT=null;
+function searchActive(){return tab==='board'&&shipFilter===null&&!!($('#q')&&$('#q').value.trim());}
 function showDone(){return !liveOnly||!!($('#q')&&$('#q').value.trim());}
 function boardBase(){return (liveOnly?DATA.chats.filter(c=>isLive(c)||!!parkedOf(c)):DATA.chats).filter(c=>!isSaved(c)&&(!c.done||showDone()));}
 function savedBase(){return DATA.chats.filter(isSaved);}
@@ -1151,7 +1155,6 @@ function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa
   $('.controls').style.display=other?'none':'';
   $('#row3').style.display=other?'none':'';
   $('#fchips').style.display=other?'none':'';
-  if(other)$('#deep').style.display='none';else updateDeep(); // not reset to '': the stylesheet hides it
   // Tickets is the Board's own chats and filters, drawn as columns in place of the list.
   $('#list').style.display=other||tk?'none':'';
   $('#archive').style.display=other||tk?'none':'';
@@ -1212,10 +1215,12 @@ function wireSideTop(){$('#sort').value=sortMode;
 function matchFilter(c){if(fDraft&&!hasDrafts(c))return false;if(fIssue){const s=st(c);if(!(s==='warning'||s==='error'))return false;}return true;}
 function render(){renderTabs();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
-let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):scoped()).filter(c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q)));
+const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||(c.title+' '+c.overview+' '+c.first_message).toLowerCase().includes(q));
+let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
+if(searching){SPLIT=splitMatches(rows,isOpenChat,archHits,DATA.chats.map(c=>c.session_id));rows=SPLIT.open;}else SPLIT=null;
 // Order inside each group is the chosen sort; the groups (Working, Your turn, ...) only
 // decide which heading a row sits under.
-CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(sidebarRows(rows)||empty);wireShips(list);flipPlay(flipBefore);renderMain();}
+CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(searching?'<div class="ahead">Open · '+rows.length+'</div>'+(sidebarRows(rows)||'<p class="muted">no open matches</p>'):(sidebarRows(rows)||empty));wireShips(list);flipPlay(flipBefore);renderArchive();renderMain();}
 // ---- Sidebar rows ------------------------------------------------------------
 // One row per chat: state dot, title, project and pane name, age, PR / Slack /
 // draft chips. Click selects it into the main area; right-click opens the action
@@ -1749,14 +1754,21 @@ $('#restorebtn').onclick=restoreWorkspace;
 // #q filters the board client-side. This searches every chat on disk via find-chat
 // (/api/search) and renders what the 7-day board can't show. Click/Enter only —
 // never per-keystroke, since each search spawns a subprocess.
-var archHits=[], archQuery='', archState='idle', archErr='';
-function updateDeep(){const q=$('#q').value.trim();const d=$('#deep');if(!q||!DATA.archiveSearch){d.style.display='none';return;}d.style.display='block';d.textContent='⤷ Search all history for "'+q+'"';}
-function runArchive(){const q=$('#q').value.trim();if(!q||!DATA.archiveSearch)return;archQuery=q;archState='searching';archErr='';renderArchive();fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(j=>{if(archQuery!==q)return;if(j.ok){archHits=j.results||[];archState='results';}else{archErr=j.detail||'search failed';archState='error';}renderArchive();}).catch(()=>{if(archQuery!==q)return;archErr='server off?';archState='error';renderArchive();});}
+var archHits=[], archQuery='', archState='idle', archErr='', archTimer=null;
+// Typing runs the archive search by itself once it settles (400 ms, 2+ chars); Enter runs it now.
+// Hits are only shown for the query they answered, so an older response never lands on a newer one.
+function queryInput(){clearTimeout(archTimer);const q=$('#q').value.trim();if(!archiveWanted(q)||!DATA.archiveSearch){archState='idle';archQuery='';archHits=[];renderArchive();return;}if(q!==archQuery)archState='searching';archTimer=setTimeout(runArchive,400);}
+function runArchive(){clearTimeout(archTimer);const q=$('#q').value.trim();if(!archiveWanted(q)||!DATA.archiveSearch)return;archQuery=q;archState='searching';archErr='';renderArchive();fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(j=>{if(archQuery!==q)return;if(j.ok){archHits=j.results||[];archState='results';}else{archErr=j.detail||'search failed';archState='error';}render();}).catch(()=>{if(archQuery!==q)return;archErr='server off?';archState='error';renderArchive();});}
 function adisp(h){const t=(h.title||h.snippet||'Untitled').trim();return t.length>90?t.slice(0,90)+'…':t;}
 // Archive hits are chats the board has no row for. They render as sidebar rows and
 // select into the main area on the Transcript tab, where Resume / Branch live.
 function archChat(h){const pname=(h.project_dir||'').split('/').filter(Boolean).pop()||'unknown';return {agent:'claude',session_id:h.session_id,project:pname,project_dir:h.project_dir||'',jsonl_path:h.jsonl_path,title:h.title||h.snippet||'',claude_auto_title:'',pr_url:'',overview:'',state:'',breakdown:[],first_message:h.snippet||'',message_count:h.message_count,started_at:0,last_active_at:h.ended_at,last_turn_at:0,activity:{},summary_pending:false,saved:false,saved_at:0,arch:{jsonl:h.jsonl_path,proj:h.project_dir||'',title:h.title||''}};}
-function renderArchive(){const box=$('#archive');if(archState==='idle'){box.innerHTML='';return;}const hd='<div class="ahead">From your archive</div>';if(archState==='searching'){box.innerHTML=hd+'<p class="muted">searching all history…</p>';return;}if(archState==='error'){box.innerHTML=hd+'<p class="muted">'+esc(archErr)+'</p>';return;}if(!archHits.length){box.innerHTML=hd+'<p class="muted">no archive matches for "'+esc(archQuery)+'" — chats already on the board above are excluded</p>';return;}box.innerHTML=hd+archHits.map(h=>srow(archChat(h))).join('');}
+function renderArchive(){const box=$('#archive');if(!SPLIT||!searchActive()){box.innerHTML='';return;}const q=$('#q').value.trim();const cur=archQuery===q;
+  const rowsHtml=SPLIT.archivedBoard.map(srow).join('')+(cur&&archState==='results'?SPLIT.archiveHits.map(h=>srow(archChat(h))).join(''):'');
+  const n=SPLIT.archivedBoard.length+(cur&&archState==='results'?SPLIT.archiveHits.length:0);
+  let note='';if(archiveWanted(q)&&DATA.archiveSearch){if(!cur||archState==='searching')note='<p class="muted">searching all history…</p>';else if(archState==='error')note='<p class="muted">'+esc(archErr)+'</p>';}
+  if(!rowsHtml&&!note)note='<p class="muted">no archived matches</p>';
+  box.innerHTML='<div class="ahead">Archived · '+n+'</div>'+rowsHtml+note;}
 // ---- Watchers ----------------------------------------------------------------
 // Slack channels the Loom server polls itself every 60s. A match starts a Claude
 // worker in the first idle loom-tp-N shell pane; no free pane leaves it queued.
@@ -2192,11 +2204,10 @@ $('.cbox').addEventListener('dragleave',()=>$('.cbox').classList.remove('drop'))
 $('.cbox').addEventListener('drop',e=>{e.preventDefault();$('.cbox').classList.remove('drop');for(const f of (e.dataTransfer&&e.dataTransfer.files)||[])addImageFile(f);});
 $('#composer').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeComposer();}else if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();launchThread();}});
 $('#setbtn').onclick=openSettings;
-$('#deep').onclick=runArchive;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
-$('#q').addEventListener('input',updateDeep);
+$('#q').addEventListener('input',queryInput);
 setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
-wireMain();wireShipModal();heat();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();updateDeep();refreshWatch();refreshTrees(false);
+wireMain();wireShipModal();heat();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();refreshWatch();refreshTrees(false);
 $('#default-agent').onchange=updateDefaultAgent;
 // Codex is offered only when ~/.codex exists (or the codex_visible setting says so).
 if(!DATA.codexVisible){['#default-agent','#cagent'].forEach(function(id){const o=$(id+' option[value="codex"]');if(o)o.remove();});}

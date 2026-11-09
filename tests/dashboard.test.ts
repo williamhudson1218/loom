@@ -122,7 +122,7 @@ describe('dashboard', () => {
     // Sidebar: filter, selects, chips, live toggle, archive link, then the rows.
     const sideStart = html.indexOf('<aside id="side"');
     const side = html.slice(sideStart, html.indexOf('</aside>', sideStart));
-    for (const id of ['id="q"', 'id="proj"', 'id="sort"', 'id="fbtn"', 'id="fchips"', 'id="fpop"', 'id="livetoggle"', 'id="deep"', 'id="list"', 'id="archive"']) {
+    for (const id of ['id="q"', 'id="proj"', 'id="sort"', 'id="fbtn"', 'id="fchips"', 'id="fpop"', 'id="livetoggle"', 'id="list"', 'id="archive"']) {
       expect(side).toContain(id);
     }
     expect(side.indexOf('id="q"')).toBeLessThan(side.indexOf('id="fchips"'));
@@ -211,7 +211,6 @@ describe('dashboard', () => {
   it('ships the archive-search scaffolding in the static shell', () => {
     const html = renderDashboard([], 9999);
     expect(html).toContain('id="archive"'); // results container
-    expect(html).toContain('id="deep"'); // the "search all history" affordance
     expect(html).toContain('/api/search?q='); // client calls the archive endpoint
     expect(html).toContain('function archChat('); // archive hit -> chat the sidebar and main area can show
     expect(html).toContain('function renderArchive('); // archive section renderer
