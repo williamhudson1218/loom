@@ -82,6 +82,11 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .dsend { display:flex; align-items:center; gap:8px; padding:9px 12px; border-top:1px solid #1d2a4a; font-size:12.5px; color:#e8b84b; }
   .dsend .spin { width:12px; height:12px; border-radius:50%; border:2px solid rgba(232,184,75,.3); border-top-color:#e8b84b; animation:dspin .8s linear infinite; }
   .dfail { color:#ff8d8d; }
+  .slk-st { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; color:#8a90a2; }
+  .slk-st.sent { color:#7fd6a0; }
+  .slk-st.now { color:#e8b84b; }
+  .slk-st button { padding:1px 8px; font-size:11px; }
+  .slk-burst.queued { opacity:.55; }
   @keyframes dspin { to { transform:rotate(360deg); } }
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
@@ -129,7 +134,7 @@ function destInitial(l){var m=String(l||'').replace(/^[#@]/,'').trim();return (m
 
 export const OUTBOX_VIEW_JS = String.raw`
 // ---- Outbox rail + view -------------------------------------------------------
-var LEAVING={},outPoll=null;
+var LEAVING={},outPoll=null,SENDING={},SEND_LOCAL={},outTick=null;
 var DRAFT_EDITS={},draftConfirm=null,draftArmDiscard=null,draftMsg={},DRAFT_EDIT_ON={};
 var outCollapsed=true,outRailKey='',SLK_DIR=null,SLK_EMOJI=null,slkAt=0,slkLoading=false;
 function draftsFor(c){return draftsOfChat(DATA.drafts,c.session_id);}
@@ -149,13 +154,25 @@ function draftHeadHtml(d,stale){const lbl=draftDestLabel(d);const link=/^https?:
   return '<div class="dhd"><span class="dh-ch">'+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
 // The message exactly as Slack lays it out: one sender header, then a bubble per message.
 function slackPreviewHtml(d,texts){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts,slkCtx(),t?hhmm(t):'')+'</div></div>';}
-function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const conf=draftConfirm===d.id;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf;const dest=draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'');
-  const body=editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
+// A draft Loom is posting: each message shows sent / sending / a countdown with Send now / queued.
+function sendProgressOf(d,texts){return SENDING[d.id]||(SEND_LOCAL[d.id]?{total:texts.length,sent:0,next_at:null}:null);}
+function sendEtaText(at){return 'in '+Math.max(0,Math.ceil((at-Date.now())/1000))+'s';}
+function sendingBodyHtml(d,texts,p){const t=draftDate(d);const ctx=slkCtx();
+  return '<div class="dbody"><div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+texts.map(function(m,i){
+    const done=i<p.sent,cur=i===p.sent;let st;
+    if(done)st='<span class="slk-st sent">\u2713 Sent</span>';
+    else if(cur&&p.next_at&&p.next_at>Date.now())st='<span class="slk-st now"><span data-eta="'+p.next_at+'">'+sendEtaText(p.next_at)+'</span><button type="button" data-dact="sendnow" title="Skip the wait and post this message now">Send now</button></span>';
+    else if(cur)st='<span class="slk-st now">\u25cf Sending\u2026</span>';
+    else st='<span class="slk-st">Queued</span>';
+    return '<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m,ctx)+'</div>';}).join('')+'</div></div></div>';}
+function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total);const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;const dest=draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'');
+  const body=burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
-  const acts=sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
+  const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
+    :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
     :conf?'<div class="dconf"><div class="dsub">Post as '+esc(senderName())+' to '+esc(dest)+(texts.length>1?' ('+texts.length+' messages)':'')+'</div><div class="arow"><button class="send" data-dact="post-none" title="Post it. The chat stays as it is.">Send</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
     :'<div class="dacts"><button class="send" data-dact="send">Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
-  return '<div class="draft sdraft'+(sending?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+acts+'</div>';}
+  return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+acts+'</div>';}
 function canPark(d){return !!(d.thread_ts||d.channel);}
 function parkWhyNot(d){return canPark(d)?'':'no thread or channel to watch for a reply';}
 function draftsBusy(box){return !!(box&&box.querySelector('textarea:focus'));}
@@ -192,8 +209,9 @@ function setDrafts(nl){const old=DATA.drafts||[];const keep=new Set(nl.map(d=>d.
   gone.forEach(d=>{LEAVING[d.id]=1;const el=document.querySelector('#outcards .draft[data-id="'+d.id+'"]');if(el){el.style.maxHeight=el.offsetHeight+'px';void el.offsetHeight;el.classList.add('leaving');}});
   setTimeout(()=>{gone.forEach(d=>{delete LEAVING[d.id];delete DRAFT_EDITS[d.id];});DATA.drafts=(DATA.drafts||[]).filter(d=>!LEAVING[d.id]&&keep.has(d.id));renderOutbox();},300);}
 // While the open chat has pending drafts, ask for their state every 1.5 s so a chat posting one itself shows as Sending\u2026 within a second or two.
-function outPollSync(){const want=!document.hidden&&railDrafts().length>0;if(want&&!outPoll)outPoll=setInterval(pollOutbox,1500);else if(!want&&outPoll){clearInterval(outPoll);outPoll=null;}}
-function pollOutbox(){if(document.hidden)return;fetch('/api/outbox/state').then(r=>r.json()).then(j=>{if(!j||!j.ok)return;const sig=x=>JSON.stringify((x||[]).map(d=>[d.id,d.send_state||'',d.send_note||'']));const before=sig((DATA.drafts||[]).filter(d=>!LEAVING[d.id]));setDrafts(j.drafts||[]);if(sig(j.drafts)!==before)renderOutbox();}).catch(()=>{});}
+function outPollSync(){const want=!document.hidden&&railDrafts().length>0;if(want&&!outPoll)outPoll=setInterval(pollOutbox,1500);else if(!want&&outPoll){clearInterval(outPoll);outPoll=null;}
+  if(want&&!outTick)outTick=setInterval(function(){document.querySelectorAll('#outrail [data-eta]').forEach(function(el){el.textContent=sendEtaText(+el.dataset.eta);});},1000);else if(!want&&outTick){clearInterval(outTick);outTick=null;}}
+function pollOutbox(){if(document.hidden)return;fetch('/api/outbox/state').then(r=>r.json()).then(j=>{if(!j||!j.ok)return;const sig=x=>JSON.stringify((x||[]).map(d=>[d.id,d.send_state||'',d.send_note||'']));const psig=x=>JSON.stringify(x||{});const before=sig((DATA.drafts||[]).filter(d=>!LEAVING[d.id]))+psig(SENDING);SENDING=j.sending||{};setDrafts(j.drafts||[]);if(sig(j.drafts)+psig(SENDING)!==before)renderOutbox();}).catch(()=>{});}
 function refitTerm(){try{if(termFit)termFit.fit();}catch(e){}}
 function renderOutbox(){railRender();}
 // ---- actions (rail and view share them)
@@ -202,11 +220,12 @@ function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if
   if(act==='copy'){copyText(draftTexts(d).join(NL+NL),'draft copied');return;}
   if(act==='send'){if(draftTexts(d).some(t=>!t.trim())){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
   if(act==='cancel'){draftConfirm=null;renderOutbox();return;}
-  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);btn.disabled=true;btn.textContent='posting…';
+  if(act==='sendnow'){fetch('/api/outbox/send-now',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(()=>pollOutbox()).catch(()=>{});return;}
+  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
     fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after})}).then(r=>r.json()).then(j=>{
-      draftConfirm=null;draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
+      delete SEND_LOCAL[id];delete SENDING[id];draftConfirm=null;draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
       if(j.ok&&!j.dry){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));toast(j.parked?'posted, chat parked'+(j.waiting_on&&j.waiting_on.length?' (waiting on '+j.waiting_on.join(', ')+')':''):(j.done?'posted, chat closed':(after==='park'?(j.detail||'posted'):'posted')));}
-      renderOutbox();setTimeout(refresh,800);}).catch(()=>{draftConfirm=null;draftMsg[id]='server off';renderOutbox();});return;}
+      renderOutbox();setTimeout(refresh,800);}).catch(()=>{delete SEND_LOCAL[id];draftConfirm=null;draftMsg[id]='server off';renderOutbox();});return;}
   if(act==='discard'){if(draftArmDiscard!==id){draftArmDiscard=id;renderOutbox();setTimeout(()=>{if(draftArmDiscard===id){draftArmDiscard=null;renderOutbox();}},2500);return;}
     draftArmDiscard=null;fetch('/api/outbox/discard',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{draftMsg[id]=j.ok?'':(j.detail||'failed');if(j.ok){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));}renderOutbox();setTimeout(refresh,300);}).catch(()=>{});}}
 function wireOutbox(){['#outrail'].forEach(q=>{const box=$(q);

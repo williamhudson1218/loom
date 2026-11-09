@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { OUTBOX_PURE_JS } from '../src/outboxview.ts';
+import { OUTBOX_PURE_JS, OUTBOX_VIEW_JS } from '../src/outboxview.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
 const lib = new Function(`${OUTBOX_PURE_JS}; return { draftDate, sortDrafts, draftStaleReason, railMode, draftsOfChat, destInitial, draftThreadOf, railShut };`)() as {
@@ -129,8 +129,8 @@ describe('outbox UI wiring', () => {
     expect(html).toContain('data-dact="send">Send</button>');
     expect(html).toContain('Enter send · \u2325Enter send &amp; park · \u21e7Enter send &amp; close · Esc cancel');
     expect(html).toContain("body:JSON.stringify({id,messages:texts,after})");
-    // No second write path: nothing posts anywhere else.
-    expect(html.match(/\/api\/outbox\//g)!.length).toBeLessThanOrEqual(3);
+    // No second write path: send, discard, send-now (cuts a gap short, posts nothing itself) and the state poll.
+    expect(html.match(/\/api\/outbox\//g)!.length).toBeLessThanOrEqual(4);
   });
   it('no longer renders drafts inside the transcript detail column', () => {
     expect(html).not.toContain('function draftsHtml(');
@@ -146,5 +146,40 @@ describe('outbox UI wiring', () => {
     const out = renderDashboard([view], 1, {}, 'claude', [], [{ id: 'd', session_id: 's', messages: ['</script><b>x</b>'] }]);
     expect(out).not.toContain('</script><img');
     expect(out).not.toContain('</script><b>');
+  });
+});
+
+describe('burst send progress rendering', () => {
+  const view = (SENDING: object, local = false) => {
+    const OUT = require_view();
+    return OUT(SENDING, local);
+  };
+  function require_view() {
+    return (SENDING: object, local: boolean) => {
+      const f = new Function(
+        'DATA', 'esc', 'rel', 'hhmm', 'NL', 'canParkStub',
+        `var TERM_TOKEN='t',SENDING=${JSON.stringify(SENDING)},SEND_LOCAL=${local ? '{"d1":1}' : '{}'},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
+         var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};
+         ${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+         return draftCardHtml(DATA.drafts[0],{});`,
+      );
+      return f({ drafts: [{ id: 'd1', session_id: 's', created_at: '2026-11-09T10:00:00Z', messages: ['one', 'two', 'three'], channel: 'C1' }] }, (x: string) => x, () => '', () => '10:00', '\n', null) as string;
+    };
+  }
+  it('shows sent, a countdown with Send now on the next, and queued for the rest', () => {
+    const html = view({ d1: { total: 3, sent: 1, next_at: Date.now() + 12_000, started_at: 0 } });
+    expect(html).toContain('\u2713 Sent');
+    expect(html).toMatch(/data-eta="\d+">in \d+s</);
+    expect(html).toContain('data-dact="sendnow"');
+    expect(html).toContain('Queued');
+    expect(html).toContain('Sending 2 of 3');
+    expect(html).not.toContain('data-dact="send"');
+  });
+  it('shows Sending while a message posts, and Sending before the first poll lands', () => {
+    expect(view({ d1: { total: 3, sent: 0, next_at: null, started_at: 0 } })).toContain('Sending\u2026');
+    expect(view({}, true)).toContain('Sending 1 of 3');
+  });
+  it('the page script still parses', () => {
+    expect(() => new Function(OUTBOX_VIEW_JS)).not.toThrow();
   });
 });

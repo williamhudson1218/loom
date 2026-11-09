@@ -28,7 +28,7 @@ import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, readAllThreads, threadOwners } from './slack.ts';
 import { slackCounts } from './slackthreads.ts';
 import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
-import { discardDraft, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft } from './outbox.ts';
+import { discardDraft, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps } from './routes/cli.ts';
@@ -1241,6 +1241,16 @@ export function createServer(): http.Server {
       return;
     }
 
+    // Cut a burst's current typing gap short. Body {id}. Posts nothing itself: the running send does.
+    if (url.pathname === '/api/outbox/send-now' && req.method === 'POST') {
+      return readBody(req, res, (b) => {
+        const id = typeof b.id === 'string' ? b.id : '';
+        if (!id) return json(res, 400, { ok: false, detail: 'id is required' });
+        const ok = sendNow(id);
+        return json(res, ok ? 200 : 409, { ok, detail: ok ? 'sending the next message now' : 'no message is waiting to send' });
+      });
+    }
+
     // Restore to board: undo a Send & close. Body {session, agent}.
     if (url.pathname === '/api/restore' && req.method === 'POST') {
       return readBody(req, res, (b) => {
@@ -1280,7 +1290,7 @@ export function createServer(): http.Server {
 
     // Fast poll while a card is sending: the pending drafts with their send state, and what just landed.
     if (url.pathname === '/api/outbox/state' && req.method === 'GET') {
-      return json(res, 200, { ok: true, drafts: pendingDrafts(), sent: outboxWatch.recentlySent() });
+      return json(res, 200, { ok: true, drafts: pendingDrafts(), sent: outboxWatch.recentlySent(), sending: sendProgress() });
     }
 
     // What the draft renderer needs to read Slack text like Slack does: names for

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  addDraft, burstGapMs, closeDraft, discardDraft, listDrafts, mergeLegacy, pendingDrafts, readOutbox, sendDraft, sendPayload,
+  addDraft, burstGapMs, closeDraft, discardDraft, listDrafts, mergeLegacy, pendingDrafts, readOutbox, sendDraft, sendNow, sendProgress, sendPayload,
   legacyWriteBack, reconcileLive, slackPoster, toMrkdwn, updateDraft, type Draft,
 } from '../src/outbox.ts';
 
@@ -135,6 +135,63 @@ describe('legacy outbox import (read-only)', () => {
     expect(own.a.messages).toEqual(['newer']);
     mergeLegacy(own, { z: { ...base, id: 'z', status: 'pending', created_at: '2026-10-16T10:00:00', messages: ['newest'] } as Draft });
     expect([own.a.status, own.z.status]).toEqual(['superseded', 'pending']);
+  });
+});
+
+describe('send progress and Send now', () => {
+  it('tracks posted count and the next post time through a burst, then clears', async () => {
+    const f = outboxFile({ x: { ...base, id: 'x', status: 'pending', channel: 'C0TESTOUT01' } });
+    const st = slackStub();
+    const seen: { sent: number; next_at: number | null; total: number }[] = [];
+    const snap = () => { const p = sendProgress().x; if (p) seen.push({ sent: p.sent, next_at: p.next_at, total: p.total }); };
+    const slack = {
+      ...st.slack,
+      sleep: async () => { snap(); },
+      post: async (p: any) => { snap(); return st.slack.post(p); },
+    };
+    const r = await sendDraft('x', ['one', 'two', 'three'], { file: f, slack, now: () => 1000 });
+    expect(r.ok).toBe(true);
+    expect(seen).toEqual([
+      { total: 3, sent: 0, next_at: null }, // posting the first
+      { total: 3, sent: 1, next_at: 1000 + burstGapMs('two') }, // gap before the second
+      { total: 3, sent: 1, next_at: null }, // posting the second
+      { total: 3, sent: 2, next_at: 1000 + burstGapMs('three') },
+      { total: 3, sent: 2, next_at: null },
+    ]);
+    expect(sendProgress()).toEqual({});
+  });
+
+  it('Send now ends the current gap early, posts each message exactly once, and only works during a gap', async () => {
+    const f = outboxFile({ x: { ...base, id: 'x', status: 'pending', channel: 'C0TESTOUT01' } });
+    const st = slackStub();
+    const slack = { ...st.slack, sleep: () => new Promise<void>(() => {}) }; // a gap that never ends by itself
+    expect(sendNow('x')).toBe(false); // nothing sending
+    const run = sendDraft('x', ['one', 'two', 'three'], { file: f, slack });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sendProgress().x).toMatchObject({ sent: 1 });
+    expect(sendProgress().x.next_at).toBeTypeOf('number');
+    expect(st.posts()).toHaveLength(1);
+    expect(sendNow('x')).toBe(true);
+    expect(sendNow('x')).toBe(false); // one message per press
+    await new Promise((r) => setTimeout(r, 20));
+    expect(st.posts().map((c) => c.body.text)).toEqual(['one', 'two']);
+    expect(sendProgress().x).toMatchObject({ sent: 2 });
+    expect(sendNow('x')).toBe(true); // the next gap applies, and can be cut too
+    expect((await run).ok).toBe(true);
+    expect(st.posts().map((c) => c.body.text)).toEqual(['one', 'two', 'three']);
+    expect(readOutbox(f).x.status).toBe('sent');
+    expect(sendProgress()).toEqual({});
+    expect(sendNow('x')).toBe(false);
+  });
+
+  it('clears progress after a partial failure and after a failed single send', async () => {
+    const f = outboxFile({ x: { ...base, id: 'x', status: 'pending', channel: 'C0TESTOUT01' } });
+    const flaky = slackStub({ 'chat.postMessage': (b, n) => (n === 1 ? { ok: true, channel: b.channel, ts: '1793990000.000001' } : { ok: false, error: 'ratelimited' }) });
+    expect(await sendDraft('x', ['a', 'b'], { file: f, slack: flaky.slack })).toMatchObject({ ok: false, partial: 1 });
+    expect(sendProgress()).toEqual({});
+    const down = slackStub({ 'chat.postMessage': () => ({ ok: false, error: 'channel_not_found' }) });
+    expect((await sendDraft('x', ['b'], { file: f, slack: down.slack })).ok).toBe(false);
+    expect(sendProgress()).toEqual({});
   });
 });
 

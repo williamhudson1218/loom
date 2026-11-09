@@ -543,6 +543,32 @@ const sendingNow = new Set<string>();
 /** Is Loom posting this draft right now (in this process)? */
 export const isSending = (id: string): boolean => sendingNow.has(id);
 
+/** Where a send is: messages posted so far, and when the next one goes out (null while one is posting). In memory only. */
+export interface SendProgress {
+  total: number;
+  sent: number;
+  next_at: number | null;
+  started_at: number;
+}
+const progress = new Map<string, { p: SendProgress; skip: (() => void) | null }>();
+
+/** Progress of every draft being posted right now, by draft id. */
+export function sendProgress(): Record<string, SendProgress> {
+  const out: Record<string, SendProgress> = {};
+  for (const [id, e] of progress) out[id] = { ...e.p };
+  return out;
+}
+
+/** Cut the current typing gap short so the next message posts now. One message per call; false when no gap is running. */
+export function sendNow(id: string): boolean {
+  const e = progress.get(id);
+  if (!e?.skip) return false;
+  const skip = e.skip;
+  e.skip = null;
+  skip();
+  return true;
+}
+
 export interface SendOpts extends StoreOpts {
   dry?: boolean;
   slack?: SlackPoster;
@@ -592,12 +618,22 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
     const slack = opts.slack ?? slackPoster();
     const sent: { ts: string; text: string }[] = [];
     let channel = '';
+    const entry = { p: { total: clean.length, sent: 0, next_at: null as number | null, started_at: now() }, skip: null as (() => void) | null };
+    progress.set(id, entry);
     try {
       channel = await slack.resolveChannel(d.channel);
       for (const [i, text] of clean.entries()) {
-        if (i > 0) await slack.sleep(burstGapMs(text));
+        if (i > 0) {
+          const gap = burstGapMs(text);
+          entry.p.next_at = now() + gap;
+          // Send now resolves this race; the sleep itself is left to run out, and nothing posts from it.
+          await Promise.race([slack.sleep(gap), new Promise<void>((r) => { entry.skip = r; })]);
+          entry.skip = null;
+          entry.p.next_at = null;
+        }
         const r = await slack.post({ channel, text: toMrkdwn(text), ...(d.thread_ts ? { thread_ts: d.thread_ts } : {}) });
         sent.push({ ts: r.ts, text });
+        entry.p.sent = sent.length;
         channel = r.channel || channel;
       }
     } catch (e) {
@@ -639,6 +675,7 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
     if (!marked.ok) return { ok: true, permalink, detail: 'posted, but marking it sent failed: ' + marked.detail };
     return { ok: true, permalink, detail: 'posted' };
   } finally {
+    progress.delete(id);
     sendingNow.delete(id);
   }
 }
