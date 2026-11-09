@@ -1038,7 +1038,7 @@ ${SHIPMODAL_HTML}
       <label>Agent <select id="cagent"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
       <label class="cchk"><input type="checkbox" id="cfocus"/> focus it</label>
     </div>
-    <div class="crow"><span id="cmsg" class="dsub"></span><span class="spacer"></span><button id="ccancel">Cancel</button><button id="claunch" class="send">Launch ↵</button></div>
+    <div class="crow"><span id="cmsg" class="dsub"></span><a id="crestore" href="#" hidden>Restore last message</a><span class="spacer"></span><button id="ccancel">Cancel</button><button id="claunch" class="send">Launch ↵</button></div>
   </div>
 </div>
 <div id="termbox" hidden>
@@ -2173,11 +2173,11 @@ function openComposer(prefill){if(composerOpen)return;composerOpen=true;const m=
   let projs=composerProjects();if(seed&&seed.project&&projs.indexOf(seed.project)<0)projs=[seed.project].concat(projs);
   const last=seed&&seed.project?seed.project:lsGet('loom.lastProject');const def=projs.indexOf(last)>=0?last:(projs[0]||'');
   fillCproj(projs,def);
-  if(seed)$('#cprompt').value=seed.prompt;
+  if(seed)$('#cprompt').value=seed.prompt;else if(!$('#cprompt').value)$('#cprompt').value=lsGet('loom.draft');
   $('#cagent').value=DATA.defaultAgent==='codex'?'codex':'claude';
   $('#ctarget').innerHTML='<option value="">Next open pane</option>';
   fetch('/api/lanes?all=1').then(r=>r.json()).then(ls=>{$('#ctarget').innerHTML='<option value="">Next open pane</option>'+ls.map(l=>'<option value="'+esc(l.lane)+'">loom-'+esc(l.lane)+(l.open?' → '+esc(l.open.where):' (full: splits a new pane)')+'</option>').join('');}).catch(()=>{});
-  $('#cmsg').textContent='';renderThumbs();setTimeout(()=>$('#cprompt').focus(),0);}
+  $('#cmsg').textContent='';renderThumbs();updateRestore();setTimeout(()=>$('#cprompt').focus(),0);}
 function projLabel(p){const x=(DATA.projects||[]).find(q=>q.path===p);return x?x.name+'  \u2014  '+shortPath(p):shortPath(p);}
 function fillCproj(projs,sel){$('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===sel?' selected':'')+'>'+esc(projLabel(p))+'</option>').join('')+'<option value="__add__">Add project\u2026</option>';$('#cpathrow').hidden=true;}
 function addProjectPath(p){return fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':TERM_TOKEN},body:JSON.stringify({path:p})}).then(r=>r.json());}
@@ -2189,7 +2189,13 @@ function onCprojChange(){const sel=$('#cproj');if(sel.value!=='__add__'){$('#cpa
   else{$('#cpathrow').hidden=false;$('#cpath').focus();}}
 function addTypedProject(){addProjectPath($('#cpath').value.trim()).then(j=>{if(!j.ok){$('#cmsg').textContent='\u2715 '+j.detail;return;}$('#cmsg').textContent='';$('#cpath').value='';reloadProjects().then(()=>fillCproj(composerProjects(),j.project.path));});}
 function closeComposer(){composerOpen=false;$('#composer').hidden=true;}
-function resetComposer(){$('#cprompt').value='';CIMAGES=[];renderThumbs();}
+function lsDel(k){try{localStorage.removeItem(k);}catch(e){}}
+function saveDraft(){const v=$('#cprompt').value;if(v)lsSet('loom.draft',v);else lsDel('loom.draft');updateRestore();}
+function lastPrompt(){try{const o=JSON.parse(lsGet('loom.lastPrompt')||'null');if(o&&typeof o.text==='string'&&o.text&&Date.now()-o.t<86400000)return o.text;}catch(e){}return '';}
+function updateRestore(){$('#crestore').hidden=!!$('#cprompt').value||!lastPrompt();}
+function resetComposer(){$('#cprompt').value='';lsDel('loom.draft');CIMAGES=[];renderThumbs();updateRestore();}
+$('#cprompt').addEventListener('input',saveDraft);
+$('#crestore').onclick=e=>{e.preventDefault();const t=lastPrompt();if(t){$('#cprompt').value=t;saveDraft();$('#cprompt').focus();}};
 function renderThumbs(){const t=$('#cthumbs');t.innerHTML=CIMAGES.map((im,i)=>'<div class="cthumb"><img src="'+im.url+'" alt="'+esc(im.name)+'"/><button data-i="'+i+'" title="remove">✕</button></div>').join('');
   t.querySelectorAll('button').forEach(b=>b.onclick=()=>{CIMAGES.splice(+b.dataset.i,1);renderThumbs();});}
 function addImageFile(f){if(!f||f.type.indexOf('image/')!==0)return;const r=new FileReader();r.onload=()=>{const url=String(r.result);CIMAGES.push({name:f.name||'pasted',type:f.type,url,data:url.slice(url.indexOf(',')+1)});renderThumbs();};r.readAsDataURL(f);}
@@ -2198,7 +2204,7 @@ function launchThread(){if(composerBusy)return;const prompt=$('#cprompt').value;
   composerBusy=true;$('#claunch').disabled=true;$('#cmsg').textContent='launching…';
   fetch('/api/new-thread',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(j=>{
     if(!j.ok){$('#cmsg').textContent='✕ '+(j.detail||'failed');return;}
-    lsSet('loom.lastProject',body.project);const m=/^loom-(.+)-\\d+ /.exec(j.where||'');if(m)lsSet('loom.lastLane',m[1]);
+    lsSet('loom.lastPrompt',JSON.stringify({t:Date.now(),text:prompt}));lsSet('loom.lastProject',body.project);const m=/^loom-(.+)-\\d+ /.exec(j.where||'');if(m)lsSet('loom.lastLane',m[1]);
     $('#cmsg').textContent='✓ started in '+(j.where||j.pane_id);resetComposer();refresh();setTimeout(refresh,2000);setTimeout(refresh,5000);setTimeout(closeComposer,1100);
   }).catch(e=>{$('#cmsg').textContent='✕ launch failed ('+((e&&e.message)||'server off?')+') \\u2014 your text is kept';}).finally(()=>{composerBusy=false;$('#claunch').disabled=false;});}
 $('#newbtn').onclick=()=>openComposer();

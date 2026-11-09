@@ -89,6 +89,20 @@ describe('composer shell', () => {
     expect(html).toContain("fetch('/api/lanes?all=1')");
   });
 
+  it('autosaves the draft, restores it on open, and keeps the last launched prompt for 24 h', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).toContain('id="crestore"');
+    expect(html).toContain("addEventListener('input',saveDraft)");
+    const open = html.slice(html.indexOf('function openComposer'), html.indexOf('function projLabel'));
+    expect(open).toContain("lsGet('loom.draft')");
+    const launch = html.slice(html.indexOf('function launchThread'));
+    // the last-launched copy is written only on the ok path, before the reset that clears the draft
+    expect(launch.indexOf("'loom.lastPrompt'")).toBeGreaterThan(launch.indexOf('if(!j.ok)'));
+    expect(launch.indexOf("'loom.lastPrompt'")).toBeLessThan(launch.indexOf('resetComposer()'));
+    expect(html).toContain('86400000');
+    expect(html.slice(html.indexOf('function resetComposer'))).toContain("lsDel('loom.draft')");
+  });
+
   it('keeps the typed prompt when a launch fails, and clears it only on success', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     const js = html.slice(html.indexOf('function launchThread'), html.indexOf("$('#newbtn').onclick"));
