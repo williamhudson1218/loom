@@ -10,6 +10,9 @@ import {
   chatGetPermalink,
   chatPostMessage,
   conversationsHistory,
+  filesCompleteUploadExternal,
+  filesGetUploadURLExternal,
+  filesInfo,
   conversationsList,
   conversationsOpen,
   conversationsReplies,
@@ -54,6 +57,8 @@ export interface Draft {
   thread_ts?: string;
   thread_url?: string;
   messages: string[];
+  /** Files attached to each message, parallel to `messages` (absolute paths). A message with no text and files is an images-only post. */
+  files?: string[][];
   status: string; // DraftStatus
   created_at: string; // local 'YYYY-MM-DDTHH:MM:SS', the legacy CLI's format, so string order is time order
   revised_at?: string;
@@ -157,6 +162,7 @@ export function mergeLegacy(own: Record<string, Draft>, legacy: Record<string, D
     if (mine.status === 'pending' && d.status === 'pending' && (d.revised_at ?? '') > (mine.revised_at ?? '') && !inSend(mine, now)) {
       if (JSON.stringify(d.messages) !== JSON.stringify(mine.messages)) {
         mine.messages = d.messages;
+        delete mine.files; // the legacy file knows nothing of attachments, and its messages no longer line up with them
         mine.revised_at = d.revised_at;
         changed = true;
       }
@@ -299,10 +305,25 @@ export interface Outcome {
   detail: string;
 }
 
-const cleanMessages = (messages: unknown): string[] | null => {
+/** Per-message attachments: absolute paths only, at most MAX_FILES a message. Null when malformed; [] / all-empty when there are none. */
+export const MAX_FILES = 10;
+const cleanFiles = (files: unknown, n: number): string[][] | null => {
+  if (files === undefined || files === null) return Array.from({ length: n }, () => []);
+  if (!Array.isArray(files) || files.length > n) return null;
+  const out: string[][] = [];
+  for (let i = 0; i < n; i++) {
+    const f = files[i] ?? [];
+    if (!Array.isArray(f) || f.length > MAX_FILES || !f.every((x) => typeof x === 'string' && path.isAbsolute(x))) return null;
+    out.push(f as string[]);
+  }
+  return out;
+};
+const hasFiles = (files: string[][] | undefined): boolean => !!files?.some((f) => f.length);
+/** Every message needs text, unless it carries files (an images-only post). */
+const cleanMessages = (messages: unknown, files?: string[][]): string[] | null => {
   if (!Array.isArray(messages) || !messages.length) return null;
   const out = messages.map((m) => (typeof m === 'string' ? m.trim() : ''));
-  return out.every(Boolean) ? out : null;
+  return out.every((m, i) => m || files?.[i]?.length) ? out : null;
 };
 
 export interface AddInput {
@@ -312,6 +333,7 @@ export interface AddInput {
   thread_ts?: string;
   thread_url?: string;
   messages: string[];
+  files?: string[][];
   at?: number;
 }
 
@@ -321,7 +343,9 @@ export interface AddInput {
  * chat and destination supersedes the pending one.
  */
 export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
-  const messages = cleanMessages(input.messages);
+  const files = cleanFiles(input.files, Array.isArray(input.messages) ? input.messages.length : 0);
+  if (!files) return { ok: false, detail: 'files must be absolute paths, up to ' + MAX_FILES + ' per message' };
+  const messages = cleanMessages(input.messages, files);
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.id || '')) return { ok: false, detail: 'bad id' };
   if (!input.session_id) return { ok: false, detail: 'session is required' };
   if (!input.channel || input.channel.length > 200) return { ok: false, detail: 'channel is required' };
@@ -336,6 +360,7 @@ export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
       ...(input.thread_ts ? { thread_ts: input.thread_ts } : {}),
       ...(input.thread_url ? { thread_url: input.thread_url } : {}),
       messages,
+      ...(hasFiles(files) ? { files } : {}),
       status: 'pending',
       created_at: stamp(now),
     };
@@ -346,16 +371,23 @@ export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
 }
 
 /** Replace a pending draft's text in place (`loom outbox update`): same id, a revision. */
-export function updateDraft(id: string, messages: string[], o?: StoreOpts | string, at: number = Date.now()): Outcome {
-  const clean = cleanMessages(messages);
-  if (!clean) return { ok: false, detail: 'every message needs text' };
+export function updateDraft(id: string, messages: string[], o?: StoreOpts | string, at: number = Date.now(), files?: string[][]): Outcome {
+  // `files` omitted keeps the draft's attachments when the message count is unchanged; given, it replaces them.
+  const given = files !== undefined;
+  const newFiles = given ? cleanFiles(files, Array.isArray(messages) ? messages.length : 0) : undefined;
+  if (given && !newFiles) return { ok: false, detail: 'files must be absolute paths, up to ' + MAX_FILES + ' per message' };
   return mutateOutbox<Outcome>(o, (drafts) => {
     const d = drafts[id];
     if (!d) return { write: false, result: { ok: false, detail: 'no such draft' } };
     if (d.status !== 'pending') return { write: false, result: { ok: false, detail: `already ${d.status}` } };
     if (inSend(d, at)) return { write: false, result: { ok: false, detail: 'being sent' } };
-    if (JSON.stringify(d.messages) === JSON.stringify(clean)) return { write: false, result: { ok: true, detail: 'unchanged' } };
-    d.messages = clean;
+    const nf = given ? newFiles! : Array.isArray(messages) && messages.length === d.messages.length ? (d.files ?? cleanFiles(undefined, messages.length)!) : cleanFiles(undefined, Array.isArray(messages) ? messages.length : 0)!;
+    const next = cleanMessages(messages, nf);
+    if (!next) return { write: false, result: { ok: false, detail: 'every message needs text' } };
+    if (JSON.stringify(d.messages) === JSON.stringify(next) && JSON.stringify(d.files ?? []) === JSON.stringify(hasFiles(nf) ? nf : [])) return { write: false, result: { ok: true, detail: 'unchanged' } };
+    d.messages = next;
+    if (hasFiles(nf)) d.files = nf;
+    else delete d.files;
     d.revised_at = stamp(at);
     return { write: true, result: { ok: true, detail: 'updated' } };
   });
@@ -487,6 +519,8 @@ export const burstGapMs = (text: string): number => Math.min(25_000, 5_000 + Mat
 export interface SlackPoster {
   resolveChannel(target: string): Promise<string>;
   post(p: { channel: string; text: string; thread_ts?: string }): Promise<{ channel: string; ts: string }>;
+  /** Upload local files into a channel/thread as ONE message, `comment` as its text. Returns where it landed (ts '' when Slack did not say). */
+  upload(p: { channel: string; thread_ts?: string; paths: string[]; comment?: string }): Promise<{ channel: string; ts: string }>;
   permalink(channel: string, ts: string): Promise<string>;
   sleep(ms: number): Promise<void>;
 }
@@ -523,6 +557,37 @@ export function slackPoster(opts: CallOpts = {}): SlackPoster {
       return byName(target);
     },
     post: (p) => chatPostMessage({ ...p, unfurl_links: true, unfurl_media: true }, opts),
+    async upload(p) {
+      const doFetch = opts.fetchImpl ?? fetch;
+      const up: { id: string; title: string }[] = [];
+      for (const file of p.paths) {
+        const bytes = fs.readFileSync(file);
+        const title = path.basename(file);
+        const slot = await filesGetUploadURLExternal(title, bytes.length, opts);
+        const r = await doFetch(slot.upload_url, { method: 'POST', body: new Uint8Array(bytes), signal: AbortSignal.timeout(60_000) });
+        if (!r.ok) throw new Error(`upload of ${title} failed: HTTP ${r.status}`);
+        up.push({ id: slot.file_id, title });
+      }
+      const done = await filesCompleteUploadExternal({
+        files: up,
+        channel_id: p.channel,
+        ...(p.thread_ts ? { thread_ts: p.thread_ts } : {}),
+        ...(p.comment ? { initial_comment: p.comment } : {}),
+      }, opts);
+      // The share lands asynchronously, so the message ts is not in the response: poll the file's shares for it.
+      const id = (done.files as { id?: string }[] | undefined)?.[0]?.id ?? up[0].id;
+      for (let i = 0; i < 8; i++) {
+        try {
+          const info = (await filesInfo(id, opts)) as { shares?: Record<string, Record<string, { ts?: string }[]>> };
+          const hit = (info.shares?.public?.[p.channel] ?? info.shares?.private?.[p.channel] ?? [])[0];
+          if (hit?.ts) return { channel: p.channel, ts: hit.ts };
+        } catch {
+          /* files:read may be missing: the post is out either way */
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return { channel: p.channel, ts: '' };
+    },
     permalink: (channel, ts) => chatGetPermalink(channel, ts, opts),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   };
@@ -593,9 +658,14 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
   const d = readOutbox(opts)[id];
   if (!d) return { ok: false, detail: 'no such draft' };
   if (d.status !== 'pending') return { ok: false, detail: `already ${d.status}` };
-  const clean = cleanMessages(messages);
-  if (!clean || clean.length !== messages.length) return { ok: false, detail: 'every message needs text' };
-  if (opts.dry) return { ok: true, dry: true, detail: 'dry run: nothing posted', rendered: clean.map(toMrkdwn).join('\n---\n') };
+  const files = cleanFiles(d.files, Array.isArray(messages) ? messages.length : 0);
+  const clean = files ? cleanMessages(messages, files) : null;
+  if (!clean || !files || clean.length !== messages.length) return { ok: false, detail: 'every message needs text' };
+  const attached = (i: number) => (files[i]?.length ? `\n[+ ${files[i].length} file${files[i].length === 1 ? '' : 's'}: ${files[i].map((f) => path.basename(f)).join(', ')}]` : '');
+  if (opts.dry) return { ok: true, dry: true, detail: 'dry run: nothing posted', rendered: clean.map((t, i) => (t ? toMrkdwn(t) : '(no text)') + attached(i)).join('\n---\n') };
+  // Every attachment must be readable before anything is posted: a missing file is not found halfway through a burst.
+  const missing = files.flat().find((f) => !fs.existsSync(f));
+  if (missing) return { ok: false, detail: `file not found: ${missing}` };
   if (sendingNow.has(id)) return { ok: false, detail: 'already sending' };
   sendingNow.add(id);
   try {
@@ -631,7 +701,17 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
           entry.skip = null;
           entry.p.next_at = null;
         }
-        const r = await slack.post({ channel, text: toMrkdwn(text), ...(d.thread_ts ? { thread_ts: d.thread_ts } : {}) });
+        // A top-level draft's images-only message is the thread reply under message 1; text messages stay where they are today.
+        let thread = d.thread_ts;
+        if (!thread && !text && files[i].length && (i > 0 || d.sent_parts?.length)) {
+          thread = d.sent_parts?.[0]?.ts || sent[0]?.ts;
+          if (!thread) throw new Error('message 1 went out but Slack did not report its timestamp, so the images cannot be threaded under it');
+        }
+        const dest = { channel, ...(thread ? { thread_ts: thread } : {}) };
+        // Text and images are ONE Slack message (the text rides on the upload), so a retry never re-uploads what is out.
+        const r = files[i].length
+          ? await slack.upload({ ...dest, paths: files[i], ...(text ? { comment: toMrkdwn(text) } : {}) })
+          : await slack.post({ ...dest, text: toMrkdwn(text) });
         sent.push({ ts: r.ts, text });
         entry.p.sent = sent.length;
         channel = r.channel || channel;
@@ -648,6 +728,9 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
         if (!x) return { write: false, result: null };
         x.sent_parts = [...(x.sent_parts ?? []), ...sent];
         x.messages = clean.slice(sent.length);
+        const rest = files.slice(sent.length);
+        if (hasFiles(rest)) x.files = rest;
+        else delete x.files;
         x.revised_at = stamp(now());
         delete x.send_started_at;
         return { write: true, result: null };
@@ -656,12 +739,12 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
     }
     let permalink = '';
     try {
-      permalink = await slack.permalink(channel, sent[0].ts);
+      if (sent[0].ts) permalink = await slack.permalink(channel, sent[0].ts);
     } catch {
       /* posted; the permalink is a nicety */
     }
     const marked = closeDraft(id, 'sent', { by: 'loom', permalink, bySend: true, at: now() }, opts);
-    if (!d.thread_ts && opts.onStarted && sent[0]) {
+    if (!d.thread_ts && opts.onStarted && sent[0]?.ts) {
       const ref = parseSlackThread(permalink) ?? { key: `${channel}/${sent[0].ts}`, url: '', channel, ts: sent[0].ts, linkTs: sent[0].ts };
       if (ref.ts === ref.linkTs && !ref.channel.startsWith('D')) {
         try {
@@ -800,4 +883,24 @@ export async function reconcileLive(o: StoreOpts = {}, only?: string[], api: Cal
       if (!r.ok && !r.detail.startsWith('already')) throw new Error(r.detail);
     },
   });
+}
+
+/* ------------------------------------------------------------- card thumbnails */
+
+const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+
+/**
+ * The bytes of one image attached to a pending draft, for the card's thumbnail.
+ * Only a file recorded on that draft (message `m`, file `f`) is ever read: the
+ * request names an index, never a path. Non-images are not served.
+ */
+export function draftImage(id: string, m: number, f: number, o?: StoreOpts | string): { type: string; bytes: Buffer } | null {
+  const file = readOutbox(o)[id]?.files?.[m]?.[f];
+  const type = file ? IMAGE_TYPES[path.extname(file).toLowerCase()] : undefined;
+  if (!file || !type) return null;
+  try {
+    return { type, bytes: fs.readFileSync(file) };
+  } catch {
+    return null;
+  }
 }

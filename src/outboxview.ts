@@ -86,6 +86,14 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .slk-st.sent { color:#7fd6a0; }
   .slk-st.now { color:#e8b84b; }
   .slk-st button { padding:1px 8px; font-size:11px; }
+  .slk-files { margin-top:6px; }
+  .slk-fwhere { font-size:11px; color:#8a90a2; margin-bottom:4px; }
+  .slk-fwhere.thr { color:#e8b84b; }
+  .slk-fwhere.top { color:#7fd6a0; }
+  .slk-fthumbs { display:flex; flex-wrap:wrap; gap:6px; }
+  .slk-thumb { max-width:100%; max-height:180px; border-radius:6px; border:1px solid rgba(255,255,255,.12); object-fit:contain; background:#111; }
+  .slk-fchip { font-size:12px; padding:3px 8px; border-radius:6px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
+  .slk-noimg { color:#8a90a2; font-style:italic; }
   .slk-burst.queued { opacity:.55; }
   @keyframes dspin { to { transform:rotate(360deg); } }
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
@@ -107,6 +115,11 @@ export const OUTBOX_PURE_JS = String.raw`
 function draftDate(d){var t=Date.parse((d&&d.created_at)||'');return isNaN(t)?0:t;}
 function sortDrafts(ds){return ds.slice().sort(function(a,b){return draftDate(a)-draftDate(b)||(a.id<b.id?-1:a.id>b.id?1:0);});}
 // A draft is stale when a newer one exists for the same chat, or it is over a day old.
+function draftFilesOf(d,i){return (d&&d.files&&d.files[i])||[];}
+// Where a message's files land: in the draft's thread; in the thread under message 1 (a top-level draft's images-only message); or at the top level.
+function fileWhere(d,i,text){if(d&&d.thread_ts)return 'thread';if(i>0&&!String(text||'').trim()&&draftFilesOf(d,i).length)return 'thread';return 'channel';}
+function fileIsImage(p){return /[.](png|jpe?g|gif|webp)$/i.test(p||'');}
+function filesLabel(d,i,text){var w=fileWhere(d,i,text);return w==='thread'?(d.thread_ts?'Posts in the thread':'Posts as a thread reply under message 1'):'Posts top-level in the channel';}
 function draftStaleReason(d,all,now){
   if(!d)return '';
   if(d.stale&&d.stale_reason)return d.stale_reason;
@@ -153,7 +166,11 @@ function avatarHtml(){const m=(SLK_DIR&&SLK_DIR.me)||{};const n=senderName();if(
 function draftHeadHtml(d,stale){const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
   return '<div class="dhd"><span class="dh-ch">'+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
 // The message exactly as Slack lays it out: one sender header, then a bubble per message.
-function slackPreviewHtml(d,texts){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts,slkCtx(),t?hhmm(t):'')+'</div></div>';}
+function filesHtml(d,i,text){const fl=draftFilesOf(d,i);if(!fl.length)return '';const w=fileWhere(d,i,text);
+  return '<div class="slk-files"><div class="slk-fwhere '+(w==='thread'?'thr':'top')+'">'+esc(filesLabel(d,i,text))+' \u00b7 '+fl.length+(fl.length===1?' file':' files')+'</div><div class="slk-fthumbs">'+fl.map(function(f,j){
+    return fileIsImage(f)?'<img class="slk-thumb" alt="'+esc(f.split('/').pop())+'" src="/api/outbox/file?id='+encodeURIComponent(d.id)+'&m='+i+'&f='+j+'">':'<span class="slk-fchip">'+esc(f.split('/').pop())+'</span>';}).join('')+'</div></div>';}
+function msgExtras(d,texts){return texts.map(function(t,i){return filesHtml(d,i,t);});}
+function slackPreviewHtml(d,texts){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts.map(function(x,i){return x.trim()?x:'_(images only)_';}),slkCtx(),t?hhmm(t):'',msgExtras(d,texts))+'</div></div>';}
 // A draft Loom is posting: each message shows sent / sending / a countdown with Send now / queued.
 function sendProgressOf(d,texts){return SENDING[d.id]||(SEND_LOCAL[d.id]?{total:texts.length,sent:0,next_at:null}:null);}
 function sendEtaText(at){return 'in '+Math.max(0,Math.ceil((at-Date.now())/1000))+'s';}
@@ -164,13 +181,13 @@ function sendingBodyHtml(d,texts,p){const t=draftDate(d);const ctx=slkCtx();
     else if(cur&&p.next_at&&p.next_at>Date.now())st='<span class="slk-st now"><span data-eta="'+p.next_at+'">'+sendEtaText(p.next_at)+'</span><button type="button" data-dact="sendnow" title="Skip the wait and post this message now">Send now</button></span>';
     else if(cur)st='<span class="slk-st now">\u25cf Sending\u2026</span>';
     else st='<span class="slk-st">Queued</span>';
-    return '<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m,ctx)+'</div>';}).join('')+'</div></div></div>';}
+    return '<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+filesHtml(d,i,m)+'</div>';}).join('')+'</div></div></div>';}
 function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total);const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;const dest=draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'');
   const body=burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
   const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
     :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
-    :conf?'<div class="dconf"><div class="dsub">Post as '+esc(senderName())+' to '+esc(dest)+(texts.length>1?' ('+texts.length+' messages)':'')+'</div><div class="arow"><button class="send" data-dact="post-none" title="Post it. The chat stays as it is.">Send</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
+    :conf?'<div class="dconf"><div class="dsub">Post as '+esc(senderName())+' to '+esc(dest)+(texts.length>1?' ('+texts.length+' messages)':'')+((d.files||[]).reduce(function(n,f){return n+f.length;},0)?' with '+(d.files||[]).reduce(function(n,f){return n+f.length;},0)+' file(s)':'')+'</div><div class="arow"><button class="send" data-dact="post-none" title="Post it. The chat stays as it is.">Send</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
     :'<div class="dacts"><button class="send" data-dact="send">Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
   return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+acts+'</div>';}
 function canPark(d){return !!(d.thread_ts||d.channel);}
@@ -218,7 +235,7 @@ function renderOutbox(){railRender();}
 function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if(!d)return;
   if(act==='edit'){DRAFT_EDIT_ON[id]=!DRAFT_EDIT_ON[id];renderOutbox();return;}
   if(act==='copy'){copyText(draftTexts(d).join(NL+NL),'draft copied');return;}
-  if(act==='send'){if(draftTexts(d).some(t=>!t.trim())){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
+  if(act==='send'){if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
   if(act==='cancel'){draftConfirm=null;renderOutbox();return;}
   if(act==='sendnow'){fetch('/api/outbox/send-now',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(()=>pollOutbox()).catch(()=>{});return;}
   if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();

@@ -100,6 +100,6 @@ function slkRender(text,ctx){
 }
 // A burst is several messages. A lone draft is one plain bubble; a burst is a distinct card per
 // message with a "1/3" marker and its own hover time (time = the draft's, as nothing is sent yet).
-function slkBubbles(messages,ctx,time){var ms=messages||[];if(ms.length<2)return ms.map(function(m){return '<div class="slk-msg">'+slkRender(m,ctx)+'</div>';}).join('');
-  return ms.map(function(m,i){return '<div class="slk-msg slk-burst"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+ms.length+'</span><span class="slk-hts">'+slkEsc(time||'')+'</span></div>'+slkRender(m,ctx)+'</div>';}).join('');}
+function slkBubbles(messages,ctx,time,extras){var ms=messages||[],ex=extras||[];if(ms.length<2)return ms.map(function(m,i){return '<div class="slk-msg">'+slkRender(m,ctx)+(ex[i]||'')+'</div>';}).join('');
+  return ms.map(function(m,i){return '<div class="slk-msg slk-burst"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+ms.length+'</span><span class="slk-hts">'+slkEsc(time||'')+'</span></div>'+slkRender(m,ctx)+(ex[i]||'')+'</div>';}).join('');}
 `;

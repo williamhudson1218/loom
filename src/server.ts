@@ -28,7 +28,7 @@ import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, readAllThreads, threadOwners } from './slack.ts';
 import { slackCounts } from './slackthreads.ts';
 import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
-import { discardDraft, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
+import { discardDraft, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps } from './routes/cli.ts';
@@ -1310,6 +1310,15 @@ export function createServer(): http.Server {
     // Fast poll while a card is sending: the pending drafts with their send state, and what just landed.
     if (url.pathname === '/api/outbox/state' && req.method === 'GET') {
       return json(res, 200, { ok: true, drafts: pendingDrafts(), sent: outboxWatch.recentlySent(), sending: sendProgress() });
+    }
+
+    // A thumbnail for the card: one image recorded on a draft, by message and file index. Never a path.
+    if (url.pathname === '/api/outbox/file' && req.method === 'GET') {
+      const q = url.searchParams;
+      const img = draftImage(q.get('id') ?? '', Number(q.get('m')), Number(q.get('f')));
+      if (!img) return json(res, 404, { ok: false, detail: 'no such image' });
+      res.writeHead(200, { 'content-type': img.type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return res.end(img.bytes);
     }
 
     // What the draft renderer needs to read Slack text like Slack does: names for

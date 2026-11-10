@@ -67,12 +67,13 @@ export function applyEvent(db: Database.Database, e: LoomEvent, opts: IngestOpts
           thread_ts: str(e.thread_ts) || undefined,
           thread_url: str(e.thread_url) || undefined,
           messages: Array.isArray(e.messages) ? (e.messages as string[]) : [],
+          ...(Array.isArray(e.files) ? { files: e.files as string[][] } : {}),
           at,
         },
         opts.outbox,
       );
     case 'outbox.update': {
-      const r = updateDraft(str(e.id), Array.isArray(e.messages) ? (e.messages as string[]) : [], opts.outbox, at);
+      const r = updateDraft(str(e.id), Array.isArray(e.messages) ? (e.messages as string[]) : [], opts.outbox, at, Array.isArray(e.files) ? (e.files as string[][]) : undefined);
       // A revision of a draft that has since been sent or replaced has nothing to change: done, not bad.
       return r.ok || r.detail.startsWith('already') ? { ok: true, detail: r.detail } : r;
     }

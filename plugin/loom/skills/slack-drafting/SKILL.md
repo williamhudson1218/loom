@@ -24,6 +24,13 @@ A Slack message is written in the user's name, so it is **drafted, shown, record
 
    - A reply in a thread **must** use `--thread <url>`, not `--channel`: Loom needs the thread to watch it for the answer.
    - Several `--text-file` flags are one burst, sent in order.
+   - **Images:** `--file <absolute-or-relative path>` (repeatable) attaches a file to the message it follows, so
+     `--text-file m1.md --file shot1.png --text-file m2.md` puts the image on message 1. The file must exist when you
+     record the draft. Loom shows a thumbnail under that message and Send uploads it as part of that message
+     (the text becomes the upload's comment). A message that is only images, with no text, is `--images-only --file a.png`:
+     on a top-level draft it posts as a thread reply under message 1; in a thread draft it posts in that thread.
+     Text messages after the first stay where the draft posts. `update` keeps attachments when you omit `--file` and the
+     message count is unchanged, replaces them when you pass `--file`, and `--clear-files` drops them.
    - The command prints the draft id. Mention it in one line under the draft.
 5. **Revise in place.** When the user asks for changes, edit and re-record: `loom outbox update <id> --text-file m1.md`,
    or `loom outbox add` again for the same destination (the older pending draft is superseded). Re-record after **every** redraft;
