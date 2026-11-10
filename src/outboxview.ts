@@ -18,6 +18,7 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .orh2 button { background:transparent; color:#8a90a2; padding:2px 8px; font-size:14px; }
   .orh2 button:hover { color:#e4e7ee; background:#1b2233; }
   #outcards { flex:1 1 auto; min-height:0; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:12px; }
+  #outcards > * { flex-shrink:0; } /* cards clip their corners (overflow:hidden), which would otherwise let flex squash them instead of scrolling */
   .orailtab { width:100%; height:100%; border-radius:0; background:transparent; display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px 0; color:#a9c6ff; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
   .orailtab .oglyph { font-size:14px; line-height:1; }
   .orailtab .odest { width:18px; height:18px; border-radius:4px; background:#2a3a63; color:#e4e7ee; display:flex; align-items:center; justify-content:center; font-size:10px; letter-spacing:0; }

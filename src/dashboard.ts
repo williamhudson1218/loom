@@ -926,6 +926,12 @@ ${TEST_LINKS_CSS}
     #mterm { margin:10px 14px; }
   }
   .sidetop #q { min-width:0; flex:1 1 0; width:auto; }
+  .qwrap { position:relative; display:flex; flex:1 1 0; min-width:0; }
+  .qwrap #q { flex:1 1 0; min-width:0; width:auto; padding-right:28px; }
+  .qclear { position:absolute; right:6px; top:50%; width:18px; height:18px; padding:0; border:0; border-radius:50%; background:#2f3446; color:#c9cede; display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:0; transform:translateY(-50%) scale(.4) rotate(-90deg); pointer-events:none; transition:opacity .16s ease, transform .2s cubic-bezier(.3,1.5,.6,1), background .12s; }
+  .qwrap.has .qclear { opacity:1; transform:translateY(-50%) scale(1) rotate(0); pointer-events:auto; }
+  .qclear:hover { background:#454c66; color:#fff; }
+  @media (prefers-reduced-motion:reduce) { .qclear { transition:none; } }
 ${ORCH_VIEW_CSS}
 ${WIZARD_VIEW_CSS}
 ${TOUR_VIEW_CSS}
@@ -961,7 +967,7 @@ ${OUTBOX_VIEW_CSS}
   <div class="sidetop" data-tour="filters">
     <div class="controls">
       <div class="searchrow">
-        <input id="q" placeholder="Search open and archived chats"/>
+        <span class="qwrap"><input id="q" placeholder="Search open and archived chats"/><button type="button" id="qclear" class="qclear" tabindex="-1" title="Clear search" aria-label="Clear search"><svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></span>
         <button type="button" id="fbtn" class="fbtn" aria-haspopup="true" aria-expanded="false" aria-controls="fpop" title="Filters"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4h12M4 8h8M6.5 12h3"/></svg><span class="pip" hidden></span></button>
       </div>
     </div>
@@ -1220,7 +1226,7 @@ function wireSideTop(){$('#sort').value=sortMode;
     render();});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const h=e.target.closest&&e.target.closest('.sgrp[data-gk]');if(!h||e.target!==h)return;e.preventDefault();h.click();});}
 function matchFilter(c){if(fDraft&&!hasDrafts(c))return false;if(fIssue){const s=st(c);if(!(s==='warning'||s==='error'))return false;}return true;}
-function render(){renderTabs();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
+function render(){renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||searchHay(c,(DATA.live[chatKey(c)]||{}).name).includes(q));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
@@ -2232,6 +2238,12 @@ $('#composer').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropaga
 $('#setbtn').onclick=openSettings;
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter')runArchive();});
 $('#q').addEventListener('input',queryInput);
+function syncQClear(){const q=$('#q'),w=q&&q.parentElement;if(w&&w.classList.contains('qwrap'))w.classList.toggle('has',!!q.value);}
+function clearQuery(){const q=$('#q');q.value='';q.dispatchEvent(new Event('input',{bubbles:true}));q.focus();}
+$('#q').addEventListener('input',syncQClear);
+$('#q').addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#q').value){e.preventDefault();e.stopPropagation();clearQuery();}});
+$('#qclear').addEventListener('mousedown',e=>e.preventDefault());
+$('#qclear').addEventListener('click',clearQuery);
 setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
 wireMain();wireShipModal();heat();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();refreshWatch();refreshTrees(false);
 $('#default-agent').onchange=updateDefaultAgent;
