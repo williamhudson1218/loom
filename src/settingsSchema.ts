@@ -376,6 +376,12 @@ export const SETTINGS = [
     key: 'outbox_chat_drafts', section: 'outbox', label: 'Chats may add drafts', help: 'Chats can put drafts in the Outbox (needs the plugin and Slack direct).',
     defaultNew: true, legacyUnset: true, restart: false,
   }),
+  // Empty = the Gmail CLI at ~/.claude/tools/gmail/gmail.mjs when it exists; otherwise email drafts cannot send.
+  strDef(optionalPath, {
+    key: 'email_cli', section: 'outbox', label: 'Email CLI',
+    help: 'A Gmail-CLI-compatible script (send, thread, send-as) that sends email drafts as you. Empty uses ~/.claude/tools/gmail/gmail.mjs when it exists.',
+    defaultNew: '', legacyUnset: '', restart: false,
+  }),
   intDef(1, 365, {
     key: 'outbox_keep_days', section: 'outbox', label: 'Keep sent drafts (days)', help: 'How long sent and dismissed drafts stay listed.',
     defaultNew: 14, legacyUnset: 14, restart: false,

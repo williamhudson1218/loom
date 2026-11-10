@@ -6,6 +6,8 @@ import { TOOL_DIR } from './paths.ts';
 import { channelLabels } from './slack.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
 import { cleanReactions, cleanReview, githubPoster, headMoved, reviewSummary, type DraftReaction, type DraftReview, type GithubPoster, type PostedReview } from './outboxreview.ts';
+import { addressOf, AmbiguousSendError, cleanEmail, emailPayload, emailSummary, gmailThreadUrl, ownAddresses, type DraftEmail, type EmailAdapter, type SentEmail } from './outboxemail.ts';
+import { checkFresh, cleanSeen, unacked, type FreshDeps, type FreshItem, type Seen } from './outboxfresh.ts';
 import {
   authTest,
   chatGetPermalink,
@@ -79,6 +81,16 @@ export interface Draft {
   review_posted?: PostedReview;
   /** Slack reactions applied after the messages (the review's status signal on the request). */
   reactions?: DraftReaction[];
+  /** 'email' for an email draft (src/outboxemail.ts); absent for Slack / review drafts. */
+  kind?: 'email';
+  /** The email itself. An email draft has channel '' and no messages. */
+  email?: DraftEmail;
+  /** Set the moment the email CLI reported the message: a retry never sends it again. */
+  email_sent?: SentEmail;
+  /** What was last in each target when the draft was recorded: the freshness check's baseline (src/outboxfresh.ts). */
+  seen?: Seen;
+  /** Loom tried to fetch `seen` at add time (so it does not try again on every tick). */
+  seen_tried?: boolean;
   origin?: string; // 'legacy' for a draft imported from the old file
   label?: string; // the channel's #name / @dm, added on read
   stale?: boolean; // added on read: see staleReason
@@ -124,9 +136,10 @@ const isDraft = (d: unknown): d is Draft => {
 };
 
 /** Where a draft goes: its PR when it carries a review (one pending review per PR), else its Slack destination. */
-const destKey = (d: Pick<Draft, 'channel' | 'thread_ts' | 'review'>): string =>
-  d.review ? `gh:${d.review.repo}#${d.review.pr}` : `${d.channel}|${d.thread_ts ?? ''}`;
-const sameDest = (a: Draft, b: Pick<Draft, 'session_id' | 'channel' | 'thread_ts' | 'review'>) =>
+const destKey = (d: Pick<Draft, 'channel' | 'thread_ts' | 'review' | 'email'>): string =>
+  d.email ? `mail:${d.email.account ?? ''}|${d.email.threadId || d.email.subject.toLowerCase()}`
+    : d.review ? `gh:${d.review.repo}#${d.review.pr}` : `${d.channel}|${d.thread_ts ?? ''}`;
+const sameDest = (a: Draft, b: Pick<Draft, 'session_id' | 'channel' | 'thread_ts' | 'review' | 'email'>) =>
   a.session_id === b.session_id && destKey(a) === destKey(b);
 
 /**
@@ -348,6 +361,10 @@ export interface AddInput {
   files?: string[][];
   review?: unknown;
   reactions?: unknown;
+  /** An email draft (cleanEmail). Not combined with Slack messages or a review. */
+  email?: unknown;
+  /** The chat's own `seen` (`loom outbox add --seen`); otherwise Loom fetches it after the add. */
+  seen?: unknown;
   at?: number;
 }
 
@@ -357,6 +374,7 @@ export interface AddInput {
  * chat and destination supersedes the pending one.
  */
 export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
+  if (input.email !== undefined && input.email !== null) return addEmailDraft(input, o);
   const rv = input.review === undefined || input.review === null ? null : cleanReview(input.review);
   if (rv && !rv.ok) return { ok: false, detail: rv.detail };
   const rx = cleanReactions(input.reactions);
@@ -372,6 +390,7 @@ export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
   if (!noSlack && (!input.channel || input.channel.length > 200)) return { ok: false, detail: 'channel is required' };
   if (!messages) return { ok: false, detail: 'every message needs text' };
   const now = input.at ?? Date.now();
+  const seenIn = input.seen === undefined || input.seen === null ? null : cleanSeen(input.seen, now);
   return mutateOutbox<Outcome>(o, (drafts) => {
     if (drafts[input.id]) return { write: false, result: { ok: true, detail: 'already recorded' } };
     const d: Draft = {
@@ -384,12 +403,55 @@ export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
       ...(hasFiles(files) ? { files } : {}),
       ...(review ? { review } : {}),
       ...(rx.reactions.length ? { reactions: rx.reactions } : {}),
+      ...(seenIn ? { seen: seenIn } : {}),
       status: 'pending',
       created_at: stamp(now),
     };
     drafts[d.id] = d;
     settleKin(drafts, d, now);
     return { write: true, result: { ok: true, detail: 'recorded' } };
+  });
+}
+
+/** An email draft: no Slack messages, no review; the email is the whole draft. */
+function addEmailDraft(input: AddInput, o?: StoreOpts | string): Outcome {
+  const em = cleanEmail(input.email);
+  if (!em.ok) return { ok: false, detail: em.detail };
+  if ((Array.isArray(input.messages) && input.messages.length) || (input.review !== undefined && input.review !== null)) {
+    return { ok: false, detail: 'an email draft cannot also carry Slack messages or a review' };
+  }
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.id || '')) return { ok: false, detail: 'bad id' };
+  if (!input.session_id) return { ok: false, detail: 'session is required' };
+  const now = input.at ?? Date.now();
+  const seen = input.seen === undefined || input.seen === null ? null : cleanSeen(input.seen, now);
+  return mutateOutbox<Outcome>(o, (drafts) => {
+    if (drafts[input.id]) return { write: false, result: { ok: true, detail: 'already recorded' } };
+    const d: Draft = {
+      id: input.id,
+      session_id: input.session_id,
+      channel: '',
+      messages: [],
+      kind: 'email',
+      email: em.email,
+      ...(seen ? { seen } : {}),
+      status: 'pending',
+      created_at: stamp(now),
+    };
+    drafts[d.id] = d;
+    settleKin(drafts, d, now);
+    return { write: true, result: { ok: true, detail: 'recorded' } };
+  });
+}
+
+/** Record what was in the draft's targets at add time (only once, and never over a `seen` the chat passed). */
+export function setSeen(id: string, seen: Seen | null, o?: StoreOpts | string): boolean {
+  return mutateOutbox<boolean>(o, (drafts) => {
+    const d = drafts[id];
+    if (!d || d.status !== 'pending' || d.seen_tried) return { write: false, result: false };
+    d.seen_tried = true;
+    if (d.seen) return { write: true, result: false };
+    if (seen && (seen.slack || seen.email || seen.github)) d.seen = seen;
+    return { write: true, result: !!d.seen };
   });
 }
 
@@ -404,8 +466,24 @@ export function updateDraft(
   o?: StoreOpts | string,
   at: number = Date.now(),
   files?: string[][],
-  extra: { review?: unknown; reactions?: unknown } = {},
+  extra: { review?: unknown; reactions?: unknown; email?: unknown } = {},
 ): Outcome {
+  if (extra.email !== undefined && extra.email !== null) {
+    const em = cleanEmail(extra.email);
+    if (!em.ok) return { ok: false, detail: em.detail };
+    return mutateOutbox<Outcome>(o, (drafts) => {
+      const d = drafts[id];
+      if (!d) return { write: false, result: { ok: false, detail: 'no such draft' } };
+      if (d.status !== 'pending') return { write: false, result: { ok: false, detail: `already ${d.status}` } };
+      if (inSend(d, at)) return { write: false, result: { ok: false, detail: 'being sent' } };
+      if (!d.email) return { write: false, result: { ok: false, detail: 'this draft is not an email; record a new one with --email-file' } };
+      if (d.email_sent) return { write: false, result: { ok: false, detail: 'the email is already sent' } };
+      if (JSON.stringify(d.email) === JSON.stringify(em.email)) return { write: false, result: { ok: true, detail: 'unchanged' } };
+      d.email = em.email;
+      d.revised_at = stamp(at);
+      return { write: true, result: { ok: true, detail: 'updated' } };
+    });
+  }
   const rv = extra.review === undefined || extra.review === null ? null : cleanReview(extra.review);
   if (rv && !rv.ok) return { ok: false, detail: rv.detail };
   const rx = extra.reactions === undefined ? null : cleanReactions(extra.reactions);
@@ -518,7 +596,7 @@ export function pendingDrafts(
     /* unlabeled: the raw destination shows instead */
   }
   return Object.values(readOutbox({ file, legacy: opts.legacy }))
-    .filter((d) => d.status === 'pending' && Array.isArray(d.messages) && (d.messages.length || d.review))
+    .filter((d) => d.status === 'pending' && Array.isArray(d.messages) && (d.messages.length || d.review || d.email))
     .map((d) => {
       const reason = opts.liveSessions
         ? staleReason(d, { chatLive: opts.liveSessions.has(d.session_id), willPostedAfter: !!opts.marks?.[d.id], now: opts.now })
@@ -670,6 +748,13 @@ export interface SendResult {
   stale_head?: string;
   /** The review's url, once GitHub has it. */
   review_url?: string;
+  /** New messages in the draft's thread(s) since it was drafted: send again with ackFresh to post anyway. */
+  stale_thread?: FreshItem[];
+  /** The freshness check itself failed: nothing was sent; send again with ackFresh to post without it. */
+  fresh_error?: string;
+  /** The email's Gmail message id and thread, once sent. */
+  email_id?: string;
+  email_thread?: string;
 }
 
 const sendingNow = new Set<string>();
@@ -684,7 +769,7 @@ export interface SendProgress {
   next_at: number | null;
   started_at: number;
   /** What is going out now: the GitHub review, the Slack messages, or the reactions. */
-  phase?: 'review' | 'slack' | 'reactions';
+  phase?: 'review' | 'slack' | 'reactions' | 'email';
 }
 const progress = new Map<string, { p: SendProgress; skip: (() => void) | null }>();
 
@@ -717,6 +802,43 @@ export interface SendOpts extends StoreOpts {
   github?: GithubPoster;
   /** The person saw "PR has new commits" and sends anyway (still against the stored commit). */
   ackStale?: boolean;
+  /** The reads the freshness check makes. Absent = no check (tests, dry runs); server.ts always passes them. */
+  fresh?: FreshDeps;
+  /** The person saw the new messages (true: everything, or the ids they were shown) or the could-not-check warning, and sends anyway. */
+  ackFresh?: boolean | string[];
+  /** The email CLI. null = email is off (emailOff says how to turn it on). */
+  email?: EmailAdapter | null;
+  emailOff?: string;
+}
+
+/**
+ * The gates before anything is claimed or posted, folded into one answer so the
+ * card asks once: has the PR moved past the review's commit, and has anything
+ * landed in the draft's thread(s) since it was drafted? Null = go.
+ */
+async function preSendGate(d: Draft, review: DraftReview | null, gh: GithubPoster, opts: SendOpts): Promise<SendResult | null> {
+  const headJob = review && !opts.ackStale
+    ? gh.head(review.repo, review.pr).then((h) => ({ sha: h.sha, error: '' }), (e: Error) => ({ sha: '', error: e.message }))
+    : Promise.resolve(null);
+  const freshJob = opts.fresh && opts.ackFresh !== true ? checkFresh(d, opts.fresh).catch((e: Error) => ({ ok: false as const, error: e.message, items: [] as FreshItem[] })) : Promise.resolve(null);
+  const [head, fresh] = await Promise.all([headJob, freshJob]);
+  if (head?.error) return { ok: false, detail: 'could not check the PR head before posting the review: ' + head.error };
+  const staleHead = head && headMoved(review!.commit_id, head.sha) ? head.sha : '';
+  const items = fresh ? unacked(fresh.items, opts.ackFresh) : [];
+  const freshErr = fresh && !fresh.ok ? fresh.error : '';
+  if (!staleHead && !items.length && !freshErr) return null;
+  const why = [
+    ...(staleHead ? ['PR has new commits since this review was drafted'] : []),
+    ...(items.length ? [`${items.length} new message${items.length === 1 ? '' : 's'} since this was drafted`] : []),
+    ...(freshErr ? ['could not check the thread for new messages (' + freshErr + ')'] : []),
+  ];
+  return {
+    ok: false,
+    detail: why.join('; ') + '. Nothing was sent.',
+    ...(staleHead ? { stale_head: staleHead } : {}),
+    ...(items.length ? { stale_thread: items } : {}),
+    ...(freshErr ? { fresh_error: freshErr } : {}),
+  };
 }
 
 /**
@@ -741,6 +863,7 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
   if (!d) return { ok: false, detail: 'no such draft' };
   if (d.status !== 'pending') return { ok: false, detail: `already ${d.status}` };
   if (!Array.isArray(messages)) return { ok: false, detail: 'every message needs text' };
+  if (d.email) return sendEmailDraft(d, messages, opts);
   // No Slack text: only a review draft (with or without reactions) may go out without messages.
   const noSlack = messages.length === 0;
   if (noSlack && (d.messages?.length || !d.review)) return { ok: false, detail: 'every message needs text' };
@@ -785,16 +908,10 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
       }
     }
     const review = d.review && !d.review_posted ? d.review : null;
-    // The PR moved on since the review was drafted: say so, and post only on a second, deliberate send.
-    if (review && !opts.ackStale) {
-      let sha = '';
-      try {
-        sha = (await gh.head(review.repo, review.pr)).sha;
-      } catch (e) {
-        return { ok: false, detail: 'could not check the PR head before posting the review: ' + (e as Error).message };
-      }
-      if (headMoved(review.commit_id, sha)) return { ok: false, stale_head: sha, detail: 'PR has new commits since this review was drafted' };
-    }
+    // The PR moved on, or someone wrote in the thread, since this was drafted: say so, and post only on a second, deliberate send.
+    // Only awaited when there is something to check, so a plain send claims the draft without yielding first.
+    const gate = (review && !opts.ackStale) || (opts.fresh && opts.ackFresh !== true) ? await preSendGate(d, review, gh, opts) : null;
+    if (gate) return gate;
     // Claim the draft on disk before anything is posted.
     const claimed = mutateOutbox(opts, (all) => {
       const x = all[id];
@@ -921,6 +1038,87 @@ function recordReview(id: string, posted: { id: number; url: string }, at: numbe
     x.review_posted = { id: posted.id, url: posted.url, at: stamp(at) };
     return { write: true, result: x };
   });
+}
+
+/**
+ * Send an email draft through the email CLI. Same guarantees as a Slack send:
+ * the freshness gate first, a claim on disk before the CLI runs, the message id
+ * recorded the moment the CLI answers. A failure after the request reached Gmail
+ * (the CLI says so) keeps the claim, so a quick second press cannot send it twice.
+ */
+async function sendEmailDraft(d: Draft, messages: string[], opts: SendOpts): Promise<SendResult> {
+  const now = opts.now ?? Date.now;
+  const id = d.id;
+  const e = d.email!;
+  if (d.email_sent) return { ok: false, detail: 'already sent (message ' + d.email_sent.messageId + ')' };
+  // The card sends the body it showed (edited or not) as the one message.
+  const body = messages.length === 1 && typeof messages[0] === 'string' && messages[0].trim() ? messages[0].replace(/\r\n/g, '\n').replace(/\s+$/, '') : messages.length === 0 ? e.body : '';
+  if (!body) return { ok: false, detail: 'the email needs a body' };
+  if (opts.dry) {
+    const head = [`[Email] ${emailSummary(e)}`, ...(e.cc?.length ? [`Cc: ${e.cc.join(', ')}`] : []), ...(e.bcc?.length ? [`Bcc: ${e.bcc.join(', ')}`] : []), `Subject: ${e.subject}`];
+    return { ok: true, dry: true, detail: 'dry run: nothing sent', rendered: head.join('\n') + '\n---\n' + body + (e.attachments?.length ? `\n[+ ${e.attachments.length} attachment(s): ${e.attachments.map((f) => path.basename(f)).join(', ')}]` : '') };
+  }
+  const mail = opts.email;
+  if (!mail) return { ok: false, detail: opts.emailOff || 'email is not set up' };
+  const missing = (e.attachments ?? []).find((f) => !fs.existsSync(f));
+  if (missing) return { ok: false, detail: `attachment not found: ${missing}` };
+  if (sendingNow.has(id)) return { ok: false, detail: 'already sending' };
+  sendingNow.add(id);
+  try {
+    if (d.send_started_at) {
+      if (inSend(d, now())) return { ok: false, detail: 'an earlier send of this email may have gone out; check Sent mail. Send again after ten minutes resends it.' };
+      // Interrupted earlier and the lock has run out: a reply can be looked for in its thread.
+      if (e.threadId) {
+        try {
+          const [msgs, mine] = await Promise.all([mail.thread(e.threadId, e.account), ownAddresses(mail, e.account)]);
+          const hit = msgs.find((m) => m.at >= d.send_started_at! - 60_000 && ((m.labels ?? []).includes('SENT') || mine.includes(addressOf(m.from))) && !(m.labels ?? []).includes('DRAFT'));
+          if (hit) {
+            closeDraft(id, 'sent', { by: 'loom', permalink: gmailThreadUrl(e.threadId), bySend: true, at: now() }, opts);
+            return { ok: false, detail: 'already sent (found in the thread)' };
+          }
+        } catch (err) {
+          return { ok: false, detail: 'an earlier send was interrupted and the thread could not be checked: ' + (err as Error).message };
+        }
+      }
+    }
+    const gate = await preSendGate(d, null, opts.github ?? githubPoster(), opts);
+    if (gate) return gate;
+    const claimed = mutateOutbox(opts, (all) => {
+      const x = all[id];
+      if (!x || x.status !== 'pending') return { write: false, result: x ? `already ${x.status}` : 'no such draft' };
+      if (x.email_sent) return { write: false, result: 'already sent' };
+      x.send_started_at = now();
+      return { write: true, result: '' };
+    });
+    if (claimed) return { ok: false, detail: claimed };
+    progress.set(id, { p: { total: 1, sent: 0, next_at: null, started_at: now(), phase: 'email' }, skip: null });
+    let res: { messageId: string; threadId: string };
+    try {
+      res = await mail.send(emailPayload(e, body), e.account);
+    } catch (err) {
+      if (err instanceof AmbiguousSendError || (err as { ambiguous?: boolean }).ambiguous) {
+        // The request reached Gmail: it may be out. Keep the claim (send_started_at) so nothing resends it blind.
+        return { ok: false, detail: 'the email may have been sent (' + (err as Error).message + '). Check Sent mail before trying again.' };
+      }
+      releaseClaim(id, opts);
+      return { ok: false, detail: 'email send failed: ' + (err as Error).message + '. Nothing was sent.' };
+    }
+    const permalink = gmailThreadUrl(res.threadId || e.threadId || '');
+    mutateOutbox(opts, (all) => {
+      const x = all[id];
+      if (!x) return { write: false, result: null };
+      x.email_sent = { messageId: res.messageId, threadId: res.threadId, at: stamp(now()) };
+      if (body !== e.body && x.email) x.email = { ...x.email, body };
+      return { write: true, result: null };
+    });
+    const marked = closeDraft(id, 'sent', { by: 'loom', permalink, bySend: true, at: now() }, opts);
+    const extra = { email_id: res.messageId, email_thread: res.threadId || e.threadId || '', ...(permalink ? { permalink } : {}) };
+    if (!marked.ok) return { ok: true, ...extra, detail: 'sent, but marking it sent failed: ' + marked.detail };
+    return { ok: true, ...extra, detail: 'sent' };
+  } finally {
+    progress.delete(id);
+    sendingNow.delete(id);
+  }
 }
 
 function releaseClaim(id: string, o: StoreOpts): void {

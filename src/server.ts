@@ -28,7 +28,7 @@ import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, readAllThreads, threadOwners } from './slack.ts';
 import { slackCounts } from './slackthreads.ts';
 import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
-import { discardDraft, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
+import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps } from './routes/cli.ts';
@@ -36,9 +36,11 @@ import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmod
 import { authTest, conversationsReplies } from './slackapi.ts';
 import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
-import { getParked, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
+import { emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
 import { OutboxWatch } from './outboxwatch.ts';
-import { cachedHead, githubPoster, headMoved } from './outboxreview.ts';
+import { cachedHead, ghRun, githubPoster, headMoved } from './outboxreview.ts';
+import { cliAdapter, cliRunner, EMAIL_OFF_DETAIL, resolveEmailCli, type EmailAdapter } from './outboxemail.ts';
+import { cachedFresh, clearFreshCache, currentSeen, ghActivityVia, ghMeVia, type FreshDeps } from './outboxfresh.ts';
 import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
@@ -301,22 +303,98 @@ function chatIsSending(id: string): boolean {
   return since !== undefined && Date.now() - since < CHAT_SENDING_MS;
 }
 
-/** The Send path's options: a top-level post claims its thread, an interrupted send is checked in Slack first. */
-function sendOpts(dry: boolean, ackStale = false) {
+/** The email CLI from the `email_cli` setting (or the default script), or null when email is off. */
+function emailAdapter(): EmailAdapter | null {
+  let setting = '';
+  try {
+    const db = openDb();
+    try {
+      setting = getSetting(db, 'email_cli', { env: false });
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* the default */
+  }
+  const cli = resolveEmailCli(setting);
+  return cli ? cliAdapter(cliRunner(cli)) : null;
+}
+
+let slackMeCache: { at: number; id: string } | null = null;
+/** The person's Slack user id, cached ten minutes (one auth.test). */
+async function slackMe(): Promise<string> {
+  if (slackMeCache && Date.now() - slackMeCache.at < 600_000) return slackMeCache.id;
+  const id = (await authTest()).identity.user_id;
+  if (id) slackMeCache = { at: Date.now(), id };
+  return id;
+}
+
+/** The freshness check's reads, all read-only: Slack replies / history, the email thread, the PR's reviews and comments. */
+function freshDeps(): FreshDeps {
+  return {
+    slackMe,
+    slackReplies: (channel, ts) => conversationsReplies(channel, ts, { limit: 200 }),
+    slackHistory: (channel, oldest) => conversationsHistory(channel, { oldest, limit: 100, maxPages: 1 }),
+    slackNames,
+    email: emailAdapter(),
+    ghMe: ghMeVia(ghRun),
+    ghActivity: ghActivityVia(ghRun),
+  };
+}
+
+/** The Send path's options: a top-level post claims its thread, an interrupted send is checked in Slack first, every send is freshness-checked. */
+function sendOpts(dry: boolean, ackStale = false, ackFresh: boolean | string[] = false) {
+  const email = dry ? null : emailAdapter();
   return {
     dry,
     ackStale,
+    ackFresh,
+    ...(dry ? {} : { fresh: freshDeps() }),
+    email,
+    emailOff: EMAIL_OFF_DETAIL,
     onStarted: claimStartedThread,
     checkPosted: async (x: string) => (await reconcileLive({}, [x])).includes(x),
   };
 }
 
+let seenBusy = false;
+/** Record `seen` on drafts added since the last pass (the chat did not pass one): what each target held at add time. */
+async function fillSeenTick(): Promise<void> {
+  if (seenBusy) return;
+  const fresh = Object.values(readOutbox()).filter((d) => d.status === 'pending' && !d.seen_tried && Date.now() - (Date.parse(d.created_at) || 0) < 30 * 60_000);
+  if (!fresh.length) return;
+  seenBusy = true;
+  try {
+    const deps = freshDeps();
+    // Slack is only read in direct mode; a draft for Slack in another mode falls back to created_at.
+    if (!slackFeatureOn('send')) Object.assign(deps, { slackReplies: undefined, slackHistory: undefined });
+    for (const d of fresh) {
+      if (d.seen) {
+        setSeen(d.id, null);
+        continue;
+      }
+      try {
+        setSeen(d.id, await currentSeen(d, deps));
+      } catch {
+        setSeen(d.id, null);
+      }
+    }
+  } finally {
+    seenBusy = false;
+  }
+}
+
 /** Pending drafts, each carrying send_state ('sending' | 'failed') and send_note while a chat is posting it. */
 function pendingDrafts(): ReturnType<typeof pendingDraftsRaw> {
   const liveSessions = new Set(Object.values(snapshot().live).map((l) => l.session_id));
+  const mailOff = (() => {
+    let off: boolean | null = null;
+    return () => (off ??= !emailAdapter());
+  })();
   return pendingDraftsRaw(undefined, undefined, { liveSessions, marks: readStaleMarks() }).map((d) => {
     const s = outboxWatch.stateOf(d.id);
-    return s ? { ...d, send_state: s.state, send_note: s.note ?? '' } : d;
+    const x = d.email && mailOff() ? { ...d, email_off: EMAIL_OFF_DETAIL } : d;
+    return s ? { ...x, send_state: s.state, send_note: s.note ?? '' } : x;
   });
 }
 
@@ -419,18 +497,25 @@ async function parkedTick(): Promise<void> {
   try {
     const db = openDb();
     try {
-      if (!listParked(db).some((r) => r.state === 'waiting')) return;
-      // Reply detection reads Slack: direct mode (and slack_poll_parked) only.
-      if (!slackFeatureOn('parked', db)) return;
-      const me = (await authTest()).identity.user_id;
-      if (!me) return;
+      const waiting = listParked(db).filter((r) => r.state === 'waiting');
+      if (!waiting.length) return;
+      // Reply detection reads Slack: direct mode (and slack_poll_parked) only. Email threads read the email CLI.
+      const slackOn = waiting.some((r) => !isEmailRow(r)) && slackFeatureOn('parked', db);
+      const mail = waiting.some(isEmailRow) ? emailAdapter() : null;
+      if (!slackOn && !mail) return;
+      const me = slackOn ? (await authTest()).identity.user_id : '';
+      if (slackOn && !me && !mail) return;
       await pollParked(db, {
-        me,
+        me: me || '\u0000none',
         names: slackNames(),
         notify: (title, body, target) => notifyUser({ title, body, target }),
         autoResume: autoResumeParked(db),
         resume: async (r) => resumeParkedChat(r, false),
-        replies: (channel, ts) => conversationsReplies(channel, ts, { limit: 200 }),
+        replies: async (channel, ts) => {
+          if (!slackOn || !me) throw new Error('Slack reply polling is off');
+          return conversationsReplies(channel, ts, { limit: 200 });
+        },
+        ...(mail ? { emailReplies: (account: string, thread: string) => emailRepliesVia(mail, account, thread) } : {}),
       });
     } finally {
       db.close();
@@ -1231,7 +1316,7 @@ export function createServer(): http.Server {
       let raw = '';
       req.on('data', (chunk: Buffer) => { raw += chunk; });
       req.on('end', () => {
-        let body: { id?: unknown; messages?: unknown; dry?: unknown; park?: unknown; after?: unknown; ack_stale?: unknown };
+        let body: { id?: unknown; messages?: unknown; dry?: unknown; park?: unknown; after?: unknown; ack_stale?: unknown; ack_fresh?: unknown };
         try {
           body = JSON.parse(raw) ?? {};
         } catch {
@@ -1247,7 +1332,7 @@ export function createServer(): http.Server {
         // Posting needs the Web API (direct mode). A dry run touches nothing, so it is always allowed.
         // A review-only draft with no reactions never touches Slack, so it does not need it.
         const pending = readOutbox()[id];
-        const slackFree = !!pending?.review && !pending.messages?.length && !pending.reactions?.length;
+        const slackFree = (!!pending?.review || !!pending?.email) && !pending.messages?.length && !pending.reactions?.length;
         if (!dryAsked && !slackFree && !slackFeatureOn('send')) return json(res, 409, { ok: false, error: SLACK_OFF, detail: slackOffDetail() });
         // The chat is posting this draft itself right now: a second post would duplicate it.
         if (!dryAsked && chatIsSending(id)) return json(res, 409, { ok: false, detail: 'the chat is posting this draft now' });
@@ -1260,11 +1345,18 @@ export function createServer(): http.Server {
         const after: AfterSend = (body.after as AfterSend | undefined) ?? (body.park === true ? 'park' : 'none');
         const dry = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
         const ackStale = body.ack_stale === true;
+        // ack_fresh: true (sent anyway past any warning) or the ids of the new messages the card showed.
+        const ackFresh: boolean | string[] = body.ack_fresh === true ? true : Array.isArray(body.ack_fresh) && body.ack_fresh.every((x) => typeof x === 'string') ? (body.ack_fresh as string[]).slice(0, 500) : false;
+        // A send that was refused for freshness refreshes the card's passive check too.
+        const done = <T extends { ok: boolean; stale_thread?: unknown; fresh_error?: unknown }>(r: T): T => {
+          if (!r.ok && (r.stale_thread || r.fresh_error)) clearFreshCache(id);
+          return r;
+        };
         if (after !== 'none' && !dry) {
           const db = openDb();
           sendThen(db, after, id, messages, {
             readDraft: (x) => readOutbox()[x],
-            send: (x, m) => sendDraft(x, m, sendOpts(false, ackStale)),
+            send: (x, m) => sendDraft(x, m, sendOpts(false, ackStale, ackFresh)).then(done),
             closePane: closeChatPane,
             names: slackNames(),
           })
@@ -1272,7 +1364,7 @@ export function createServer(): http.Server {
             .finally(() => db.close());
           return;
         }
-        sendDraft(id, messages, sendOpts(dry, ackStale)).then((r) => json(res, r.ok ? 200 : 409, r));
+        sendDraft(id, messages, sendOpts(dry, ackStale, ackFresh)).then(done).then((r) => json(res, r.ok ? 200 : 409, r));
       });
       return;
     }
@@ -1337,6 +1429,16 @@ export function createServer(): http.Server {
       cachedHead(githubPoster(), r.repo, r.pr).then((h) =>
         json(res, 200, { ok: !h.error, head: h.sha, title: h.title, url: h.url, stale: !!h.sha && !d.review_posted && headMoved(r.commit_id, h.sha), ...(h.error ? { detail: h.error } : {}) }),
       );
+      return;
+    }
+
+    // The card's passive freshness check: anything new in the draft's thread(s) since it was drafted. Cached a minute per draft; read-only.
+    if (url.pathname === '/api/outbox/fresh' && req.method === 'GET') {
+      const d = readOutbox()[url.searchParams.get('id') ?? ''];
+      if (!d || d.status !== 'pending') return json(res, 404, { ok: false, detail: 'no such draft' });
+      const deps = freshDeps();
+      if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined });
+      cachedFresh(d.id, d, deps).then((r) => json(res, 200, r.ok ? { ok: true, items: r.items } : { ok: false, error: r.error, items: r.items }));
       return;
     }
 
@@ -1943,6 +2045,8 @@ export function startGhTicks(): void {
   setInterval(() => void parkedTick(), 30_000);
   // The plugin's event files (drafts, claims, stages, ship labels): on change and every 2 s.
   startEventIngest(() => openDb(), { legacyThreads: legacyThreadState });
+  // `seen` for drafts the chat did not pass one for: what each target held when the draft arrived.
+  setInterval(() => void fillSeenTick().catch((e) => console.error('[loom] outbox seen:', (e as Error).message)), 3000).unref?.();
   // plugin-state.json follows the settings its hooks gate on (src/pluginmgr.ts).
   startPluginStateSync(() => openDb());
 

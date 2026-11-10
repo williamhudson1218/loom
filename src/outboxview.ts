@@ -1,5 +1,7 @@
 // The Outbox: Slack drafts that chats propose, shown the way Slack would show
-// them. A draft may also carry a GitHub PR review (verdict, body, inline
+// them, and emails, shown the way a mail client would (src/outboxemail.ts). Before
+// any Send goes out the server re-reads the draft's thread(s); anything new from
+// someone else stops it, and the confirm lists it with one Send anyway. A draft may also carry a GitHub PR review (verdict, body, inline
 // comments) and Slack reactions; the card shows the review above the Slack
 // preview, and Send posts the whole bundle (review, then messages, then reactions). Each chat has its own outbox: a thin strip on the right edge of the chat
 // view (both tabs) when that chat has pending drafts, which expands into a drawer
@@ -120,6 +122,27 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .gh-warn { margin-top:8px; padding:6px 8px; border-radius:6px; background:rgba(212,167,44,.14); border:1px solid rgba(212,167,44,.35); color:#e8b84b; font-size:12px; }
   .gh-rx { padding:7px 12px; border-top:1px solid #1d2a4a; font-size:12px; color:#a3a9b8; }
   .dconf .gh-warn { margin-top:0; }
+  .em-sec { padding:12px; background:#f8f9fa; color:#202124; font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .em-hdr { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12.5px; color:#5f6368; padding-bottom:8px; margin-bottom:8px; border-bottom:1px solid #dadce0; }
+  .em-hdr b { font-weight:600; color:#5f6368; }
+  .em-hdr span { color:#202124; overflow-wrap:anywhere; }
+  .em-subj { font-size:16px; font-weight:600; color:#202124; margin-bottom:8px; overflow-wrap:anywhere; }
+  .em-body { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .em-quote { margin-top:8px; padding-left:10px; border-left:2px solid #dadce0; color:#5f6368; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .em-more { margin-top:6px; background:#e8eaed; color:#3c4043; padding:0 8px; font-size:13px; border-radius:6px; letter-spacing:.1em; }
+  .em-atts { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .em-att { font-size:12px; padding:3px 8px; border-radius:6px; background:#fff; border:1px solid #dadce0; color:#3c4043; }
+  .em-sec textarea.dtext { width:100%; box-sizing:border-box; resize:vertical; min-height:120px; background:#fff; color:#202124; border:1px solid #dadce0; border-radius:6px; padding:8px; font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .dh-mail { font-weight:700; color:#e4e7ee; }
+  .fr-warn { margin:0; padding:8px 10px; border-radius:6px; background:rgba(212,167,44,.14); border:1px solid rgba(212,167,44,.35); color:#e8b84b; font-size:12.5px; }
+  .fr-warn.err { background:rgba(248,81,73,.12); border-color:rgba(248,81,73,.35); color:#ff9b94; }
+  .fr-warn .fr-t { font-weight:600; }
+  .fr-items { margin:6px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px; }
+  .fr-items li { color:#d1d5de; font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+  .fr-items .fr-who { color:#e8b84b; font-weight:600; }
+  .fr-items .fr-at { color:#8a90a2; }
+  .fr-items a { color:#9cc0ff; }
+  .fr-pass { padding:8px 12px; border-top:1px solid #1d2a4a; }
   @keyframes dspin { to { transform:rotate(360deg); } }
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
@@ -184,6 +207,17 @@ function reviewLoc(c){var l=c.start_line?c.start_line+'-'+c.line:String(c.line);
 function reviewPrLabel(r){return r.repo+'#'+r.pr;}
 // "React :eyes: :white_check_mark:, remove :large_orange_circle:" per message the reactions go on.
 function reactionParts(rx){return (rx||[]).map(function(r){return {add:r.add||[],remove:r.remove||[],channel:r.channel,ts:r.ts};});}
+// ---- email drafts
+// The body split at the start of the quoted history ("On ... wrote:", "--- Original Message", or a > line): the quote collapses.
+function emailSplitQuote(body){var ls=String(body||'').split('\n');for(var i=0;i<ls.length;i++){var l=ls[i].trim();
+    if(/^On .{4,200} wrote:$/.test(l)||/^-{2,}\s*Original Message/i.test(l)||(/^>/.test(l)&&ls.slice(i).every(function(x){return !x.trim()||/^\s*>/.test(x);}))){
+      return {main:ls.slice(0,i).join('\n').replace(/\s+$/,''),quoted:ls.slice(i).join('\n')};}}
+  return {main:String(body||'').replace(/\s+$/,''),quoted:''};}
+function emailDest(e){var to=(e&&e.to)||[];return to.length?(to[0]+(to.length>1?' +'+(to.length-1):'')):'(no recipient)';}
+// ---- the freshness check: new messages in the draft's thread(s) since it was drafted
+// The items the card knows of: what the last refused send returned plus the passive check, one per id, oldest first.
+function freshMerge(a,b){var seen={},out=[];(a||[]).concat(b||[]).forEach(function(i){if(i&&i.id&&!seen[i.id]){seen[i.id]=1;out.push(i);}});return out.sort(function(x,y){return (x.at||0)-(y.at||0);});}
+function freshTitle(n){return n+' new message'+(n===1?'':'s')+' since this was drafted';}
 `;
 
 export const OUTBOX_VIEW_JS = String.raw`
@@ -193,7 +227,7 @@ var DRAFT_EDITS={},draftConfirm=null,draftArmDiscard=null,draftMsg={},DRAFT_EDIT
 var outCollapsed=true,outRailKey='',SLK_DIR=null,SLK_EMOJI=null,slkAt=0,slkLoading=false;
 function draftsFor(c){return draftsOfChat(DATA.drafts,c.session_id);}
 function hasDrafts(c){return (DATA.drafts||[]).some(function(d){return d.session_id===c.session_id;});}
-function draftTexts(d){return DRAFT_EDITS[d.id]||d.messages.slice();}
+function draftTexts(d){if(d.email)return DRAFT_EDITS[d.id]||[d.email.body];return DRAFT_EDITS[d.id]||d.messages.slice();}
 function slkCtx(){return {users:(SLK_DIR&&SLK_DIR.users)||{},channels:(SLK_DIR&&SLK_DIR.channels)||{},emoji:SLK_EMOJI||{},custom:(SLK_DIR&&SLK_DIR.custom)||{}};}
 // Names, custom emoji and the shortcode map load once the first draft is on screen,
 // and the names again every ten minutes; each part falls back by itself when absent.
@@ -201,13 +235,31 @@ function loadSlkData(){if(slkLoading)return;const needDir=!SLK_DIR||Date.now()-s
   Promise.all([needDir?fetch('/api/slack/directory').then(r=>r.json()).catch(()=>null):Promise.resolve(SLK_DIR),SLK_EMOJI?Promise.resolve(SLK_EMOJI):fetch('/api/emoji-map').then(r=>r.json()).catch(()=>null)]).then(a=>{
     if(needDir){SLK_DIR=a[0]&&a[0].ok?a[0]:(SLK_DIR||{users:{},channels:{},custom:{},me:{}});slkAt=Date.now();}
     SLK_EMOJI=a[1]||SLK_EMOJI||{};slkLoading=false;renderOutbox();}).catch(()=>{slkLoading=false;});}
-function draftDestLabel(d){const u=slkCtx().users;let l=d.label||d.channel;if(l===d.channel&&u[d.channel])l='@'+u[d.channel];if(!l&&d.review)l=reviewPrLabel(d.review);return l;}
+function draftDestLabel(d){if(d.email)return emailDest(d.email);const u=slkCtx().users;let l=d.label||d.channel;if(l===d.channel&&u[d.channel])l='@'+u[d.channel];if(!l&&d.review)l=reviewPrLabel(d.review);return l;}
 // The PR head, fetched once a minute per review card, for the "new commits since" warning.
-var REVIEW_HEAD={},REVIEW_ALL={},STALE_ACK={};
+var REVIEW_HEAD={},REVIEW_ALL={};
 function loadReviewHead(d){if(!d.review||d.review_posted)return;const h=REVIEW_HEAD[d.id];if(h&&(h.loading||Date.now()-h.at<60000))return;REVIEW_HEAD[d.id]=Object.assign({},h||{},{loading:1,at:Date.now()});
   fetch('/api/outbox/review-head?id='+encodeURIComponent(d.id)).then(r=>r.json()).then(j=>{const was=JSON.stringify(REVIEW_HEAD[d.id]&&[REVIEW_HEAD[d.id].stale,REVIEW_HEAD[d.id].head]);REVIEW_HEAD[d.id]={at:Date.now(),stale:!!j.stale,head:j.head||'',title:j.title||'',url:j.url||''};if(JSON.stringify([!!j.stale,j.head||''])!==was)renderOutbox();}).catch(()=>{REVIEW_HEAD[d.id]={at:Date.now(),stale:false,head:''};});}
 function reviewStale(d){return !!(d.review&&!d.review_posted&&REVIEW_HEAD[d.id]&&REVIEW_HEAD[d.id].stale);}
 function staleWarnHtml(d){const h=REVIEW_HEAD[d.id]||{};return '<div class="gh-warn" role="alert">PR has new commits since this review was drafted'+(h.head?' (head '+esc(String(h.head).slice(0,7))+', drafted on '+esc(d.review.commit_id.slice(0,7))+')':'')+'. It still posts against the drafted commit.</div>';}
+// The passive freshness check, once a minute per card; BLOCK holds what a refused send returned.
+var FRESH={},BLOCK={},EMAIL_QUOTE={};
+function loadFresh(d){const f=FRESH[d.id];if(f&&(f.loading||Date.now()-f.at<60000))return;FRESH[d.id]=Object.assign({},f||{},{loading:1,at:Date.now()});
+  fetch('/api/outbox/fresh?id='+encodeURIComponent(d.id)).then(r=>r.json()).then(j=>{const was=JSON.stringify((FRESH[d.id]&&FRESH[d.id].items)||[]);FRESH[d.id]={at:Date.now(),items:j.items||[],error:j.ok?'':(j.error||j.detail||'')};if(JSON.stringify(FRESH[d.id].items)!==was)renderOutbox();}).catch(()=>{FRESH[d.id]={at:Date.now(),items:[],error:''};});}
+// Everything the confirm must warn about before this goes out: the PR head, new messages, a check that failed.
+function sendWarnings(d){const b=BLOCK[d.id]||{};const f=FRESH[d.id]||{};return {head:reviewStale(d),items:freshMerge(b.items,f.items),error:b.error||''};}
+function hasWarnings(w){return !!(w.head||w.items.length||w.error);}
+function freshItemsHtml(items){return '<ul class="fr-items">'+items.slice(0,8).map(function(i){const link=/^https:[/][/]/.test(i.url||'')?' <a href="'+esc(i.url)+'" target="_blank" rel="noopener noreferrer">open</a>':'';
+    return '<li><span class="fr-who">'+esc(i.author||'someone')+'</span> <span class="fr-at">'+esc(i.at?rel(i.at):'')+'</span><br>'+esc(i.snippet||'')+link+'</li>';}).join('')+(items.length>8?'<li>and '+(items.length-8)+' more</li>':'')+'</ul>';}
+function freshWarnHtml(w){let h='';if(w.items.length)h+='<div class="fr-warn" role="alert"><span class="fr-t">'+esc(freshTitle(w.items.length))+'</span>'+freshItemsHtml(w.items)+'</div>';
+  if(w.error)h+='<div class="fr-warn err" role="alert"><span class="fr-t">Could not check the thread for new messages.</span><br>'+esc(w.error)+'</div>';return h;}
+function emailHtml(d,texts,editing){const e=d.email;const rows=[['From',e.from||(e.account?e.account+' account':'default account')],['To',(e.to||[]).join(', ')]].concat(e.cc&&e.cc.length?[['Cc',e.cc.join(', ')]]:[]).concat(e.bcc&&e.bcc.length?[['Bcc',e.bcc.join(', ')]]:[]);
+  const hdr='<div class="em-hdr">'+rows.map(function(r){return '<b>'+r[0]+'</b><span>'+esc(r[1])+'</span>';}).join('')+'</div><div class="em-subj">'+esc(e.subject)+'</div>';
+  const atts=(e.attachments||[]).length?'<div class="em-atts">'+e.attachments.map(function(a){return '<span class="em-att">'+esc(a.split('/').pop())+'</span>';}).join('')+'</div>':'';
+  const off=d.email_off?'<div class="fr-warn err" role="alert">'+esc(d.email_off)+'</div>':'';
+  if(editing)return '<div class="em-sec">'+hdr+'<textarea class="dtext" data-i="0" rows="'+Math.min(18,Math.max(6,texts[0].split(NL).length+1))+'">'+esc(texts[0])+'</textarea>'+atts+'</div>'+off;
+  const body=e.html?String(texts[0]).replace(/<br\s*[/]?>/gi,NL).replace(/<[^>]+>/g,''):texts[0];const q=emailSplitQuote(body);
+  return '<div class="em-sec">'+hdr+'<div class="em-body">'+esc(q.main)+'</div>'+(q.quoted?(EMAIL_QUOTE[d.id]?'<div class="em-quote">'+esc(q.quoted)+'</div>':'')+'<button type="button" class="em-more" data-dact="email-quote" title="'+(EMAIL_QUOTE[d.id]?'Hide':'Show')+' quoted text" aria-label="'+(EMAIL_QUOTE[d.id]?'Hide':'Show')+' quoted text">\u2026</button>':'')+atts+'</div>'+off;}
 function emojiHtml(n){const h=typeof slkEmoji==='function'?slkEmoji(n,null,slkCtx()):null;return h||(':'+esc(n)+':');}
 function reactionsHtml(d){const rx=reactionParts(d.reactions);if(!rx.length)return '';return '<div class="gh-rx">'+rx.map(function(r){const bits=[];if(r.add.length)bits.push('React '+r.add.map(emojiHtml).join(' '));if(r.remove.length)bits.push((r.add.length?'remove ':'Remove ')+r.remove.map(emojiHtml).join(' '));
     return bits.join(', ')+' on the '+(d.thread_ts&&r.ts===d.thread_ts?'request message':'message '+esc(r.ts));}).join('<br>')+'</div>';}
@@ -220,13 +272,16 @@ function reviewHtml(d){const r=d.review;if(!r)return '';loadReviewHead(d);const 
       +(cs.length>REVIEW_SHOW?'<button type="button" class="gh-more" data-dact="review-all">'+(REVIEW_ALL[d.id]?'Show fewer':'Show all '+cs.length+' comments')+'</button>':''):'')
     +(reviewStale(d)&&draftConfirm!==d.id?staleWarnHtml(d):'')+'</div>';}
 // What the confirm says it will do, in send order.
-function confirmWhat(d,texts){const parts=[];if(d.review&&!d.review_posted){const b=reviewBadge(d.review.event);const n=(d.review.comments||[]).length;parts.push('post the review ('+b.label+(n?', '+n+' comment'+(n===1?'':'s'):'')+') on '+reviewPrLabel(d.review));}
+function confirmWhat(d,texts){if(d.email){const e=d.email;const n=(e.cc||[]).length+(e.bcc||[]).length;return 'Send the email'+(e.threadId?' as a reply in the thread':'')+' to '+(e.to||[]).join(', ')+(n?' (+'+n+' cc/bcc)':'')+(e.account?' from the '+e.account+' account':'')+((e.attachments||[]).length?' with '+e.attachments.length+' attachment(s)':'');}
+  const parts=[];if(d.review&&!d.review_posted){const b=reviewBadge(d.review.event);const n=(d.review.comments||[]).length;parts.push('post the review ('+b.label+(n?', '+n+' comment'+(n===1?'':'s'):'')+') on '+reviewPrLabel(d.review));}
   if(texts.length){const nf=(d.files||[]).reduce(function(n,f){return n+f.length;},0);parts.push('post as '+senderName()+' to '+draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'')+(texts.length>1?' ('+texts.length+' messages)':'')+(nf?' with '+nf+' file(s)':''));}
   const nr=(d.reactions||[]).reduce(function(n,r){return n+(r.add||[]).length+(r.remove||[]).length;},0);if(nr)parts.push('apply '+nr+' reaction change'+(nr===1?'':'s'));
   const s=parts.join(', then ');return s.charAt(0).toUpperCase()+s.slice(1)+(d.review_posted?' (the review is already posted)':'');}
 function senderName(){return (SLK_DIR&&SLK_DIR.me&&SLK_DIR.me.name)||'You';}
 function avatarHtml(){const m=(SLK_DIR&&SLK_DIR.me)||{};const n=senderName();if(m.avatar&&m.avatar.indexOf('https://')===0)return '<img class="slk-av" alt="" src="'+esc(m.avatar)+'">';return '<span class="slk-av" aria-hidden="true">'+esc(n.charAt(0).toUpperCase()||'?')+'</span>';}
-function draftHeadHtml(d,stale){const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
+function draftHeadHtml(d,stale){if(d.email){const e=d.email;const tl=e.threadId&&/^[0-9a-f]+$/i.test(e.threadId)?' <a href="https://mail.google.com/mail/#all/'+esc(e.threadId)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
+    return '<div class="dhd"><span class="dh-mail">\u2709 Email</span><span class="dh-ch">'+esc(emailDest(e))+'</span>'+(e.threadId?'<span class="dh-th">Reply in thread: '+esc(e.thread_subject||e.subject)+tl+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
+  const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
   return '<div class="dhd"><span class="dh-ch">'+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
 // The message exactly as Slack lays it out: one sender header, then a bubble per message.
 function filesHtml(d,i,text){const fl=draftFilesOf(d,i);if(!fl.length)return '';const w=fileWhere(d,i,text);
@@ -246,15 +301,17 @@ function sendingBodyHtml(d,texts,p){const t=draftDate(d);const ctx=slkCtx();
     else st='<span class="slk-st">Queued</span>';
     return '<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+filesHtml(d,i,m)+'</div>';}).join('')+'</div></div></div>';}
 function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total&&prog.phase!=='review');const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;
-  const slackBody=!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
-  const body=reviewHtml(d)+slackBody+reactionsHtml(d);const stale=reviewStale(d)&&!STALE_ACK[d.id];
+  loadFresh(d);
+  const slackBody=d.email?emailHtml(d,texts,editing):!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
+  const body=reviewHtml(d)+slackBody+reactionsHtml(d);const warn=sendWarnings(d);const warned=hasWarnings(warn);const anyway=warned?'Send anyway':'Send';
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
-  const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
+  const passive=!conf&&!prog&&!sending&&warn.items.length?'<div class="fr-pass">'+freshWarnHtml({items:warn.items,error:''})+'</div>':'';
+  const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':prog.phase==='email'?'Sending the email\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
     :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
-    :conf?'<div class="dconf">'+(stale?staleWarnHtml(d)+'<div class="arow"><button class="send" data-dact="ack-stale" title="Post the review against the commit it was drafted on">Send anyway\u2026</button><button data-dact="cancel">Cancel</button>'+msg+'</div>':'')+'<div class="dsub">'+esc(confirmWhat(d,texts))+'</div><div class="arow"><button class="send" data-dact="post-none"'+(stale?' disabled':'')+' title="Post it. The chat stays as it is.">Send'+(d.review&&!d.review_posted&&texts.length?' all':'')+'</button><button class="send park" data-dact="post-park"'+(stale?' disabled':canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close"'+(stale?' disabled':'')+' title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button>'+(stale?'':'<button data-dact="cancel">Cancel</button>'+msg)+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
+    :conf?'<div class="dconf">'+(warn.head?staleWarnHtml(d):'')+freshWarnHtml(warn)+'<div class="dsub">'+esc(confirmWhat(d,texts))+'</div><div class="arow"><button class="send" data-dact="post-none" title="'+(warned?'Send it past the warning above. ':'')+'Post it. The chat stays as it is.">'+anyway+(!warned&&d.review&&!d.review_posted&&texts.length?' all':'')+'</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>'+anyway+' &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">'+anyway+' &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
     :'<div class="dacts"><button class="send" data-dact="send">Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
-  return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+acts+'</div>';}
-function canPark(d){return !!(d.thread_ts||d.channel);}
+  return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+passive+acts+'</div>';}
+function canPark(d){return !!(d.thread_ts||d.channel||d.email);}
 function parkWhyNot(d){return canPark(d)?'':(d.review?'a review with no Slack message has no thread to watch for a reply':'no thread or channel to watch for a reply');}
 function draftsBusy(box){return !!(box&&box.querySelector('textarea:focus'));}
 // ---- the rail
@@ -279,7 +336,7 @@ function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wr
   const now=Date.now();
   rail.innerHTML='<div class="orh2"><span>Outbox</span><span class="obadge">'+ds.length+'</span><span class="sp"></span><button type="button" data-rail="close" title="collapse" aria-label="Collapse the outbox">\u203a</button></div><div id="outcards">'+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join('')+'</div>';focusConfirm();}
 // Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
-function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="ack-stale"]')||card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
+function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
 function reduceMotion(){return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);}
 // New draft list from the server (or after a local send/discard). A card that is gone while it
 // is on screen fades and collapses out first (~280 ms); the rail closes after the last one.
@@ -298,17 +355,21 @@ function renderOutbox(){railRender();}
 // ---- actions (rail and view share them)
 function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if(!d)return;
   if(act==='edit'){DRAFT_EDIT_ON[id]=!DRAFT_EDIT_ON[id];renderOutbox();return;}
+  if(act==='copy'&&d.email){const e=d.email;copyText(['To: '+(e.to||[]).join(', ')].concat(e.cc&&e.cc.length?['Cc: '+e.cc.join(', ')]:[]).concat(['Subject: '+e.subject,'',draftTexts(d)[0]]).join(NL),'email copied');return;}
+  if(act==='email-quote'){EMAIL_QUOTE[id]=!EMAIL_QUOTE[id];renderOutbox();return;}
   if(act==='copy'){const r=d.review;const gh=r?[r.body].concat((r.comments||[]).map(function(c){return reviewLoc(c)+NL+c.body;})).filter(Boolean):[];copyText(gh.concat(draftTexts(d)).join(NL+NL),'draft copied');return;}
   if(act==='review-all'){REVIEW_ALL[id]=!REVIEW_ALL[id];renderOutbox();return;}
-  if(act==='ack-stale'){STALE_ACK[id]=1;renderOutbox();return;}
   if(act==='send'){if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
-  if(act==='cancel'){draftConfirm=null;delete STALE_ACK[id];renderOutbox();return;}
+  if(act==='cancel'){draftConfirm=null;delete BLOCK[id];renderOutbox();return;}
   if(act==='sendnow'){fetch('/api/outbox/send-now',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(()=>pollOutbox()).catch(()=>{});return;}
-  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;if(reviewStale(d)&&!STALE_ACK[id])return;const texts=draftTexts(d);const ack_stale=!!STALE_ACK[id];draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
-    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after,ack_stale})}).then(r=>r.json()).then(j=>{
-      delete SEND_LOCAL[id];delete SENDING[id];draftConfirm=null;delete STALE_ACK[id];draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
+  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);
+    // The confirm showed these warnings and Send anyway was pressed: acknowledge exactly what was shown (new items still stop it).
+    const w=sendWarnings(d);const ack_stale=w.head;const ack_fresh=w.error?true:w.items.map(function(i){return i.id;});draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
+    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after,ack_stale,ack_fresh})}).then(r=>r.json()).then(j=>{
+      delete SEND_LOCAL[id];delete SENDING[id];draftConfirm=null;delete BLOCK[id];draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
       // The PR moved since the review was drafted: reopen the confirm with the warning; Send anyway is the second click.
-      if(!j.ok&&j.stale_head){REVIEW_HEAD[id]={at:Date.now(),stale:true,head:j.stale_head};draftConfirm=id;draftMsg[id]='';}
+      // Refused before anything went out (the PR moved, someone wrote in the thread, or the check failed): reopen the confirm with every warning; one Send anyway sends.
+      if(!j.ok&&(j.stale_head||j.stale_thread||j.fresh_error)){if(j.stale_head)REVIEW_HEAD[id]={at:Date.now(),stale:true,head:j.stale_head};BLOCK[id]={items:j.stale_thread||[],error:j.fresh_error||''};draftConfirm=id;draftMsg[id]='';}
       if(j.ok&&!j.dry){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));toast(j.parked?'posted, chat parked'+(j.waiting_on&&j.waiting_on.length?' (waiting on '+j.waiting_on.join(', ')+')':''):(j.done?'posted, chat closed':(after==='park'?(j.detail||'posted'):'posted')));}
       renderOutbox();setTimeout(refresh,800);}).catch(()=>{delete SEND_LOCAL[id];draftConfirm=null;draftMsg[id]='server off';renderOutbox();});return;}
   if(act==='discard'){if(draftArmDiscard!==id){draftArmDiscard=id;renderOutbox();setTimeout(()=>{if(draftArmDiscard===id){draftArmDiscard=null;renderOutbox();}},2500);return;}
@@ -317,7 +378,7 @@ function wireOutbox(){['#outrail'].forEach(q=>{const box=$(q);
   box.addEventListener('click',e=>{const r=e.target.closest('button[data-rail]');if(r){outCollapsed=r.dataset.rail==='close';if(outRailKey)railSave(outRailKey,outCollapsed);railRender();return;}
     const b=e.target.closest('[data-dact]');if(!b)return;const card=b.closest('.draft');if(card)draftAction(b.dataset.dact,card.dataset.id,b);});
   box.addEventListener('keydown',e=>{if(!draftConfirm)return;const card=e.target.closest&&e.target.closest('.draft');if(!card||card.dataset.id!==draftConfirm)return;
-    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();delete STALE_ACK[draftConfirm];draftConfirm=null;renderOutbox();return;}
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();delete BLOCK[draftConfirm];draftConfirm=null;renderOutbox();return;}
     if(e.key!=='Enter'||e.isComposing)return;
     const onOther=e.target.tagName==='BUTTON'&&!e.altKey&&!e.shiftKey&&e.target.dataset.dact!=='post-none';if(onOther)return;
     const which=e.altKey?'post-park':(e.shiftKey?'post-close':'post-none');const btn=card.querySelector('[data-dact="'+which+'"]');

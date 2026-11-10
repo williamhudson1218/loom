@@ -70,16 +70,19 @@ export function applyEvent(db: Database.Database, e: LoomEvent, opts: IngestOpts
           ...(Array.isArray(e.files) ? { files: e.files as string[][] } : {}),
           ...(e.review !== undefined ? { review: e.review } : {}),
           ...(e.reactions !== undefined ? { reactions: e.reactions } : {}),
+          ...(e.email !== undefined ? { email: e.email } : {}),
+          ...(e.seen !== undefined ? { seen: e.seen } : {}),
           at,
         },
         opts.outbox,
       );
     case 'outbox.update': {
       // No messages on the event (a review-only revision) keeps the draft's Slack text.
-      const msgs = Array.isArray(e.messages) ? (e.messages as string[]) : e.review !== undefined || e.reactions !== undefined ? null : [];
+      const msgs = Array.isArray(e.messages) ? (e.messages as string[]) : e.review !== undefined || e.reactions !== undefined || e.email !== undefined ? null : [];
       const r = updateDraft(str(e.id), msgs, opts.outbox, at, Array.isArray(e.files) ? (e.files as string[][]) : undefined, {
         ...(e.review !== undefined ? { review: e.review } : {}),
         ...(e.reactions !== undefined ? { reactions: e.reactions } : {}),
+        ...(e.email !== undefined ? { email: e.email } : {}),
       });
       // A revision of a draft that has since been sent or replaced has nothing to change: done, not bad.
       return r.ok || r.detail.startsWith('already') ? { ok: true, detail: r.detail } : r;

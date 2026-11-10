@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { parseSlackThread } from './slackref.ts';
 import type { Draft, SendResult } from './outbox.ts';
+import { addressOf, ownAddresses, type EmailAdapter } from './outboxemail.ts';
 
 // Send & park. Will sends a message that puts the ball in someone else's court and
 // does not want the chat on his plate until that person answers. The chat's pane is
@@ -168,7 +169,7 @@ export function resumePrompt(r: ParkedRow): string {
   const who = r.reply_user || 'Someone';
   const link = r.reply_ts ? replyPermalink(r) : r.thread_url;
   return (
-    `Loom: ${who} replied in the Slack thread you were waiting on. You sent a message there and this chat was parked until they answered.\n\n` +
+    `Loom: ${who} replied in the ${isEmailRow(r) ? 'email' : 'Slack'} thread you were waiting on. You sent a message there and this chat was parked until they answered.\n\n` +
     `Thread: ${link}\n\n` +
     `Their reply:\n${r.reply_text.split('\n').map((l) => '> ' + l).join('\n')}\n\n` +
     `Read the whole thread for anything after it (read-only), then carry on with what you were doing. Draft any answer for my approval as usual.`
@@ -176,7 +177,7 @@ export function resumePrompt(r: ParkedRow): string {
 }
 
 export function replyPermalink(r: Pick<ParkedRow, 'thread_url' | 'reply_ts' | 'thread_ts' | 'channel'>): string {
-  if (!r.thread_url || !r.reply_ts) return r.thread_url;
+  if (!r.thread_url || !r.reply_ts || isEmailRow(r)) return r.thread_url;
   const base = r.thread_url.split('?')[0].replace(/\/p\d+$/, '');
   return `${base}/p${r.reply_ts.replace('.', '')}?thread_ts=${r.thread_ts}&cid=${r.channel}`;
 }
@@ -186,12 +187,27 @@ export function replyPermalink(r: Pick<ParkedRow, 'thread_url' | 'reply_ts' | 't
 export interface PollDeps {
   me: string;
   replies: (channel: string, threadTs: string) => Promise<SlackMsg[]>;
+  /** An email row's thread (channel 'email:<account>', thread_ts = the Gmail thread id), as SlackMsg-shaped rows: ts in seconds, user '' for the person's own. */
+  emailReplies?: (account: string, threadId: string) => Promise<SlackMsg[]>;
   names?: Record<string, string>;
   notify: (title: string, body: string, target?: { agent: string; sid: string }) => void;
   /** Auto-resume setting on: reopen the chat in a managed pane. */
   autoResume?: boolean;
   resume?: (r: ParkedRow) => Promise<{ ok: boolean; detail: string }>;
   now?: number;
+}
+
+/** A parked email thread: channel 'email:<account label>' ('' = the default account), thread_ts = the Gmail thread id. */
+export const EMAIL_ROW = 'email:';
+export const isEmailRow = (r: Pick<ParkedRow, 'channel'>): boolean => r.channel.startsWith(EMAIL_ROW);
+
+/** An email thread as SlackMsg rows for repliesAfter: the account's own messages (and unsent drafts) carry no user, so they never count. */
+export async function emailRepliesVia(mail: EmailAdapter, account: string, threadId: string): Promise<SlackMsg[]> {
+  const [msgs, mine] = await Promise.all([mail.thread(threadId, account || undefined), ownAddresses(mail, account || undefined)]);
+  return msgs.map((m) => {
+    const own = (m.labels ?? []).includes('SENT') || (m.labels ?? []).includes('DRAFT') || mine.includes(addressOf(m.from));
+    return { ts: (m.at / 1000).toFixed(6), user: own ? '' : m.from.replace(/\s*<[^>]*>\s*$/, '').replace(/^"|"$/g, '').trim() || m.from, text: m.snippet };
+  });
 }
 
 /** Look at every due parked thread once. Returns the chats that just got a reply. */
@@ -203,7 +219,12 @@ export async function pollParked(db: Database.Database, deps: PollDeps): Promise
     db.prepare(`UPDATE parked_chats SET last_check_at = ? WHERE agent = ? AND session_id = ?`).run(now, r.agent, r.session_id);
     let msgs: SlackMsg[];
     try {
-      msgs = await deps.replies(r.channel, r.thread_ts);
+      if (isEmailRow(r)) {
+        if (!deps.emailReplies) continue;
+        msgs = await deps.emailReplies(r.channel.slice(EMAIL_ROW.length), r.thread_ts);
+      } else {
+        msgs = await deps.replies(r.channel, r.thread_ts);
+      }
     } catch {
       continue; // read-only best effort; the next due tick retries
     }
@@ -268,6 +289,26 @@ export async function sendAndPark(db: Database.Database, id: string, messages: s
   if (!r.ok || r.dry) return r;
   const agent = deps.agent ?? 'claude';
   const now = deps.now ?? Date.now();
+  // An email: watch its Gmail thread for a reply from anyone but the account itself.
+  if (d.email) {
+    const thread = r.email_thread || d.email.threadId || '';
+    if (!thread) return { ...r, parked: false, detail: r.detail + '; not parked: the email CLI did not report a thread to watch' };
+    const waitingOn = d.email.to.map((a) => a.replace(/\s*<[^>]*>\s*$/, '').trim() || a);
+    parkChat(db, {
+      agent,
+      sessionId: d.session_id,
+      draftId: id,
+      channel: EMAIL_ROW + (d.email.account ?? ''),
+      threadTs: thread,
+      threadUrl: r.permalink ?? '',
+      permalink: r.permalink ?? '',
+      waitingOn,
+      sentTs: ((now - 5_000) / 1000).toFixed(6),
+      sentAt: now,
+    }, now);
+    const c = deps.closePane(agent, d.session_id);
+    return { ...r, parked: true, closed: c.found && c.ok, waiting_on: waitingOn };
+  }
   // The thread to watch: the one the draft replied into, else the thread the new post started.
   let channel = d.channel;
   let threadTs = d.thread_ts ?? '';

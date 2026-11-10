@@ -46,7 +46,7 @@ const DESIGN_KEYS = [
   'terminal', 'launch_target', 'lane_view', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
   'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill',
   'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_client_id', 'slack_reconnect', 'slack_poll_parked', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_goto_confirm_new', 'slack_ax_last_result',
-  'outbox_primary', 'outbox_confirm', 'auto_resume_parked', 'outbox_slack_drafts', 'outbox_chat_drafts', 'outbox_keep_days',
+  'outbox_primary', 'outbox_confirm', 'auto_resume_parked', 'outbox_slack_drafts', 'outbox_chat_drafts', 'email_cli', 'outbox_keep_days',
   'orchestrator_enabled', 'orchestrator_autostart', 'orchestrator_notify', 'orchestrator_trust', 'orchestrator_session_id', 'orchestrator_pane_id',
   'watchers_enabled', 'watcher_brief_prune_days', 'watchers_ignore_self', 'watcher_default_target',
   'plugin_state', 'codex_hook',
@@ -101,6 +101,7 @@ const TODAY: Record<string, unknown> = {
   auto_resume_parked: false, // settings.autoResumeParked: on only when 'on'
   outbox_slack_drafts: false,
   outbox_chat_drafts: true,
+  email_cli: '',
   outbox_keep_days: 14,
   orchestrator_enabled: '1', // orchestrator.enabled: off only when '0'
   orchestrator_autostart: true,
@@ -141,7 +142,7 @@ const NEW_USER: Record<string, unknown> = {
   perm_chats: 'normal', perm_watchers: 'normal', perm_orchestrator: 'normal', rc_watchers: false,
   review_skill: 'loom:review', voice_skill: '',
   slack_mode: 'off', slack_poll_parked: true, channel_projects: {}, slack_goto_hotkey: 'Command+Shift+L', slack_paste_fallback: true, slack_goto_confirm_new: true,
-  outbox_primary: 'send', outbox_confirm: true, auto_resume_parked: false, outbox_slack_drafts: false, outbox_chat_drafts: true, outbox_keep_days: 14,
+  outbox_primary: 'send', outbox_confirm: true, auto_resume_parked: false, outbox_slack_drafts: false, outbox_chat_drafts: true, email_cli: '', outbox_keep_days: 14,
   orchestrator_enabled: '0', orchestrator_autostart: true, orchestrator_notify: 'needs_you', orchestrator_trust: false,
   watchers_enabled: false, watcher_brief_prune_days: 14, watchers_ignore_self: true, watcher_default_target: 'managed',
   codex_hook: false,

@@ -318,6 +318,7 @@ function sxOutbox(){var slOn=sxv('slack_mode')==='direct';
    sxKey('auto_resume_parked',{title:'Reopen parked chats when a reply arrives',help:'Reopens each one in a managed pane with the reply as its first prompt. Off leaves a Resume button.'})+
    sxKey('outbox_slack_drafts',{title:'Also save to Slack Drafts',help:'Uses an unofficial Slack endpoint.'})+
    sxKey('outbox_chat_drafts',{title:'Let chats add drafts to the Outbox',help:'Needs the outbox hook and slack-drafting skill from Helpers, and a Direct Slack connection.',after:sxHelperPill('outbox-recording')})+
+   sxKey('email_cli',{title:'Email CLI',help:'Sends email drafts as you and reads their threads for the before-send check. A Gmail-CLI-compatible script (send, thread, send-as). Empty uses ~/.claude/tools/gmail/gmail.mjs when it exists; without one, email drafts can be reviewed but not sent.',mono:true,ph:'~/.claude/tools/gmail/gmail.mjs if present',noDef:true})+
    sxKey('outbox_keep_days',{title:'Keep sent and discarded drafts',help:'Then they are removed from the Outbox.',unit:'days',min:1});}
 function sxHelperPill(name){var pl=SX.data.plugin;if(!pl)return '';return pl.status==='not_installed'?sxPill('warn','Helpers not installed'):sxPill('ok','Installed');}
 function sxShip(){var sh=SX.data.ship;if(!sh)return '<p class="sxempty">loading…</p>';var rows=sh.projects||[];

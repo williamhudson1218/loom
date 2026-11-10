@@ -7,9 +7,16 @@
   loom outbox add --review-file <review.json> [--reactions-file <rx.json>] [--thread <url> --text-file <p> ...]
                                                      a GitHub PR review (posted first on Send, all comments in
                                                      one call), optionally with the Slack reply and reactions
+  loom outbox add --email-file <email.json>          an email, sent through the email CLI on Send
+                                                     ({to, cc?, bcc?, subject, body, account?, from?, threadId?,
+                                                     inReplyTo?, references?, thread_subject?, signature?, attachments?})
+                    [--seen <ts|json>]               what the chat last saw in the target (a Slack ts, or
+                                                     {"slack":ts,"email":id,"github":{"at":iso,"id":id}}); Send warns
+                                                     when anything newer from someone else has landed. Without it Loom
+                                                     records what is there when the draft arrives.
   loom outbox update <id> --text-file <p> [--file <img> ...] [...]   revise a pending draft in place
                                                      (--clear-files drops attachments; omit --file to keep them;
-                                                     --review-file / --reactions-file replace those parts)
+                                                     --review-file / --reactions-file / --email-file replace those parts)
   loom outbox supersede <id>                         retire a pending draft a newer one replaces
   loom outbox list [--json] [--all] | show <id>
   loom thread claim <url> | started <url|key> | release <url> | list [filter]
@@ -273,6 +280,70 @@ def pr_facts(r):
               % (head[:7], str(r["commit_id"])[:7]), file=sys.stderr)
 
 
+ADDR = re.compile(r"[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+")
+
+
+def addr_ok(a):
+    m = re.search(r"<([^<>]+)>", a)
+    return bool(ADDR.fullmatch((m.group(1) if m else a).strip()))
+
+
+def check_email(e, cmd):
+    """The same rules Loom applies (src/outboxemail.ts cleanEmail), so a bad file fails here, not on Send."""
+    bad = lambda m: die("%s: email: %s" % (cmd, m), 2)
+    if not isinstance(e, dict):
+        bad("the file must hold one JSON object")
+    e.pop("kind", None)
+    for k in ("to", "cc", "bcc"):
+        v = e.get(k)
+        if v is None or v == "":
+            e.pop(k, None)
+            continue
+        if isinstance(v, str):
+            v = [x.strip() for x in v.split(",") if x.strip()]
+        if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+            bad("%s must be a list of addresses" % k)
+        for a in v:
+            if not addr_ok(a):
+                bad("not an email address: %s" % a)
+        e[k] = v
+    if not e.get("to"):
+        bad("needs at least one recipient in to")
+    if not str(e.get("subject") or "").strip():
+        bad("subject is required")
+    if not str(e.get("body") or "").strip():
+        bad("body is required")
+    if bool(e.get("threadId")) != bool(e.get("inReplyTo")):
+        bad("a reply needs both threadId and inReplyTo (the Message-ID it answers, from `gmail read`)")
+    if e.get("inReplyTo") and not re.fullmatch(r"<[^<>\s]+>", str(e["inReplyTo"])):
+        bad("inReplyTo must be a Message-ID like <abc@mail.example.com>")
+    atts = []
+    for a in e.get("attachments") or []:
+        p = os.path.abspath(os.path.expanduser(str(a)))
+        if not os.path.isfile(p):
+            bad("attachment not found: %s" % p)
+        atts.append(p)
+    if atts:
+        e["attachments"] = atts
+    else:
+        e.pop("attachments", None)
+    return e
+
+
+def parse_seen(v, cmd):
+    if v is None or v is True:
+        return None
+    if re.fullmatch(r"\d{10}\.\d{6}", v):
+        return {"slack": v}
+    try:
+        j = json.loads(v)
+    except ValueError:
+        die("%s: --seen takes a Slack ts or a JSON object" % cmd, 2)
+    if not isinstance(j, dict):
+        die("%s: --seen takes a Slack ts or a JSON object" % cmd, 2)
+    return j
+
+
 def review_parts(o, cmd):
     ev = {}
     if o.get("review_file"):
@@ -280,6 +351,10 @@ def review_parts(o, cmd):
         pr_facts(ev["review"])
     if o.get("reactions_file"):
         ev["reactions"] = check_reactions(read_json(o["reactions_file"], cmd, "--reactions-file"), cmd)
+    if o.get("email_file"):
+        if ev or o.get("thread") or o.get("channel"):
+            die("%s: an email draft cannot also carry Slack messages or a review" % cmd, 2)
+        ev["email"] = check_email(read_json(o["email_file"], cmd, "--email-file"), cmd)
     return ev
 
 
@@ -288,6 +363,17 @@ def outbox_add(args):
     sid = need_session(o)
     paths, files = message_specs(args, "outbox add")
     parts = review_parts(o, "outbox add")
+    seen = parse_seen(o.get("seen"), "outbox add")
+    if "email" in parts:
+        if paths:
+            die("outbox add: an email draft has no --text-file; the body is in the email file", 2)
+        ev = {"session": sid, "messages": [], "channel": "", "email": parts["email"]}
+        if seen:
+            ev["seen"] = seen
+        ev["id"] = "d%x" % int(time.time() * 1000) + "%02x" % random.randrange(256)
+        c.write_event("outbox.add", **ev)
+        print(ev["id"])
+        return
     if o.get("thread") and o.get("channel"):
         die("outbox add: give one of --thread <url> or --channel <id>, not both", 2)
     if "review" not in parts:
@@ -300,6 +386,8 @@ def outbox_add(args):
     msgs, files = messages_and_files(paths, files)
     ev = {"session": sid, "messages": msgs}
     ev.update(parts)
+    if seen:
+        ev["seen"] = seen
     if any(files):
         ev["files"] = files
     if not paths:
@@ -334,7 +422,9 @@ def outbox_update(args):
     paths, files = message_specs(args, "outbox update")
     parts = review_parts(o, "outbox update")
     if not rest or not (paths or parts):
-        die("usage: loom outbox update <id> --text-file <path> [--file <img> ...] [...] | --review-file <json> | --reactions-file <json>", 2)
+        die("usage: loom outbox update <id> --text-file <path> [--file <img> ...] [...] | --review-file <json> | --reactions-file <json> | --email-file <json>", 2)
+    if "email" in parts and paths:
+        die("outbox update: an email draft has no --text-file; the body is in the email file", 2)
     ev = dict(parts)
     if paths:
         msgs, files = messages_and_files(paths, files)
@@ -363,6 +453,10 @@ def outbox_list(args):
     for d in drafts:
         dest = d.get("channel", "") + (" thread " + d["thread_ts"] if d.get("thread_ts") else "")
         first = (d.get("messages") or [""])[0].replace("\n", " ")
+        em = d.get("email")
+        if em:
+            dest = "email to %s%s" % (", ".join(em.get("to") or []), " (reply)" if em.get("threadId") else "")
+            first = str(em.get("subject") or "")
         rv = d.get("review")
         if rv:
             tag = "[%s %s#%s%s]" % (rv.get("event"), rv.get("repo"), rv.get("pr"), " posted" if d.get("review_posted") else "")

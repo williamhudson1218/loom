@@ -221,7 +221,7 @@ describe('send all', () => {
     const log: Log = [];
     const gh = ghStub(log, { head: 'fff0000aaa1111bbb2222ccc3333ddd4444eee55' });
     const first = await sendDraft('r1', ['Left two blockers on the PR.', 'Ping me when fixed.'], { file: f, github: gh, slack: slackStub(log) });
-    expect(first).toMatchObject({ ok: false, stale_head: 'fff0000aaa1111bbb2222ccc3333ddd4444eee55', detail: 'PR has new commits since this review was drafted' });
+    expect(first).toMatchObject({ ok: false, stale_head: 'fff0000aaa1111bbb2222ccc3333ddd4444eee55', detail: 'PR has new commits since this review was drafted. Nothing was sent.' });
     expect(gh.posts).toHaveLength(0);
     expect(readOutbox(f).r1.send_started_at).toBeUndefined();
     const second = await sendDraft('r1', ['Left two blockers on the PR.', 'Ping me when fixed.'], { file: f, github: gh, slack: slackStub(log), ackStale: true });
@@ -318,7 +318,7 @@ describe('the card', () => {
     ghRender: (t: string) => string;
     reviewLoc: (c: object) => string;
   };
-  const card = (d: object, state: { head?: object; all?: boolean; confirm?: boolean; ack?: boolean } = {}) => {
+  const card = (d: object, state: { head?: object; all?: boolean; confirm?: boolean } = {}) => {
     const f = new Function(
       'DATA', 'esc', 'rel', 'hhmm', 'NL',
       `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=${state.confirm ? "'r1'" : 'null'},draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
@@ -326,7 +326,7 @@ describe('the card', () => {
        var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};var slkBubbles=function(ms){return ms.map(function(m){return '<p>'+esc(m)+'</p>';}).join('');};
        ${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
        ${state.head ? `REVIEW_HEAD['r1']=${JSON.stringify({ at: Date.now(), ...state.head })};` : `REVIEW_HEAD['r1']={at:Date.now(),stale:false,head:''};`}
-       ${state.all ? "REVIEW_ALL['r1']=1;" : ''}${state.ack ? "STALE_ACK['r1']=1;" : ''}
+       ${state.all ? "REVIEW_ALL['r1']=1;" : ''}FRESH['r1']={at:Date.now(),items:[]};
        return draftCardHtml(DATA.drafts[0],{});`,
     );
     const esc = (x: unknown) => String(x ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]!);
@@ -366,15 +366,17 @@ describe('the card', () => {
     expect(card(many, { all: true }).match(/class="gh-cmt"/g)).toHaveLength(7);
   });
 
-  it('warns when the PR has new commits and gates the send behind Send anyway', () => {
+  it('warns when the PR has new commits, and the confirm sends past it in one click (Send anyway)', () => {
     const stale = card(bundle, { head: { stale: true, head: 'fff0000aaa' }, confirm: true });
     expect(stale).toContain('PR has new commits since this review was drafted');
-    expect(stale).toContain('data-dact="ack-stale"');
-    expect(stale).toMatch(/data-dact="post-none" disabled/);
-    const acked = card(bundle, { head: { stale: true, head: 'fff0000aaa' }, confirm: true, ack: true });
-    expect(acked).not.toContain('data-dact="ack-stale"');
-    expect(acked).not.toMatch(/data-dact="post-none" disabled/);
-    expect(acked).toContain('Post the review (Request changes, 2 comments) on acme/app#12, then post as You to #eng');
+    expect(stale).not.toContain('data-dact="ack-stale"');
+    expect(stale).not.toMatch(/data-dact="post-none" disabled/);
+    expect(stale).toMatch(/data-dact="post-none"[^>]*>Send anyway<\/button>/);
+    expect(stale).toContain('>Send anyway &amp; park</button>');
+    expect(stale).toContain('>Send anyway &amp; close</button>');
+    expect(stale).toContain('Post the review (Request changes, 2 comments) on acme/app#12, then post as You to #eng');
+    const fresh = card(bundle, { confirm: true });
+    expect(fresh).toMatch(/data-dact="post-none"[^>]*>Send all<\/button>/);
   });
 
   it('a review-only card has no Slack body and cannot park', () => {
