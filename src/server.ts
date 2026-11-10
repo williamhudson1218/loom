@@ -32,7 +32,7 @@ import { discardDraft, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, d
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps } from './routes/cli.ts';
-import { slackFeatureOn, slackMode, SLACK_OFF } from './slackmode.ts';
+import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmode.ts';
 import { authTest, conversationsReplies } from './slackapi.ts';
 import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
@@ -1232,7 +1232,7 @@ export function createServer(): http.Server {
         }
         const dryAsked = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
         // Posting needs the Web API (direct mode). A dry run touches nothing, so it is always allowed.
-        if (!dryAsked && !slackFeatureOn('send')) return json(res, 409, { ok: false, error: SLACK_OFF, detail: 'Slack is not connected in direct mode' });
+        if (!dryAsked && !slackFeatureOn('send')) return json(res, 409, { ok: false, error: SLACK_OFF, detail: slackOffDetail() });
         // The chat is posting this draft itself right now: a second post would duplicate it.
         if (!dryAsked && chatIsSending(id)) return json(res, 409, { ok: false, detail: 'the chat is posting this draft now' });
         const messages = Array.isArray(body.messages) && body.messages.every((m) => typeof m === 'string') ? (body.messages as string[]) : null;

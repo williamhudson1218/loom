@@ -8,7 +8,9 @@ import { renderDashboard } from '../src/dashboard.ts';
 const OTHER_VIEW = new Set(['watchers_enabled', 'watcher_brief_prune_days', 'watchers_ignore_self']);
 
 // Loom's own bookkeeping (ids it wrote itself); nothing a person could act on.
-const BOOKKEEPING = new Set(['orchestrator_session_id', 'orchestrator_pane_id', 'plugin_state', 'last_project_dir']);
+// slack_reconnect is written by a refused token refresh and reaches the page as
+// /api/slack/status `reconnect` (the Reconnect Slack button and note).
+const BOOKKEEPING = new Set(['orchestrator_session_id', 'orchestrator_pane_id', 'plugin_state', 'last_project_dir', 'slack_reconnect']);
 
 describe('settings view', () => {
   it('has no backslash, backtick or dollar-brace (it is spliced into a template string)', () => {

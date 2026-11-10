@@ -45,7 +45,7 @@ const DESIGN_KEYS = [
   'claude_bin', 'extra_path', 'codex_visible',
   'terminal', 'launch_target', 'lane_view', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
   'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill',
-  'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_poll_parked', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_ax_last_result',
+  'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_client_id', 'slack_reconnect', 'slack_poll_parked', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_ax_last_result',
   'outbox_primary', 'outbox_confirm', 'auto_resume_parked', 'outbox_slack_drafts', 'outbox_chat_drafts', 'outbox_keep_days',
   'orchestrator_enabled', 'orchestrator_autostart', 'orchestrator_notify', 'orchestrator_trust', 'orchestrator_session_id', 'orchestrator_pane_id',
   'watchers_enabled', 'watcher_brief_prune_days', 'watchers_ignore_self', 'watcher_default_target',
@@ -88,6 +88,8 @@ const TODAY: Record<string, unknown> = {
   slack_mode: 'direct', // Slack ran whenever its CLI was present
   slack_identity: {},
   slack_scopes_granted: [],
+  slack_client_id: '',
+  slack_reconnect: '',
   slack_poll_parked: true,
   channel_projects: {},
   slack_goto_hotkey: DEFAULT_SLACK_HOTKEY,

@@ -1,3 +1,4 @@
+import { redirectUri } from './slackoauth.ts';
 import { FEATURE_METHODS, READ_FEATURES, compareScopes, scopesFor, type ScopeReport } from './slackapi.ts';
 
 // The Slack app manifest Loom asks the user to paste at api.slack.com/apps (§5.1).
@@ -40,6 +41,32 @@ export function buildManifest(opts: ManifestOpts = {}): SlackManifest {
     },
     oauth_config: { scopes: { user: manifestScopes(opts.readonly) } },
     settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: false },
+  };
+}
+
+/**
+ * The ONE shared app a workspace admin creates for Connect Slack: the same user
+ * scopes, a localhost redirect, and PKCE on, which makes it a public client with
+ * no client secret (one-way: Slack cannot turn PKCE off again). Token rotation
+ * is on, so a token expires after 12 hours and refreshes; a PKCE app's refresh
+ * token lasts 30 days. Still no bot user and no bot scopes: a localhost
+ * redirect counts as a desktop redirect under PKCE, and those cannot take bot
+ * scopes anyway. A read-only person asks for fewer scopes at authorize time.
+ */
+export interface SharedManifest {
+  display_information: { name: string; description: string };
+  oauth_config: { redirect_urls: string[]; scopes: { user: string[] }; pkce_enabled: true };
+  settings: { org_deploy_enabled: false; socket_mode_enabled: false; token_rotation_enabled: true };
+}
+
+export function buildSharedManifest(opts: { port: number }): SharedManifest {
+  return {
+    display_information: {
+      name: 'Loom',
+      description: 'Loom links your Slack threads to your Claude Code chats and sends the drafts you approve, as you.',
+    },
+    oauth_config: { redirect_urls: [redirectUri(opts.port)], scopes: { user: manifestScopes(false) }, pkce_enabled: true },
+    settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: true },
   };
 }
 

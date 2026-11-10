@@ -112,8 +112,10 @@ describe('token resolution', () => {
     configureToken({ account: () => '', allowLegacy: () => false });
     kc.set(KEYCHAIN_SERVICE, 'default', 'xoxp-a');
     slackToken();
+    // One read of the token and one of its (absent) refresh data, then nothing.
+    expect(reads).toBe(2);
     slackToken();
-    expect(reads).toBe(1);
+    expect(reads).toBe(2);
     kc.set(KEYCHAIN_SERVICE, 'default', 'xoxp-b');
     expect(slackToken()).toBe('xoxp-a');
     clearTokenCache();

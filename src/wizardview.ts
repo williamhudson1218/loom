@@ -562,6 +562,20 @@ function wzSlackDraw() {
   if (ch === 'direct') {
     var tabs = ['1 Create the app', '2 Install', '3 Paste token'];
     var connected = s && s.connected && s.mode === 'direct';
+    var cid = s && s.clientId, envTk = s && s.tokenSource === 'env';
+    // Connect Slack (the team's shared app, OAuth with PKCE) leads when a client id is set.
+    if (cid && !envTk) {
+      var oa = WZ.oauth;
+      sub += '<div class="stack"><div class="lrow"><span class="st ' + (connected ? 'y' : 'w') + '">' + (connected ? '&#10003;' : '!') + '</span><div class="t"><b>Connect with your team&#39;s Slack app</b><span>Slack opens in your browser. Approve there and Loom stores your own token in the Keychain. Posts are sent as you.</span></div>'
+        + (oa ? '<button class="btn sm" data-wz-oauthcancel="1">Cancel</button>' : '<button class="btn pri" data-wz-oauth="1">' + (connected ? 'Connect again' : s.reconnect ? 'Reconnect Slack' : 'Connect Slack') + '</button>') + '</div>'
+        + (oa ? '<div class="def"><span class="spin"></span>Waiting for you to approve in Slack. <a href="' + wzEsc(oa.url) + '" target="_blank" rel="noopener">Open the Slack page</a> if it did not open.</div>' : '')
+        + (WZ.oauthMsg ? '<div class="note ' + (WZ.oauthMsg.ok ? 'ok' : 'err') + '">' + wzEsc(WZ.oauthMsg.text) + '</div>' : '')
+        + (connected && !WZ.oauthMsg ? '<div class="note ok"><span class="st y">&#10003;</span> Connected' + (s.identity ? ' as ' + wzEsc(s.identity.user || '') + ' in ' + wzEsc(s.identity.team || '') : '') + '.</div>' : '')
+        + (WZ.ownApp ? '' : '<div><button class="btn sm" data-wz-ownapp="1">Use your own app instead</button></div>') + '</div>';
+    } else if (!envTk) {
+      sub += '<div class="fld" style="margin-bottom:8px"><label for="wz-cid">Team shared app client id (optional)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="wz-cid" autocomplete="off" spellcheck="false" placeholder="1234567890.1234567890" style="flex:1;min-width:200px"><button class="btn sm" data-wz-cidsave="1">Save</button></div><div class="def">If your team set up one shared Loom app in Slack, paste its client id to connect without creating your own app.</div>' + (WZ.cidErr ? '<div class="note err">' + wzEsc(WZ.cidErr) + '</div>' : '') + '</div>';
+    }
+    if (!cid || envTk || WZ.ownApp) {
     sub += '<div class="subs">' + tabs.map(function (t, i) { return '<button class="btn sm' + (WZ.slackSub === i ? ' pri' : '') + '" data-wz-sub="' + i + '">' + t + '</button>'; }).join('') + '</div>';
     if (WZ.slackSub === 0) {
       sub += '<div class="stack"><div class="def">Open <b>api.slack.com/apps</b> &rsaquo; Create New App &rsaquo; From a manifest, pick your workspace, and paste this. It requests user-token scopes only: Loom acts as you and never adds a bot to the workspace.</div>'
@@ -582,7 +596,8 @@ function wzSlackDraw() {
         + (connected && !WZ.slackMsg ? '<div class="note ok"><span class="st y">&#10003;</span> Connected' + (s.identity ? ' as ' + wzEsc(s.identity.user || '') + ' in ' + wzEsc(s.identity.team || '') : '') + '.' + (s.scopes ? ' ' + wzEsc(s.scopes.text || '') : '') + '</div>' : '')
         + '</div>';
     }
-    if (!connected) sub += '<div class="def" style="margin-top:8px">Not connected yet. If you continue now, Slack stays off until the token Test passes.</div>';
+    }
+    if (!connected) sub += '<div class="def" style="margin-top:8px">Not connected yet. If you continue now, Slack stays off until ' + (cid ? 'you connect.' : 'the token Test passes.') + '</div>';
   } else if (ch === 'mcp') {
     var m = s && s.mcp;
     sub += '<div class="stack">'
@@ -615,6 +630,27 @@ function wzSlackTest() {
     WZ.slackMsg = r;
     wzGet('/api/slack/status').then(function (s) { WZ.slack = Object.assign({}, WZ.slack || {}, s); wzSlackDraw(); });
   }).catch(function () { WZ.slackMsg = { ok: false, hint: 'Loom did not answer.' }; wzSlackDraw(); });
+}
+// Connect Slack from the wizard: same routes as Settings, polled until the callback reports.
+function wzOAuthStop() { if (WZ.oauth && WZ.oauth.t) clearInterval(WZ.oauth.t); WZ.oauth = null; }
+function wzOAuthStart() {
+  wzOAuthStop(); WZ.oauthMsg = null;
+  var w = window.loomNative ? null : window.open('about:blank', '_blank');
+  wzJson('POST', '/api/slack/oauth/start', { readonly: WZ.S.readonly }).then(function (j) {
+    if (!j.ok) { if (w) w.close(); WZ.oauthMsg = { ok: false, text: j.hint || j.error || 'Could not start Connect Slack.' }; wzSlackDraw(); return; }
+    if (w) { try { w.location.href = j.url; } catch (e) { window.open(j.url, '_blank', 'noopener'); } } else window.open(j.url, '_blank', 'noopener');
+    var o = { state: j.state, url: j.url, at: Date.now() }; WZ.oauth = o; wzSlackDraw();
+    o.t = setInterval(function () {
+      if (WZ.oauth !== o) return;
+      if (Date.now() - o.at > 600000) { wzOAuthStop(); WZ.oauthMsg = { ok: false, text: 'Connect Slack timed out. Start it again.' }; wzSlackDraw(); return; }
+      wzGet('/api/slack/status?oauth=' + encodeURIComponent(o.state)).then(function (st) {
+        if (WZ.oauth !== o) return; var r = st && st.oauth; if (!r || r.state === 'pending') return;
+        wzOAuthStop(); WZ.slack = Object.assign({}, WZ.slack || {}, st);
+        WZ.oauthMsg = r.state === 'ok' ? null : { ok: false, text: r.hint || r.error || 'Slack sign-in did not finish.' };
+        if (wzCur() === 'slack') wzSlackDraw();
+      });
+    }, 2000);
+  }).catch(function () { if (w) w.close(); WZ.oauthMsg = { ok: false, text: 'Loom did not answer.' }; wzSlackDraw(); });
 }
 WZ_STEPS.slack = function (c) {
   c.innerHTML = '<div class="stack" id="wz-slack"></div>';
@@ -863,6 +899,10 @@ function wzClick(e) {
   if (d.wzReadonly) { S.readonly = t.checked; return wzGet('/api/slack/manifest?readonly=' + (S.readonly ? '1' : '0')).then(function (m) { WZ.manifest = m; wzSlackDraw(); }); }
   if (d.wzCopy) { try { navigator.clipboard.writeText(WZ.manifest.text); t.textContent = 'Copied'; setTimeout(function () { t.textContent = 'Copy manifest'; }, 1400); } catch (x) { t.textContent = 'Select and copy'; } return; }
   if (d.wzSlacktest) return wzSlackTest();
+  if (d.wzOauth) return wzOAuthStart();
+  if (d.wzOauthcancel) { wzOAuthStop(); return wzSlackDraw(); }
+  if (d.wzOwnapp) { WZ.ownApp = true; return wzSlackDraw(); }
+  if (d.wzCidsave) { var ci = wzEl('wz-cid'), cv = ci ? ci.value.trim() : ''; return wzJson('PUT', '/api/settings', { slack_client_id: cv }).then(function (j) { if (j && j.ok === false) { WZ.cidErr = j.detail || 'That client id was not accepted.'; return wzSlackDraw(); } WZ.cidErr = ''; wzSlackLoad(); }); }
   if (d.wzSlackrecheck) return wzSlackLoad();
   if (d.wzOpenax) { if (window.loomNative && window.loomNative.openAccessibility) window.loomNative.openAccessibility(); return; }
   if (d.wzHkrec) { if (WZ.rec) return; WZ.rec = true; WZ.recRes = null; wzHkDraw(); document.addEventListener('keydown', wzRecKey, true); return; }

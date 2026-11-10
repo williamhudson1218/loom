@@ -318,6 +318,17 @@ export const SETTINGS = [
     key: 'slack_scopes_granted', section: 'slack', label: 'Granted scopes', help: 'Scopes the token was granted, from the last connection test.',
     defaultNew: [], legacyUnset: [], restart: false, internal: true,
   }),
+  // The shared Slack app's client id for Connect Slack (OAuth with PKCE). Public,
+  // not a secret: a PKCE app has no client secret at all.
+  strDef((s) => (s === '' || /^[0-9]+\.[0-9]+$/.test(s) ? null : 'must look like 1234567890.1234567890'), {
+    key: 'slack_client_id', section: 'slack', label: 'Shared Slack app client id', help: 'From the shared Slack app (Basic Information, Client ID). Turns on Connect Slack.',
+    defaultNew: '', legacyUnset: '', restart: false, envName: 'LOOM_SLACK_CLIENT_ID',
+    env: (env) => env.LOOM_SLACK_CLIENT_ID?.trim() || undefined,
+  }),
+  strDef(() => null, {
+    key: 'slack_reconnect', section: 'slack', label: 'Slack needs reconnecting', help: 'Why the Connect Slack token stopped working (a refused refresh). Empty when it works.',
+    defaultNew: '', legacyUnset: '', restart: false, internal: true,
+  }),
   boolDef({
     key: 'slack_poll_parked', section: 'slack', label: 'Watch parked threads', help: 'Poll parked chats’ Slack threads for replies (direct mode only).',
     defaultNew: true, legacyUnset: true, restart: false,

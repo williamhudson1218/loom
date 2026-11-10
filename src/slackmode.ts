@@ -78,3 +78,13 @@ export function slackMode(db?: Database.Database): SlackMode {
 export function slackFeatureOn(feature: SlackFeature, db?: Database.Database): boolean {
   return withDb(db, (d) => featureOn(feature, effectiveMode(getSetting(d, 'slack_mode'), !!slackToken()), getSetting(d, 'slack_poll_parked')));
 }
+
+/** Why Slack cannot send, in words: a lapsed Connect Slack token reads differently from never connected. */
+export function slackOffDetail(db?: Database.Database): string {
+  try {
+    if (withDb(db, (d) => getSetting(d, 'slack_reconnect'))) return 'The Slack connection expired. Reconnect Slack in Settings, Slack.';
+  } catch {
+    /* fall through */
+  }
+  return 'Slack is not connected in direct mode';
+}

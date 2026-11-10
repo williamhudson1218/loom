@@ -192,7 +192,7 @@ function sxStatus(id){var sl=SX.data.slack,mode=sxv('slack_mode'),pl=SX.data.plu
   if(id==='projects'){var n=(ALLP||[]).filter(function(p){return !p.hidden;}).length;return n?['ok',n+(n===1?' project':' projects')]:['warn','No folders yet'];}
   if(id==='terminal'){var t=SET.terminal;return ['ok',t?t.label:'Inside Loom'];}
   if(id==='agents'){var sk=['perm_chats','perm_watchers','perm_orchestrator'].filter(function(k){return sxv(k)==='skip';}).length;return sk?['warn','Skip permissions on']:['ok','Normal permissions'];}
-  if(id==='slack'){if(mode==='off')return ['off','Off'];if(mode==='mcp')return ['ok','MCP only'];if(!sl)return ['off','Checking'];if(!sl.connected)return ['warn','Not connected'];var miss=sl.scopes&&sl.scopes.missing?sl.scopes.missing.length:0;return miss?['warn','Connected, '+miss+(miss===1?' scope missing':' scopes missing')]:['ok','Connected'];}
+  if(id==='slack'){if(mode==='off')return ['off','Off'];if(mode==='mcp')return ['ok','MCP only'];if(!sl)return ['off','Checking'];if(!sl.connected)return ['warn',sl.reconnect?'Reconnect Slack':'Not connected'];var miss=sl.scopes&&sl.scopes.missing?sl.scopes.missing.length:0;return miss?['warn','Connected, '+miss+(miss===1?' scope missing':' scopes missing')]:['ok','Connected'];}
   if(id==='shortcut'){var hk=sxv('slack_goto_hotkey');return hk==='off'?['off','Off']:['ok',sxFmtAcc(hk)];}
   if(id==='outbox'){return mode==='direct'?['ok','On']:['off','Needs Slack (Direct app)'];}
   if(id==='ship'){if(!sh||!sh.projects)return ['off','Checking'];var e=sh.projects.filter(function(p){return p.enabled;}).length;return e?['ok',e+(e===1?' repo':' repos')]:['off','No repos'];}
@@ -250,6 +250,19 @@ function sxAgents(){var skipOn=['perm_chats','perm_watchers','perm_orchestrator'
    sxKey('orchestrator_trust',{title:'Trust the orchestrator folder in ~/.claude.json',help:'Lets the orchestrator run unattended. The trust entry is only added with your consent.'})+
    sxChoice('review_skill',[['loom:review','loom:review (generic, read-only)'],['none','None']],{title:'Review skill for watcher briefs',help:'Which skill a PR-review watcher tells its worker to load.',customLabel:'Another skill…',ph:'skill-name',defTxt:'loom:review'})+
    sxChoice('voice_skill',[['','None']],{title:'Voice skill for drafts',help:'Optional. A skill that writes drafts in your tone.',customLabel:'A skill…',ph:'skill-name',defTxt:'None'});}
+// Connect Slack: start a flow, open Slack's page in the browser, then poll the status route
+// until the callback reports the outcome (or 10 minutes pass).
+function sxOAuthStop(){if(SX.oauth&&SX.oauth.t)clearInterval(SX.oauth.t);SX.oauth=null;}
+function sxOAuthStart(){sxOAuthStop();var native=!!window.loomNative;var w=native?null:window.open('about:blank','_blank');
+  sxPost('/api/slack/oauth/start',{}).then(function(j){if(!j.ok){if(w)w.close();sxBad(sxErr(j));return;}
+   if(w){try{w.location.href=j.url;}catch(e){window.open(j.url,'_blank','noopener');}}else window.open(j.url,'_blank','noopener');
+   var o={state:j.state,url:j.url,at:Date.now()};SX.oauth=o;renderSettings();
+   o.t=setInterval(function(){if(SX.oauth!==o)return;if(Date.now()-o.at>600000){sxOAuthStop();sxBad('Connect Slack timed out. Start it again.');renderSettings();return;}
+    sxJ('/api/slack/status?oauth='+encodeURIComponent(o.state)).then(function(st){if(SX.oauth!==o)return;var r=st&&st.oauth;if(!r||r.state==='pending')return;
+     sxOAuthStop();SX.ownApp=false;SX.pwOpen=false;
+     if(r.state==='ok')toast('Slack connected'+(st.identity&&st.identity.team?': '+st.identity.team:''));else sxBad(r.hint||r.error||'Slack sign-in did not finish');
+     SX.data.slack=st;sxLoadSettings().then(function(){DATA.slackMode=sxv('slack_mode');sxLoad('slack',true);});});},2000);
+  }).catch(function(){if(w)w.close();sxBad('Loom did not answer');});}
 function sxSlackSection(){var sl=SX.data.slack,mode=sxv('slack_mode'),st=sxs('slack_mode');
   var seg='<div class="seg">'+['direct','mcp','off'].map(function(m){return '<button type="button" data-act="smode" data-arg="'+m+'"'+(m===mode?' class="on"':'')+'>'+sxEsc(sxLab(m))+'</button>';}).join('')+'</div>';
   var h=sxRow('Connection','Direct app gives every feature. MCP only is reduced: no sending from the Outbox, no parked-thread polling, no names or previews.',seg);
@@ -257,8 +270,17 @@ function sxSlackSection(){var sl=SX.data.slack,mode=sxv('slack_mode'),st=sxs('sl
   var env=sl.tokenSource==='env';var conn=sl.connected;
   var tok=conn?(env?sxPill('ok','Token from environment'):'<input type="password" disabled value="xoxp-••••••••••••••••" style="max-width:190px">'+sxBtn('stest','Test')+sxBtn('sreplace','Replace')+sxBtn('sdisc','Disconnect',{danger:true})):'';
   if(conn&&env)tok+=sxBtn('stest','Test');
-  var form=(!conn||SX.pwOpen)?'<input type="password" id="sx-tok" placeholder="xoxp-…" autocomplete="off" style="max-width:220px">'+sxBtn('sconn',conn?'Save new token':'Connect',{pri:true})+sxBtn('smanifest','Copy app manifest'):'';
-  h+=sxRow('Token',conn?(env?'Set by SLACK_USER_TOKEN, which wins over a stored token.':'Stored in your macOS Keychain and never shown again. Replace it to rotate.'):'Create a Slack app from the manifest, install it, and paste the User OAuth Token (starts with xoxp-).',(tok+(tok&&form?'<br>':'')+form),false);
+  // Connect Slack (one shared app, OAuth with PKCE) leads when a client id is set; pasting a token from your own app stays as the secondary route.
+  var cid=sxv('slack_client_id'),oa=SX.oauth;
+  if(!env)h+=sxKey('slack_client_id',{title:'Shared Slack app',help:'The client id of your team’s shared Loom app (Basic Information, Client ID). With it, Connect Slack signs you in through Slack and stores your own token. Leave it empty to use your own app.',mono:true,w:230,ph:'1234567890.1234567890',noDef:true,after:sxBtn('ssharedmanifest','Copy shared-app manifest',{ghost:true})});
+  if(!conn&&sl.reconnect)h+=sxNote(sxEsc(sl.reconnectHint||'The Slack connection expired. Reconnect Slack.'),'warn');
+  var oauthBtn=cid&&!env?(oa?'<span class="def">Waiting for you to approve in Slack…</span>'+(oa.url?' <a href="'+sxEsc(oa.url)+'" target="_blank" rel="noopener">Open the Slack page</a> ':'')+sxBtn('soauthcancel','Cancel',{ghost:true}):sxBtn('soauth',sl.reconnect&&!conn?'Reconnect Slack':conn?'Connect again':'Connect Slack',{pri:!conn})):'';
+  var showPaste=!cid||SX.ownApp||SX.pwOpen;
+  var form=((!conn&&showPaste)||SX.pwOpen)?'<input type="password" id="sx-tok" placeholder="xoxp-…" autocomplete="off" style="max-width:220px">'+sxBtn('sconn',conn?'Save new token':'Connect',{pri:!cid})+sxBtn('smanifest','Copy app manifest'):'';
+  var own=cid&&!conn&&!env&&!SX.ownApp?sxBtn('sownapp','Use your own app instead',{ghost:true}):'';
+  var thelp=conn?(env?'Set by SLACK_USER_TOKEN, which wins over a stored token.':'Stored in your macOS Keychain and never shown again. Replace it to rotate.'):cid?'Connect Slack opens Slack in your browser. Approve there and Loom stores your own token. Or create your own app from a manifest and paste its User OAuth Token.':'Create a Slack app from the manifest, install it, and paste the User OAuth Token (starts with xoxp-).';
+  var parts=[oauthBtn+own,tok,form].filter(function(x){return x;});
+  h+=sxRow('Token',thelp,parts.join('<br>'),false);
   var idn=sl.identity;
   h+=sxRow('Workspace','The permalink slug is read from the token, not typed.',idn?sxPill('ok',(idn.user||'')+(idn.team?' · '+idn.team:''))+(idn.url?'<code>'+sxEsc(String(idn.url).split('https://').join(''))+'</code>':''):sxPill('off','Not connected'));
   if(conn&&sl.scopes){var sc=sl.scopes,miss=sc.missing||[];
@@ -288,7 +310,8 @@ function sxShortcut(){var hk=sxv('slack_goto_hotkey'),sa=SX.data.slackapp,pr=SX.
   h+=sxRow('Last result','From the last time the shortcut ran.',last);
   return h;}
 function sxOutbox(){var slOn=sxv('slack_mode')==='direct';
-  return (slOn?'':sxNote('Slack is not connected as a Direct app, so the Outbox cannot send. Drafts can still be reviewed. Connect it in the Slack section.','warn'))+
+  var slR=SX.data.slack&&SX.data.slack.reconnect&&!SX.data.slack.connected;
+  return (slR?sxNote('The Slack connection expired, so the Outbox cannot send. Drafts can still be reviewed. Reconnect Slack in the Slack section.','warn'):slOn?'':sxNote('Slack is not connected as a Direct app, so the Outbox cannot send. Drafts can still be reviewed. Connect it in the Slack section.','warn'))+
    sxKey('outbox_primary',{kind:'select',title:'Main button does',help:'What the first button in the Outbox strip does.',labels:{send:'Send',park:'Send & park',close:'Send & close'}})+
    sxKey('outbox_confirm',{title:'Confirm before posting',help:'Shows channel, thread and text once more.'})+
    sxKey('auto_resume_parked',{title:'Reopen parked chats when a reply arrives',help:'Reopens each one in a managed pane with the reply as its first prompt. Off leaves a Resume button.'})+
@@ -440,6 +463,10 @@ function sxAct(a,arg,btn){
   if(a==='smode'){sxPost('/api/slack/mode',{mode:arg}).then(function(j){if(!j.ok)sxBad(sxErr(j));return sxLoadSettings();}).then(function(){DATA.slackMode=sxv('slack_mode');sxLoad('slack',true);});return;}
   if(a==='sconn'){var tk=$('#sx-tok');var tv=tk?tk.value.trim():'';if(!tv){sxBad('Paste the token first');return;}sxPost('/api/slack/token',{token:tv}).then(function(j){if(!j.ok){sxBad(sxErr(j));return;}SX.pwOpen=false;toast('Slack connected');sxLoadSettings().then(function(){DATA.slackMode=sxv('slack_mode');sxLoad('slack',true);});});return;}
   if(a==='sreplace'){SX.pwOpen=!SX.pwOpen;renderSettings();return;}
+  if(a==='sownapp'){SX.ownApp=true;renderSettings();return;}
+  if(a==='soauth'){sxOAuthStart();return;}
+  if(a==='soauthcancel'){sxOAuthStop();renderSettings();return;}
+  if(a==='ssharedmanifest'){sxJ('/api/slack/manifest?shared=1').then(function(j){if(!j.ok){sxBad(sxErr(j));return;}var txt=j.text||'';if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(function(){toast('Shared-app manifest copied. Create the app from it at api.slack.com/apps, then share its client id.');},function(){sxBad('Could not copy');});});return;}
   if(a==='stest'){sxPost('/api/slack/test',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast('Slack token works: '+((j.identity&&j.identity.team)||'connected'));sxLoad('slack',true);});return;}
   if(a==='sdisc'){sxConfirm({title:'Disconnect Slack',body:'Loom deletes the token from the Keychain and turns Slack off. Sending from the Outbox, parked-thread polling and names stop until you connect again.',ok:'Disconnect',danger:true}).then(function(y){if(y)sxPost('/api/slack/disconnect',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));return sxLoadSettings();}).then(function(){DATA.slackMode='off';sxLoad('slack',true);});});return;}
   if(a==='smanifest'){sxJ('/api/slack/manifest').then(function(j){if(!j.ok){sxBad(sxErr(j));return;}var txt=j.text||'';if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(function(){toast('Manifest copied. Paste it at api.slack.com/apps (Create New App, From a manifest).');},function(){sxBad('Could not copy');});});return;}

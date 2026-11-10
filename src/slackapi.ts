@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { openDb } from './db.ts';
 import { keychain } from './secrets.ts';
+import { setSetting } from './settingsSchema.ts';
 
 // Loom's own Slack Web API client: plain fetch, no SDK, one function per method
 // Loom calls. It replaces the shell-outs to the owner's slack CLI and hook
@@ -14,7 +15,9 @@ import { keychain } from './secrets.ts';
 
 /* ------------------------------------------------------------------ redaction */
 
-const TOKEN_RE = /xox[abposr]-[A-Za-z0-9-]+/g;
+// `xoxp-…` (a pasted user token), `xoxe.xoxp-…` (a rotating one from OAuth) and
+// `xoxe-1-…` (its refresh token) all match.
+const TOKEN_RE = /xox[a-z](?:\.xox[a-z])?-[A-Za-z0-9-]+/g;
 const BEARER_RE = /Bearer\s+[A-Za-z0-9._~+/=-]+/gi;
 
 /** Mask anything that looks like a Slack token or a bearer credential. */
@@ -24,7 +27,7 @@ export function redact(s: unknown): string {
 
 /** How the UI shows a stored token: `xoxp-…1a2b`. */
 export function maskToken(token: string): string {
-  const prefix = /^xox[a-z]-/.exec(token)?.[0] ?? '';
+  const prefix = /^(?:xoxe\.)?xox[a-z]-/.exec(token)?.[0] ?? '';
   return prefix + '…' + token.slice(-4);
 }
 
@@ -55,6 +58,8 @@ export interface TokenConfig {
   /** Whether the legacy token file may be read (a migrated install). */
   allowLegacy(): boolean;
   legacyPath: string;
+  /** A refresh was refused: the token is gone and the user must Connect again. */
+  reconnectNeeded(reason: string): void;
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -104,6 +109,19 @@ const defaultConfig: TokenConfig = {
     return legacyAllowed(settingRow('setup_origin'));
   },
   legacyPath: LEGACY_TOKEN_PATH,
+  reconnectNeeded(reason) {
+    if (process.env.VITEST) return;
+    try {
+      const db = openDb();
+      try {
+        setSetting(db, 'slack_reconnect', reason || 'refresh_failed');
+      } finally {
+        db.close();
+      }
+    } catch {
+      /* no DB: Settings still shows Not connected */
+    }
+  },
 };
 
 let config: TokenConfig = defaultConfig;
@@ -113,34 +131,41 @@ export function configureToken(c: Partial<TokenConfig> | null): void {
 }
 
 const CACHE_MS = 5 * 60_000;
-let memo: { at: number; token: string; source: TokenSource } | null = null;
+interface Resolved {
+  token: string;
+  source: TokenSource;
+  /** The Keychain account the token was read from. */
+  account: string;
+  refresh?: RefreshData | null;
+}
+let memo: ({ at: number } & Resolved) | null = null;
 
 export function clearTokenCache(): void {
   memo = null;
 }
 
-function resolve(): { token: string; source: TokenSource } {
+function resolve(): Resolved {
   const env = process.env.SLACK_USER_TOKEN?.trim();
-  if (env) return { token: env, source: 'env' };
+  if (env) return { token: env, source: 'env', account: '' };
   const team = config.account();
   for (const account of team ? [team, DEFAULT_ACCOUNT] : [DEFAULT_ACCOUNT]) {
     try {
       const tok = keychain().get(KEYCHAIN_SERVICE, account)?.trim();
-      if (tok) return { token: tok, source: 'keychain' };
+      if (tok) return { token: tok, source: 'keychain', account, refresh: readRefreshItem(account) };
     } catch {
       /* a locked or denied Keychain reads as no token; the reason is not the token */
     }
   }
   if (config.allowLegacy()) {
     const tok = readJson<{ user_token?: string }>(config.legacyPath, {}).user_token?.trim();
-    if (tok) return { token: tok, source: 'legacy' };
+    if (tok) return { token: tok, source: 'legacy', account: '' };
   }
-  return { token: '', source: 'none' };
+  return { token: '', source: 'none', account: '' };
 }
 
-function cached(): { token: string; source: TokenSource } {
+function cached(): Resolved {
   // The env var is read live so a test or a shell override takes effect at once.
-  if (process.env.SLACK_USER_TOKEN?.trim()) return { token: process.env.SLACK_USER_TOKEN.trim(), source: 'env' };
+  if (process.env.SLACK_USER_TOKEN?.trim()) return { token: process.env.SLACK_USER_TOKEN.trim(), source: 'env', account: '' };
   if (!memo || Date.now() - memo.at > CACHE_MS) memo = { at: Date.now(), ...resolve() };
   return memo;
 }
@@ -164,23 +189,180 @@ export function requireToken(): string {
 
 /** Store a token that has passed a Test. `account` is the team id from auth.test. */
 export function storeToken(token: string, account: string = DEFAULT_ACCOUNT): void {
-  if (!/^xox[a-z]-/.test(token)) throw new SlackError('token', 'not_a_slack_token');
+  if (!/^(?:xoxe\.)?xox[a-z]-/.test(token)) throw new SlackError('token', 'not_a_slack_token');
   keychain().set(KEYCHAIN_SERVICE, account || DEFAULT_ACCOUNT, token);
   // A token stored before the first Test sits under 'default'; once it has a team, drop that copy.
   if (account && account !== DEFAULT_ACCOUNT) {
-    try {
-      keychain().delete(KEYCHAIN_SERVICE, DEFAULT_ACCOUNT);
-    } catch {
-      /* stale default copy: harmless */
+    for (const svc of [KEYCHAIN_SERVICE, REFRESH_SERVICE]) {
+      try {
+        keychain().delete(svc, DEFAULT_ACCOUNT);
+      } catch {
+        /* stale default copy: harmless */
+      }
     }
+  }
+  // A pasted token has no refresh data: drop any left from an earlier OAuth connect,
+  // or it would "refresh" this token into a different one.
+  try {
+    keychain().delete(REFRESH_SERVICE, account || DEFAULT_ACCOUNT);
+  } catch {
+    /* nothing to drop */
   }
   clearTokenCache();
 }
 
-/** Disconnect: remove the Keychain item(s). The legacy file is the owner's and is left alone. */
+/** Disconnect: remove the Keychain item(s), token and refresh data. The legacy file is the owner's and is left alone. */
 export function deleteToken(account: string = config.account()): void {
-  for (const a of new Set([account || DEFAULT_ACCOUNT, DEFAULT_ACCOUNT])) keychain().delete(KEYCHAIN_SERVICE, a);
+  for (const a of new Set([account || DEFAULT_ACCOUNT, DEFAULT_ACCOUNT])) {
+    keychain().delete(KEYCHAIN_SERVICE, a);
+    keychain().delete(REFRESH_SERVICE, a);
+  }
   clearTokenCache();
+}
+
+/* --------------------------------------------- OAuth (PKCE) tokens and refresh */
+// A token from "Connect Slack" (src/slackoauth.ts) may rotate: Slack hands back
+// an access token that expires (`expires_in`, 12 h) and a refresh token that
+// lasts 30 days for a PKCE app. The refresh data is a second Keychain item
+// beside the token, same account, holding JSON:
+//   { refresh_token, expires_at (epoch ms, 0 = never), client_id }
+// A pasted xoxp- token has no such item and is never refreshed.
+
+export const REFRESH_SERVICE = 'Loom Slack refresh';
+/** The error code when a refresh was refused and the person must Connect Slack again. */
+export const RECONNECT = 'reconnect_slack';
+export const OAUTH_URL = 'https://slack.com/api/oauth.v2.access';
+/** Refresh this long before the access token expires. */
+export const REFRESH_EARLY_MS = 5 * 60_000;
+
+export interface RefreshData {
+  refresh_token: string;
+  expires_at: number;
+  client_id: string;
+}
+
+/** What oauth.v2.access returned for the user, after picking `authed_user` or the top level. */
+export interface OAuthGrant {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
+  user_id?: string;
+  team_id?: string;
+}
+
+/** The user grant in an oauth.v2.access response. Exchange puts it in `authed_user`; a refresh may put it at the top. */
+export function userGrant(d: Record<string, unknown>): OAuthGrant | null {
+  const au = (d.authed_user ?? {}) as Record<string, unknown>;
+  const src = typeof au.access_token === 'string' && au.access_token ? au : d.token_type === 'bot' ? null : d;
+  if (!src || typeof src.access_token !== 'string' || !src.access_token) return null;
+  const exp = Number(src.expires_in);
+  return {
+    access_token: src.access_token,
+    refresh_token: typeof src.refresh_token === 'string' && src.refresh_token ? src.refresh_token : undefined,
+    expires_in: Number.isFinite(exp) && exp > 0 ? exp : undefined,
+    scope: typeof src.scope === 'string' ? src.scope : undefined,
+    user_id: typeof au.id === 'string' ? au.id : undefined,
+    team_id: String(((d.team ?? {}) as { id?: string }).id ?? '') || undefined,
+  };
+}
+
+/** Store an OAuth grant: the token, and its refresh data when it rotates. */
+export function storeGrant(g: OAuthGrant, clientId: string, account: string = DEFAULT_ACCOUNT, now = Date.now()): void {
+  storeToken(g.access_token, account);
+  if (g.refresh_token) {
+    const data: RefreshData = { refresh_token: g.refresh_token, expires_at: g.expires_in ? now + g.expires_in * 1000 : 0, client_id: clientId };
+    keychain().set(REFRESH_SERVICE, account || DEFAULT_ACCOUNT, JSON.stringify(data));
+  }
+  clearTokenCache();
+}
+
+function readRefreshItem(account: string): RefreshData | null {
+  try {
+    const raw = keychain().get(REFRESH_SERVICE, account);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Partial<RefreshData>;
+    if (typeof d.refresh_token !== 'string' || !d.refresh_token || typeof d.client_id !== 'string') return null;
+    return { refresh_token: d.refresh_token, expires_at: Number(d.expires_at) || 0, client_id: d.client_id };
+  } catch {
+    return null;
+  }
+}
+
+/** The refresh data for the token in use, or null (pasted token, env token, none). */
+export function slackRefreshData(): RefreshData | null {
+  const c = cached();
+  return c.source === 'keychain' ? c.refresh ?? null : null;
+}
+
+let inflight: Promise<string> | null = null;
+
+/**
+ * Trade the refresh token for a new access token, once at a time: concurrent
+ * callers share one request, since each refresh token is single-use and a
+ * second request with it would fail. The new refresh token Slack returns is
+ * always persisted. A refusal from Slack (`invalid_refresh_token`, a refresh
+ * token past its 30 days, a revoked app) clears the stale token and marks Slack
+ * as needing a reconnect; a network failure clears nothing.
+ */
+export function refreshSlackToken(opts: { fetchImpl?: typeof fetch } = {}): Promise<string> {
+  if (inflight) return inflight;
+  inflight = (async () => {
+    // Read the Keychain afresh, not the 5-minute memo: another Loom process (the
+    // CLI, a hook) may have rotated the pair already, and the old refresh token
+    // is spent.
+    clearTokenCache();
+    const c = cached();
+    const rd = c.source === 'keychain' ? c.refresh : null;
+    if (!rd) throw new SlackError('oauth.v2.access', 'no_refresh_token');
+    const account = c.account;
+    const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rd.refresh_token, client_id: rd.client_id });
+    let d: Record<string, unknown>;
+    try {
+      const r = await (opts.fetchImpl ?? fetch)(OAUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      d = (await r.json()) as Record<string, unknown>;
+    } catch (e) {
+      throw new SlackError('oauth.v2.access', 'network: ' + redact((e as Error)?.message ?? e));
+    }
+    const g = d && d.ok ? userGrant(d) : null;
+    if (!g) {
+      const code = redact(String(d?.error ?? 'no_user_token'));
+      // Lost a race with another process that refreshed first: use its token.
+      clearTokenCache();
+      const now = cached();
+      if (now.source === 'keychain' && now.refresh && now.refresh.refresh_token !== rd.refresh_token) return now.token;
+      try {
+        deleteToken(account);
+      } catch {
+        /* the Keychain refused: the reconnect flag still tells the user */
+      }
+      config.reconnectNeeded(code);
+      // One code every caller can recognise; the reason Slack gave is in the setting.
+      throw new SlackError('oauth.v2.access', RECONNECT);
+    }
+    // Rotation: Slack returns a NEW refresh token each time. Keep the old one only if it sent none.
+    storeGrant({ ...g, refresh_token: g.refresh_token ?? rd.refresh_token }, rd.client_id, account);
+    return g.access_token;
+  })().finally(() => {
+    inflight = null;
+  });
+  return inflight;
+}
+
+/**
+ * The token to call Slack with, refreshed first when it expires within
+ * REFRESH_EARLY_MS. Synchronous callers keep using slackToken(); call() goes
+ * through this, so every Web API call refreshes on the way.
+ */
+export async function freshToken(opts: { fetchImpl?: typeof fetch; now?: number } = {}): Promise<string> {
+  const rd = slackRefreshData();
+  if (rd && rd.expires_at && rd.expires_at - (opts.now ?? Date.now()) < REFRESH_EARLY_MS) return refreshSlackToken(opts);
+  return requireToken();
 }
 
 /* ------------------------------------------------------------------- calling */
@@ -210,7 +392,25 @@ interface CallResult<T> {
  * become a SlackError whose text is redacted.
  */
 async function call<T = Record<string, unknown>>(method: string, params: Params, opts: CallOpts = {}, write = false): Promise<CallResult<T>> {
-  const token = opts.token ?? requireToken();
+  // A call made with the stored token (named or not) refreshes it when it is
+  // about to expire, and once more when Slack says it already has. A token the
+  // caller supplied from elsewhere (a Test of a pasted token) is used as given.
+  const managed = !opts.token || opts.token === slackToken();
+  if (!managed) return callOnce<T>(method, params, opts.token!, opts, write);
+  const token = await freshToken({ fetchImpl: opts.fetchImpl });
+  try {
+    return await callOnce<T>(method, params, token, opts, write);
+  } catch (e) {
+    if (!(e instanceof SlackError) || !RETRY_CODES.has(e.code) || !slackRefreshData()) throw e;
+    const next = await refreshSlackToken({ fetchImpl: opts.fetchImpl });
+    return callOnce<T>(method, params, next, opts, write);
+  }
+}
+
+/** Slack's answers that a refresh can cure. */
+const RETRY_CODES = new Set(['token_expired', 'invalid_auth']);
+
+async function callOnce<T>(method: string, params: Params, token: string, opts: CallOpts, write: boolean): Promise<CallResult<T>> {
   const doFetch = opts.fetchImpl ?? fetch;
   const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
   const url = 'https://slack.com/api/' + method + (write || !Object.keys(clean).length ? '' : '?' + new URLSearchParams(clean));
