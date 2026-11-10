@@ -192,6 +192,69 @@ describe('threadGoto', () => {
   });
 });
 
+describe('threadGoto, asking before a new chat', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-slackgoto-ask-'));
+  const link = `${WS}/archives/C0TESTADV01/p1792688542707769`;
+
+  function deps(over: Partial<GotoDeps> = {}): GotoDeps & { calls: string[]; contexts: (string | undefined)[] } {
+    const calls: string[] = [];
+    const contexts: (string | undefined)[] = [];
+    return {
+      calls,
+      contexts,
+      threads: () => ({}),
+      search: async () => ({ ok: true, results: [] }),
+      mentions: () => true,
+      live: () => ({}),
+      projectDirOf: () => null,
+      elsewhere: () => false,
+      goto: (p, s) => (calls.push(`goto ${p} ${s}`), { ok: true, detail: 'tmux ok' }),
+      acquire: (d, lane) => (calls.push(`acquire ${d} ${lane}`), { ok: true, paneId: '%42' }),
+      resume: (p, d, sid) => (calls.push(`resume ${p} ${d} ${sid}`), { ok: true, detail: 'resumed' }),
+      start: (ref, _picked, o) => {
+        calls.push(`start ${ref.key}`);
+        contexts.push(o.context);
+        return { ok: true, started: { session_id: 's1', pane_id: '%9', where: '%9' } as never };
+      },
+      startTarget: () => ({ channel_name: 'filings', project_dir: dir }),
+      ...over,
+    };
+  }
+
+  it('the lookup never starts a chat for an unowned thread', async () => {
+    const d = deps();
+    const r = await threadGoto(link, d, { mode: 'ask' });
+    expect(r).toMatchObject({ ok: true, action: 'ask', key: 'C0TESTADV01/1792688542.707769', ask: { channel: 'C0TESTADV01', channel_name: 'filings', project: path.basename(dir) } });
+    expect(d.calls).toEqual([]);
+  });
+
+  it('the lookup still jumps straight to an existing owner', async () => {
+    const d = deps({
+      threads: () => ({ 'C0TESTADV01/1792688542.707769': { url: link, session_id: 'owner-1', cwd: dir } }),
+      live: () => ({ 'claude:owner-1': loc('owner-1', 'loom-tp-3', dir, '%7') }),
+    });
+    expect(await threadGoto(link, d, { mode: 'ask' })).toMatchObject({ ok: true, action: 'jumped', pane_id: '%7' });
+    expect(d.calls).toEqual(['goto %7 loom-tp-3']);
+  });
+
+  it('start passes the context through, and no mode starts at once as before', async () => {
+    const d = deps();
+    expect(await threadGoto(link, d, { mode: 'start', context: 'Check WV first' })).toMatchObject({ ok: true, action: 'started' });
+    expect(await threadGoto(link, d)).toMatchObject({ ok: true, action: 'started' });
+    expect(d.calls).toEqual(['start C0TESTADV01/1792688542.707769', 'start C0TESTADV01/1792688542.707769']);
+    expect(d.contexts).toEqual(['Check WV first', undefined]);
+  });
+
+  it('start jumps instead when a chat took the thread in the meantime', async () => {
+    const d = deps({
+      threads: () => ({ 'C0TESTADV01/1792688542.707769': { url: link, session_id: 'owner-1', cwd: dir } }),
+      live: () => ({ 'claude:owner-1': loc('owner-1', 'loom-tp-3', dir, '%7') }),
+    });
+    expect(await threadGoto(link, d, { mode: 'start', context: 'x' })).toMatchObject({ action: 'jumped' });
+    expect(d.calls).toEqual(['goto %7 loom-tp-3']);
+  });
+});
+
 describe('preferredLane', () => {
   it('is empty when no live chat shares the project', () => {
     expect(preferredLane('/p', {})).toBe('');

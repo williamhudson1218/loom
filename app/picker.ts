@@ -3,6 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pickedThread, parseSlackThread } from '../src/slackgoto.ts';
+import { NEW_THREAD_HTML, OVERLAY_HTML, PASTE_HTML, newThreadWhere } from '../src/pickpages.ts';
+import { needsTrustCheck, overlaysMatch, pressAction, PickTimer, type PickPhase } from '../src/pickstate.ts';
 
 // Pick mode for "open the chat for this Slack thread", shaped like the macOS
 // screenshot crosshairs: the hotkey covers every display with a transparent,
@@ -82,45 +84,29 @@ export function stopHelper(): void {
 
 /* ------------------------------------------------------------ the overlay */
 
-const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
-  html,body{margin:0;height:100%;overflow:hidden;cursor:crosshair;user-select:none;
-    /* not 0: macOS passes clicks through fully transparent pixels */
-    background:rgba(0,0,0,0.01)}
-  #box{position:fixed;display:none;border:2px solid #4c8dff;border-radius:6px;
-    background:rgba(76,141,255,0.14);box-shadow:0 0 0 1px rgba(0,0,0,0.35);pointer-events:none}
-  /* bottom, not top: top-center is under the camera notch on MacBooks */
-  #hint{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:8px;
-    font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:rgba(20,22,30,0.88);pointer-events:none}
-</style></head><body><div id="box"></div><div id="hint"></div><script>
-  const { ipcRenderer } = require('electron');
-  const origin = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-  const box = document.getElementById('box'), hint = document.getElementById('hint');
-  const IDLE = 'Click a Slack message to open its chat. Esc cancels.';
-  hint.textContent = IDLE;
-  let timer = 0;
-  ipcRenderer.on('rect', (_e, r) => {
-    if (!r) { box.style.display = 'none'; return; }
-    Object.assign(box.style, { display: 'block', left: (r.x - origin.x - 2) + 'px', top: (r.y - origin.y - 2) + 'px', width: r.w + 'px', height: r.h + 'px' });
-  });
-  ipcRenderer.on('hint', (_e, text) => {
-    hint.textContent = text;
-    clearTimeout(timer);
-    timer = setTimeout(() => { hint.textContent = IDLE; }, 1800);
-  });
-  window.addEventListener('mousedown', (e) => { e.preventDefault(); ipcRenderer.send('loom-pick-click'); });
-  window.addEventListener('contextmenu', (e) => e.preventDefault());
-</script></body></html>`;
-
-let overlays: BrowserWindow[] = [];
-let ticker: NodeJS.Timeout | null = null;
-let lastPoint = '';
-let busy = false;
-
-export function picking(): boolean {
-  return overlays.length > 0;
+interface Overlay {
+  win: BrowserWindow;
+  bounds: Rectangle;
+  ready: boolean; // loaded and painted: showing it is instant
 }
 
-function overlayFor(bounds: Rectangle): BrowserWindow {
+// The overlays are built once, hidden, and reused for every press: building one
+// per press made the crosshairs late and dropped clicks made before they
+// appeared (see src/pickstate.ts). They are rebuilt only when the displays change.
+let overlays: Overlay[] = [];
+let phase: PickPhase = 'idle';
+let shownAt = 0;
+let ticker: NodeJS.Timeout | null = null;
+let openGuard: NodeJS.Timeout | null = null;
+let lastPoint = '';
+let busy = false;
+const timer = new PickTimer(!!process.env.LOOM_PICK_TIMING);
+
+export function picking(): boolean {
+  return phase !== 'idle';
+}
+
+function overlayFor(bounds: Rectangle): Overlay {
   const w = new BrowserWindow({
     ...bounds,
     // A non-activating panel: showing it, and clicking it, never activates Loom
@@ -141,31 +127,99 @@ function overlayFor(bounds: Rectangle): BrowserWindow {
     enableLargerThanScreen: true,
     alwaysOnTop: true,
     show: false,
-    webPreferences: { nodeIntegration: true, contextIsolation: false },
+    webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false },
   });
+  const o: Overlay = { win: w, bounds, ready: false };
   // Above the menu bar and full-screen apps, like the screenshot crosshairs.
   w.setAlwaysOnTop(true, 'screen-saver');
   w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(OVERLAY_HTML) + '#' + encodeURIComponent(JSON.stringify({ x: bounds.x, y: bounds.y })));
-  w.once('ready-to-show', () => w.showInactive());
-  return w;
+  w.once('ready-to-show', () => {
+    o.ready = true;
+    // Pressed before this display's overlay was ready: show it now.
+    if (phase === 'picking' && !w.isDestroyed()) {
+      w.showInactive();
+      timer.mark('shown-late');
+    }
+  });
+  return o;
 }
 
-function broadcast(channel: string, payload: unknown): void {
-  for (const w of overlays) if (!w.isDestroyed()) w.webContents.send(channel, payload);
+/** Build the overlays if the displays changed since they were built (or they died). */
+function prepareOverlays(): void {
+  const displays = screen.getAllDisplays().map((d) => d.bounds);
+  const alive = overlays.every((o) => !o.win.isDestroyed());
+  if (alive && overlaysMatch(overlays.map((o) => o.bounds), displays)) return;
+  for (const o of overlays) if (!o.win.isDestroyed()) o.win.destroy();
+  overlays = displays.map((b) => overlayFor(b));
 }
 
-function closeOverlays(): void {
+let displaysStale = false;
+function onDisplaysChanged(): void {
+  // Never rebuild under an open pick; do it once the pick ends.
+  if (phase === 'idle') prepareOverlays();
+  else displaysStale = true;
+}
+
+let warmed = false;
+/**
+ * Called once the app is ready: start the helper, cache its trust answer and
+ * build the overlays, so the first press costs no more than the rest.
+ */
+export function warmPicker(): void {
+  if (warmed) return;
+  warmed = true;
+  void ask<{ trusted?: boolean }>({ op: 'trust' }).then((t) => {
+    if (t.trusted === true) trustedCache = true;
+  });
+  prepareOverlays();
+  screen.on('display-added', onDisplaysChanged);
+  screen.on('display-removed', onDisplaysChanged);
+  screen.on('display-metrics-changed', onDisplaysChanged);
+}
+
+function broadcast(channel: string, payload?: unknown): void {
+  for (const o of overlays) if (!o.win.isDestroyed()) o.win.webContents.send(channel, payload);
+}
+
+/** End the pick: hide (not destroy) the overlays. Safe to call when idle. */
+export function endPick(): void {
   if (ticker) clearInterval(ticker);
   ticker = null;
+  if (openGuard) clearTimeout(openGuard);
+  openGuard = null;
   lastPoint = '';
-  globalShortcut.unregister('Escape');
-  for (const w of overlays) if (!w.isDestroyed()) w.destroy();
-  overlays = [];
+  if (phase !== 'idle') {
+    globalShortcut.unregister('Escape');
+    timer.mark('hidden');
+    if (process.env.LOOM_PICK_TIMING) console.error('[loom] pick timing:', timer.line());
+  }
+  phase = 'idle';
+  for (const o of overlays) if (!o.win.isDestroyed()) o.win.hide();
+  broadcast('reset');
+  if (displaysStale) {
+    displaysStale = false;
+    prepareOverlays();
+  }
+}
+
+function showOverlays(): void {
+  prepareOverlays();
+  broadcast('reset');
+  phase = 'picking';
+  shownAt = Date.now();
+  let shown = 0;
+  for (const o of overlays) {
+    if (o.ready && !o.win.isDestroyed()) {
+      o.win.showInactive();
+      shown++;
+    }
+  }
+  if (shown) timer.mark('shown');
 }
 
 async function track(): Promise<void> {
-  if (busy) return;
+  if (busy || phase !== 'picking') return;
   const pt = screen.getCursorScreenPoint();
   const key = `${pt.x},${pt.y}`;
   if (key === lastPoint) return;
@@ -173,7 +227,7 @@ async function track(): Promise<void> {
   busy = true;
   try {
     const r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y });
-    if (picking()) broadcast('rect', r.ok ? r.rect : null);
+    if (phase === 'picking') broadcast('rect', r.ok ? r.rect : null);
   } finally {
     busy = false;
   }
@@ -197,24 +251,6 @@ export async function axTrusted(): Promise<{ trusted: boolean; helperDown: boole
 }
 
 /* ------------------------------------------------------------ paste-the-link fallback */
-
-const PASTE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
-  body{margin:0;padding:18px;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#e8eaf0;background:#161a24}
-  p{margin:0 0 10px;line-height:1.4} input{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #3a4258;background:#0d0f15;color:inherit;font:inherit}
-  #err{color:#ff8a8a;min-height:16px;margin:6px 0} .row{display:flex;gap:8px;justify-content:flex-end}
-  button{padding:6px 14px;border-radius:6px;border:1px solid #3a4258;background:#222a3b;color:inherit;font:inherit} button.p{background:#4c8dff;border-color:#4c8dff;color:#fff}
-</style></head><body><p id="why"></p><input id="u" placeholder="https://workspace.slack.com/archives/C.../p..." autofocus><div id="err"></div>
-<div class="row"><button id="c">Cancel</button><button id="ok" class="p">Open chat</button></div><script>
-  const { ipcRenderer } = require('electron');
-  const init = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-  const u = document.getElementById('u'); u.value = init.prefill || '';
-  document.getElementById('why').textContent = init.why;
-  const send = () => ipcRenderer.send('loom-paste-link', u.value.trim());
-  document.getElementById('ok').onclick = send;
-  document.getElementById('c').onclick = () => ipcRenderer.send('loom-paste-link', '');
-  u.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); if (e.key === 'Escape') ipcRenderer.send('loom-paste-link', ''); });
-  ipcRenderer.on('err', (_e, t) => { document.getElementById('err').textContent = t; });
-</script></body></html>`;
 
 let pasteWin: BrowserWindow | null = null;
 
@@ -255,6 +291,48 @@ export function askPasteLink(why: string): Promise<string | null> {
   });
 }
 
+/* ------------------------------------------------------------ new-thread prompt */
+
+
+let newThreadWin: BrowserWindow | null = null;
+
+/**
+ * No chat owns the picked thread: ask for optional context before starting one.
+ * Resolves to the context ('' for Send as is), or null when cancelled.
+ */
+export function askNewThread(info: { channel: string; channelName?: string; author?: string; text?: string; project?: string }): Promise<string | null> {
+  if (newThreadWin && !newThreadWin.isDestroyed()) newThreadWin.destroy();
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({
+      width: 480, height: 290, title: 'Start a chat for this thread', resizable: false, minimizable: false, maximizable: false,
+      alwaysOnTop: true, show: false, webPreferences: { nodeIntegration: true, contextIsolation: false },
+    });
+    newThreadWin = w;
+    let done = false;
+    const finish = (v: string | null) => {
+      if (done) return;
+      done = true;
+      ipcMain.removeListener('loom-new-thread', onAnswer);
+      if (!w.isDestroyed()) w.destroy();
+      resolve(v);
+    };
+    const onAnswer = (e: Electron.IpcMainEvent, a: { start?: boolean; context?: string }) => {
+      if (e.sender !== w.webContents) return;
+      finish(a?.start ? String(a.context ?? '').trim() : null);
+    };
+    ipcMain.on('loom-new-thread', onAnswer);
+    w.on('closed', () => finish(null));
+    const init = { where: newThreadWhere(info), project: info.project ?? '' };
+    w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(NEW_THREAD_HTML) + '#' + encodeURIComponent(JSON.stringify(init)));
+    w.once('ready-to-show', () => {
+      // Loom is in the background (Slack was frontmost), so take focus for the typing.
+      app.focus({ steal: true });
+      w.show();
+      w.focus();
+    });
+  });
+}
+
 async function pasteInstead(deps: PickDeps, why: string): Promise<boolean> {
   if (!deps.pasteFallback?.()) return false;
   const url = await askPasteLink(why);
@@ -263,6 +341,7 @@ async function pasteInstead(deps: PickDeps, why: string): Promise<boolean> {
 }
 
 let helperUntrusted = false; // the helper's last trust answer was no
+let trustedCache = false; // the helper has said yes; cleared by an 'untrusted' hit
 let prompted = false; // the system dialog has been shown this run
 let pickDeps: PickDeps | null = null;
 
@@ -278,41 +357,67 @@ const GRANT_HINT = 'Switch on "slack-ax" in System Settings, Privacy & Security,
  * since a process can keep answering no after the switch is turned on.
  */
 export async function startPick(deps: PickDeps): Promise<void> {
-  if (picking()) return closeOverlays();
+  const act = pressAction({ phase, shownAt, now: Date.now() });
+  if (act === 'ignore') return;
+  if (act === 'cancel' || act === 'dismiss') return endPick();
+  timer.start();
   pickDeps = deps;
   if (helperUntrusted) stopHelper();
-  const t = await ask<{ trusted?: boolean; ok?: boolean; reason?: string }>({ op: 'trust' });
-  if (t.trusted !== true) {
-    if (t.reason === 'helper_down') {
-      if (await pasteInstead(deps, 'The Slack reader could not start. Copy the message link in Slack (right-click, Copy link) and paste it here.')) return;
-      return deps.notify('The Slack reader (slack-ax) failed to start');
+  if (needsTrustCheck(trustedCache)) {
+    const t = await ask<{ trusted?: boolean; ok?: boolean; reason?: string }>({ op: 'trust' });
+    if (t.trusted !== true) {
+      if (t.reason === 'helper_down') {
+        if (await pasteInstead(deps, 'The Slack reader could not start. Copy the message link in Slack (right-click, Copy link) and paste it here.')) return;
+        return deps.notify('The Slack reader (slack-ax) failed to start');
+      }
+      helperUntrusted = true;
+      // The prompt adds slack-ax to the list (switched off) and shows the system
+      // dialog that links to it. Once per run: after that the row exists.
+      if (!prompted) await ask({ op: 'trust', prompt: true });
+      prompted = true;
+      if (await pasteInstead(deps, 'Loom cannot read Slack without Accessibility access. Copy the message link in Slack and paste it here.')) return;
+      return deps.notify('Loom reads Slack through its helper, slack-ax. ' + GRANT_HINT);
     }
-    helperUntrusted = true;
-    // The prompt adds slack-ax to the list (switched off) and shows the system
-    // dialog that links to it. Once per run: after that the row exists.
-    if (!prompted) await ask({ op: 'trust', prompt: true });
-    prompted = true;
-    if (await pasteInstead(deps, 'Loom cannot read Slack without Accessibility access. Copy the message link in Slack and paste it here.')) return;
-    return deps.notify('Loom reads Slack through its helper, slack-ax. ' + GRANT_HINT);
+    trustedCache = true;
+    timer.mark('trusted');
   }
   helperUntrusted = false;
-  overlays = screen.getAllDisplays().map((d) => overlayFor(d.bounds));
+  if (phase !== 'idle') return; // a second press landed during the trust check
+  showOverlays();
   // The overlay never takes focus (see overlayFor), so Esc can only arrive as a
   // global shortcut, held just while picking.
-  globalShortcut.register('Escape', closeOverlays);
+  globalShortcut.register('Escape', endPick);
   ticker = setInterval(() => void track(), HIT_EVERY_MS);
+  void track(); // outline what is under the cursor now, not 100 ms from now
 }
 
+const OPEN_GUARD_MS = 15_000; // never leave the overlay up on a lost request
+
+const RETRY_MS = 80;
+
 async function onClick(): Promise<void> {
-  if (!picking() || !pickDeps) return;
+  if (phase !== 'picking' || !pickDeps) return;
   const deps = pickDeps;
+  timer.mark('click');
   const pt = screen.getCursorScreenPoint();
-  const r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y, root: true });
+  let r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y, root: true });
+  // Slack's AX tree can answer late for a part of the page it has not been asked
+  // about yet: one quick retry before telling the user to click again.
+  if (!r.ok && r.reason === 'not_message') {
+    await new Promise((res) => setTimeout(res, RETRY_MS));
+    if (phase !== 'picking') return;
+    r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y, root: true });
+  }
+  timer.mark('hit');
+  if (phase !== 'picking') return; // cancelled while the hit-test ran
   if (!r.ok) {
     if (r.reason === 'not_message') return broadcast('hint', 'Not a Slack message. Click a message, or press Esc.');
     if (r.reason === 'covered') return broadcast('hint', 'Slack is behind another window there.');
-    closeOverlays();
-    if (r.reason === 'untrusted') helperUntrusted = true;
+    endPick();
+    if (r.reason === 'untrusted') {
+      helperUntrusted = true;
+      trustedCache = false;
+    }
     const why = r.reason === 'no_slack' ? 'Slack is not running. Copy the message link and paste it here.' : r.reason === 'untrusted' ? 'Loom cannot read Slack without Accessibility access. Copy the message link and paste it here.' : 'Loom could not read that message. Copy its link in Slack and paste it here.';
     if (await pasteInstead(deps, why)) return;
     if (r.reason === 'no_slack') return deps.notify('Slack is not running');
@@ -322,12 +427,25 @@ async function onClick(): Promise<void> {
   const ref = pickedThread(r);
   if (!ref) {
     // No permalink to read: only now is the paste field better than another click.
-    closeOverlays();
+    endPick();
     if (await pasteInstead(deps, 'That message has no permalink. Copy its link in Slack and paste it here.')) return;
     return deps.notify('That message has no permalink.');
   }
-  closeOverlays();
-  await deps.goto(ref.url, { text: r.text, author: r.author });
+  // Keep the overlay up, saying so, until the chat opens (goto calls endPick
+  // itself before it shows a prompt). Further clicks are ignored; Esc or the
+  // hotkey dismisses the overlay and the open carries on.
+  phase = 'opening';
+  if (ticker) clearInterval(ticker);
+  ticker = null;
+  broadcast('rect', r.rect);
+  broadcast('busy', 'Opening…');
+  openGuard = setTimeout(endPick, OPEN_GUARD_MS);
+  try {
+    await deps.goto(ref.url, { text: r.text, author: r.author });
+  } finally {
+    timer.mark('opened');
+    if (phase === 'opening') endPick();
+  }
 }
 
 ipcMain.on('loom-pick-click', () => void onClick());

@@ -301,6 +301,7 @@ function sxShortcut(){var hk=sxv('slack_goto_hotkey'),sa=SX.data.slackapp,pr=SX.
   h+=sxRow('Slack desktop app','The browser version cannot be read.',!sa?sxPill('off','Checking'):sa.found?sxPill('ok','Found'):sxPill('warn','Not found'));
   h+=sxRow('Accessibility','Lets Loom see which message is under the pointer.',sxAxRow());
   h+=sxKey('slack_paste_fallback',{title:'If the message cannot be read',help:'Slack changes its page structure now and then. The fallback asks you to paste the thread link.',after:'<span class="def">Show a paste-link box</span>'});
+  h+=sxKey('slack_goto_confirm_new',{title:'Ask before starting a new chat',help:'When no chat owns the thread, Loom asks for optional context first. Off starts the chat at once.',after:'<span class="def">Ask first</span>'});
   var res='';if(pr&&pr.state==='armed')res=sxPill('warn','Waiting for the shortcut…')+sxBtn('pcancel','Cancel');
   else if(pr&&pr.state==='done'){var r=pr.result||{};res=sxPill(r.ok?'ok':'err',r.ok?('Read '+(r.author||'a message')+(r.channel?' in '+r.channel:'')+(r.wouldDo?' · would '+r.wouldDo:'')):(r.detail||'Could not read the message'))+sxBtn('parm','Practice again');}
   else if(pr&&pr.state==='timeout')res=sxPill('off','Timed out')+sxBtn('parm','Practice again');

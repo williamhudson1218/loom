@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { readThreads, type ThreadRec } from './slack.ts';
+import { channelLabels, readThreads, type ThreadRec } from './slack.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
-import { autoStartThread, getOwner, noteStart, type PickedText, type StartedThread } from './slackowner.ts';
+import { autoStartThread, getOwner, noteStart, startProjectFor, type PickedText, type StartedThread } from './slackowner.ts';
 import { openDb, getDefaultAgent } from './db.ts';
 import { MANAGED_SESSION } from './managed.ts';
 import { searchArchive, isValidProjectDir, type ArchiveResult } from './findchat.ts';
@@ -21,6 +21,12 @@ import type { LiveLoc } from './dashboard.ts';
 // jumped to if it is running in a pane, or resumed into one if not. A thread no
 // chat owns starts one (slackowner.autoStartThread) with the thread as its first
 // prompt; before 2026-11-05 that was only a notification.
+//
+// The hotkey asks before it starts one (slack_goto_confirm_new): it posts with
+// mode 'ask' first, which jumps to an owner exactly as before but answers
+// action 'ask' for an unowned thread and starts nothing; the user's answer comes
+// back as a second post with mode 'start' and the optional `context`, which goes
+// into the opening prompt. No mode is the old one-shot behaviour (curl, paste).
 
 /* ------------------------------------------------------------ the link */
 
@@ -126,7 +132,9 @@ export function supersetLive(sessionId: string, home: string = process.env.SUPER
 /* ------------------------------------------------------------ the jump */
 
 export interface ThreadGotoResult extends GotoResult {
-  action?: 'jumped' | 'resumed' | 'started';
+  action?: 'jumped' | 'resumed' | 'started' | 'ask';
+  /** action 'ask': what the confirm prompt names. */
+  ask?: { channel: string; channel_name: string; project: string; project_dir: string };
   reason?: 'not_slack' | 'no_owner' | 'elsewhere' | 'no_dir' | 'no_pane' | 'failed' | 'no_project';
   started?: StartedThread;
   key?: string;
@@ -144,8 +152,13 @@ export interface GotoDeps extends LookupDeps {
   resume: (paneId: string, projectDir: string, sessionId: string, focus: boolean) => GotoResult;
   // Nothing owns the thread: start a chat for it (see slackowner.autoStartThread).
   // Absent, an unowned thread is just reported, as before.
-  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string }) => StartedOrFailed;
+  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string; context?: string }) => StartedOrFailed;
+  // Where a start would go, and the channel's name, for the confirm prompt. Never starts anything.
+  startTarget?: (ref: ThreadRef) => { channel_name: string; project_dir: string };
 }
+
+/** 'ask': report an unowned thread instead of starting. 'start': start (or jump, if an owner appeared). */
+export type GotoMode = 'ask' | 'start';
 
 export type StartedOrFailed = { ok: true; started: StartedThread } | { ok: false; reason: 'no_project' | 'failed'; detail: string };
 
@@ -167,13 +180,22 @@ export function preferredLane(projectDir: string, live: Record<string, LiveLoc>)
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
 }
 
-export async function threadGoto(text: string, deps: GotoDeps, opts: { pane?: string; picked?: PickedText } = {}): Promise<ThreadGotoResult> {
+export async function threadGoto(
+  text: string,
+  deps: GotoDeps,
+  opts: { pane?: string; picked?: PickedText; mode?: GotoMode; context?: string } = {},
+): Promise<ThreadGotoResult> {
   const ref = parseSlackThread(text);
   if (!ref) return { ok: false, reason: 'not_slack', detail: 'Not a Slack message link' };
   const owner = await findOwner(ref, deps);
   if (!owner) {
     if (!deps.start) return { ok: false, reason: 'no_owner', key: ref.key, detail: 'No chat owns this thread' };
-    const s = deps.start(ref, opts.picked ?? {}, { pane: opts.pane });
+    if (opts.mode === 'ask') {
+      const t = deps.startTarget?.(ref) ?? { channel_name: '', project_dir: '' };
+      const ask = { channel: ref.channel, channel_name: t.channel_name, project: t.project_dir ? path.basename(t.project_dir) : '', project_dir: t.project_dir };
+      return { ok: true, detail: 'No chat owns this thread', action: 'ask', key: ref.key, ask };
+    }
+    const s = deps.start(ref, opts.picked ?? {}, { pane: opts.pane, context: opts.context });
     if (!s.ok) return { ok: false, reason: s.reason, key: ref.key, detail: s.detail };
     const st = s.started;
     return { ok: true, detail: `started a chat in ${st.where}`, action: 'started', key: ref.key, session_id: st.session_id, pane_id: st.pane_id, started: st };
@@ -273,11 +295,31 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
             return { ok: true, paneId, where: managed ? 'a new window in ' + MANAGED_SESSION : l.detail.replace(/^started; ?/, '') || paneId };
           },
         },
-        { pane: o.pane, projectDir: o.projectDir },
+        { pane: o.pane, projectDir: o.projectDir, context: o.context },
       );
       if (!r.ok) return r;
       noteStart(r);
       return { ok: true, started: r };
+    },
+    startTarget: (ref) => {
+      let project_dir = '';
+      try {
+        const db = openDb();
+        try {
+          project_dir = startProjectFor(db, ref.channel, isValidProjectDir)?.dir ?? '';
+        } finally {
+          db.close();
+        }
+      } catch {
+        /* no project known: the prompt just leaves it out */
+      }
+      let channel_name = '';
+      try {
+        channel_name = String(channelLabels()[ref.channel] ?? '').replace(/^[#@]/, '');
+      } catch {
+        /* no label cache */
+      }
+      return { channel_name, project_dir };
     },
   };
 }

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, Notification, shell, screen } from 'electron';
 import { loadWinState, saveWinState, restoreBounds } from '../src/winstate.ts';
-import { startPick, stopHelper, axTrusted } from './picker.ts';
+import { startPick, stopHelper, axTrusted, warmPicker, endPick, askNewThread } from './picker.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -335,14 +335,38 @@ function notify(body: string): void {
   if (Notification.isSupported()) new Notification({ title: 'Loom', body, silent: true }).show();
 }
 
+interface GotoReply {
+  ok: boolean;
+  detail?: string;
+  action?: string;
+  ask?: { channel: string; channel_name: string; project: string };
+}
+
+async function postThreadGoto(body: Record<string, unknown>): Promise<GotoReply> {
+  const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/slack/thread-goto`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...loomWriteHeaders() },
+    body: JSON.stringify(body),
+  });
+  return (await r.json()) as GotoReply;
+}
+
+/**
+ * Open the chat for a picked thread. With slack_goto_confirm_new on (the
+ * default), the first post only looks: an owned thread is jumped to at once, and
+ * an unowned one comes back as action 'ask', so the user can add context (or
+ * send it as is, or cancel) before a second post starts the chat.
+ */
 async function threadGoto(url: string, picked: { text?: string; author?: string } = {}): Promise<void> {
   try {
-    const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/slack/thread-goto`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...loomWriteHeaders() },
-      body: JSON.stringify({ url, text: picked.text, author: picked.author }),
-    });
-    const out = (await r.json()) as { ok: boolean; detail?: string; action?: string };
+    const base = { url, text: picked.text, author: picked.author };
+    let out = await postThreadGoto({ ...base, mode: confirmNewOn() ? 'ask' : undefined });
+    if (out.ok && out.action === 'ask') {
+      endPick(); // the overlay would sit over the prompt
+      const context = await askNewThread({ channel: out.ask?.channel ?? '', channelName: out.ask?.channel_name, author: picked.author, text: picked.text, project: out.ask?.project });
+      if (context === null) return;
+      out = await postThreadGoto({ ...base, mode: 'start', context });
+    }
     if (!out.ok) notify(out.detail || 'Could not open the chat for this thread');
     // No chat owned the thread, so one was started: show it in Loom's main area
     // (the board picks the new start up on its next poll; nudge it now).
@@ -352,6 +376,19 @@ async function threadGoto(url: string, picked: { text?: string; author?: string 
     }
   } catch (e) {
     notify('Slack thread lookup failed: ' + (e as Error).message);
+  }
+}
+
+function confirmNewOn(): boolean {
+  try {
+    const db = openDb();
+    try {
+      return getSetting(db, 'slack_goto_confirm_new', { env: false });
+    } finally {
+      db.close();
+    }
+  } catch {
+    return true;
   }
 }
 
@@ -482,6 +519,7 @@ function reRegisterSlackHotkey(): void {
     if (tryGlobal(next)) {
       if (slackAccel) globalShortcut.unregister(slackAccel);
       slackAccel = next;
+      warmPicker();
     } else {
       notify(`Could not register ${next}; another app or the system holds it. Keeping ${slackAccel || 'no shortcut'}.`);
     }
@@ -617,6 +655,8 @@ app.whenReady().then(() => {
   clearPaneTints();
 
   slackAccel = registerSlackHotkey();
+  // Helper, trust answer and hidden overlays ready before the first press.
+  if (slackAccel) warmPicker();
   // Live: a new slack_goto_hotkey takes effect without a restart.
   onSettingChanged((c) => {
     if (c.key === 'slack_goto_hotkey') reRegisterSlackHotkey();

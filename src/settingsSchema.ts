@@ -346,6 +346,10 @@ export const SETTINGS = [
     key: 'slack_paste_fallback', section: 'shortcut', label: 'Clipboard fallback', help: 'When the message cannot be read directly, copy its link and read that.',
     defaultNew: true, legacyUnset: true, restart: false,
   }),
+  boolDef({
+    key: 'slack_goto_confirm_new', section: 'shortcut', label: 'Ask before a new chat', help: 'When no chat owns the picked thread, ask for optional context before starting one.',
+    defaultNew: true, legacyUnset: true, restart: false,
+  }),
   jsonDef(anyObject('slack_ax_last_result'), {
     key: 'slack_ax_last_result', section: 'shortcut', label: 'Last shortcut result', help: 'Diagnostics from the last shortcut press.',
     defaultNew: {}, legacyUnset: {}, restart: false, internal: true,

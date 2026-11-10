@@ -1079,15 +1079,17 @@ export function createServer(): http.Server {
     // clipboard here). Body {url, pane?, text?, author?}: the owning chat is jumped
     // to if live, otherwise resumed into `pane` or an open lane pane. A thread no
     // chat owns starts one, with the link and `text` as its first prompt (the
-    // channel's mapped project, else the last project used). 200 on a jump,
-    // resume or start; 404 for a non-Slack link.
+    // channel's mapped project, else the last project used). mode 'ask' starts
+    // nothing: an unowned thread answers action 'ask' (the hotkey's confirm
+    // prompt), and the follow-up post with mode 'start' and optional `context`
+    // starts it. 200 on a jump, resume, ask or start; 404 for a non-Slack link.
     if (url.pathname === '/api/slack/thread-goto' && req.method === 'POST') {
       let raw = '';
       req.on('data', (chunk: Buffer) => {
         if (raw.length < 64 * 1024) raw += chunk;
       });
       req.on('end', () => {
-        let b: { url?: unknown; pane?: unknown; text?: unknown; author?: unknown };
+        let b: { url?: unknown; pane?: unknown; text?: unknown; author?: unknown; mode?: unknown; context?: unknown };
         try {
           b = JSON.parse(raw || '{}') ?? {};
         } catch {
@@ -1101,7 +1103,9 @@ export function createServer(): http.Server {
         const snap = snapshot();
         const dirs = new Map(snap.views.filter((v) => v.agent === 'claude').map((v) => [v.session_id, v.project_dir]));
         const picked = { text: typeof b.text === 'string' ? b.text.slice(0, 8000) : undefined, author: typeof b.author === 'string' ? b.author.slice(0, 200) : undefined };
-        threadGoto(typeof b.url === 'string' ? b.url : '', defaultGotoDeps(() => snap.live, (sid) => dirs.get(sid) ?? null), { pane, picked })
+        const mode = b.mode === 'ask' || b.mode === 'start' ? b.mode : undefined;
+        const context = typeof b.context === 'string' ? b.context.slice(0, 4000) : undefined;
+        threadGoto(typeof b.url === 'string' ? b.url : '', defaultGotoDeps(() => snap.live, (sid) => dirs.get(sid) ?? null), { pane, picked, mode, context })
           .then((r) => json(res, r.ok ? 200 : r.reason === 'no_owner' || r.reason === 'not_slack' ? 404 : 409, r))
           .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });

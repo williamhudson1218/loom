@@ -321,13 +321,23 @@ export function resolveStartProject(
   return null;
 }
 
-/** The first prompt: the permalink, then the message text when Loom could read it. */
-export function buildStartPrompt(ref: ThreadRef, message?: { text?: string; author?: string }): string {
+/** Where autoStartThread would start this thread's chat, without starting anything. */
+export function startProjectFor(db: Database.Database, channel: string, valid: (dir: string) => boolean): { dir: string; source: ProjectSource } | null {
+  return resolveStartProject(channel, { mapping: getChannelProjects(db), last: getLastProject(db), recent: mostRecentProject(db), valid });
+}
+
+/**
+ * The first prompt: the permalink, then the message text when Loom could read it,
+ * then any context the user typed in the new-thread prompt.
+ */
+export function buildStartPrompt(ref: ThreadRef, message?: { text?: string; author?: string }, context?: string): string {
   const text = (message?.text ?? '').trim().slice(0, 4000);
+  const extra = (context ?? '').trim().slice(0, 4000);
   const lines = [`This chat was started from a Slack thread: ${ref.url}`];
   if (text) {
     lines.push('', `The message${message?.author ? ` from ${message.author}` : ''}:`, ...text.split('\n').map((l) => '> ' + l));
   }
+  if (extra) lines.push('', 'Context from the user:', extra);
   lines.push('', 'Read the whole thread if you can, work out what it asks for, and start on it.');
   return lines.join('\n');
 }
@@ -375,7 +385,7 @@ export type AutoStartResult = StartedThread | { ok: false; reason: 'no_project' 
  * once; an agent that cannot is recorded 'pending' and completed when the
  * indexer sees its first prompt.
  */
-export function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoStartDeps, opts: { pane?: string; projectDir?: string } = {}): AutoStartResult {
+export function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoStartDeps, opts: { pane?: string; projectDir?: string; context?: string } = {}): AutoStartResult {
   const db = deps.db();
   try {
     let project: { dir: string; source: ProjectSource } | null;
@@ -390,7 +400,7 @@ export function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoSt
     if (!project) return { ok: false, reason: 'no_project', key: ref.key, detail: 'No chat owns this thread, and there is no project to start one in. Start a chat once, or map this channel to a project.' };
     const agent = deps.agent();
     const sessionId = agent === 'claude' ? (deps.newSessionId ?? randomUUID)() : '';
-    const prompt = buildStartPrompt(ref, picked);
+    const prompt = buildStartPrompt(ref, picked, opts.context);
     const r = deps.launch({ projectDir: project.dir, prompt, agent, sessionId, pane: opts.pane });
     if (!r.ok) return { ok: false, reason: 'failed', key: ref.key, detail: r.detail };
     const now = (deps.now ?? Date.now)();

@@ -26,6 +26,7 @@ import {
   reassignThread,
   recentStarts,
   resolveStartProject,
+  startProjectFor,
   setChannelProject,
   setLastProject,
   type AutoStartDeps,
@@ -189,6 +190,13 @@ describe('buildStartPrompt', () => {
     expect(p).toContain(ROOT);
     expect(p).not.toContain('>');
   });
+  it('adds the user context before the closing instruction, and is unchanged without it', () => {
+    const plain = buildStartPrompt(ref, { text: 'hi', author: 'Alex' });
+    expect(buildStartPrompt(ref, { text: 'hi', author: 'Alex' }, '   ')).toBe(plain);
+    expect(plain).not.toContain('Context from the user');
+    const p = buildStartPrompt(ref, { text: 'hi', author: 'Alex' }, 'Only the Q3 return\nnot Q2');
+    expect(p).toContain('> hi\n\nContext from the user:\nOnly the Q3 return\nnot Q2\n\nRead the whole thread');
+  });
 });
 
 describe('--session-id for a fresh Claude chat', () => {
@@ -243,6 +251,17 @@ describe('autoStartThread', () => {
     expect(getOwner(check, ref.key)).toMatchObject({ session_id: 'new-session-id', source: 'start', pane_id: '%42', project_dir: '/ok/acme-app', created_at: 1234 });
     expect(getLastProject(check)).toBe('/ok/acme-app');
     check.close();
+  });
+
+  it('puts the user context into the launched prompt, and startProjectFor previews the same project', () => {
+    const { deps, launches, peek } = setup();
+    const seed = peek();
+    setChannelProject(seed, 'C0TESTADV01', '/ok/acme-app');
+    expect(startProjectFor(seed, 'C0TESTADV01', (d) => d.startsWith('/ok/'))).toEqual({ dir: '/ok/acme-app', source: 'channel' });
+    seed.close();
+    expect(launches).toHaveLength(0); // previewing launches nothing
+    autoStartThread(ref, { text: 'hi' }, deps, { context: 'Start with Q3' });
+    expect(launches[0].prompt).toContain('Context from the user:\nStart with Q3');
   });
 
   it('falls back to the last project used when the channel has no mapping', () => {
