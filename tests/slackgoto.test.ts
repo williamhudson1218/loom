@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readThreads } from '../src/slack.ts';
-import { findOwner, parseSlackThread, pickedThread, preferredLane, threadGoto, transcriptMentions, type GotoDeps } from '../src/slackgoto.ts';
+import { findOwner, parseSlackThread, pickedThread, preferredLane, resumeFocus, threadGoto, transcriptMentions, type GotoDeps } from '../src/slackgoto.ts';
 import type { ArchiveHit } from '../src/findchat.ts';
 import type { LiveLoc } from '../src/dashboard.ts';
 
@@ -189,6 +189,46 @@ describe('threadGoto', () => {
     expect(await threadGoto(link, deps({ threads: () => ({ 'C0TESTADV01/1792688542.707769': { url: link, session_id: 'x', cwd: '/gone/dir' } }) }))).toMatchObject({ ok: false, reason: 'no_dir' });
     expect(await threadGoto(link, deps({ acquire: () => ({ ok: false, detail: 'no lane sessions found' }) }))).toMatchObject({ ok: false, reason: 'no_pane' });
     expect(d.calls).toEqual([]);
+  });
+
+  it('waits for an async acquire (a managed window and its shell) and reports where the time went', async () => {
+    let focused: boolean | undefined;
+    const d = deps({
+      acquire: async () => ({ ok: true, paneId: '%60', managed: true, readyMs: 640 }),
+      resume: (_p, _d, _sid, focus) => ((focused = focus), { ok: true, detail: 'resumed' }),
+      focusManaged: () => false, // Loom's own terminal
+    });
+    const r = await threadGoto(link, d);
+    expect(r).toMatchObject({ ok: true, action: 'resumed', pane_id: '%60', managed: true });
+    expect(r.timings).toMatchObject({ ready_ms: 640 });
+    expect(r.timings!.lookup_ms).toBeGreaterThanOrEqual(0);
+    expect(r.timings!.acquire_ms).toBeGreaterThanOrEqual(0);
+    expect(r.timings!.total_ms).toBeGreaterThanOrEqual(r.timings!.lookup_ms);
+    expect(focused).toBe(false); // app/main.ts shows it in Loom instead
+  });
+
+  it('a managed resume switches an external terminal to it', async () => {
+    let focused: boolean | undefined;
+    await threadGoto(link, deps({
+      acquire: () => ({ ok: true, paneId: '%60', managed: true }),
+      resume: (_p, _d, _sid, focus) => ((focused = focus), { ok: true, detail: 'resumed' }),
+      focusManaged: () => true,
+    }));
+    expect(focused).toBe(true);
+  });
+
+  it('every answer carries timings, failures included', async () => {
+    expect((await threadGoto('hello', deps())).timings).toBeDefined();
+    expect((await threadGoto(link, deps({ threads: () => ({}) }))).timings).toBeDefined();
+  });
+});
+
+describe('resumeFocus', () => {
+  it('focuses a lane pane always, a managed window only for an external terminal', () => {
+    expect(resumeFocus(false, false)).toBe(true);
+    expect(resumeFocus(false, true)).toBe(true);
+    expect(resumeFocus(true, true)).toBe(true);
+    expect(resumeFocus(true, false)).toBe(false);
   });
 });
 

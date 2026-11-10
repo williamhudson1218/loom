@@ -1,3 +1,4 @@
+import { PENDING_VIEW_JS } from './pendingview.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
@@ -802,7 +803,15 @@ ${TEST_LINKS_CSS}
   .sdot.d-wait { background:#6a7ba8; box-shadow:0 0 0 2px rgba(106,123,168,.25); }
   .parkbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
   #chatmain { display:flex; flex-direction:column; min-width:0; min-height:0; position:relative; }
-  #chatmain.empty > :not(#mempty) { display:none !important; }
+  #chatmain.empty > :not(#mempty):not(#mpending) { display:none !important; }
+  /* Opening / resuming: shown the moment the view switches, until the pane is there. */
+  #mpending { position:absolute; inset:0; z-index:30; display:flex; align-items:flex-start; justify-content:center; padding-top:96px; background:rgba(11,13,19,.72); }
+  .mpcard { display:flex; align-items:center; gap:12px; max-width:440px; padding:14px 18px; border-radius:10px; border:1px solid #2a2f40; background:#121620; color:#e4e7ee; font-size:13px; }
+  .mpcard b { display:block; font-weight:600; }
+  .mpcard span.mpd { display:block; color:#8a90a2; margin-top:2px; }
+  #mpending.err .mpcard { border-color:#6b2a2e; background:#1d1215; }
+  .mpspin { width:16px; height:16px; flex-shrink:0; border:2px solid #2f3a55; border-top-color:#8fb4ff; border-radius:50%; animation:mpspin .7s linear infinite; }
+  @keyframes mpspin { to { transform:rotate(360deg); } }
   #mempty { display:none; padding:20px; overflow-y:auto; }
   #chatmain.empty #mempty { display:block; }
   #mhead { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid #232634; position:relative; }
@@ -1330,7 +1339,7 @@ function openPicker(sid,sourceAgent,el,action,proj,selectedAgent){const p=el.que
 // lane's next open pane at launch time, so these rows are a menu, not a claim.
 if(lanes.length===1){doLaunch(sid,sourceAgent,lanes[0].lane,el,p,action,proj,selectedAgent);return;}p.innerHTML='<div class="pickhdr">'+esc(verb)+' into which lane?</div>'+lanes.map(ln=>'<button class="paneopt" data-lane="'+esc(ln.lane)+'">'+esc(ln.lane)+' → '+esc(ln.where)+(ln.name?'<span class="pcwd">'+esc(ln.name)+'</span>':'')+'</button>').join('');p.querySelectorAll('.paneopt').forEach(b=>b.onclick=()=>doLaunch(sid,sourceAgent,b.dataset.lane,el,p,action,proj,selectedAgent));}).catch(()=>p.innerHTML='<span class="muted">server off?</span>');}
 // proj is sent only for archive chats — the server resolves board chats from its DB.
-function doLaunch(sid,sourceAgent,lane,el,p,action,proj,selectedAgent){const busy=action==='branch'?'branching…':(sourceAgent===selectedAgent?'resuming…':'starting new…');const okmsg=action==='branch'?'branched ✓':(sourceAgent===selectedAgent?'resumed ✓':'started fresh ✓');p.innerHTML='<span class="muted">'+busy+'</span>';fetch('/'+action+'?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(selectedAgent)+'&lane='+encodeURIComponent(lane)+(proj?'&proj='+encodeURIComponent(proj):''),{method:'POST'}).then(r=>r.json()).then(j=>{if(!j.ok&&j.reason==='no_pane'){p.innerHTML='<span class="muted">No empty panes found. Open a new pane/window in tmux, then click '+esc(launchVerb(action,sourceAgent,selectedAgent))+' again.</span>';return;}flash(el,j.ok?okmsg:(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');p.dataset.open='';p.innerHTML='';setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>{p.innerHTML='<span class="muted">server off?</span>';});}
+${PENDING_VIEW_JS}
 // One toast for every action result (the per-element flash it replaced would sit
 // on whichever chat the header happens to show, not the row that was clicked).
 function toast(msg,bg){const t=$('#toast');t.textContent=msg;t.style.background=bg||'#1f6f3f';t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),1800);}
@@ -1471,7 +1480,7 @@ function openInBoard(sid,agent){const c=DATA.chats.find(x=>x.agent===agent&&x.se
 var FOCUS_SEQ=null;
 function checkInsideFocus(f){if(!f)return;if(FOCUS_SEQ===null){FOCUS_SEQ=f.seq;return;}if(f.seq===FOCUS_SEQ)return;FOCUS_SEQ=f.seq;
   const k=Object.keys(DATA.live).find(x=>DATA.live[x].pane_id===f.pane_id);if(!k)return;const L=DATA.live[k];
-  const c=DATA.chats.find(x=>chatKey(x)===k);if(!c)return;openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();}
+  const c=DATA.chats.find(x=>chatKey(x)===k);if(!c)return;openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();if(typeof setPending==='function')setPending(null);}
 // A notification click lands here (app/main.ts): switch to the tab that lists the chat, drop any filter hiding it,
 // select it and open its terminal. A chat not indexed yet gets one retry after a refresh, then a toast.
 window.loomOpenChat=function(agent,sid,retried){
@@ -1479,7 +1488,7 @@ window.loomOpenChat=function(agent,sid,retried){
   if(!c){if(retried){toast('that chat is not on the board','#8a2b2e');return;}
     refresh();setTimeout(function(){window.loomOpenChat(agent,sid,true);},1500);return;}
   const q=$('#q');if(q&&q.value)q.value='';onlyGroup=null;
-  openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();
+  openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();if(typeof setPending==='function')setPending(null);
   setTimeout(function(){const r=document.querySelector('#sidelist .srow.sel, #kanban .tk.sel');if(r&&r.scrollIntoView)r.scrollIntoView({block:'nearest'});},0);
 };
 // A notification about a PR: open the chat working on it (the most recently active one), else the orchestrator.
@@ -1533,7 +1542,7 @@ function renderMain(){const box=$('#chatmain');renderOutbox();
   const c=selChat();
   if(!c){box.classList.add('empty');closeTerm();$('#mempty').innerHTML='<div class="dempty">That chat is no longer on the board.</div>';return;}
   box.classList.remove('empty');
-  const L=sel.arch?null:DATA.live[chatKey(c)];const live=!!L;
+  const L=(sel.arch?null:DATA.live[chatKey(c)])||pendingLiveFor(c);const live=!!L;
   const eff=(live&&TERM_TOKEN&&mtab==='terminal')?'terminal':'transcript';
   renderHead(c,L,live);renderTabsBar(live,eff);renderSlackStart(c);
   $('#mterm').style.display=eff==='terminal'?'':'none';
@@ -1549,7 +1558,7 @@ function mbtn(act,label,cls,extra){return '<button type="button" class="mbtn'+(c
 function renderHead(c,L,live){const h=$('#mhead');const prn=chatPrNum(c),prs=prStateOf(c),sk=slackKeyOf(c);
   const sig=[c.session_id,chatTags(c).join(','),JSON.stringify(DATA.tags||[]),disp(c),dotCls(c),live,L&&L.name,L&&L.tmux_session,L&&L.window_index,L&&L.pane_index,c.saved,prn,prs,ownsSlack(c),sk,slackSig(c),testLinksOf(c).length,prciSig(c),!!c.arch,c.project_dir].join('|');
   if(h.dataset.sig===sig)return;if(h.querySelector('.picker:not(:empty)'))return;h.dataset.sig=sig;
-  const where=L?(L.tmux_session+':'+L.window_index+'.'+L.pane_index):(c.arch?'archive':'not running');
+  const where=L?(L.pending?'starting…':L.tmux_session+':'+L.window_index+'.'+L.pane_index):(c.arch?'archive':'not running');
   const pn=L?(L.name||L.pane_index):'none';
   const canLaunch=!!(c.project_dir&&c.project_dir.trim());
   let b='';
@@ -1769,7 +1778,7 @@ loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
 function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{});}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.archiveSearch=!!d.archiveSearch;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.archiveSearch=!!d.archiveSearch;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{pollFailed=true;renderStale();});}
@@ -2251,6 +2260,8 @@ $('#default-agent').onchange=updateDefaultAgent;
 if(!DATA.codexVisible){['#default-agent','#cagent'].forEach(function(id){const o=$(id+' option[value="codex"]');if(o)o.remove();});}
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(visOnly(refresh),5000);
+// Shown again (the hotkey raised the window, or Cmd-Tab): catch up now, not on the next tick.
+document.addEventListener('visibilitychange',function(){if(!document.hidden)refresh();});
 setInterval(renderStale,5000);renderStale();
 setInterval(visOnly(function(){refreshTrees(false);}),300000);
 setInterval(visOnly(refreshWatch),15000);

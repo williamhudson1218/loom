@@ -230,14 +230,14 @@ describe('autoStartThread', () => {
     return { deps, launches, peek };
   }
 
-  it('starts in the channel\'s project, records ownership and remembers the project', () => {
+  it('starts in the channel\'s project, records ownership and remembers the project', async () => {
     const { deps, launches, peek } = setup();
     const seed = peek();
     setChannelProject(seed, 'C0TESTADV01', '/ok/acme-app');
     setLastProject(seed, '/ok/other');
     seed.close();
 
-    const r = autoStartThread(ref, { text: 'Can you confirm WV?', author: 'Alex' }, deps);
+    const r = await autoStartThread(ref, { text: 'Can you confirm WV?', author: 'Alex' }, deps);
     expect(r).toMatchObject({
       ok: true, action: 'started', key: ref.key, agent: 'claude', session_id: 'new-session-id', pane_id: '%42',
       project_dir: '/ok/acme-app', project: 'acme-app', project_source: 'channel', quote: 'Can you confirm WV?', author: 'Alex', at: 1234,
@@ -253,42 +253,42 @@ describe('autoStartThread', () => {
     check.close();
   });
 
-  it('puts the user context into the launched prompt, and startProjectFor previews the same project', () => {
+  it('puts the user context into the launched prompt, and startProjectFor previews the same project', async () => {
     const { deps, launches, peek } = setup();
     const seed = peek();
     setChannelProject(seed, 'C0TESTADV01', '/ok/acme-app');
     expect(startProjectFor(seed, 'C0TESTADV01', (d) => d.startsWith('/ok/'))).toEqual({ dir: '/ok/acme-app', source: 'channel' });
     seed.close();
     expect(launches).toHaveLength(0); // previewing launches nothing
-    autoStartThread(ref, { text: 'hi' }, deps, { context: 'Start with Q3' });
+    await autoStartThread(ref, { text: 'hi' }, deps, { context: 'Start with Q3' });
     expect(launches[0].prompt).toContain('Context from the user:\nStart with Q3');
   });
 
-  it('falls back to the last project used when the channel has no mapping', () => {
+  it('falls back to the last project used when the channel has no mapping', async () => {
     const { deps, launches, peek } = setup();
     const seed = peek();
     setLastProject(seed, '/ok/last-used');
     seed.close();
-    const r = autoStartThread(ref, {}, deps);
+    const r = await autoStartThread(ref, {}, deps);
     expect(r).toMatchObject({ ok: true, project_dir: '/ok/last-used', project_source: 'last' });
     expect(launches[0].projectDir).toBe('/ok/last-used');
   });
 
-  it('records a codex start as pending, since it cannot be given a session id', () => {
+  it('records a codex start as pending, since it cannot be given a session id', async () => {
     const { deps, peek } = setup({ agent: () => 'codex' });
     const seed = peek();
     setLastProject(seed, '/ok/p');
     seed.close();
-    const r = autoStartThread(ref, {}, deps);
+    const r = await autoStartThread(ref, {}, deps);
     expect(r).toMatchObject({ ok: true, agent: 'codex', session_id: '' });
     const check = peek();
     expect(getOwner(check, ref.key)).toMatchObject({ session_id: '', source: 'pending', pane_id: '%42', agent: 'codex' });
     check.close();
   });
 
-  it('refuses, launching nothing, when there is no project to start in', () => {
+  it('refuses, launching nothing, when there is no project to start in', async () => {
     const { deps, launches, peek } = setup();
-    const r = autoStartThread(ref, {}, deps);
+    const r = await autoStartThread(ref, {}, deps);
     expect(r).toMatchObject({ ok: false, reason: 'no_project' });
     expect(launches).toEqual([]);
     const check = peek();
@@ -296,12 +296,12 @@ describe('autoStartThread', () => {
     check.close();
   });
 
-  it('writes no ownership when the launch fails', () => {
+  it('writes no ownership when the launch fails', async () => {
     const { deps, peek } = setup({ launch: () => ({ ok: false, detail: 'Not starting a new chat: only 0.1 GB of memory is free' }) });
     const seed = peek();
     setLastProject(seed, '/ok/p');
     seed.close();
-    const r = autoStartThread(ref, {}, deps);
+    const r = await autoStartThread(ref, {}, deps);
     expect(r).toMatchObject({ ok: false, reason: 'failed', detail: expect.stringContaining('0.1 GB') });
     const check = peek();
     expect(getOwner(check, ref.key)).toBeNull();
@@ -309,13 +309,13 @@ describe('autoStartThread', () => {
     check.close();
   });
 
-  it('Change project restarts in the chosen directory and hands the thread over', () => {
+  it('Change project restarts in the chosen directory and hands the thread over', async () => {
     const { deps, launches, peek } = setup();
     const seed = peek();
     setLastProject(seed, '/ok/first');
     seed.close();
-    autoStartThread(ref, {}, deps);
-    const r = autoStartThread(ref, {}, { ...deps, newSessionId: () => 'second-id' }, { projectDir: '/ok/second' });
+    await autoStartThread(ref, {}, deps);
+    const r = await autoStartThread(ref, {}, { ...deps, newSessionId: () => 'second-id' }, { projectDir: '/ok/second' });
     expect(r).toMatchObject({ ok: true, project_dir: '/ok/second', session_id: 'second-id' });
     expect(launches.map((l) => l.projectDir)).toEqual(['/ok/first', '/ok/second']);
     const check = peek();

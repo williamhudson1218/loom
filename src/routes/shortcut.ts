@@ -2,6 +2,10 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import type { RouteDef } from './index.ts';
 import { isAccelerator } from '../settingsSchema.ts';
+import { pickLog, type LogFields } from '../picklog.ts';
+
+// What the page may write to pick.log.
+const PAGE_EVENTS = new Set(['resume-click', 'resume-reply', 'resume-view', 'resume-failed', 'open-view']);
 
 // The ⌘⇧L Slack shortcut step: record, conflict check, practice (§5.5).
 // Every entry is gated by requireWrite(kind) in src/routes/index.ts before its
@@ -210,6 +214,25 @@ export function findSlackApp(): Promise<string | null> {
 /* ------------------------------------------------------------ routes */
 
 export const routes: RouteDef[] = [
+  {
+    // The page's half of a Resume trace for pick.log (src/picklog.ts): click to
+    // view shown. Only known event names and numeric / short fields are kept.
+    method: 'POST', path: '/api/pick-log', kind: 'browser',
+    handler: async (ctx) => {
+      const b = await ctx.body();
+      const event = typeof b?.event === 'string' ? b.event : '';
+      if (!b || !PAGE_EVENTS.has(event)) return ctx.json(400, { ok: false, detail: 'unknown event' });
+      const id = typeof b.id === 'string' && /^[a-z0-9]{1,24}$/i.test(b.id) ? b.id : '-';
+      const fields: LogFields = {};
+      for (const [k, v] of Object.entries(b.fields && typeof b.fields === 'object' ? (b.fields as Record<string, unknown>) : {})) {
+        if (!/^[a-z_]{1,24}$/.test(k)) continue;
+        if (typeof v === 'number' || typeof v === 'boolean') fields[k] = v;
+        else if (typeof v === 'string' && /^[\w%:.\-]{0,40}$/.test(v)) fields[k] = v;
+      }
+      pickLog().write(id, event, { src: 'page', ...fields });
+      ctx.json(200, { ok: true });
+    },
+  },
   {
     // Conflict check. Body {accelerator} or {event: KeyEventLike} from the recorder.
     method: 'POST', path: '/api/shortcut/check', kind: 'browser',

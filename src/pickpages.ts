@@ -9,32 +9,52 @@ export const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
     background:rgba(76,141,255,0.14);box-shadow:0 0 0 1px rgba(0,0,0,0.35);pointer-events:none}
   /* bottom, not top: top-center is under the camera notch on MacBooks */
   #hint{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:8px;
-    font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:rgba(20,22,30,0.88);pointer-events:none}
-</style></head><body><div id="box"></div><div id="hint"></div><script>
+    font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:rgba(20,22,30,0.88);pointer-events:none;
+    display:flex;align-items:center;gap:8px}
+  #hint.err{background:rgba(138,43,46,0.95)}
+  #spin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;
+    animation:spin .7s linear infinite}
+  #hint.busy #spin{display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style></head><body><div id="box"></div><div id="hint"><span id="spin"></span><span id="msg"></span></div><script>
   const { ipcRenderer } = require('electron');
   const origin = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-  const box = document.getElementById('box'), hint = document.getElementById('hint');
+  const box = document.getElementById('box'), hint = document.getElementById('hint'), msg = document.getElementById('msg');
   const IDLE = 'Click a Slack message to open its chat. Esc cancels.';
-  hint.textContent = IDLE;
+  const say = (text, cls) => { msg.textContent = text; hint.className = cls || ''; };
+  say(IDLE);
   let timer = 0;
-  // The windows are built once and reused (see prepareOverlays), so each pick starts with a reset.
+  // The windows are built once and reused (see prepareOverlays), so each pick starts
+  // with a reset. Once that reset has been painted, say so: pick.log then shows when
+  // this display could really take a click, not just when it was ordered in.
   ipcRenderer.on('reset', () => {
-    clearTimeout(timer); box.style.display = 'none'; hint.textContent = IDLE; document.body.style.cursor = 'crosshair';
+    clearTimeout(timer); box.style.display = 'none'; say(IDLE); document.body.style.cursor = 'crosshair';
+    requestAnimationFrame(() => requestAnimationFrame(() => ipcRenderer.send('loom-pick-painted', { d: origin.d, t: Date.now(), vis: document.visibilityState })));
   });
-  // A message was picked: say so until the chat opens, so the wait is visible.
+  // A message was picked: say so until the chat is on screen, so the wait is visible.
   ipcRenderer.on('busy', (_e, text) => {
-    clearTimeout(timer); hint.textContent = text; document.body.style.cursor = 'progress';
+    clearTimeout(timer); say(text, 'busy'); document.body.style.cursor = 'progress';
+  });
+  // The open failed: say why here, where the user is looking.
+  ipcRenderer.on('error', (_e, text) => {
+    clearTimeout(timer); say(text, 'err'); document.body.style.cursor = 'default';
   });
   ipcRenderer.on('rect', (_e, r) => {
     if (!r) { box.style.display = 'none'; return; }
     Object.assign(box.style, { display: 'block', left: (r.x - origin.x - 2) + 'px', top: (r.y - origin.y - 2) + 'px', width: r.w + 'px', height: r.h + 'px' });
   });
   ipcRenderer.on('hint', (_e, text) => {
-    hint.textContent = text;
+    say(text);
     clearTimeout(timer);
-    timer = setTimeout(() => { hint.textContent = IDLE; }, 1800);
+    timer = setTimeout(() => { say(IDLE); }, 1800);
   });
-  window.addEventListener('mousedown', (e) => { e.preventDefault(); ipcRenderer.send('loom-pick-click'); });
+  // First thing on a mousedown: tell the main process, with when and where (global
+  // screen points), so the pick is resolved at the click, not wherever the pointer is
+  // by the time the main process gets to it.
+  window.addEventListener('mousedown', (e) => {
+    ipcRenderer.send('loom-pick-click', { t: Date.now(), x: origin.x + e.clientX, y: origin.y + e.clientY, d: origin.d, button: e.button });
+    e.preventDefault();
+  });
   window.addEventListener('contextmenu', (e) => e.preventDefault());
 </script></body></html>`;
 

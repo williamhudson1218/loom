@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, Notification, shell, screen } from 'electron';
 import { loadWinState, saveWinState, restoreBounds } from '../src/winstate.ts';
-import { startPick, stopHelper, axTrusted, warmPicker, endPick, askNewThread } from './picker.ts';
+import { startPick, stopHelper, axTrusted, warmPicker, endPick, askNewThread, pickEvent, type GotoOutcome } from './picker.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +13,7 @@ import { composePath, resolveTmuxTmpdir, loginEnv, shouldAutostartOrchestrator }
 import { practice, setShortcutHost, normalizeAccelerator } from '../src/routes/shortcut.ts';
 import { parseSlackThread, findOwner, defaultGotoDeps } from '../src/slackgoto.ts';
 import { getChannelProjects } from '../src/slackowner.ts';
+import { channelLabels } from '../src/slack.ts';
 import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
@@ -339,43 +340,121 @@ interface GotoReply {
   ok: boolean;
   detail?: string;
   action?: string;
+  reason?: string;
   ask?: { channel: string; channel_name: string; project: string };
+  session_id?: string;
+  pane_id?: string;
+  managed?: boolean;
+  source?: string;
+  timings?: Record<string, number>;
+  started?: { agent?: string; session_id?: string };
 }
 
 async function postThreadGoto(body: Record<string, unknown>): Promise<GotoReply> {
+  const t = Date.now();
   const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/slack/thread-goto`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...loomWriteHeaders() },
     body: JSON.stringify(body),
   });
-  return (await r.json()) as GotoReply;
+  const out = (await r.json()) as GotoReply;
+  // The server's own breakdown (find-chat lookup, pane + shell, jump/launch) next to the round trip.
+  pickEvent('server', { mode: String(body.mode ?? ''), ms: Date.now() - t, ok: out.ok, action: out.action, reason: out.reason, source: out.source, managed: out.managed, pane: out.pane_id, ...(out.timings ?? {}) });
+  return out;
 }
 
+/** Run a page hook in the main window and wait for it; false when the page is not there yet. */
+async function pageCall(js: string): Promise<boolean> {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    if (win.webContents.isLoading()) await new Promise<void>((r) => win!.webContents.once('did-finish-load', () => r()));
+    return !!(await win.webContents.executeJavaScript(js));
+  } catch {
+    return false;
+  }
+}
+
+// How long the hotkey's open may take before Loom's window comes up saying so.
+const PENDING_AFTER_MS = 300;
+
 /**
- * Open the chat for a picked thread. With slack_goto_confirm_new on (the
- * default), the first post only looks: an owned thread is jumped to at once, and
- * an unowned one comes back as action 'ask', so the user can add context (or
- * send it as is, or cancel) before a second post starts the chat.
+ * Open the chat for a picked thread, resolving once it is on screen. With
+ * slack_goto_confirm_new on (the default), the first post only looks: an owned
+ * thread is jumped to at once, and an unowned one comes back as action 'ask', so
+ * the user can add context (or send it as is, or cancel) before a second post
+ * starts the chat.
+ *
+ * With Loom's own terminal (`terminal: inside`) every outcome lands in Loom's
+ * window, so that window is brought up and told what to show the moment the
+ * server answers, instead of on the page's next 5 s poll; and when the server is
+ * slow (a resume waiting on a new window's shell), it comes up early saying
+ * "Opening…". Before, a resumed chat (a managed window, left unfocused) showed
+ * nowhere at all, so the first press seemed to do nothing and the second, now
+ * finding the chat running, jumped: the "two clicks".
  */
-async function threadGoto(url: string, picked: { text?: string; author?: string } = {}): Promise<void> {
+async function threadGoto(url: string, picked: { text?: string; author?: string } = {}): Promise<GotoOutcome> {
+  const inside = currentTerminal() === 'inside';
+  const label = threadLabel(url);
+  let pendingUp = false;
+  const showPending = (title: string, detail = '') => {
+    pendingUp = true;
+    showWindow();
+    void pageCall('typeof loomPending==="function"&&loomPending(' + JSON.stringify({ label: title, detail }) + ')');
+    pickEvent('pending-shown');
+  };
+  const slow = inside ? setTimeout(() => showPending('Opening ' + label + '…', 'Finding the chat for this thread.'), PENDING_AFTER_MS) : null;
+  const fail = (detail: string): GotoOutcome => {
+    if (pendingUp) void pageCall('typeof loomPending==="function"&&loomPending(' + JSON.stringify({ label: 'Could not open ' + label, detail, state: 'error' }) + ')');
+    notify(detail);
+    return { ok: false, detail };
+  };
   try {
     const base = { url, text: picked.text, author: picked.author };
     let out = await postThreadGoto({ ...base, mode: confirmNewOn() ? 'ask' : undefined });
+    if (slow) clearTimeout(slow);
     if (out.ok && out.action === 'ask') {
-      endPick(); // the overlay would sit over the prompt
+      if (pendingUp) void pageCall('typeof loomPending==="function"&&loomPending(null)');
+      pendingUp = false;
+      endPick('ask'); // the overlay would sit over the prompt
       const context = await askNewThread({ channel: out.ask?.channel ?? '', channelName: out.ask?.channel_name, author: picked.author, text: picked.text, project: out.ask?.project });
-      if (context === null) return;
+      pickEvent('ask-answer', { start: context !== null });
+      if (context === null) return { ok: true };
+      if (inside) showPending('Starting a chat for ' + label + '…', out.ask?.project ? 'In ' + out.ask.project + '.' : '');
       out = await postThreadGoto({ ...base, mode: 'start', context });
     }
-    if (!out.ok) notify(out.detail || 'Could not open the chat for this thread');
-    // No chat owned the thread, so one was started: show it in Loom's main area
-    // (the board picks the new start up on its next poll; nudge it now).
-    else if (out.action === 'started') {
+    if (!out.ok) return fail(out.detail || 'Could not open the chat for this thread');
+    let shown = true;
+    if (out.action === 'started') {
+      // No chat owned the thread, so one was started: show it in Loom's main area
+      // (the board picks the new start up on its refresh; nudge it now).
       showWindow();
-      void win?.webContents.executeJavaScript('typeof refresh === "function" && refresh()').catch(() => {});
+      shown = await pageCall('typeof refresh==="function"&&refresh().then(function(){typeof loomPending==="function"&&loomPending(null);return true;})');
+    } else if (inside && out.action === 'resumed' && out.session_id) {
+      showWindow();
+      shown = await pageCall('typeof loomOpenResumed==="function"&&loomOpenResumed("claude",' + JSON.stringify(out.session_id) + ',' + JSON.stringify(out.pane_id ?? '') + ')');
+    } else if (inside && out.action === 'jumped') {
+      // The server raised the window and published the focus request; take it now.
+      showWindow();
+      shown = await pageCall('typeof loomFocusNow==="function"&&loomFocusNow()');
     }
+    pickEvent('view-shown', { action: out.action, inside, shown });
+    return { ok: true };
   } catch (e) {
-    notify('Slack thread lookup failed: ' + (e as Error).message);
+    return fail('Slack thread lookup failed: ' + (e as Error).message);
+  } finally {
+    if (slow) clearTimeout(slow);
+  }
+}
+
+/** "#channel" for the loading and error states, from the label cache; "this thread" when unknown. */
+function threadLabel(url: string): string {
+  const ref = parseSlackThread(url);
+  if (!ref) return 'this thread';
+  try {
+    const name = String(channelLabels()[ref.channel] ?? '').replace(/^[#@]/, '');
+    return name ? 'the #' + name + ' thread' : 'this thread';
+  } catch {
+    return 'this thread';
   }
 }
 

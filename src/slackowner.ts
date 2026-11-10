@@ -347,14 +347,15 @@ export interface PickedText {
   author?: string;
 }
 
+type LaunchOut = { ok: true; paneId: string; where: string } | { ok: false; detail: string };
+
 export interface AutoStartDeps {
   db: () => Database.Database;
   validDir: (dir: string) => boolean;
   agent: () => Agent;
   /** Open the chat in a pane. A stub in tests: nothing here may start a real process. */
   launch: (a: { projectDir: string; prompt: string; agent: Agent; sessionId: string; pane?: string }) =>
-    | { ok: true; paneId: string; where: string }
-    | { ok: false; detail: string };
+    LaunchOut | Promise<LaunchOut>;
   newSessionId?: () => string;
   now?: () => number;
 }
@@ -385,7 +386,7 @@ export type AutoStartResult = StartedThread | { ok: false; reason: 'no_project' 
  * once; an agent that cannot is recorded 'pending' and completed when the
  * indexer sees its first prompt.
  */
-export function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoStartDeps, opts: { pane?: string; projectDir?: string; context?: string } = {}): AutoStartResult {
+export async function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoStartDeps, opts: { pane?: string; projectDir?: string; context?: string } = {}): Promise<AutoStartResult> {
   const db = deps.db();
   try {
     let project: { dir: string; source: ProjectSource } | null;
@@ -401,7 +402,7 @@ export function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoSt
     const agent = deps.agent();
     const sessionId = agent === 'claude' ? (deps.newSessionId ?? randomUUID)() : '';
     const prompt = buildStartPrompt(ref, picked, opts.context);
-    const r = deps.launch({ projectDir: project.dir, prompt, agent, sessionId, pane: opts.pane });
+    const r = await deps.launch({ projectDir: project.dir, prompt, agent, sessionId, pane: opts.pane });
     if (!r.ok) return { ok: false, reason: 'failed', key: ref.key, detail: r.detail };
     const now = (deps.now ?? Date.now)();
     const claim: ClaimInput = { agent, sessionId, projectDir: project.dir, paneId: r.paneId, source: sessionId ? 'start' : 'pending', now };

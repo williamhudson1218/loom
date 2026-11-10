@@ -43,7 +43,8 @@ import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
 import { EMOJI_MAP } from './emojimap.ts';
-import { confirmLaunches, dismissLaunch, indexFreshLaunches, launchById, launchView, recentLaunches, startThread, waitForShellReady } from './newthread.ts';
+import { confirmLaunches, dismissLaunch, indexFreshLaunches, launchById, launchView, recentLaunches, startThread, waitForShellReady, waitForShellReadyAsync } from './newthread.ts';
+import { pickLog } from './picklog.ts';
 import { acquireManagedPane, pickStrategy, startManagedTicks } from './managed.ts';
 import { readThreads } from './slack.ts';
 import { claimThread, dismissStart, getChannelProjects, recentStarts, replaceStart, setChannelProject, setLastProject } from './slackowner.ts';
@@ -74,6 +75,9 @@ import { conversationsHistory } from './slackapi.ts';
 import { activeJobs, allPipelines } from './pipeline.ts';
 import { getOwner } from './slackowner.ts';
 import { currentLaunchSettings } from './launch.ts';
+
+// /resume and /branch requests still waiting on a new window's shell, by session id.
+const resumesInFlight = new Set<string>();
 
 export const SERVER_PORT = 4317;
 
@@ -1167,10 +1171,13 @@ export function createServer(): http.Server {
           db.close();
         }
         const deps = defaultGotoDeps(() => snap.live, () => null);
-        const r = deps.start!(ref, { text: s.quote, author: s.author }, { projectDir: project });
-        if (!r.ok) return json(res, 409, r);
-        replaceStart(key, at, r.started);
-        return json(res, 200, { ok: true, started: r.started });
+        void Promise.resolve(deps.start!(ref, { text: s.quote, author: s.author }, { projectDir: project }))
+          .then((r) => {
+            if (!r.ok) return json(res, 409, r);
+            replaceStart(key, at, r.started);
+            json(res, 200, { ok: true, started: r.started });
+          })
+          .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });
     }
 
@@ -1820,25 +1827,42 @@ export function createServer(): http.Server {
       }
       // Neither lane nor pane: with lane sessions that is a caller error (the picker
       // names a lane); with none, the chat gets a managed window of its own.
-      let managed = false;
-      if (!pane) {
-        if (pickStrategy(readWorld()) === 'lanes') return json(res, 400, { ok: false, reason: 'no_pane', detail: 'no pane' });
-        const a = acquireManagedPane(target.dir, { ready: (id) => waitForShellReady(id) });
-        if (!a.ok) return json(res, 409, { ok: false, detail: a.detail });
-        pane = a.paneId;
-        managed = true;
-      }
-      const r = launchInPane({
-        paneId: pane,
-        projectDir: target.dir,
-        sessionId: sid,
-        sourceAgent: target.sourceAgent,
-        selectedAgent: agent,
-        fork,
-        ...(managed && currentTerminal() === 'inside' ? { focus: false } : {}), // Loom's own terminal shows a managed window; an external one is switched to it
-      });
-      if (r.ok) rememberProject(target.dir);
-      return json(res, r.ok ? 200 : 500, r);
+      if (!pane && pickStrategy(readWorld()) === 'lanes') return json(res, 400, { ok: false, reason: 'no_pane', detail: 'no pane' });
+      // Async from here: a new managed window's shell is waited for without
+      // blocking the main process (the whole app froze for that wait before).
+      // A second click while the first is still waiting on its shell would put
+      // two processes on one transcript.
+      if (resumesInFlight.has(sid)) return json(res, 409, { ok: false, reason: 'busy', detail: 'already resuming this chat' });
+      resumesInFlight.add(sid);
+      void (async () => {
+        const t0 = Date.now();
+        let managed = false;
+        let readyMs = 0;
+        if (!pane) {
+          const a = acquireManagedPane(target.dir);
+          if (!a.ok) return json(res, 409, { ok: false, detail: a.detail });
+          pane = a.paneId;
+          managed = true;
+          const t = Date.now();
+          await waitForShellReadyAsync(pane);
+          readyMs = Date.now() - t;
+        }
+        const r = launchInPane({
+          paneId: pane,
+          projectDir: target.dir,
+          sessionId: sid,
+          sourceAgent: target.sourceAgent,
+          selectedAgent: agent,
+          fork,
+          ...(managed && currentTerminal() === 'inside' ? { focus: false } : {}), // Loom's own terminal shows a managed window; an external one is switched to it
+        });
+        if (r.ok) rememberProject(target.dir);
+        pickLog().write(url.searchParams.get('trace') || '-', 'resume-served', { action: fork ? 'branch' : 'resume', ok: r.ok, pane, managed, ready_ms: readyMs, total_ms: Date.now() - t0 });
+        json(res, r.ok ? 200 : 500, { ...r, pane_id: pane, managed });
+      })()
+        .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }))
+        .finally(() => resumesInFlight.delete(sid));
+      return;
     }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {

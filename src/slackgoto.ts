@@ -9,7 +9,8 @@ import { openDb, getDefaultAgent } from './db.ts';
 import { MANAGED_SESSION } from './managed.ts';
 import { searchArchive, isValidProjectDir, type ArchiveResult } from './findchat.ts';
 import { gotoPane, launchInPane, type GotoResult } from './goto.ts';
-import { acquirePaneAuto, noteLaunch } from './newthread.ts';
+import { acquirePaneAutoAsync, noteLaunch } from './newthread.ts';
+import { currentTerminal } from './terminal.ts';
 import { parseLane } from './compact.ts';
 import type { LiveLoc } from './dashboard.ts';
 
@@ -133,6 +134,8 @@ export function supersetLive(sessionId: string, home: string = process.env.SUPER
 
 export interface ThreadGotoResult extends GotoResult {
   action?: 'jumped' | 'resumed' | 'started' | 'ask';
+  /** action 'resumed': into a fresh Loom-managed window. */
+  managed?: boolean;
   /** action 'ask': what the confirm prompt names. */
   ask?: { channel: string; channel_name: string; project: string; project_dir: string };
   reason?: 'not_slack' | 'no_owner' | 'elsewhere' | 'no_dir' | 'no_pane' | 'failed' | 'no_project';
@@ -141,6 +144,18 @@ export interface ThreadGotoResult extends GotoResult {
   session_id?: string;
   source?: Owner['source'];
   pane_id?: string;
+  timings?: GotoTimings;
+}
+
+type Acquired = { ok: true; paneId: string; managed?: boolean; readyMs?: number } | { ok: false; detail: string };
+
+/** Where the time went, for pick.log: the find-chat lookup, getting a pane (and its shell), and the jump or launch. */
+export interface GotoTimings {
+  lookup_ms: number;
+  acquire_ms?: number;
+  ready_ms?: number;
+  act_ms?: number;
+  total_ms: number;
 }
 
 export interface GotoDeps extends LookupDeps {
@@ -148,11 +163,13 @@ export interface GotoDeps extends LookupDeps {
   projectDirOf: (sessionId: string) => string | null; // the board's record, when it has one
   elsewhere: (sessionId: string) => boolean;
   goto: (paneId: string, tmuxSession: string) => GotoResult;
-  acquire: (projectDir: string, lane: string) => { ok: true; paneId: string; managed?: boolean } | { ok: false; detail: string };
+  acquire: (projectDir: string, lane: string) => Acquired | Promise<Acquired>;
   resume: (paneId: string, projectDir: string, sessionId: string, focus: boolean) => GotoResult;
   // Nothing owns the thread: start a chat for it (see slackowner.autoStartThread).
   // Absent, an unowned thread is just reported, as before.
-  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string; context?: string }) => StartedOrFailed;
+  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string; context?: string }) => StartedOrFailed | Promise<StartedOrFailed>;
+  /** Whether a resume into a fresh managed window should switch the terminal to it (see resumeFocus). */
+  focusManaged?: () => boolean;
   // Where a start would go, and the channel's name, for the confirm prompt. Never starts anything.
   startTarget?: (ref: ThreadRef) => { channel_name: string; project_dir: string };
 }
@@ -185,20 +202,26 @@ export async function threadGoto(
   deps: GotoDeps,
   opts: { pane?: string; picked?: PickedText; mode?: GotoMode; context?: string } = {},
 ): Promise<ThreadGotoResult> {
+  const t0 = Date.now();
+  const t: GotoTimings = { lookup_ms: 0, total_ms: 0 };
+  const done = (r: ThreadGotoResult): ThreadGotoResult => ({ ...r, timings: { ...t, total_ms: Date.now() - t0 } });
   const ref = parseSlackThread(text);
-  if (!ref) return { ok: false, reason: 'not_slack', detail: 'Not a Slack message link' };
+  if (!ref) return done({ ok: false, reason: 'not_slack', detail: 'Not a Slack message link' });
   const owner = await findOwner(ref, deps);
+  t.lookup_ms = Date.now() - t0;
   if (!owner) {
-    if (!deps.start) return { ok: false, reason: 'no_owner', key: ref.key, detail: 'No chat owns this thread' };
+    if (!deps.start) return done({ ok: false, reason: 'no_owner', key: ref.key, detail: 'No chat owns this thread' });
     if (opts.mode === 'ask') {
-      const t = deps.startTarget?.(ref) ?? { channel_name: '', project_dir: '' };
-      const ask = { channel: ref.channel, channel_name: t.channel_name, project: t.project_dir ? path.basename(t.project_dir) : '', project_dir: t.project_dir };
-      return { ok: true, detail: 'No chat owns this thread', action: 'ask', key: ref.key, ask };
+      const st = deps.startTarget?.(ref) ?? { channel_name: '', project_dir: '' };
+      const ask = { channel: ref.channel, channel_name: st.channel_name, project: st.project_dir ? path.basename(st.project_dir) : '', project_dir: st.project_dir };
+      return done({ ok: true, detail: 'No chat owns this thread', action: 'ask', key: ref.key, ask });
     }
-    const s = deps.start(ref, opts.picked ?? {}, { pane: opts.pane, context: opts.context });
-    if (!s.ok) return { ok: false, reason: s.reason, key: ref.key, detail: s.detail };
+    const ta = Date.now();
+    const s = await deps.start(ref, opts.picked ?? {}, { pane: opts.pane, context: opts.context });
+    t.act_ms = Date.now() - ta;
+    if (!s.ok) return done({ ok: false, reason: s.reason, key: ref.key, detail: s.detail });
     const st = s.started;
-    return { ok: true, detail: `started a chat in ${st.where}`, action: 'started', key: ref.key, session_id: st.session_id, pane_id: st.pane_id, started: st };
+    return done({ ok: true, detail: `started a chat in ${st.where}`, action: 'started', key: ref.key, session_id: st.session_id, pane_id: st.pane_id, started: st });
   }
   const base = { key: ref.key, session_id: owner.session_id, source: owner.source };
 
@@ -206,31 +229,51 @@ export async function threadGoto(
   if (!owner.session_id) {
     // Started by Loom a moment ago and not yet tied to a session: its pane is the chat.
     const there = Object.values(live).find((l) => l.pane_id === owner.pane_id);
-    if (!there) return { ok: false, ...base, reason: 'failed', detail: 'The chat for this thread is still starting' };
+    if (!there) return done({ ok: false, ...base, reason: 'failed', detail: 'The chat for this thread is still starting' });
+    const ta = Date.now();
     const r = deps.goto(there.pane_id, there.tmux_session);
-    return { ...r, ...base, action: 'jumped', pane_id: there.pane_id, ...(r.ok ? {} : { reason: 'failed' }) };
+    t.act_ms = Date.now() - ta;
+    return done({ ...r, ...base, action: 'jumped', pane_id: there.pane_id, ...(r.ok ? {} : { reason: 'failed' }) });
   }
   const here = live[`claude:${owner.session_id}`];
   if (here?.running && here.pane_id) {
+    const ta = Date.now();
     const r = deps.goto(here.pane_id, here.tmux_session);
-    return { ...r, ...base, action: 'jumped', pane_id: here.pane_id, ...(r.ok ? {} : { reason: 'failed' }) };
+    t.act_ms = Date.now() - ta;
+    return done({ ...r, ...base, action: 'jumped', pane_id: here.pane_id, ...(r.ok ? {} : { reason: 'failed' }) });
   }
   if (deps.elsewhere(owner.session_id)) {
-    return { ok: false, ...base, reason: 'elsewhere', detail: 'The chat for this thread is open in Superset, not tmux' };
+    return done({ ok: false, ...base, reason: 'elsewhere', detail: 'The chat for this thread is open in Superset, not tmux' });
   }
 
   const dir = deps.projectDirOf(owner.session_id) || owner.cwd;
-  if (!dir || !isValidProjectDir(dir)) return { ok: false, ...base, reason: 'no_dir', detail: `No project directory for chat ${owner.session_id.slice(0, 8)}` };
+  if (!dir || !isValidProjectDir(dir)) return done({ ok: false, ...base, reason: 'no_dir', detail: `No project directory for chat ${owner.session_id.slice(0, 8)}` });
   let paneId = opts.pane ?? '';
   let managed = false;
   if (!paneId) {
-    const p = deps.acquire(dir, preferredLane(dir, live));
-    if (!p.ok) return { ok: false, ...base, reason: 'no_pane', detail: p.detail };
+    const ta = Date.now();
+    const p = await deps.acquire(dir, preferredLane(dir, live));
+    t.acquire_ms = Date.now() - ta;
+    if (!p.ok) return done({ ok: false, ...base, reason: 'no_pane', detail: p.detail });
     paneId = p.paneId;
     managed = !!p.managed;
+    if (p.readyMs !== undefined) t.ready_ms = p.readyMs;
   }
-  const r = deps.resume(paneId, dir, owner.session_id, !managed);
-  return { ...r, ...base, action: 'resumed', pane_id: paneId, ...(r.ok ? {} : { reason: 'failed' }) };
+  const ta = Date.now();
+  const r = deps.resume(paneId, dir, owner.session_id, resumeFocus(managed, deps.focusManaged?.() ?? false));
+  t.act_ms = Date.now() - ta;
+  return done({ ...r, ...base, action: 'resumed', pane_id: paneId, managed, ...(r.ok ? {} : { reason: 'failed' }) });
+}
+
+/**
+ * Whether a resume switches the terminal to its pane. A lane pane: yes. A fresh
+ * managed window: only for an external terminal (Ghostty and co.), the same rule
+ * as the dashboard's Resume; Loom's own terminal shows it in the app instead
+ * (app/main.ts opens it there). Before, every managed resume was left unfocused,
+ * so with an external terminal the resumed chat appeared nowhere.
+ */
+export function resumeFocus(managed: boolean, externalTerminal: boolean): boolean {
+  return !managed || externalTerminal;
 }
 
 /** Loom's own ownership table, as findOwner's first source. A missing or locked DB reads as "no row". */
@@ -263,10 +306,11 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
     projectDirOf,
     elsewhere: (sid) => supersetLive(sid),
     goto: gotoPane,
-    acquire: (dir, lane) => acquirePaneAuto(dir, lane, lane),
+    acquire: (dir, lane) => acquirePaneAutoAsync(dir, lane, lane),
+    focusManaged: () => currentTerminal() !== 'inside',
     resume: (paneId, dir, sid, focus) => launchInPane({ paneId, projectDir: dir, sessionId: sid, sourceAgent: 'claude', selectedAgent: 'claude', focus }),
-    start: (ref, picked, o) => {
-      const r = autoStartThread(
+    start: async (ref, picked, o) => {
+      const r = await autoStartThread(
         ref,
         picked,
         {
@@ -280,16 +324,16 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
               db.close();
             }
           },
-          launch: ({ projectDir, prompt, agent, sessionId, pane }) => {
+          launch: async ({ projectDir, prompt, agent, sessionId, pane }) => {
             let paneId = pane ?? '';
             let managed = false;
             if (!paneId) {
-              const p = acquirePaneAuto(projectDir, preferredLane(projectDir, live()), '');
+              const p = await acquirePaneAutoAsync(projectDir, preferredLane(projectDir, live()), '');
               if (!p.ok) return p;
               paneId = p.paneId;
               managed = p.managed;
             }
-            const l = launchInPane({ paneId, projectDir, sessionId, sourceAgent: agent, selectedAgent: agent, fresh: true, prompt, focus: !managed });
+            const l = launchInPane({ paneId, projectDir, sessionId, sourceAgent: agent, selectedAgent: agent, fresh: true, prompt, focus: resumeFocus(managed, currentTerminal() !== 'inside') });
             if (!l.ok) return { ok: false, detail: l.detail };
             noteLaunch({ pane_id: paneId, where: paneId, project: path.basename(projectDir), projectDir, agent, prompt: prompt.slice(0, 200) });
             return { ok: true, paneId, where: managed ? 'a new window in ' + MANAGED_SESSION : l.detail.replace(/^started; ?/, '') || paneId };

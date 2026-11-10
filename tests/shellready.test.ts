@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { waitForShellReady } from '../src/newthread.ts';
+import { waitForShellReady, waitForShellReadyAsync } from '../src/newthread.ts';
 
 // A runner whose capture-pane returns the next screen in the list each call,
 // then keeps returning the last one.
@@ -32,5 +32,28 @@ describe('waitForShellReady', () => {
       throw new Error('no pane');
     };
     expect(waitForShellReady('%1', run, { sleep: noSleep })).toBe(false);
+  });
+});
+
+describe('waitForShellReadyAsync', () => {
+  it('settles like the blocking version, but yields between polls', async () => {
+    let i = 0;
+    const frames = ['', 'Now using node v22', '❯ ', '❯ ', '❯ ', '❯ ', '❯ ', '❯ '];
+    const run = () => frames[Math.min(i++, frames.length - 1)];
+    const waits: number[] = [];
+    const ok = await waitForShellReadyAsync('%1', run, { stepMs: 100, quietMs: 500, sleep: async (ms) => void waits.push(ms) });
+    expect(ok).toBe(true);
+    expect(waits.length).toBe(i);
+    expect(waits.every((w) => w === 100)).toBe(true);
+  });
+  it('does not block the event loop while it waits', async () => {
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 5);
+    await waitForShellReadyAsync('%1', () => '❯ ', { stepMs: 20, quietMs: 60 });
+    clearInterval(timer);
+    expect(ticks).toBeGreaterThan(3);
+  });
+  it('gives up when capture-pane fails', async () => {
+    expect(await waitForShellReadyAsync('%1', () => { throw new Error('no pane'); }, { sleep: async () => {} })).toBe(false);
   });
 });

@@ -322,6 +322,7 @@ export function acquirePane(
   prefer: string,
   run: TmuxRunner = defaultRun,
   exclude: string[] = [],
+  wait = true, // false: the caller waits for the new shell itself (waitForShellReadyAsync)
 ): { ok: true; paneId: string; split: boolean } | { ok: false; detail: string } {
   const world = readWorld(run);
   const target = chooseTarget(exclude.length ? { ...world, panes: world.panes.filter((p) => !exclude.includes(p.pane_id)) } : world, readGeometry(run), lane, prefer);
@@ -334,7 +335,7 @@ export function acquirePane(
     return { ok: false, detail: 'split failed: ' + (e as Error).message };
   }
   nameNewPanes();
-  waitForShellReady(paneId, run);
+  if (wait) waitForShellReady(paneId, run);
   return { ok: true, paneId, split: true };
 }
 
@@ -351,6 +352,64 @@ export function acquirePaneAuto(projectDir: string, lane: string, prefer: string
   }
   const m = acquireManagedPane(projectDir, { run, ready: (id) => waitForShellReady(id, run) });
   return m.ok ? { ok: true, paneId: m.paneId, split: false, managed: true } : m;
+}
+
+/**
+ * waitForShellReady without blocking the thread. Loom's server runs inside the
+ * Electron main process, so the blocking version froze the whole app (every
+ * request, the hotkey, the pick overlay) for 0.6-8 s on each managed launch.
+ */
+export async function waitForShellReadyAsync(
+  paneId: string,
+  run: TmuxRunner = defaultRun,
+  opts: { maxMs?: number; quietMs?: number; stepMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<boolean> {
+  const maxMs = opts.maxMs ?? 8000, quietMs = opts.quietMs ?? 500, stepMs = opts.stepMs ?? 100;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let last = '';
+  let stableFor = 0;
+  for (let waited = 0; waited < maxMs; waited += stepMs) {
+    await sleep(stepMs);
+    let screen = '';
+    try {
+      screen = run(['capture-pane', '-p', '-t', paneId]).trim();
+    } catch {
+      return false;
+    }
+    if (screen && screen === last) {
+      stableFor += stepMs;
+      if (stableFor >= quietMs) return true;
+    } else {
+      stableFor = 0;
+      last = screen;
+    }
+  }
+  return false;
+}
+
+/** acquirePaneAuto, waiting for a new shell without blocking. `readyMs` is how long that wait took. */
+export async function acquirePaneAutoAsync(
+  projectDir: string,
+  lane: string,
+  prefer: string,
+  run: TmuxRunner = defaultRun,
+  exclude: string[] = [],
+): Promise<AcquiredPane & { readyMs?: number }> {
+  let r: AcquiredPane;
+  let fresh = false;
+  if (pickStrategy(readWorld(run)) === 'lanes') {
+    const a = acquirePane(projectDir, lane, prefer, run, exclude, false);
+    r = a.ok ? { ...a, managed: false } : a;
+    fresh = a.ok && a.split;
+  } else {
+    const m = acquireManagedPane(projectDir, { run });
+    r = m.ok ? { ok: true, paneId: m.paneId, split: false, managed: true } : m;
+    fresh = m.ok;
+  }
+  if (!r.ok || !fresh) return r;
+  const t = Date.now();
+  await waitForShellReadyAsync(r.paneId, run);
+  return { ...r, readyMs: Date.now() - t };
 }
 
 /**

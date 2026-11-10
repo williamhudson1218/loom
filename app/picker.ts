@@ -4,7 +4,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { pickedThread, parseSlackThread } from '../src/slackgoto.ts';
 import { NEW_THREAD_HTML, OVERLAY_HTML, PASTE_HTML, newThreadWhere } from '../src/pickpages.ts';
-import { needsTrustCheck, overlaysMatch, pressAction, PickTimer, type PickPhase } from '../src/pickstate.ts';
+import { hoverFor, needsTrustCheck, overlaysMatch, PickMachine, type HoverHit, type PickPhase } from '../src/pickstate.ts';
+import { newPressId, pickLog, type LogFields } from '../src/picklog.ts';
 
 // Pick mode for "open the chat for this Slack thread", shaped like the macOS
 // screenshot crosshairs: the hotkey covers every display with a transparent,
@@ -87,6 +88,7 @@ export function stopHelper(): void {
 interface Overlay {
   win: BrowserWindow;
   bounds: Rectangle;
+  index: number; // display number, for pick.log
   ready: boolean; // loaded and painted: showing it is instant
 }
 
@@ -94,19 +96,32 @@ interface Overlay {
 // per press made the crosshairs late and dropped clicks made before they
 // appeared (see src/pickstate.ts). They are rebuilt only when the displays change.
 let overlays: Overlay[] = [];
-let phase: PickPhase = 'idle';
-let shownAt = 0;
+const machine = new PickMachine();
 let ticker: NodeJS.Timeout | null = null;
 let openGuard: NodeJS.Timeout | null = null;
 let lastPoint = '';
 let busy = false;
-const timer = new PickTimer(!!process.env.LOOM_PICK_TIMING);
+let hover: HoverHit<Extract<HitReply, { ok: true }>> | null = null;
+// pick.log: one id per press ties its lines together (src/picklog.ts).
+let press = '';
+let pressAt = 0;
+const log = (event: string, fields: LogFields = {}) => pickLog().write(press, event, { ...fields, t: pressAt ? Date.now() - pressAt : undefined });
 
 export function picking(): boolean {
-  return phase !== 'idle';
+  return machine.phase !== 'idle';
 }
 
-function overlayFor(bounds: Rectangle): Overlay {
+/** The current press's log id, so main.ts can log the open under the same id. */
+export function currentPress(): string {
+  return press;
+}
+
+/** Log an event under the current press (main.ts: the open, the server's timings). */
+export function pickEvent(event: string, fields: LogFields = {}): void {
+  log(event, fields);
+}
+
+function overlayFor(bounds: Rectangle, index: number): Overlay {
   const w = new BrowserWindow({
     ...bounds,
     // A non-activating panel: showing it, and clicking it, never activates Loom
@@ -129,35 +144,55 @@ function overlayFor(bounds: Rectangle): Overlay {
     show: false,
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false },
   });
-  const o: Overlay = { win: w, bounds, ready: false };
-  // Above the menu bar and full-screen apps, like the screenshot crosshairs.
-  w.setAlwaysOnTop(true, 'screen-saver');
-  w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-  w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(OVERLAY_HTML) + '#' + encodeURIComponent(JSON.stringify({ x: bounds.x, y: bounds.y })));
+  const o: Overlay = { win: w, bounds, index, ready: false };
+  raise(w);
+  w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(OVERLAY_HTML) + '#' + encodeURIComponent(JSON.stringify({ x: bounds.x, y: bounds.y, d: index })));
   w.once('ready-to-show', () => {
     o.ready = true;
     // Pressed before this display's overlay was ready: show it now.
-    if (phase === 'picking' && !w.isDestroyed()) {
+    if (machine.phase === 'picking' && !w.isDestroyed()) {
+      raise(w);
       w.showInactive();
-      timer.mark('shown-late');
+      log('shown-late', { d: index, visible: w.isVisible() });
     }
   });
+  w.webContents.on('render-process-gone', (_e, d) => {
+    o.ready = false;
+    log('overlay-gone', { d: index, reason: d.reason });
+  });
   return o;
+}
+
+/**
+ * Put an overlay above everything and make it take every click. Done on every
+ * show, not once at build time: a reused hidden panel is not guaranteed to keep
+ * its level or Space membership across hide/show. And the click capture is made
+ * explicit: left at its default, macOS decides per pixel for a transparent
+ * window, so a click on an overlay whose first frame had not painted yet fell
+ * through to Slack, the "first click did nothing" case.
+ */
+function raise(w: BrowserWindow): void {
+  if (w.isDestroyed()) return;
+  // Above the menu bar and full-screen apps, like the screenshot crosshairs.
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  w.setIgnoreMouseEvents(false);
 }
 
 /** Build the overlays if the displays changed since they were built (or they died). */
 function prepareOverlays(): void {
   const displays = screen.getAllDisplays().map((d) => d.bounds);
-  const alive = overlays.every((o) => !o.win.isDestroyed());
+  const alive = overlays.every((o) => !o.win.isDestroyed() && !o.win.webContents.isCrashed());
   if (alive && overlaysMatch(overlays.map((o) => o.bounds), displays)) return;
   for (const o of overlays) if (!o.win.isDestroyed()) o.win.destroy();
-  overlays = displays.map((b) => overlayFor(b));
+  overlays = displays.map((b, i) => overlayFor(b, i));
+  pickLog().write('-', 'overlays-built', { n: overlays.length });
 }
 
 let displaysStale = false;
 function onDisplaysChanged(): void {
   // Never rebuild under an open pick; do it once the pick ends.
-  if (phase === 'idle') prepareOverlays();
+  if (machine.phase === 'idle') prepareOverlays();
   else displaysStale = true;
 }
 
@@ -183,18 +218,18 @@ function broadcast(channel: string, payload?: unknown): void {
 }
 
 /** End the pick: hide (not destroy) the overlays. Safe to call when idle. */
-export function endPick(): void {
+export function endPick(reason = 'end'): void {
   if (ticker) clearInterval(ticker);
   ticker = null;
   if (openGuard) clearTimeout(openGuard);
   openGuard = null;
   lastPoint = '';
-  if (phase !== 'idle') {
+  hover = null;
+  const was = machine.end();
+  if (was !== 'idle') {
     globalShortcut.unregister('Escape');
-    timer.mark('hidden');
-    if (process.env.LOOM_PICK_TIMING) console.error('[loom] pick timing:', timer.line());
+    log('end', { reason, phase: was });
   }
-  phase = 'idle';
   for (const o of overlays) if (!o.win.isDestroyed()) o.win.hide();
   broadcast('reset');
   if (displaysStale) {
@@ -203,39 +238,60 @@ export function endPick(): void {
   }
 }
 
-function showOverlays(): void {
+/** Show an error on the overlay, where the user is looking, then end the pick. */
+export function failPick(text: string, ms = 2200): void {
+  if (machine.phase === 'idle') return;
+  if (ticker) clearInterval(ticker);
+  ticker = null;
+  broadcast('error', text);
+  if (openGuard) clearTimeout(openGuard);
+  openGuard = setTimeout(() => endPick('error-shown'), ms);
+}
+
+function showOverlays(): boolean {
   prepareOverlays();
   broadcast('reset');
-  phase = 'picking';
-  shownAt = Date.now();
-  let shown = 0;
+  if (!machine.shown(Date.now())) return false;
   for (const o of overlays) {
     if (o.ready && !o.win.isDestroyed()) {
+      raise(o.win);
       o.win.showInactive();
-      shown++;
+      log('shown', { d: o.index, visible: o.win.isVisible(), x: o.bounds.x, y: o.bounds.y, w: o.bounds.width, h: o.bounds.height });
+    } else {
+      log('not-ready', { d: o.index });
     }
   }
-  if (shown) timer.mark('shown');
+  return true;
 }
 
 async function track(): Promise<void> {
-  if (busy || phase !== 'picking') return;
+  if (busy || machine.phase !== 'picking') return;
   const pt = screen.getCursorScreenPoint();
   const key = `${pt.x},${pt.y}`;
   if (key === lastPoint) return;
   lastPoint = key;
   busy = true;
   try {
-    const r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y });
-    if (phase === 'picking') broadcast('rect', r.ok ? r.rect : null);
+    // root:true, so the outlined message is a complete answer a click can use as is.
+    const r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y, root: true });
+    if (machine.phase !== 'picking') return;
+    if (r.ok) hover = { rect: r.rect, at: Date.now(), hit: r };
+    broadcast('rect', r.ok ? r.rect : null);
   } finally {
     busy = false;
   }
 }
 
+/** How an open went. Not ok: the overlay shows `detail` in place before it closes. */
+export interface GotoOutcome {
+  ok: boolean;
+  detail?: string;
+}
+
 export interface PickDeps {
   notify: (body: string) => void;
-  goto: (url: string, picked?: { text?: string; author?: string }) => Promise<void>; // POST the parent permalink (and the clicked message) to the server
+  /** POST the parent permalink (and the clicked message) to the server. Resolves once the chat is on screen. */
+  goto: (url: string, picked?: { text?: string; author?: string }) => Promise<GotoOutcome | void>;
   /** slack_paste_fallback: when the message cannot be read, offer a field to paste its link. */
   pasteFallback?: () => boolean;
 }
@@ -357,15 +413,22 @@ const GRANT_HINT = 'Switch on "slack-ax" in System Settings, Privacy & Security,
  * since a process can keep answering no after the switch is turned on.
  */
 export async function startPick(deps: PickDeps): Promise<void> {
-  const act = pressAction({ phase, shownAt, now: Date.now() });
+  const before = machine.phase;
+  const act = machine.press(Date.now());
+  if (act === 'open') {
+    press = newPressId();
+    pressAt = Date.now();
+  }
+  log('press', { act, phase: before });
   if (act === 'ignore') return;
-  if (act === 'cancel' || act === 'dismiss') return endPick();
-  timer.start();
+  if (act === 'cancel' || act === 'dismiss') return endPick(act === 'cancel' ? 'press-cancel' : 'press-dismiss');
   pickDeps = deps;
   if (helperUntrusted) stopHelper();
   if (needsTrustCheck(trustedCache)) {
     const t = await ask<{ trusted?: boolean; ok?: boolean; reason?: string }>({ op: 'trust' });
+    log('trust', { trusted: t.trusted === true, reason: t.reason });
     if (t.trusted !== true) {
+      machine.end();
       if (t.reason === 'helper_down') {
         if (await pasteInstead(deps, 'The Slack reader could not start. Copy the message link in Slack (right-click, Copy link) and paste it here.')) return;
         return deps.notify('The Slack reader (slack-ax) failed to start');
@@ -379,41 +442,72 @@ export async function startPick(deps: PickDeps): Promise<void> {
       return deps.notify('Loom reads Slack through its helper, slack-ax. ' + GRANT_HINT);
     }
     trustedCache = true;
-    timer.mark('trusted');
   }
   helperUntrusted = false;
-  if (phase !== 'idle') return; // a second press landed during the trust check
-  showOverlays();
+  if (!showOverlays()) return; // ended (Esc, a second press) during the trust check
   // The overlay never takes focus (see overlayFor), so Esc can only arrive as a
   // global shortcut, held just while picking.
-  globalShortcut.register('Escape', endPick);
+  globalShortcut.register('Escape', () => endPick('esc'));
   ticker = setInterval(() => void track(), HIT_EVERY_MS);
   void track(); // outline what is under the cursor now, not 100 ms from now
 }
 
 const OPEN_GUARD_MS = 15_000; // never leave the overlay up on a lost request
 
-const RETRY_MS = 80;
+// Slack's AX tree can answer late for a part of the page it has not been asked
+// about yet (Chromium hit-tests accessibility asynchronously): a few quick
+// retries before telling the user to click again.
+const RETRY_MS = [60, 120, 200];
 
-async function onClick(): Promise<void> {
-  if (phase !== 'picking' || !pickDeps) return;
-  const deps = pickDeps;
-  timer.mark('click');
-  const pt = screen.getCursorScreenPoint();
-  let r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y, root: true });
-  // Slack's AX tree can answer late for a part of the page it has not been asked
-  // about yet: one quick retry before telling the user to click again.
-  if (!r.ok && r.reason === 'not_message') {
-    await new Promise((res) => setTimeout(res, RETRY_MS));
-    if (phase !== 'picking') return;
-    r = await ask<HitReply>({ op: 'hit', x: pt.x, y: pt.y, root: true });
+/** What the overlay's renderer reports for a mousedown (src/pickpages.ts). */
+interface ClickMsg {
+  t?: number; // renderer Date.now() at the mousedown
+  x?: number; // global screen point of the click
+  y?: number;
+  d?: number; // display index
+  button?: number;
+}
+
+async function onClick(msg: ClickMsg = {}): Promise<void> {
+  const now = Date.now();
+  log('mousedown', { d: msg.d, x: msg.x, y: msg.y, button: msg.button, ipc_ms: msg.t ? now - msg.t : undefined, phase: machine.phase });
+  if (!pickDeps || machine.click() === 'drop') {
+    log('click-dropped', { reason: pickDeps ? machine.phase : 'no-deps' });
+    return;
   }
-  timer.mark('hit');
-  if (phase !== 'picking') return; // cancelled while the hit-test ran
+  const deps = pickDeps;
+  // Where the click was, not where the cursor is by the time this runs: the
+  // main process can be busy for a moment, and the pointer moves on.
+  const cur = screen.getCursorScreenPoint();
+  const x = typeof msg.x === 'number' ? msg.x : cur.x;
+  const y = typeof msg.y === 'number' ? msg.y : cur.y;
+  const tHit = Date.now();
+  let r: HitReply;
+  let source = 'hover';
+  let tries = 0;
+  const seen = hoverFor(hover, x, y, tHit);
+  if (seen) r = seen;
+  else {
+    source = 'helper';
+    r = await ask<HitReply>({ op: 'hit', x, y, root: true });
+    tries = 1;
+    for (const wait of RETRY_MS) {
+      if (r.ok || r.reason !== 'not_message' || machine.phase !== 'hitting') break;
+      await new Promise((res) => setTimeout(res, wait));
+      if (machine.phase !== 'hitting') break;
+      r = await ask<HitReply>({ op: 'hit', x, y, root: true });
+      tries++;
+    }
+  }
+  log('hit', { source, tries, ms: Date.now() - tHit, ok: r.ok, reason: r.ok ? undefined : r.reason, channel: r.ok ? r.url : undefined, in_thread: r.ok ? r.inThread : undefined });
+  if (machine.phase !== 'hitting') return log('click-abandoned', { phase: machine.phase }); // cancelled while the hit-test ran
   if (!r.ok) {
-    if (r.reason === 'not_message') return broadcast('hint', 'Not a Slack message. Click a message, or press Esc.');
-    if (r.reason === 'covered') return broadcast('hint', 'Slack is behind another window there.');
-    endPick();
+    if (r.reason === 'not_message' || r.reason === 'covered') {
+      machine.retry();
+      log('hint', { reason: r.reason });
+      return broadcast('hint', r.reason === 'covered' ? 'Slack is behind another window there.' : 'Not a Slack message. Click a message, or press Esc.');
+    }
+    endPick('hit-' + r.reason);
     if (r.reason === 'untrusted') {
       helperUntrusted = true;
       trustedCache = false;
@@ -427,25 +521,34 @@ async function onClick(): Promise<void> {
   const ref = pickedThread(r);
   if (!ref) {
     // No permalink to read: only now is the paste field better than another click.
-    endPick();
+    endPick('no-permalink');
     if (await pasteInstead(deps, 'That message has no permalink. Copy its link in Slack and paste it here.')) return;
     return deps.notify('That message has no permalink.');
   }
-  // Keep the overlay up, saying so, until the chat opens (goto calls endPick
-  // itself before it shows a prompt). Further clicks are ignored; Esc or the
-  // hotkey dismisses the overlay and the open carries on.
-  phase = 'opening';
+  // Keep the overlay up, saying so, until the chat is on screen (goto calls
+  // endPick itself before it shows a prompt). Further clicks are dropped; Esc or
+  // the hotkey dismisses the overlay and the open carries on.
+  machine.opening();
   if (ticker) clearInterval(ticker);
   ticker = null;
   broadcast('rect', r.rect);
   broadcast('busy', 'Opening…');
-  openGuard = setTimeout(endPick, OPEN_GUARD_MS);
+  openGuard = setTimeout(() => endPick('open-guard'), OPEN_GUARD_MS);
+  const tGo = Date.now();
+  log('goto-start', { channel: ref.url });
+  let out: GotoOutcome | void;
   try {
-    await deps.goto(ref.url, { text: r.text, author: r.author });
-  } finally {
-    timer.mark('opened');
-    if (phase === 'opening') endPick();
+    out = await deps.goto(ref.url, { text: r.text, author: r.author });
+  } catch (e) {
+    out = { ok: false, detail: (e as Error).message };
   }
+  log('goto-end', { ms: Date.now() - tGo, ok: out ? out.ok : true, phase: machine.phase });
+  if (machine.phase as PickPhase !== 'opening') return; // dismissed (Esc, the hotkey) while it opened
+  if (out && !out.ok) return failPick(out.detail || 'Could not open the chat for this thread');
+  endPick('opened');
 }
 
-ipcMain.on('loom-pick-click', () => void onClick());
+ipcMain.on('loom-pick-click', (_e, msg: ClickMsg) => void onClick(msg));
+ipcMain.on('loom-pick-painted', (_e, m: { d?: number; t?: number; vis?: string }) => {
+  log('painted', { d: m?.d, ipc_ms: m?.t ? Date.now() - m.t : undefined, vis: m?.vis, phase: machine.phase });
+});
