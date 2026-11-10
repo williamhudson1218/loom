@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
 import {
+  realignView,
   TERM_PATH,
   allowedOrigins,
   attachArgs,
@@ -724,5 +725,48 @@ describe('mode selection and input encoding', () => {
     const s = snapshotPane('%1', fake);
     expect(s).toMatchObject({ cols: 80, rows: 24 });
     expect(s.data).toBe('\x1b[0m\x1b[H\x1b[2J\x1b[3Jline one\r\nline two\x1b[0m\x1b[2;4H\x1b[?25h');
+  });
+});
+
+describe('realignView', () => {
+  // A fake tmux holding each pane's window and each view's current window.
+  function fake(views: Record<string, string>, panes: Record<string, string>) {
+    const calls: string[][] = [];
+    const tmux = (a: string[]) => {
+      calls.push(a);
+      if (a[0] === 'display-message') {
+        const t = a[3];
+        if (t.startsWith('=')) return (views[t.slice(1, -1)] ?? '') + '\n';
+        return (panes[t] ?? '') + '\n';
+      }
+      if (a[0] === 'select-window') {
+        const [v, w] = a[2].slice(1).split(':');
+        views[v] = w;
+      }
+      return '';
+    };
+    return { tmux, calls, views };
+  }
+  it("puts a view that drifted to another chat's window back on its own pane", () => {
+    const f = fake({ 'loom-view-0de2': '@1039' }, { '%899': '@854', '%1084': '@1039' });
+    expect(realignView('loom-view-0de2', '%899', f.tmux)).toEqual({ moved: true, from: '@1039', to: '@854' });
+    expect(f.views['loom-view-0de2']).toBe('@854');
+    expect(f.calls).toContainEqual(['select-window', '-t', '=loom-view-0de2:@854']);
+  });
+  it('leaves a view that is already right alone', () => {
+    const f = fake({ 'loom-view-0de2': '@854' }, { '%899': '@854' });
+    expect(realignView('loom-view-0de2', '%899', f.tmux)).toEqual({ moved: false });
+    expect(f.calls.some((c) => c[0] === 'select-window')).toBe(false);
+  });
+  it('never touches a session that is not a view', () => {
+    const f = fake({ 'loom-managed': '@1039' }, { '%899': '@854' });
+    expect(realignView('loom-managed', '%899', f.tmux)).toEqual({ moved: false });
+    expect(f.calls).toEqual([]);
+  });
+  it('reports a gone pane instead of throwing', () => {
+    const tmux = () => {
+      throw new Error("can't find pane");
+    };
+    expect(realignView('loom-view-0de2', '%1', tmux)).toMatchObject({ moved: false, error: "can't find pane" });
   });
 });

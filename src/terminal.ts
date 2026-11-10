@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import { tmux } from './tmux.ts';
-import { isViewSession } from './tmux.ts';
+import { isViewSession, paneHome } from './tmux.ts';
 import { parseLane } from './compact.ts';
 import { openDb } from './db.ts';
 import { getSetting } from './settingsSchema.ts';
@@ -199,7 +199,10 @@ export interface TerminalAdapter {
 
 function selectInTmux(target: JumpTarget, deps: JumpDeps): GotoResult | null {
   try {
-    deps.tmux(['select-window', '-t', target.paneId]);
+    // Explicitly in the pane's own session: a bare pane target would switch one
+    // of Loom's terminal views instead (see paneHome).
+    const home = paneHome(target.paneId, deps.tmux);
+    deps.tmux(['select-window', '-t', home ? `=${home.session}:${home.window}` : target.paneId]);
     deps.tmux(['select-pane', '-t', target.paneId]);
     return null;
   } catch (e) {

@@ -1549,7 +1549,10 @@ function renderMain(){const box=$('#chatmain');renderOutbox();
   $('#mtxwrap').style.display=eff==='transcript'?'':'none';
   $('#mfoot').style.display=eff==='transcript'?'':'none';
   if(eff==='terminal'){syncTerm(L);}else{closeTerm();renderBanner(c,live);renderAside(c,L);}}
-function syncTerm(L){const key=L.pane_id+'|'+selKey();if(termKey===key)return;openTerm(L.pane_id,$('#mterm'));termKey=key;}
+// Same chat still selected: the terminal is already open, but tell the server to put its view back on this
+// chat's pane, in case something moved it (ptybridge.realignView). Cheap, and runs on every render.
+function syncTerm(L){const key=L.pane_id+'|'+selKey();if(termKey===key){alignTerm();return;}openTerm(L.pane_id,$('#mterm'));termKey=key;}
+function alignTerm(){try{if(termWs&&termWs.readyState===1)termWs.send(JSON.stringify({t:'a'}));}catch(e){}}
 function renderTabsBar(live,eff){const el=$('#mtabs');const sig=live+'|'+eff+'|'+!!TERM_TOKEN;if(el.dataset.sig===sig)return;el.dataset.sig=sig;
   const can=live&&!!TERM_TOKEN;
   el.innerHTML='<button type="button" role="tab" class="mtab'+(eff==='terminal'?' on':'')+'" data-t="terminal"'+(can?'':' disabled title="'+(live?'the terminal needs the running Loom server':'not running')+'"')+'>Terminal</button>'+
@@ -1741,7 +1744,7 @@ function termCmd(action,bar){if(!termView)return;const msg=bar.querySelector('.t
 function closeTerm(){termSeq++;const e=cur;termKey='';termView='';cur=null;termRO=null;termWs=null;term=null;termFit=null;termEl=null;if(!e)return;
   if(e.key&&e.mode==='attach'&&!e.dead&&e.ws&&e.ws.readyState===1){e.parked=true;e.col.style.display='none';for(const x of termPool.park(e.key,e))destroyEnt(x.v);}else destroyEnt(e);}
 function destroyEnt(e){if(e.destroyed)return;e.destroyed=true;if(e.ro)e.ro.disconnect();try{if(e.ws)e.ws.close();}catch(x){}try{e.term.dispose();}catch(x){}if(e.col.parentNode)e.col.remove();}
-function showWarm(e,el){e.parked=false;termEl=el;cur=e;term=e.term;termWs=e.ws;termFit=e.fit;termRO=e.ro;termView=e.view;e.col.style.display='';try{e.fit.fit();}catch(x){}e.term.focus();}
+function showWarm(e,el){e.parked=false;termEl=el;cur=e;term=e.term;termWs=e.ws;termFit=e.fit;termRO=e.ro;termView=e.view;e.col.style.display='';try{e.fit.fit();}catch(x){}alignTerm();e.term.focus();}
 // Hover a sidebar row for 150ms and its screen is fetched, so the click paints at once.
 var hoverT=0;function wireHoverPrefetch(){const sl=$('#sidelist');if(!sl)return;sl.addEventListener('mouseover',e=>{const r=e.target.closest&&e.target.closest('.srow[data-sid]');clearTimeout(hoverT);if(!r||!TERM_TOKEN)return;hoverT=setTimeout(()=>{const c=rowChat(r);const p=c&&!c.arch&&livePaneFor(c.session_id,c.agent);if(p&&!termPool.has(p))snapCache.get(p);},150);});sl.addEventListener('mouseleave',()=>clearTimeout(hoverT));}
 // ---- Terminals --------------------------------------------------------------------

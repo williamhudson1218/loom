@@ -1,4 +1,4 @@
-import { tmux } from './tmux.ts';
+import { isViewSession, paneHome, tmux } from './tmux.ts';
 import type { Agent } from './types.ts';
 import { recordPlacement } from './placements.ts';
 import { RESUME_FULL_ENV, ansiQuote, claudeCommand, promptArg, shq, type LaunchSettings } from './launch.ts';
@@ -145,6 +145,8 @@ export function launchInPane(input: LaunchInPaneInput): GotoResult {
     paneInfo = tmux(['display-message', '-p', '-t', input.paneId,
       `#{session_name}${PANE_INFO_SEP}#{window_index}${PANE_INFO_SEP}#{pane_index}${PANE_INFO_SEP}#{pane_current_path}`]).trim().split(PANE_INFO_SEP);
     tmuxSession = paneInfo[0] ?? '';
+    // display-message resolves a bare pane to an attached view of its group; use the real session.
+    if (isViewSession(tmuxSession)) tmuxSession = paneHome(input.paneId, (a) => tmux(a))?.session ?? '';
   } catch {
     /* focus will be skipped */
   }

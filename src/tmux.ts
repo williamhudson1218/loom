@@ -29,6 +29,29 @@ export const DEFAULT_SOCKET = 'default';
 export const VIEW_SESSION_PREFIX = 'loom-view-';
 export const isViewSession = (name: string | undefined): boolean => !!name && name.startsWith(VIEW_SESSION_PREFIX);
 
+/**
+ * The pane's real session and window, never a view. A pane target alone is
+ * ambiguous while a view of its group exists: tmux resolves it to the "best"
+ * session holding the window, which is an attached view (Loom's terminal) over
+ * the unattached session it was made from. So `select-window -t %42` switched the
+ * VIEW to that window, and the terminal of whatever chat that view was showing
+ * (or would be shown again from the warm pool) displayed another chat's pane.
+ * Target `=<session>:<window_id>` from this instead. null when the pane is gone.
+ */
+export function paneHome(paneId: string, run: (args: string[]) => string): { session: string; window: string; windowIndex: string } | null {
+  let out = '';
+  try {
+    out = run(['list-panes', '-a', '-F', '#{pane_id}\t#{session_name}\t#{window_id}\t#{window_index}']);
+  } catch {
+    return null;
+  }
+  for (const l of out.split('\n')) {
+    const [id, session, window, windowIndex = ''] = l.split('\t');
+    if (id === paneId && session && !isViewSession(session)) return { session, window, windowIndex };
+  }
+  return null;
+}
+
 const SOCKET_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
 
 let configured: string | null = null;

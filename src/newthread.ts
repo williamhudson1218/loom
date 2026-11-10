@@ -7,7 +7,7 @@ import { parseJsonlFile } from './parser.ts';
 import { upsertChat } from './indexer.ts';
 import { defaultRun, laneTargets, nextOpenPane, parseLane, readWorld, type TmuxRunner, type WorldState } from './compact.ts';
 import { launchInPane, type GotoResult } from './goto.ts';
-import { isViewSession } from './tmux.ts';
+import { isViewSession, paneHome } from './tmux.ts';
 import { nameNewPanes } from './panenames.ts';
 import { isValidProjectDir } from './findchat.ts';
 import { acquireManagedPane, pickStrategy } from './managed.ts';
@@ -473,6 +473,8 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun,
   let where = paneId;
   try {
     where = run(['display-message', '-p', '-t', paneId, '#{session_name} · pane #{pane_index}']).trim();
+    // A bare pane resolves to an attached view of its group; name the real session.
+    if (isViewSession(where.split(' · ')[0])) where = (paneHome(paneId, run)?.session ?? paneId) + ' · pane ' + where.split(' · pane ')[1];
   } catch {
     /* the id is still a usable address */
   }

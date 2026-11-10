@@ -111,3 +111,12 @@ describe('the page script', () => {
     expect(html).toContain('#chatmain.empty > :not(#mempty):not(#mpending)');
   });
 });
+
+describe('the terminal follows the selected chat', () => {
+  it('re-aligns its view on every render of the same chat and when taken from the warm pool', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude', [], [], 'tok');
+    expect(html).toContain("if(termKey===key){alignTerm();return;}");
+    expect(html).toContain('try{e.fit.fit();}catch(x){}alignTerm();e.term.focus();');
+    expect(html).toContain("termWs.send(JSON.stringify({t:'a'}))");
+  });
+});

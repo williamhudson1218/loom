@@ -126,10 +126,23 @@ describe('adapters', () => {
   it('ghostty keeps the original sequence: select-window, select-pane, title-match script', () => {
     const f = fakeDeps();
     const r = jumpWith('ghostty', target, f.deps);
-    expect(f.calls).toEqual([['select-window', '-t', '%7'], ['select-pane', '-t', '%7']]);
+    expect(f.calls.filter((c) => c[0] !== 'list-panes')).toEqual([['select-window', '-t', '%7'], ['select-pane', '-t', '%7']]);
     expect(f.osa).toEqual([{ script: GHOSTTY_FOCUS_SCRIPT, args: ['loom-tp-2'] }]);
     expect(r).toEqual({ ok: true, detail: 'tmux ok; ghostty ok' });
     expect(f.opened).toEqual([]);
+  });
+
+  it("selects the window in the pane's own session, never in one of Loom's terminal views", () => {
+    // tmux resolves a bare pane target to an attached view of the group, so
+    // `select-window -t %1084` moved a view, and another chat's terminal showed this pane.
+    const listing = ['%899\tloom-view-0de2\t@854\t2', '%1084\tloom-view-0de2\t@1039\t7', '%1084\tloom-managed\t@1039\t7', ''].join('\n');
+    for (const k of ['inside', 'ghostty'] as const) {
+      const f = fakeDeps({ tmux: (a) => (f.calls.push(a), a[0] === 'list-panes' ? listing : '') });
+      jumpWith(k, { paneId: '%1084', session: 'loom-managed' }, f.deps);
+      const sel = f.calls.filter((c) => c[0] === 'select-window');
+      expect(sel).toEqual([['select-window', '-t', '=loom-managed:@1039']]);
+      expect(f.calls.some((c) => c.some((x) => x.includes('loom-view')))).toBe(false);
+    }
   });
 
   it('ghostty: a failed focus is still ok (tmux selected)', () => {

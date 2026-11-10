@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { configureTmuxSocket, isViewSession, tmuxArgs, tmuxSocket } from '../src/tmux.ts';
+import { configureTmuxSocket, isViewSession, paneHome, tmuxArgs, tmuxSocket } from '../src/tmux.ts';
 
 describe('tmux runner', () => {
   const env = process.env.LOOM_TMUX_SOCKET;
@@ -46,5 +46,15 @@ describe('tmux runner', () => {
     expect(isViewSession('loom-tp-2')).toBe(false);
     expect(isViewSession('')).toBe(false);
     expect(isViewSession(undefined)).toBe(false);
+  });
+});
+
+describe('paneHome', () => {
+  it("is the pane's own session and window, skipping the views that repeat it", () => {
+    const out = ['%1084\tloom-view-0de2\t@1039\t7', '%1084\tloom-managed\t@1039\t7', '%899\tloom-managed\t@854\t2'].join('\n');
+    expect(paneHome('%1084', () => out)).toEqual({ session: 'loom-managed', window: '@1039', windowIndex: '7' });
+    expect(paneHome('%5', () => out)).toBeNull();
+    expect(paneHome('%1084', () => '%1084\tloom-view-x\t@1\t1')).toBeNull();
+    expect(paneHome('%1', () => { throw new Error('no server'); })).toBeNull();
   });
 });

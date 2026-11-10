@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { VIEW_SESSION_PREFIX, isViewSession, tmux as runTmux, tmuxArgs } from './tmux.ts';
+import { pickLog } from './picklog.ts';
 import { agentPaneIds, listTmuxPanes } from './placements.ts';
 import { isTerminalWindow } from './terminals.ts';
 import { getLaneView, openDb, type LaneView } from './db.ts';
@@ -310,6 +311,26 @@ export function reassertZoom(view: string, tmux: Tmux, now: number = Date.now())
 }
 
 /**
+ * Keep a chat view on its own pane's window. A view is a grouped session, so its
+ * current window can be moved by anything that targets the group loosely: a
+ * window closing under it, or a jump that addressed a bare pane id and landed on
+ * this view (paneHome). The terminal then showed another chat's pane under the
+ * selected chat's header. Returns what it did; `moved` false when it was right.
+ */
+export function realignView(view: string, paneId: string, tmux: Tmux): { moved: boolean; from?: string; to?: string; error?: string } {
+  if (!isViewSession(view)) return { moved: false };
+  try {
+    const want = tmux(['display-message', '-p', '-t', paneId, '#{window_id}']).trim();
+    const have = tmux(['display-message', '-p', '-t', `=${view}:`, '#{window_id}']).trim();
+    if (!want || want === have) return { moved: false };
+    tmux(['select-window', '-t', `=${view}:${want}`]);
+    return { moved: true, from: have, to: want };
+  } catch (e) {
+    return { moved: false, error: (e as Error).message };
+  }
+}
+
+/**
  * A view of a whole terminal window: grouped session, that window selected,
  * status bar off, nothing zoomed. Throws if it isn't a terminal window.
  */
@@ -522,14 +543,16 @@ export interface BridgeDeps {
 // Server -> client: BINARY frames are terminal output bytes; TEXT frames are
 // JSON control: {t:'mode', mode:'attach'|'mirror', cols, rows} first, then
 // {t:'size', cols, rows} when a mirrored pane resizes, {t:'error', message}.
-// {t:'s'} asks a mirror for a fresh snapshot.
-type ClientFrame = { t: 'i'; d: string } | { t: 'r'; c: number; r: number } | { t: 's' };
+// {t:'s'} asks a mirror for a fresh snapshot. {t:'a'}: the page is showing this
+// chat view (selected, rendered, or taken from the warm pool): put it back on its pane.
+type ClientFrame = { t: 'i'; d: string } | { t: 'r'; c: number; r: number } | { t: 's' } | { t: 'a' };
 
 function parseFrame(raw: string): ClientFrame | null {
   try {
     const f = JSON.parse(raw) as Record<string, unknown>;
     if (f.t === 'i' && typeof f.d === 'string') return { t: 'i', d: f.d };
     if (f.t === 's') return { t: 's' };
+    if (f.t === 'a') return { t: 'a' };
     if (f.t === 'r' && Number.isInteger(f.c) && Number.isInteger(f.r)) {
       const c = f.c as number;
       const r = f.r as number;
@@ -942,8 +965,14 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
     let zoomed = viewZoomed(view, tmux);
     sendCtl(ws, { t: 'mode', mode, cols, rows, view, kind, zoomed });
     if (mode === 'zoom' && paneId) noteZoomOpen(view, paneId, tmux);
+    const align = (why: string) => {
+      if (kind !== 'chat' || !paneId) return;
+      const r = realignView(view, paneId, tmux);
+      if (r.moved || r.error) pickLog().write('-', 'view-realigned', { why, view, pane: paneId, from: r.from, to: r.to, error: r.error });
+    };
     if (kind === 'chat') {
       const poll = setInterval(() => {
+        align('poll');
         if (mode === 'zoom') reassertZoom(view, tmux);
         const z = viewZoomed(view, tmux);
         if (z !== zoomed) {
@@ -958,6 +987,7 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
     pty.onExit(() => finish());
     frames(ws, (f) => {
       if (f.t === 'i') pty.write(f.d);
+      else if (f.t === 'a') align('shown');
       else if (f.t === 'r') {
         try {
           pty.resize(f.c, f.r);
