@@ -1,5 +1,7 @@
 // The Outbox: Slack drafts that chats propose, shown the way Slack would show
-// them. Each chat has its own outbox: a thin strip on the right edge of the chat
+// them. A draft may also carry a GitHub PR review (verdict, body, inline
+// comments) and Slack reactions; the card shows the review above the Slack
+// preview, and Send posts the whole bundle (review, then messages, then reactions). Each chat has its own outbox: a thin strip on the right edge of the chat
 // view (both tabs) when that chat has pending drafts, which expands into a drawer
 // with the full Slack-style cards. There is no global all-drafts view.
 // Every write still goes through /api/outbox/send|discard (the CLI lock and the
@@ -96,6 +98,28 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .slk-fchip { font-size:12px; padding:3px 8px; border-radius:6px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
   .slk-noimg { color:#8a90a2; font-style:italic; }
   .slk-burst.queued { opacity:.55; }
+  .gh-sec { padding:10px 12px; background:#11151d; border-bottom:1px solid #1d2a4a; color:#d1d5de; font-size:13px; line-height:1.45; }
+  .gh-hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+  .gh-pr { color:#9cc0ff; font-weight:600; text-decoration:none; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .gh-pr:hover { text-decoration:underline; }
+  .gh-badge { font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:1px 8px; border-radius:999px; flex:0 0 auto; }
+  .gh-badge.approve { background:rgba(46,160,67,.2); color:#56d364; }
+  .gh-badge.changes { background:rgba(248,81,73,.18); color:#ff7b72; }
+  .gh-badge.comment { background:rgba(139,148,158,.2); color:#b1bac4; }
+  .gh-done { font-size:11.5px; color:#7fd6a0; }
+  .gh-done a { color:#7fd6a0; }
+  .gh-body { margin:4px 0 8px; overflow-wrap:anywhere; }
+  .gh-cmts { display:flex; flex-direction:column; gap:6px; }
+  .gh-cmt { border:1px solid #262c3a; border-radius:6px; padding:6px 8px; background:#0d1117; }
+  .gh-loc { font:11.5px/1.4 Monaco,Menlo,Consolas,monospace; color:#8b949e; margin-bottom:3px; overflow-wrap:anywhere; }
+  .gh-txt { overflow-wrap:anywhere; }
+  .gh-code { font:12px/1.4 Monaco,Menlo,Consolas,monospace; background:rgba(110,118,129,.25); border-radius:4px; padding:1px 4px; }
+  .gh-pre { margin:4px 0; font:12px/1.5 Monaco,Menlo,Consolas,monospace; background:#161b22; border:1px solid #262c3a; border-radius:6px; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .gh-more { margin-top:6px; background:transparent; color:#9cc0ff; padding:0; font-size:12px; }
+  .gh-more:hover { text-decoration:underline; background:transparent; }
+  .gh-warn { margin-top:8px; padding:6px 8px; border-radius:6px; background:rgba(212,167,44,.14); border:1px solid rgba(212,167,44,.35); color:#e8b84b; font-size:12px; }
+  .gh-rx { padding:7px 12px; border-top:1px solid #1d2a4a; font-size:12px; color:#a3a9b8; }
+  .dconf .gh-warn { margin-top:0; }
   @keyframes dspin { to { transform:rotate(360deg); } }
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
@@ -144,6 +168,22 @@ function draftThreadOf(all,sid){var ds=draftsOfChat(all,sid).filter(function(d){
     if(m)return {key:m[2]+'/'+m[3]+'.'+m[4],url:m[1]+'/archives/'+m[2]+'/p'+m[3]+m[4]};}
   return null;}
 function destInitial(l){var m=String(l||'').replace(/^[#@]/,'').trim();return (m.charAt(0)||'?').toUpperCase();}
+// ---- the GitHub review on a draft
+function reviewBadge(ev){return ev==='APPROVE'?{cls:'approve',label:'Approve'}:ev==='REQUEST_CHANGES'?{cls:'changes',label:'Request changes'}:{cls:'comment',label:'Comment'};}
+var REVIEW_SHOW=3;
+// Inline comments on the card: the first few, or all of them once "show all" is pressed.
+function reviewShown(n,all){return all?n:Math.min(n,REVIEW_SHOW);}
+function ghEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// GitHub markdown, readable rather than faithful: fenced blocks, code spans, bold, links, line breaks.
+function ghInline(t){var bt=String.fromCharCode(96);var parts=String(t).split(new RegExp('('+bt+'[^'+bt+'\n]+'+bt+')'));
+  return parts.map(function(p,i){if(i%2===1)return '<code class="gh-code">'+ghEsc(p.slice(1,-1))+'</code>';
+    return ghEsc(p).replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>').replace(/\[([^\]]+)\]\((https?:[/][/][^)\s"]+)\)/g,'<a class="slk-link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>').replace(/\n/g,'<br>');}).join('');}
+function ghRender(text){var f=String.fromCharCode(96,96,96);var parts=String(text||'').split(new RegExp(f+'[^\\n]*\\n?([\\s\\S]*?)'+f));
+  return parts.map(function(p,i){if(i%2===1)return '<pre class="gh-pre">'+ghEsc(p.replace(/\n$/,''))+'</pre>';return ghInline(p.replace(/^\n+|\n+$/g,''));}).filter(function(x){return x;}).join('');}
+function reviewLoc(c){var l=c.start_line?c.start_line+'-'+c.line:String(c.line);return c.path+':'+l+(c.side==='LEFT'?' (old)':'');}
+function reviewPrLabel(r){return r.repo+'#'+r.pr;}
+// "React :eyes: :white_check_mark:, remove :large_orange_circle:" per message the reactions go on.
+function reactionParts(rx){return (rx||[]).map(function(r){return {add:r.add||[],remove:r.remove||[],channel:r.channel,ts:r.ts};});}
 `;
 
 export const OUTBOX_VIEW_JS = String.raw`
@@ -161,7 +201,29 @@ function loadSlkData(){if(slkLoading)return;const needDir=!SLK_DIR||Date.now()-s
   Promise.all([needDir?fetch('/api/slack/directory').then(r=>r.json()).catch(()=>null):Promise.resolve(SLK_DIR),SLK_EMOJI?Promise.resolve(SLK_EMOJI):fetch('/api/emoji-map').then(r=>r.json()).catch(()=>null)]).then(a=>{
     if(needDir){SLK_DIR=a[0]&&a[0].ok?a[0]:(SLK_DIR||{users:{},channels:{},custom:{},me:{}});slkAt=Date.now();}
     SLK_EMOJI=a[1]||SLK_EMOJI||{};slkLoading=false;renderOutbox();}).catch(()=>{slkLoading=false;});}
-function draftDestLabel(d){const u=slkCtx().users;let l=d.label||d.channel;if(l===d.channel&&u[d.channel])l='@'+u[d.channel];return l;}
+function draftDestLabel(d){const u=slkCtx().users;let l=d.label||d.channel;if(l===d.channel&&u[d.channel])l='@'+u[d.channel];if(!l&&d.review)l=reviewPrLabel(d.review);return l;}
+// The PR head, fetched once a minute per review card, for the "new commits since" warning.
+var REVIEW_HEAD={},REVIEW_ALL={},STALE_ACK={};
+function loadReviewHead(d){if(!d.review||d.review_posted)return;const h=REVIEW_HEAD[d.id];if(h&&(h.loading||Date.now()-h.at<60000))return;REVIEW_HEAD[d.id]=Object.assign({},h||{},{loading:1,at:Date.now()});
+  fetch('/api/outbox/review-head?id='+encodeURIComponent(d.id)).then(r=>r.json()).then(j=>{const was=JSON.stringify(REVIEW_HEAD[d.id]&&[REVIEW_HEAD[d.id].stale,REVIEW_HEAD[d.id].head]);REVIEW_HEAD[d.id]={at:Date.now(),stale:!!j.stale,head:j.head||'',title:j.title||'',url:j.url||''};if(JSON.stringify([!!j.stale,j.head||''])!==was)renderOutbox();}).catch(()=>{REVIEW_HEAD[d.id]={at:Date.now(),stale:false,head:''};});}
+function reviewStale(d){return !!(d.review&&!d.review_posted&&REVIEW_HEAD[d.id]&&REVIEW_HEAD[d.id].stale);}
+function staleWarnHtml(d){const h=REVIEW_HEAD[d.id]||{};return '<div class="gh-warn" role="alert">PR has new commits since this review was drafted'+(h.head?' (head '+esc(String(h.head).slice(0,7))+', drafted on '+esc(d.review.commit_id.slice(0,7))+')':'')+'. It still posts against the drafted commit.</div>';}
+function emojiHtml(n){const h=typeof slkEmoji==='function'?slkEmoji(n,null,slkCtx()):null;return h||(':'+esc(n)+':');}
+function reactionsHtml(d){const rx=reactionParts(d.reactions);if(!rx.length)return '';return '<div class="gh-rx">'+rx.map(function(r){const bits=[];if(r.add.length)bits.push('React '+r.add.map(emojiHtml).join(' '));if(r.remove.length)bits.push((r.add.length?'remove ':'Remove ')+r.remove.map(emojiHtml).join(' '));
+    return bits.join(', ')+' on the '+(d.thread_ts&&r.ts===d.thread_ts?'request message':'message '+esc(r.ts));}).join('<br>')+'</div>';}
+function reviewHtml(d){const r=d.review;if(!r)return '';loadReviewHead(d);const b=reviewBadge(r.event);const h=REVIEW_HEAD[d.id]||{};const url=r.url||h.url||('https://github.com/'+r.repo+'/pull/'+r.pr);const title=r.title||h.title||'';
+  const cs=r.comments||[];const n=reviewShown(cs.length,!!REVIEW_ALL[d.id]);
+  const done=d.review_posted?'<span class="gh-done">✓ Review posted'+(/^https:[/][/]github[.]com[/]/.test(d.review_posted.url||'')?' <a href="'+esc(d.review_posted.url)+'" target="_blank" rel="noopener noreferrer">view</a>':'')+'</span>':'';
+  return '<div class="gh-sec"><div class="gh-hd"><span class="gh-badge '+b.cls+'">'+b.label+'</span><a class="gh-pr" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" title="'+esc(reviewPrLabel(r)+(title?' '+title:''))+'">'+esc(reviewPrLabel(r))+(title?' · '+esc(title):'')+'</a>'+done+'</div>'
+    +(r.body?'<div class="gh-body">'+ghRender(r.body)+'</div>':'')
+    +(cs.length?'<div class="gh-cmts">'+cs.slice(0,n).map(function(c){return '<div class="gh-cmt"><div class="gh-loc">'+esc(reviewLoc(c))+'</div><div class="gh-txt">'+ghRender(c.body)+'</div></div>';}).join('')+'</div>'
+      +(cs.length>REVIEW_SHOW?'<button type="button" class="gh-more" data-dact="review-all">'+(REVIEW_ALL[d.id]?'Show fewer':'Show all '+cs.length+' comments')+'</button>':''):'')
+    +(reviewStale(d)&&draftConfirm!==d.id?staleWarnHtml(d):'')+'</div>';}
+// What the confirm says it will do, in send order.
+function confirmWhat(d,texts){const parts=[];if(d.review&&!d.review_posted){const b=reviewBadge(d.review.event);const n=(d.review.comments||[]).length;parts.push('post the review ('+b.label+(n?', '+n+' comment'+(n===1?'':'s'):'')+') on '+reviewPrLabel(d.review));}
+  if(texts.length){const nf=(d.files||[]).reduce(function(n,f){return n+f.length;},0);parts.push('post as '+senderName()+' to '+draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'')+(texts.length>1?' ('+texts.length+' messages)':'')+(nf?' with '+nf+' file(s)':''));}
+  const nr=(d.reactions||[]).reduce(function(n,r){return n+(r.add||[]).length+(r.remove||[]).length;},0);if(nr)parts.push('apply '+nr+' reaction change'+(nr===1?'':'s'));
+  const s=parts.join(', then ');return s.charAt(0).toUpperCase()+s.slice(1)+(d.review_posted?' (the review is already posted)':'');}
 function senderName(){return (SLK_DIR&&SLK_DIR.me&&SLK_DIR.me.name)||'You';}
 function avatarHtml(){const m=(SLK_DIR&&SLK_DIR.me)||{};const n=senderName();if(m.avatar&&m.avatar.indexOf('https://')===0)return '<img class="slk-av" alt="" src="'+esc(m.avatar)+'">';return '<span class="slk-av" aria-hidden="true">'+esc(n.charAt(0).toUpperCase()||'?')+'</span>';}
 function draftHeadHtml(d,stale){const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
@@ -183,16 +245,17 @@ function sendingBodyHtml(d,texts,p){const t=draftDate(d);const ctx=slkCtx();
     else if(cur)st='<span class="slk-st now">\u25cf Sending\u2026</span>';
     else st='<span class="slk-st">Queued</span>';
     return '<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+filesHtml(d,i,m)+'</div>';}).join('')+'</div></div></div>';}
-function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total);const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;const dest=draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'');
-  const body=burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
+function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total&&prog.phase!=='review');const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;
+  const slackBody=!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
+  const body=reviewHtml(d)+slackBody+reactionsHtml(d);const stale=reviewStale(d)&&!STALE_ACK[d.id];
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
-  const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
+  const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
     :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
-    :conf?'<div class="dconf"><div class="dsub">Post as '+esc(senderName())+' to '+esc(dest)+(texts.length>1?' ('+texts.length+' messages)':'')+((d.files||[]).reduce(function(n,f){return n+f.length;},0)?' with '+(d.files||[]).reduce(function(n,f){return n+f.length;},0)+' file(s)':'')+'</div><div class="arow"><button class="send" data-dact="post-none" title="Post it. The chat stays as it is.">Send</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
+    :conf?'<div class="dconf">'+(stale?staleWarnHtml(d)+'<div class="arow"><button class="send" data-dact="ack-stale" title="Post the review against the commit it was drafted on">Send anyway\u2026</button><button data-dact="cancel">Cancel</button>'+msg+'</div>':'')+'<div class="dsub">'+esc(confirmWhat(d,texts))+'</div><div class="arow"><button class="send" data-dact="post-none"'+(stale?' disabled':'')+' title="Post it. The chat stays as it is.">Send'+(d.review&&!d.review_posted&&texts.length?' all':'')+'</button><button class="send park" data-dact="post-park"'+(stale?' disabled':canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>Send &amp; park</button><button class="send close" data-dact="post-close"'+(stale?' disabled':'')+' title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">Send &amp; close</button>'+(stale?'':'<button data-dact="cancel">Cancel</button>'+msg)+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
     :'<div class="dacts"><button class="send" data-dact="send">Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
   return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+acts+'</div>';}
 function canPark(d){return !!(d.thread_ts||d.channel);}
-function parkWhyNot(d){return canPark(d)?'':'no thread or channel to watch for a reply';}
+function parkWhyNot(d){return canPark(d)?'':(d.review?'a review with no Slack message has no thread to watch for a reply':'no thread or channel to watch for a reply');}
 function draftsBusy(box){return !!(box&&box.querySelector('textarea:focus'));}
 // ---- the rail
 function railDrafts(){if(orchSel||tsel||!sel||sel.arch)return [];const c=selChat();return c?draftsFor(c):[];}
@@ -216,7 +279,7 @@ function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wr
   const now=Date.now();
   rail.innerHTML='<div class="orh2"><span>Outbox</span><span class="obadge">'+ds.length+'</span><span class="sp"></span><button type="button" data-rail="close" title="collapse" aria-label="Collapse the outbox">\u203a</button></div><div id="outcards">'+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join('')+'</div>';focusConfirm();}
 // Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
-function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
+function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="ack-stale"]')||card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
 function reduceMotion(){return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);}
 // New draft list from the server (or after a local send/discard). A card that is gone while it
 // is on screen fades and collapses out first (~280 ms); the rail closes after the last one.
@@ -235,13 +298,17 @@ function renderOutbox(){railRender();}
 // ---- actions (rail and view share them)
 function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if(!d)return;
   if(act==='edit'){DRAFT_EDIT_ON[id]=!DRAFT_EDIT_ON[id];renderOutbox();return;}
-  if(act==='copy'){copyText(draftTexts(d).join(NL+NL),'draft copied');return;}
+  if(act==='copy'){const r=d.review;const gh=r?[r.body].concat((r.comments||[]).map(function(c){return reviewLoc(c)+NL+c.body;})).filter(Boolean):[];copyText(gh.concat(draftTexts(d)).join(NL+NL),'draft copied');return;}
+  if(act==='review-all'){REVIEW_ALL[id]=!REVIEW_ALL[id];renderOutbox();return;}
+  if(act==='ack-stale'){STALE_ACK[id]=1;renderOutbox();return;}
   if(act==='send'){if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
-  if(act==='cancel'){draftConfirm=null;renderOutbox();return;}
+  if(act==='cancel'){draftConfirm=null;delete STALE_ACK[id];renderOutbox();return;}
   if(act==='sendnow'){fetch('/api/outbox/send-now',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(()=>pollOutbox()).catch(()=>{});return;}
-  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
-    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after})}).then(r=>r.json()).then(j=>{
-      delete SEND_LOCAL[id];delete SENDING[id];draftConfirm=null;draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
+  if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;if(reviewStale(d)&&!STALE_ACK[id])return;const texts=draftTexts(d);const ack_stale=!!STALE_ACK[id];draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
+    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after,ack_stale})}).then(r=>r.json()).then(j=>{
+      delete SEND_LOCAL[id];delete SENDING[id];draftConfirm=null;delete STALE_ACK[id];draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
+      // The PR moved since the review was drafted: reopen the confirm with the warning; Send anyway is the second click.
+      if(!j.ok&&j.stale_head){REVIEW_HEAD[id]={at:Date.now(),stale:true,head:j.stale_head};draftConfirm=id;draftMsg[id]='';}
       if(j.ok&&!j.dry){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));toast(j.parked?'posted, chat parked'+(j.waiting_on&&j.waiting_on.length?' (waiting on '+j.waiting_on.join(', ')+')':''):(j.done?'posted, chat closed':(after==='park'?(j.detail||'posted'):'posted')));}
       renderOutbox();setTimeout(refresh,800);}).catch(()=>{delete SEND_LOCAL[id];draftConfirm=null;draftMsg[id]='server off';renderOutbox();});return;}
   if(act==='discard'){if(draftArmDiscard!==id){draftArmDiscard=id;renderOutbox();setTimeout(()=>{if(draftArmDiscard===id){draftArmDiscard=null;renderOutbox();}},2500);return;}
@@ -250,7 +317,7 @@ function wireOutbox(){['#outrail'].forEach(q=>{const box=$(q);
   box.addEventListener('click',e=>{const r=e.target.closest('button[data-rail]');if(r){outCollapsed=r.dataset.rail==='close';if(outRailKey)railSave(outRailKey,outCollapsed);railRender();return;}
     const b=e.target.closest('[data-dact]');if(!b)return;const card=b.closest('.draft');if(card)draftAction(b.dataset.dact,card.dataset.id,b);});
   box.addEventListener('keydown',e=>{if(!draftConfirm)return;const card=e.target.closest&&e.target.closest('.draft');if(!card||card.dataset.id!==draftConfirm)return;
-    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();draftConfirm=null;renderOutbox();return;}
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();delete STALE_ACK[draftConfirm];draftConfirm=null;renderOutbox();return;}
     if(e.key!=='Enter'||e.isComposing)return;
     const onOther=e.target.tagName==='BUTTON'&&!e.altKey&&!e.shiftKey&&e.target.dataset.dact!=='post-none';if(onOther)return;
     const which=e.altKey?'post-park':(e.shiftKey?'post-close':'post-none');const btn=card.querySelector('[data-dact="'+which+'"]');

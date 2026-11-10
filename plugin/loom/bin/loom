@@ -4,8 +4,12 @@
   loom outbox add --thread <url> | --channel <id|#name|@user>  --text-file <p> [--file <img> ...] [--text-file <p> ...]
                                                      --file attaches an image to the message it follows;
                                                      --images-only starts a message with no text
+  loom outbox add --review-file <review.json> [--reactions-file <rx.json>] [--thread <url> --text-file <p> ...]
+                                                     a GitHub PR review (posted first on Send, all comments in
+                                                     one call), optionally with the Slack reply and reactions
   loom outbox update <id> --text-file <p> [--file <img> ...] [...]   revise a pending draft in place
-                                                     (--clear-files drops attachments; omit --file to keep them)
+                                                     (--clear-files drops attachments; omit --file to keep them;
+                                                     --review-file / --reactions-file replace those parts)
   loom outbox supersede <id>                         retire a pending draft a newer one replaces
   loom outbox list [--json] [--all] | show <id>
   loom thread claim <url> | started <url|key> | release <url> | list [filter]
@@ -168,19 +172,139 @@ def messages_and_files(paths, files):
     return [next(it) if p is not None else "" for p in paths], files
 
 
+REVIEW_EVENTS = ("COMMENT", "REQUEST_CHANGES", "APPROVE")
+SLACK_LINK = re.compile(r"/archives/([CGD][A-Z0-9]+)/p(\d{10})(\d{6})")
+
+
+def read_json(path, cmd, what):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except OSError as e:
+        die("%s: cannot read %s: %s" % (cmd, path, e), 2)
+    except ValueError as e:
+        die("%s: %s is not JSON (%s): %s" % (cmd, what, path, e), 2)
+
+
+def check_review(r, cmd):
+    """The same rules Loom applies (src/outboxreview.ts cleanReview), so a bad file fails here, not silently later."""
+    bad = lambda m: die("%s: review: %s" % (cmd, m), 2)
+    if not isinstance(r, dict):
+        bad("the file must hold one JSON object")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(r.get("repo") or "")):
+        bad("repo must be owner/name")
+    if not (isinstance(r.get("pr"), int) and r["pr"] > 0) and not re.fullmatch(r"\d+", str(r.get("pr") or "")):
+        bad("pr must be a PR number")
+    r["pr"] = int(r["pr"])
+    if not re.fullmatch(r"[0-9a-fA-F]{7,40}", str(r.get("commit_id") or "")):
+        bad("commit_id must be the PR head sha the review was written against")
+    ev = str(r.get("event") or "").upper()
+    if ev not in REVIEW_EVENTS:
+        bad("event must be one of " + ", ".join(REVIEW_EVENTS))
+    r["event"] = ev
+    if ev != "APPROVE" and not str(r.get("body") or "").strip():
+        bad("body is required for " + ev)
+    comments = r.get("comments") or []
+    if not isinstance(comments, list):
+        bad("comments must be a list")
+    for i, c in enumerate(comments):
+        if not isinstance(c, dict) or not str(c.get("path") or "").strip():
+            bad("comments[%d] needs a path" % i)
+        if not isinstance(c.get("line"), int) or c["line"] <= 0:
+            bad("comments[%d] needs a line (a positive number)" % i)
+        if not str(c.get("body") or "").strip():
+            bad("comments[%d] needs a body" % i)
+        if c.get("side") not in (None, "RIGHT", "LEFT"):
+            bad("comments[%d].side must be RIGHT or LEFT" % i)
+    r["comments"] = comments
+    return r
+
+
+def check_reactions(rx, cmd):
+    """[{channel, ts} or {url}, add: [emoji], remove: [emoji]}]: a message link gives channel and ts."""
+    bad = lambda m: die("%s: reactions: %s" % (cmd, m), 2)
+    if not isinstance(rx, list):
+        bad("the file must hold a JSON list")
+    out = []
+    for i, r in enumerate(rx):
+        if not isinstance(r, dict):
+            bad("[%d] must be an object" % i)
+        channel, ts = r.get("channel"), r.get("ts")
+        if r.get("url") and not (channel and ts):
+            m = SLACK_LINK.search(str(r["url"]))
+            if not m:
+                bad("[%d].url is not a Slack message link" % i)
+            channel, ts = m.group(1), "%s.%s" % (m.group(2), m.group(3))
+        if not re.fullmatch(r"[CGD][A-Z0-9]{6,}", str(channel or "")) or not re.fullmatch(r"\d{10}\.\d{6}", str(ts or "")):
+            bad("[%d] needs channel + ts (or a message url)" % i)
+        names = lambda k: [str(e).strip(":") for e in (r.get(k) or [])]
+        add, remove = names("add"), names("remove")
+        if not add and not remove:
+            bad("[%d] adds and removes nothing" % i)
+        e = {"channel": channel, "ts": ts}
+        if add:
+            e["add"] = add
+        if remove:
+            e["remove"] = remove
+        out.append(e)
+    return out
+
+
+def pr_facts(r):
+    """Title and url for the card, from the person's own gh (read-only). Warns when the head already moved."""
+    if os.environ.get("LOOM_NO_GH") == "1" or (r.get("title") and r.get("url")):
+        return
+    try:
+        p = subprocess.run(["gh", "pr", "view", str(r["pr"]), "--repo", r["repo"], "--json", "title,url,headRefOid"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if p.returncode != 0:
+        return
+    try:
+        j = json.loads(p.stdout)
+    except ValueError:
+        return
+    r.setdefault("title", j.get("title") or "")
+    r.setdefault("url", j.get("url") or "")
+    head = str(j.get("headRefOid") or "")
+    if head and not head.lower().startswith(str(r["commit_id"]).lower()):
+        print("outbox: the PR head is %s, not the review's commit_id %s; the card will warn before posting"
+              % (head[:7], str(r["commit_id"])[:7]), file=sys.stderr)
+
+
+def review_parts(o, cmd):
+    ev = {}
+    if o.get("review_file"):
+        ev["review"] = check_review(read_json(o["review_file"], cmd, "--review-file"), cmd)
+        pr_facts(ev["review"])
+    if o.get("reactions_file"):
+        ev["reactions"] = check_reactions(read_json(o["reactions_file"], cmd, "--reactions-file"), cmd)
+    return ev
+
+
 def outbox_add(args):
     o, _ = opts(args, multi=("text_file",), flags=("images_only",))
     sid = need_session(o)
-    if bool(o.get("thread")) == bool(o.get("channel")):
-        die("outbox add: exactly one of --thread <url> or --channel <id> is required", 2)
     paths, files = message_specs(args, "outbox add")
-    if not paths:
-        die("outbox add: --text-file <path> is required", 2)
+    parts = review_parts(o, "outbox add")
+    if o.get("thread") and o.get("channel"):
+        die("outbox add: give one of --thread <url> or --channel <id>, not both", 2)
+    if "review" not in parts:
+        if not (o.get("thread") or o.get("channel")):
+            die("outbox add: exactly one of --thread <url> or --channel <id> is required", 2)
+        if not paths:
+            die("outbox add: --text-file <path> is required", 2)
+    elif paths and not (o.get("thread") or o.get("channel")):
+        die("outbox add: Slack messages need --thread <url> or --channel <id>", 2)
     msgs, files = messages_and_files(paths, files)
     ev = {"session": sid, "messages": msgs}
+    ev.update(parts)
     if any(files):
         ev["files"] = files
-    if o.get("thread"):
+    if not paths:
+        ev["channel"] = ""
+    elif o.get("thread"):
         keys = c.thread_keys(o["thread"])
         if not keys:
             die("outbox add: --thread is not a Slack thread URL", 2)
@@ -208,13 +332,16 @@ def outbox_add(args):
 def outbox_update(args):
     o, rest = opts(args, multi=("text_file",), flags=("images_only", "clear_files"))
     paths, files = message_specs(args, "outbox update")
-    if not rest or not paths:
-        die("usage: loom outbox update <id> --text-file <path> [--file <img> ...] [...]", 2)
-    msgs, files = messages_and_files(paths, files)
-    ev = {}
-    if any(files) or o.get("clear_files"):
-        ev["files"] = files
-    c.write_event("outbox.update", session=c.session_id(), id=rest[0], messages=msgs, **ev)
+    parts = review_parts(o, "outbox update")
+    if not rest or not (paths or parts):
+        die("usage: loom outbox update <id> --text-file <path> [--file <img> ...] [...] | --review-file <json> | --reactions-file <json>", 2)
+    ev = dict(parts)
+    if paths:
+        msgs, files = messages_and_files(paths, files)
+        ev["messages"] = msgs
+        if any(files) or o.get("clear_files"):
+            ev["files"] = files
+    c.write_event("outbox.update", session=c.session_id(), id=rest[0], **ev)
     print(rest[0])
 
 
@@ -236,6 +363,10 @@ def outbox_list(args):
     for d in drafts:
         dest = d.get("channel", "") + (" thread " + d["thread_ts"] if d.get("thread_ts") else "")
         first = (d.get("messages") or [""])[0].replace("\n", " ")
+        rv = d.get("review")
+        if rv:
+            tag = "[%s %s#%s%s]" % (rv.get("event"), rv.get("repo"), rv.get("pr"), " posted" if d.get("review_posted") else "")
+            dest = (dest + " " + tag).strip()
         print("%s  %-10s %s  %-36s  %s" % (d.get("id"), d.get("status"), str(d.get("session_id", ""))[:8], dest, first[:70]))
     if not drafts:
         print("no drafts")

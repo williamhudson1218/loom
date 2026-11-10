@@ -43,6 +43,35 @@ A Slack message is written in the user's name, so it is **drafted, shown, record
 
 `loom outbox list` shows pending drafts; `loom outbox show <id>` shows one.
 
+## A GitHub review in the same draft
+
+A draft can also carry a pull request review, so the review and the Slack reply about it go out together
+from one Send. Write the review as JSON in the scratchpad:
+
+```json
+{"repo": "acme/app", "pr": 12, "commit_id": "<head sha you reviewed>", "event": "REQUEST_CHANGES",
+ "body": "Two blockers, inline.",
+ "comments": [{"path": "src/a.ts", "line": 10, "body": "This drops the filter."},
+              {"path": "src/b.ts", "start_line": 18, "line": 20, "side": "RIGHT", "body": "Null gets through here."}]}
+```
+
+`event` is `COMMENT`, `REQUEST_CHANGES` or `APPROVE` (a bare approve may have an empty body). Every comment needs
+`path`, `line` and `body`; `side` defaults to `RIGHT`. Reactions to apply after the messages go in a second file,
+a list of `{"url": "<slack message link>"}` (or `{"channel", "ts"}`) with `"add"` and/or `"remove"` emoji names:
+
+```bash
+loom outbox add --review-file review.json --reactions-file rx.json --thread <url> --text-file reply.md
+loom outbox add --review-file review.json                  # a review with no Slack part
+loom outbox update <id> --review-file review.json          # revise the review; the Slack text is kept
+```
+
+The card shows the PR, the verdict as a badge, the body and each inline comment above the Slack preview. Send,
+Send & park and Send & close act on the whole draft: the review posts first (one call, every comment at once, as
+the user through their own `gh` login), then the Slack messages with the usual typing gaps, then the reactions,
+then the park or close. If GitHub refuses the review, nothing goes to Slack. Once the review is out it is recorded
+on the draft, so a retry after a Slack failure posts only the Slack part. If the PR has new commits since
+`commit_id`, the card warns and needs a second click; the review still posts against `commit_id`.
+
 ## If Slack is not connected
 
 When Loom's Slack mode is Skip, the plugin's outbox hook is off and `loom outbox add` still records the draft locally.

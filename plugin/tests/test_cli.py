@@ -38,6 +38,50 @@ class Cli(HomeCase):
         self.assertEqual(self.run_cli("outbox", "add", "--text-file", f).returncode, 2)
         self.assertEqual(self.run_cli("outbox", "add", "--thread", URL, "--channel", "C1", "--text-file", f).returncode, 2)
 
+    def review_file(self, **over):
+        r = {"repo": "acme/app", "pr": 12, "commit_id": "abc1234def5678", "event": "REQUEST_CHANGES", "body": "Two blockers.",
+             "comments": [{"path": "src/a.ts", "line": 10, "body": "This drops the filter."}]}
+        r.update(over)
+        return self.text_file(json.dumps(r), "review.json")
+
+    def run_review(self, *args):
+        env = dict(os.environ, LOOM_NO_GH="1")
+        return self.run_cli(*args, env=env)
+
+    def test_outbox_add_review_bundle(self):
+        rx = self.text_file(json.dumps([{"url": URL, "add": ["large_orange_circle"], "remove": [":eyes:"]}]), "rx.json")
+        r = self.run_review("outbox", "add", "--review-file", self.review_file(), "--reactions-file", rx,
+                            "--thread", URL, "--text-file", self.text_file("Left two blockers."))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ev = self.events()[0]
+        self.assertEqual(ev["review"]["event"], "REQUEST_CHANGES")
+        self.assertEqual(ev["review"]["comments"][0]["path"], "src/a.ts")
+        self.assertEqual(ev["reactions"], [{"channel": "CTEST12345", "ts": "1793990180.251589", "add": ["large_orange_circle"], "remove": ["eyes"]}])
+        self.assertEqual((ev["channel"], ev["messages"]), ("CTEST12345", ["Left two blockers."]))
+
+    def test_outbox_add_review_only(self):
+        r = self.run_review("outbox", "add", "--review-file", self.review_file(event="approve", body="", comments=[]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ev = self.events()[0]
+        self.assertEqual((ev["channel"], ev["messages"], ev["review"]["event"]), ("", [], "APPROVE"))
+
+    def test_outbox_add_review_validation(self):
+        for over in ({"event": "MERGE"}, {"repo": "nope"}, {"commit_id": ""}, {"pr": "x"},
+                     {"comments": [{"path": "a.ts", "body": "no line"}]}, {"comments": [{"line": 3, "body": "no path"}]},
+                     {"comments": [{"path": "a.ts", "line": 3, "body": ""}]}, {"body": "", "event": "COMMENT"}):
+            r = self.run_review("outbox", "add", "--review-file", self.review_file(**over))
+            self.assertEqual(r.returncode, 2, (over, r.stderr))
+        # Slack text without a destination is still refused alongside a review.
+        self.assertEqual(self.run_review("outbox", "add", "--review-file", self.review_file(), "--text-file", self.text_file()).returncode, 2)
+        self.assertEqual(self.events(), [])
+
+    def test_outbox_update_review_only(self):
+        r = self.run_review("outbox", "update", "d1", "--review-file", self.review_file(event="APPROVE"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ev = self.events()[0]
+        self.assertEqual(ev["review"]["event"], "APPROVE")
+        self.assertNotIn("messages", ev)
+
     def test_outbox_add_rejects_empty_file(self):
         self.assertEqual(self.run_cli("outbox", "add", "--channel", "#ops", "--text-file", self.text_file("  \n")).returncode, 2)
         self.assertEqual(self.events(), [])

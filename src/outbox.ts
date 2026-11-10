@@ -5,6 +5,7 @@ import path from 'node:path';
 import { TOOL_DIR } from './paths.ts';
 import { channelLabels } from './slack.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
+import { cleanReactions, cleanReview, githubPoster, headMoved, reviewSummary, type DraftReaction, type DraftReview, type GithubPoster, type PostedReview } from './outboxreview.ts';
 import {
   authTest,
   chatGetPermalink,
@@ -16,6 +17,8 @@ import {
   conversationsList,
   conversationsOpen,
   conversationsReplies,
+  reactionsAdd,
+  reactionsRemove,
   usersList,
   type CallOpts,
   type SlackUser,
@@ -70,6 +73,12 @@ export interface Draft {
   send_started_at?: number;
   /** Messages of a burst that went out before a send failed; `messages` then holds only the rest. */
   sent_parts?: { ts: string; text: string }[];
+  /** A GitHub PR review that posts first, all comments in one call (src/outboxreview.ts). A review-only draft has no messages and channel ''. */
+  review?: DraftReview;
+  /** Set the moment GitHub accepted the review: a retry (after a Slack failure) never posts it again. */
+  review_posted?: PostedReview;
+  /** Slack reactions applied after the messages (the review's status signal on the request). */
+  reactions?: DraftReaction[];
   origin?: string; // 'legacy' for a draft imported from the old file
   label?: string; // the channel's #name / @dm, added on read
   stale?: boolean; // added on read: see staleReason
@@ -114,8 +123,11 @@ const isDraft = (d: unknown): d is Draft => {
     && Array.isArray(x.messages) && typeof x.status === 'string' && typeof x.created_at === 'string';
 };
 
-const sameDest = (a: Draft, b: Pick<Draft, 'session_id' | 'channel' | 'thread_ts'>) =>
-  a.session_id === b.session_id && a.channel === b.channel && (a.thread_ts ?? '') === (b.thread_ts ?? '');
+/** Where a draft goes: its PR when it carries a review (one pending review per PR), else its Slack destination. */
+const destKey = (d: Pick<Draft, 'channel' | 'thread_ts' | 'review'>): string =>
+  d.review ? `gh:${d.review.repo}#${d.review.pr}` : `${d.channel}|${d.thread_ts ?? ''}`;
+const sameDest = (a: Draft, b: Pick<Draft, 'session_id' | 'channel' | 'thread_ts' | 'review'>) =>
+  a.session_id === b.session_id && destKey(a) === destKey(b);
 
 /**
  * One pending draft per chat and destination: the newest. Older pending kin
@@ -334,6 +346,8 @@ export interface AddInput {
   thread_url?: string;
   messages: string[];
   files?: string[][];
+  review?: unknown;
+  reactions?: unknown;
   at?: number;
 }
 
@@ -343,12 +357,19 @@ export interface AddInput {
  * chat and destination supersedes the pending one.
  */
 export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
-  const files = cleanFiles(input.files, Array.isArray(input.messages) ? input.messages.length : 0);
+  const rv = input.review === undefined || input.review === null ? null : cleanReview(input.review);
+  if (rv && !rv.ok) return { ok: false, detail: rv.detail };
+  const rx = cleanReactions(input.reactions);
+  if (!rx.ok) return { ok: false, detail: rx.detail };
+  const review = rv?.ok ? rv.review : undefined;
+  // A review-only draft (with or without reactions) has no Slack messages and no channel.
+  const noSlack = !!review && (!Array.isArray(input.messages) || !input.messages.length);
+  const files = noSlack ? [] : cleanFiles(input.files, Array.isArray(input.messages) ? input.messages.length : 0);
   if (!files) return { ok: false, detail: 'files must be absolute paths, up to ' + MAX_FILES + ' per message' };
-  const messages = cleanMessages(input.messages, files);
+  const messages = noSlack ? [] : cleanMessages(input.messages, files);
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.id || '')) return { ok: false, detail: 'bad id' };
   if (!input.session_id) return { ok: false, detail: 'session is required' };
-  if (!input.channel || input.channel.length > 200) return { ok: false, detail: 'channel is required' };
+  if (!noSlack && (!input.channel || input.channel.length > 200)) return { ok: false, detail: 'channel is required' };
   if (!messages) return { ok: false, detail: 'every message needs text' };
   const now = input.at ?? Date.now();
   return mutateOutbox<Outcome>(o, (drafts) => {
@@ -356,11 +377,13 @@ export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
     const d: Draft = {
       id: input.id,
       session_id: input.session_id,
-      channel: input.channel,
+      channel: noSlack ? (input.channel || '').slice(0, 200) : input.channel,
       ...(input.thread_ts ? { thread_ts: input.thread_ts } : {}),
       ...(input.thread_url ? { thread_url: input.thread_url } : {}),
       messages,
       ...(hasFiles(files) ? { files } : {}),
+      ...(review ? { review } : {}),
+      ...(rx.reactions.length ? { reactions: rx.reactions } : {}),
       status: 'pending',
       created_at: stamp(now),
     };
@@ -370,21 +393,54 @@ export function addDraft(input: AddInput, o?: StoreOpts | string): Outcome {
   });
 }
 
-/** Replace a pending draft's text in place (`loom outbox update`): same id, a revision. */
-export function updateDraft(id: string, messages: string[], o?: StoreOpts | string, at: number = Date.now(), files?: string[][]): Outcome {
-  // `files` omitted keeps the draft's attachments when the message count is unchanged; given, it replaces them.
-  const given = files !== undefined;
-  const newFiles = given ? cleanFiles(files, Array.isArray(messages) ? messages.length : 0) : undefined;
-  if (given && !newFiles) return { ok: false, detail: 'files must be absolute paths, up to ' + MAX_FILES + ' per message' };
+/**
+ * Replace a pending draft's text in place (`loom outbox update`): same id, a revision.
+ * `extra.review` / `extra.reactions` replace those parts (null drops them). With
+ * `messages` null the Slack text is kept, so a review can be revised by itself.
+ */
+export function updateDraft(
+  id: string,
+  messages: string[] | null,
+  o?: StoreOpts | string,
+  at: number = Date.now(),
+  files?: string[][],
+  extra: { review?: unknown; reactions?: unknown } = {},
+): Outcome {
+  const rv = extra.review === undefined || extra.review === null ? null : cleanReview(extra.review);
+  if (rv && !rv.ok) return { ok: false, detail: rv.detail };
+  const rx = extra.reactions === undefined ? null : cleanReactions(extra.reactions);
+  if (rx && !rx.ok) return { ok: false, detail: rx.detail };
   return mutateOutbox<Outcome>(o, (drafts) => {
     const d = drafts[id];
     if (!d) return { write: false, result: { ok: false, detail: 'no such draft' } };
     if (d.status !== 'pending') return { write: false, result: { ok: false, detail: `already ${d.status}` } };
     if (inSend(d, at)) return { write: false, result: { ok: false, detail: 'being sent' } };
+    const before = JSON.stringify([d.review ?? null, d.reactions ?? null]);
+    if (extra.review !== undefined) {
+      if (d.review_posted) return { write: false, result: { ok: false, detail: 'the review is already posted' } };
+      if (rv?.ok) d.review = rv.review;
+      else delete d.review;
+    }
+    if (rx?.ok) {
+      if (rx.reactions.length) d.reactions = rx.reactions;
+      else delete d.reactions;
+    }
+    const partsChanged = JSON.stringify([d.review ?? null, d.reactions ?? null]) !== before;
+    if (!d.review && !d.messages.length && messages === null) return { write: false, result: { ok: false, detail: 'a draft needs messages or a review' } };
+    if (messages === null || (d.review && Array.isArray(messages) && !messages.length && !d.messages.length)) {
+      if (!partsChanged) return { write: false, result: { ok: true, detail: 'unchanged' } };
+      d.revised_at = stamp(at);
+      return { write: true, result: { ok: true, detail: 'updated' } };
+    }
+    // `files` omitted keeps the draft's attachments when the message count is unchanged; given, it replaces them.
+    const given = files !== undefined;
+    const newFiles = given ? cleanFiles(files, Array.isArray(messages) ? messages.length : 0) : undefined;
+    if (given && !newFiles) return { write: false, result: { ok: false, detail: 'files must be absolute paths, up to ' + MAX_FILES + ' per message' } };
     const nf = given ? newFiles! : Array.isArray(messages) && messages.length === d.messages.length ? (d.files ?? cleanFiles(undefined, messages.length)!) : cleanFiles(undefined, Array.isArray(messages) ? messages.length : 0)!;
     const next = cleanMessages(messages, nf);
     if (!next) return { write: false, result: { ok: false, detail: 'every message needs text' } };
-    if (JSON.stringify(d.messages) === JSON.stringify(next) && JSON.stringify(d.files ?? []) === JSON.stringify(hasFiles(nf) ? nf : [])) return { write: false, result: { ok: true, detail: 'unchanged' } };
+    if (!d.channel) return { write: false, result: { ok: false, detail: 'this draft has no Slack destination; record a new one with --thread or --channel' } };
+    if (!partsChanged && JSON.stringify(d.messages) === JSON.stringify(next) && JSON.stringify(d.files ?? []) === JSON.stringify(hasFiles(nf) ? nf : [])) return { write: false, result: { ok: true, detail: 'unchanged' } };
     d.messages = next;
     if (hasFiles(nf)) d.files = nf;
     else delete d.files;
@@ -462,7 +518,7 @@ export function pendingDrafts(
     /* unlabeled: the raw destination shows instead */
   }
   return Object.values(readOutbox({ file, legacy: opts.legacy }))
-    .filter((d) => d.status === 'pending' && Array.isArray(d.messages) && d.messages.length)
+    .filter((d) => d.status === 'pending' && Array.isArray(d.messages) && (d.messages.length || d.review))
     .map((d) => {
       const reason = opts.liveSessions
         ? staleReason(d, { chatLive: opts.liveSessions.has(d.session_id), willPostedAfter: !!opts.marks?.[d.id], now: opts.now })
@@ -512,8 +568,8 @@ export function sendPayload(d: Pick<Draft, 'channel' | 'thread_ts'>, messages: s
   };
 }
 
-/** The pause before the next message of a burst: how long it would take to type it (~5 s, +1 s per 20 chars, max 25 s). */
-export const burstGapMs = (text: string): number => Math.min(25_000, 5_000 + Math.round((text.length / 20) * 1000));
+/** The pause before the next message of a burst: how long it would take to type it (~3 s, +1 s per 30 chars, max 15 s). */
+export const burstGapMs = (text: string): number => Math.min(15_000, 3_000 + Math.round((text.length / 30) * 1000));
 
 /** The Slack calls a send makes. The real one is slackPoster(); tests pass a fetch stub through it. */
 export interface SlackPoster {
@@ -522,6 +578,8 @@ export interface SlackPoster {
   /** Upload local files into a channel/thread as ONE message, `comment` as its text. Returns where it landed (ts '' when Slack did not say). */
   upload(p: { channel: string; thread_ts?: string; paths: string[]; comment?: string }): Promise<{ channel: string; ts: string }>;
   permalink(channel: string, ts: string): Promise<string>;
+  /** Add or remove one reaction. Already there / already gone count as done. */
+  react?(p: { channel: string; ts: string; name: string; remove?: boolean }): Promise<void>;
   sleep(ms: number): Promise<void>;
 }
 
@@ -589,6 +647,13 @@ export function slackPoster(opts: CallOpts = {}): SlackPoster {
       return { channel: p.channel, ts: '' };
     },
     permalink: (channel, ts) => chatGetPermalink(channel, ts, opts),
+    async react(p) {
+      try {
+        await (p.remove ? reactionsRemove : reactionsAdd)(p.channel, p.ts, p.name, opts);
+      } catch (e) {
+        if (!/already_reacted|no_reaction/.test((e as Error).message)) throw e;
+      }
+    },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   };
 }
@@ -601,6 +666,10 @@ export interface SendResult {
   rendered?: string;
   /** Messages that went out before a burst failed. The draft keeps the rest, still pending. */
   partial?: number;
+  /** The PR has moved past the commit the review was drafted against: send again with ackStale to post anyway. */
+  stale_head?: string;
+  /** The review's url, once GitHub has it. */
+  review_url?: string;
 }
 
 const sendingNow = new Set<string>();
@@ -614,6 +683,8 @@ export interface SendProgress {
   sent: number;
   next_at: number | null;
   started_at: number;
+  /** What is going out now: the GitHub review, the Slack messages, or the reactions. */
+  phase?: 'review' | 'slack' | 'reactions';
 }
 const progress = new Map<string, { p: SendProgress; skip: (() => void) | null }>();
 
@@ -642,6 +713,10 @@ export interface SendOpts extends StoreOpts {
   onStarted?: (ref: ThreadRef, sessionId: string) => void;
   /** An earlier send of this draft was interrupted: did it land? Returns true when it did (and marks it). */
   checkPosted?: (id: string) => Promise<boolean>;
+  /** The GitHub side of a review draft. Defaults to the person's own `gh`. */
+  github?: GithubPoster;
+  /** The person saw "PR has new commits" and sends anyway (still against the stored commit). */
+  ackStale?: boolean;
 }
 
 /**
@@ -652,35 +727,79 @@ export interface SendOpts extends StoreOpts {
  * send_started_at while it is posted (so a restart mid-send does not resend
  * blind), and the status is re-checked first. A burst that fails part-way keeps
  * the unsent messages as the pending draft, so a retry posts only those.
+ *
+ * A draft with a review sends in this order: the GitHub review (one call, all
+ * inline comments), then the Slack burst, then the reactions. A review that fails
+ * stops the send before Slack. The posted review is recorded on the draft at once
+ * (review_posted), so a retry after a Slack failure posts only the Slack part. A
+ * PR whose head moved past review.commit_id is refused with stale_head until the
+ * send is repeated with ackStale; it still posts against the stored commit.
  */
 export async function sendDraft(id: string, messages: string[], opts: SendOpts = {}): Promise<SendResult> {
   const now = opts.now ?? Date.now;
-  const d = readOutbox(opts)[id];
+  let d = readOutbox(opts)[id];
   if (!d) return { ok: false, detail: 'no such draft' };
   if (d.status !== 'pending') return { ok: false, detail: `already ${d.status}` };
-  const files = cleanFiles(d.files, Array.isArray(messages) ? messages.length : 0);
-  const clean = files ? cleanMessages(messages, files) : null;
+  if (!Array.isArray(messages)) return { ok: false, detail: 'every message needs text' };
+  // No Slack text: only a review draft (with or without reactions) may go out without messages.
+  const noSlack = messages.length === 0;
+  if (noSlack && (d.messages?.length || !d.review)) return { ok: false, detail: 'every message needs text' };
+  const files = noSlack ? [] : cleanFiles(d.files, messages.length);
+  const clean = noSlack ? [] : files ? cleanMessages(messages, files) : null;
   if (!clean || !files || clean.length !== messages.length) return { ok: false, detail: 'every message needs text' };
+  const reactions = d.reactions ?? [];
+  const reactLine = reactions.length ? reactions.map((r) => `[react ${r.channel}/${r.ts}: ${[...(r.add ?? []).map((e) => '+' + e), ...(r.remove ?? []).map((e) => '-' + e)].join(' ')}]`).join('\n') : '';
   const attached = (i: number) => (files[i]?.length ? `\n[+ ${files[i].length} file${files[i].length === 1 ? '' : 's'}: ${files[i].map((f) => path.basename(f)).join(', ')}]` : '');
-  if (opts.dry) return { ok: true, dry: true, detail: 'dry run: nothing posted', rendered: clean.map((t, i) => (t ? toMrkdwn(t) : '(no text)') + attached(i)).join('\n---\n') };
+  if (opts.dry) {
+    const parts = [
+      ...(d.review && !d.review_posted ? [`[GitHub] ${reviewSummary(d.review)} (commit ${d.review.commit_id.slice(0, 7)})`] : d.review_posted ? [`[GitHub] review already posted: ${d.review_posted.url}`] : []),
+      ...clean.map((t, i) => (t ? toMrkdwn(t) : '(no text)') + attached(i)),
+      ...(reactLine ? [reactLine] : []),
+    ];
+    return { ok: true, dry: true, detail: 'dry run: nothing posted', rendered: parts.join('\n---\n') };
+  }
   // Every attachment must be readable before anything is posted: a missing file is not found halfway through a burst.
   const missing = files.flat().find((f) => !fs.existsSync(f));
   if (missing) return { ok: false, detail: `file not found: ${missing}` };
   if (sendingNow.has(id)) return { ok: false, detail: 'already sending' };
   sendingNow.add(id);
+  const gh = opts.github ?? githubPoster();
   try {
     if (d.send_started_at) {
       if (inSend(d, now())) return { ok: false, detail: 'an earlier send of this draft was interrupted; check Slack, then try again in a few minutes' };
-      try {
-        if (await (opts.checkPosted ?? (async () => false))(id)) return { ok: false, detail: 'already sent (found in Slack)' };
-      } catch (e) {
-        return { ok: false, detail: 'an earlier send was interrupted and Slack could not be checked: ' + (e as Error).message };
+      // The review goes first, so an interrupted send may have posted it without recording it: look on GitHub.
+      if (d.review && !d.review_posted) {
+        try {
+          const hit = await gh.findPosted(d.review);
+          if (hit) d = recordReview(id, hit, now(), opts) ?? d;
+        } catch (e) {
+          return { ok: false, detail: 'an earlier send was interrupted and GitHub could not be checked for the review: ' + (e as Error).message };
+        }
       }
+      if (clean.length) {
+        try {
+          if (await (opts.checkPosted ?? (async () => false))(id)) return { ok: false, detail: 'already sent (found in Slack)' };
+        } catch (e) {
+          return { ok: false, detail: 'an earlier send was interrupted and Slack could not be checked: ' + (e as Error).message };
+        }
+      }
+    }
+    const review = d.review && !d.review_posted ? d.review : null;
+    // The PR moved on since the review was drafted: say so, and post only on a second, deliberate send.
+    if (review && !opts.ackStale) {
+      let sha = '';
+      try {
+        sha = (await gh.head(review.repo, review.pr)).sha;
+      } catch (e) {
+        return { ok: false, detail: 'could not check the PR head before posting the review: ' + (e as Error).message };
+      }
+      if (headMoved(review.commit_id, sha)) return { ok: false, stale_head: sha, detail: 'PR has new commits since this review was drafted' };
     }
     // Claim the draft on disk before anything is posted.
     const claimed = mutateOutbox(opts, (all) => {
       const x = all[id];
       if (!x || x.status !== 'pending') return { write: false, result: x ? `already ${x.status}` : 'no such draft' };
+      if (review && x.review_posted) return { write: false, result: 'the review was posted by another send' };
       x.send_started_at = now();
       return { write: true, result: '' };
     });
@@ -688,10 +807,26 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
     const slack = opts.slack ?? slackPoster();
     const sent: { ts: string; text: string }[] = [];
     let channel = '';
-    const entry = { p: { total: clean.length, sent: 0, next_at: null as number | null, started_at: now() }, skip: null as (() => void) | null };
+    const entry = { p: { total: clean.length, sent: 0, next_at: null as number | null, started_at: now(), phase: (review ? 'review' : 'slack') as SendProgress['phase'] }, skip: null as (() => void) | null };
     progress.set(id, entry);
+    // (a)+(b) The review: one call, every inline comment at once, no spacing. A failure stops the send before Slack.
+    let reviewUrl = d.review_posted?.url ?? '';
+    if (review) {
+      let posted: { id: number; url: string };
+      try {
+        posted = await gh.post(review);
+      } catch (e) {
+        releaseClaim(id, opts);
+        return { ok: false, detail: 'GitHub review failed: ' + (e as Error).message + '. Nothing was posted to Slack.' };
+      }
+      reviewUrl = posted.url;
+      recordReview(id, posted, now(), opts);
+    }
+    const reviewNote = review ? 'review posted; ' : d.review_posted ? 'review was already posted; ' : '';
+    entry.p.phase = 'slack';
+    // (c) The Slack burst, spaced as before. No gap before the first message: the review is not a message.
     try {
-      channel = await slack.resolveChannel(d.channel);
+      if (clean.length) channel = await slack.resolveChannel(d.channel);
       for (const [i, text] of clean.entries()) {
         if (i > 0) {
           const gap = burstGapMs(text);
@@ -720,7 +855,7 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
       const why = (e as Error).message;
       if (!sent.length) {
         releaseClaim(id, opts);
-        return { ok: false, detail: 'send failed: ' + why };
+        return { ok: false, ...(reviewUrl ? { review_url: reviewUrl } : {}), detail: reviewNote + 'send failed: ' + why + (reviewNote ? '. Send again posts only the Slack part.' : '') };
       }
       // Part of a burst is out. Never resend it: the draft keeps only the rest.
       mutateOutbox(opts, (all) => {
@@ -735,15 +870,28 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
         delete x.send_started_at;
         return { write: true, result: null };
       });
-      return { ok: false, partial: sent.length, detail: `posted ${sent.length} of ${clean.length} messages, then: ${why}. The rest are still in the draft.` };
+      return { ok: false, partial: sent.length, ...(reviewUrl ? { review_url: reviewUrl } : {}), detail: `${reviewNote}posted ${sent.length} of ${clean.length} messages, then: ${why}. The rest are still in the draft.` };
+    }
+    // (d) The reactions. The messages are out, so a reaction that fails is reported, never a reason to resend.
+    entry.p.phase = 'reactions';
+    const reactFailed: string[] = [];
+    for (const r of reactions) {
+      for (const [name, remove] of [...(r.add ?? []).map((n) => [n, false] as const), ...(r.remove ?? []).map((n) => [n, true] as const)]) {
+        try {
+          if (!slack.react) throw new Error('reactions are not supported');
+          await slack.react({ channel: r.channel, ts: r.ts, name, remove });
+        } catch (e) {
+          reactFailed.push(`${remove ? '-' : '+'}${name} (${(e as Error).message})`);
+        }
+      }
     }
     let permalink = '';
     try {
-      if (sent[0].ts) permalink = await slack.permalink(channel, sent[0].ts);
+      if (sent[0]?.ts) permalink = await slack.permalink(channel, sent[0].ts);
     } catch {
       /* posted; the permalink is a nicety */
     }
-    const marked = closeDraft(id, 'sent', { by: 'loom', permalink, bySend: true, at: now() }, opts);
+    const marked = closeDraft(id, 'sent', { by: 'loom', permalink: permalink || reviewUrl, bySend: true, at: now() }, opts);
     if (!d.thread_ts && opts.onStarted && sent[0]?.ts) {
       const ref = parseSlackThread(permalink) ?? { key: `${channel}/${sent[0].ts}`, url: '', channel, ts: sent[0].ts, linkTs: sent[0].ts };
       if (ref.ts === ref.linkTs && !ref.channel.startsWith('D')) {
@@ -754,13 +902,25 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
         }
       }
     }
+    const extra = { ...(permalink ? { permalink } : {}), ...(reviewUrl ? { review_url: reviewUrl } : {}) };
     // The message IS out. A failed mark says so loudly rather than inviting a resend.
-    if (!marked.ok) return { ok: true, permalink, detail: 'posted, but marking it sent failed: ' + marked.detail };
-    return { ok: true, permalink, detail: 'posted' };
+    if (!marked.ok) return { ok: true, ...extra, detail: 'posted, but marking it sent failed: ' + marked.detail };
+    if (reactFailed.length) return { ok: true, ...extra, detail: 'posted, but reactions failed: ' + reactFailed.join(', ') };
+    return { ok: true, ...extra, detail: 'posted' };
   } finally {
     progress.delete(id);
     sendingNow.delete(id);
   }
+}
+
+/** Record the posted review on the draft (keeping the send claim). Returns the draft as written. */
+function recordReview(id: string, posted: { id: number; url: string }, at: number, o: StoreOpts): Draft | null {
+  return mutateOutbox<Draft | null>(o, (all) => {
+    const x = all[id];
+    if (!x) return { write: false, result: null };
+    x.review_posted = { id: posted.id, url: posted.url, at: stamp(at) };
+    return { write: true, result: x };
+  });
 }
 
 function releaseClaim(id: string, o: StoreOpts): void {
@@ -825,6 +985,8 @@ export async function reconcileDrafts(deps: ReconcileDeps): Promise<string[]> {
   const posted: string[] = [];
   for (const d of all) {
     if (d.status !== 'pending' || !/^[A-Z0-9]+$/.test(d.channel) || !d.messages?.length) continue;
+    // A review not yet posted: Slack alone cannot say the draft went out, and marking it would drop the review.
+    if (d.review && !d.review_posted) continue;
     // Loom is posting this one itself: its own outcome marks it. (Asked about by
     // id, as the check before retrying an interrupted send does, it is looked at.)
     if ((inSend(d) || sendingNow.has(d.id)) && !deps.only?.includes(d.id)) continue;

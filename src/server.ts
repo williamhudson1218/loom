@@ -38,6 +38,7 @@ import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
 import { getParked, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
 import { OutboxWatch } from './outboxwatch.ts';
+import { cachedHead, githubPoster, headMoved } from './outboxreview.ts';
 import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
@@ -297,9 +298,10 @@ function chatIsSending(id: string): boolean {
 }
 
 /** The Send path's options: a top-level post claims its thread, an interrupted send is checked in Slack first. */
-function sendOpts(dry: boolean) {
+function sendOpts(dry: boolean, ackStale = false) {
   return {
     dry,
+    ackStale,
     onStarted: claimStartedThread,
     checkPosted: async (x: string) => (await reconcileLive({}, [x])).includes(x),
   };
@@ -1218,7 +1220,7 @@ export function createServer(): http.Server {
       let raw = '';
       req.on('data', (chunk: Buffer) => { raw += chunk; });
       req.on('end', () => {
-        let body: { id?: unknown; messages?: unknown; dry?: unknown; park?: unknown; after?: unknown };
+        let body: { id?: unknown; messages?: unknown; dry?: unknown; park?: unknown; after?: unknown; ack_stale?: unknown };
         try {
           body = JSON.parse(raw) ?? {};
         } catch {
@@ -1232,7 +1234,10 @@ export function createServer(): http.Server {
         }
         const dryAsked = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
         // Posting needs the Web API (direct mode). A dry run touches nothing, so it is always allowed.
-        if (!dryAsked && !slackFeatureOn('send')) return json(res, 409, { ok: false, error: SLACK_OFF, detail: slackOffDetail() });
+        // A review-only draft with no reactions never touches Slack, so it does not need it.
+        const pending = readOutbox()[id];
+        const slackFree = !!pending?.review && !pending.messages?.length && !pending.reactions?.length;
+        if (!dryAsked && !slackFree && !slackFeatureOn('send')) return json(res, 409, { ok: false, error: SLACK_OFF, detail: slackOffDetail() });
         // The chat is posting this draft itself right now: a second post would duplicate it.
         if (!dryAsked && chatIsSending(id)) return json(res, 409, { ok: false, detail: 'the chat is posting this draft now' });
         const messages = Array.isArray(body.messages) && body.messages.every((m) => typeof m === 'string') ? (body.messages as string[]) : null;
@@ -1243,11 +1248,12 @@ export function createServer(): http.Server {
         // `park: true` is the old spelling of after: 'park'.
         const after: AfterSend = (body.after as AfterSend | undefined) ?? (body.park === true ? 'park' : 'none');
         const dry = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
+        const ackStale = body.ack_stale === true;
         if (after !== 'none' && !dry) {
           const db = openDb();
           sendThen(db, after, id, messages, {
             readDraft: (x) => readOutbox()[x],
-            send: (x, m) => sendDraft(x, m, sendOpts(false)),
+            send: (x, m) => sendDraft(x, m, sendOpts(false, ackStale)),
             closePane: closeChatPane,
             names: slackNames(),
           })
@@ -1255,7 +1261,7 @@ export function createServer(): http.Server {
             .finally(() => db.close());
           return;
         }
-        sendDraft(id, messages, sendOpts(dry)).then((r) => json(res, r.ok ? 200 : 409, r));
+        sendDraft(id, messages, sendOpts(dry, ackStale)).then((r) => json(res, r.ok ? 200 : 409, r));
       });
       return;
     }
@@ -1310,6 +1316,17 @@ export function createServer(): http.Server {
     // Fast poll while a card is sending: the pending drafts with their send state, and what just landed.
     if (url.pathname === '/api/outbox/state' && req.method === 'GET') {
       return json(res, 200, { ok: true, drafts: pendingDrafts(), sent: outboxWatch.recentlySent(), sending: sendProgress() });
+    }
+
+    // A review draft's PR head, for the card's "new commits since" warning. Cached a minute per PR; read-only.
+    if (url.pathname === '/api/outbox/review-head' && req.method === 'GET') {
+      const d = readOutbox()[url.searchParams.get('id') ?? ''];
+      if (!d?.review) return json(res, 404, { ok: false, detail: 'no such review draft' });
+      const r = d.review;
+      cachedHead(githubPoster(), r.repo, r.pr).then((h) =>
+        json(res, 200, { ok: !h.error, head: h.sha, title: h.title, url: h.url, stale: !!h.sha && !d.review_posted && headMoved(r.commit_id, h.sha), ...(h.error ? { detail: h.error } : {}) }),
+      );
+      return;
     }
 
     // A thumbnail for the card: one image recorded on a draft, by message and file index. Never a path.

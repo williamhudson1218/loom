@@ -225,3 +225,16 @@ describe('migrations/state (§12 step 5)', () => {
     expect(fs.existsSync(path.join(dir, 'outbox.json'))).toBe(false);
   });
 });
+
+describe('review drafts through events', () => {
+  it('records a review bundle from outbox.add and revises the review alone from outbox.update', () => {
+    const review = { repo: 'acme/app', pr: 12, commit_id: 'abc1234def5678', event: 'REQUEST_CHANGES', body: 'Two blockers.', comments: [{ path: 'src/a.ts', line: 10, body: 'x' }] };
+    drop('outbox.add', { id: 'r1aa', session: SID, channel: '', messages: [], review, reactions: [{ channel: 'C0TESTCHAN1', ts: '1793839555.348489', add: ['white_check_mark'] }] });
+    ingest();
+    expect(readOutbox({ file: outbox, legacy: '' }).r1aa).toMatchObject({ status: 'pending', channel: '', messages: [], review: { event: 'REQUEST_CHANGES' } });
+    drop('outbox.update', { id: 'r1aa', session: SID, review: { ...review, event: 'APPROVE' } });
+    ingest();
+    expect(readOutbox({ file: outbox, legacy: '' }).r1aa.review!.event).toBe('APPROVE');
+    expect(left()).toEqual([]);
+  });
+});
