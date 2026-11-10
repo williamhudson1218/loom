@@ -70,7 +70,37 @@ Send & park and Send & close act on the whole draft: the review posts first (one
 the user through their own `gh` login), then the Slack messages with the usual typing gaps, then the reactions,
 then the park or close. If GitHub refuses the review, nothing goes to Slack. Once the review is out it is recorded
 on the draft, so a retry after a Slack failure posts only the Slack part. If the PR has new commits since
-`commit_id`, the card warns and needs a second click; the review still posts against `commit_id`.
+`commit_id`, the card warns before posting; the review still posts against `commit_id`.
+
+## Every Send checks for new messages first
+
+Before anything goes out, Loom re-reads where the draft is going: its Slack thread (or the channel, for a
+top-level post), its email thread, its PR's reviews and comments. If someone other than the user wrote there since
+the draft was recorded, nothing is sent: the card lists the new messages (who, when, a snippet, a link) with one
+**Send anyway** (which also covers a moved PR head) and **Cancel**. If the check itself cannot run, the card says
+"Could not check the thread for new messages" with the same two buttons. So read the thread right before you record
+a draft, and if you read it a while ago, pass what you last saw: `--seen <slack ts>` or
+`--seen '{"slack":"<ts>","email":"<gmail message id>","github":{"at":"<iso>","id":"<id>"}}'`. Without `--seen`
+Loom records what is there when the draft arrives.
+
+## Email drafts
+
+When the email CLI is set up (Settings > Outbox > Email CLI; a Gmail-CLI-compatible script, by default
+`~/.claude/tools/gmail/gmail.mjs`), an email can go through the outbox too:
+
+```bash
+cat > email.json <<'JSON'
+{"to": ["sam@example.org"], "cc": [], "subject": "Re: Q3 filing", "body": "Hi Sam,\n\n...",
+ "account": "work", "threadId": "<gmail thread id>", "inReplyTo": "<Message-ID it answers>",
+ "thread_subject": "Q3 filing", "signature": true, "attachments": ["/abs/path.pdf"]}
+JSON
+loom outbox add --email-file email.json            # a new email: leave out threadId / inReplyTo
+loom outbox update <id> --email-file email.json    # revise in place
+```
+
+A reply needs both `threadId` and `inReplyTo` (the `messageId` header `gmail read` prints). The card shows it as an
+email; Send, Send & park (watches the Gmail thread for a reply) and Send & close work as for Slack. An email draft
+carries no Slack messages or review.
 
 ## If Slack is not connected
 
