@@ -81,6 +81,8 @@ export const CORE_ROUTES: RouteDef[] = [
   b('POST', '/api/parked/unpark'),
   b('POST', '/api/parked/resume'),
   b('POST', '/api/new-thread'),
+  b('POST', '/api/new-thread/retry'),
+  b('POST', '/api/new-thread/dismiss'),
   b('POST', '/api/panes/move'),
   b('POST', '/api/panes/ungroup'),
   // Projects, tags, terminals
