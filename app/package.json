@@ -18,7 +18,7 @@
     "appId": "com.loom.app",
     "productName": "Loom",
     "directories": { "output": "release" },
-    "files": ["dist/**", "node_modules/**", "package.json"],
+    "files": ["dist/**", "node_modules/**", "package.json", "!**/build/node_gyp_bins/**"],
     "asarUnpack": ["**/node_modules/better-sqlite3/**", "**/node_modules/node-pty/**", "dist/orchmcp.js"],
     "extraResources": [
       { "from": "build-plugin", "to": "plugin" }
