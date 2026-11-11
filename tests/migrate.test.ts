@@ -631,7 +631,7 @@ describe('legacy placement hook shim', () => {
     const clean = { ...process.env };
     delete clean.CLAUDE_PLUGIN_ROOT;
     delete clean.CODEX_HOME;
-    execFileSync(HOOK, { input: JSON.stringify(payload), env: { ...clean, LOOM_HOME: loomHome, TMUX: '/tmp/x,1,0', TMUX_PANE: '%42', ...env }, encoding: 'utf-8' });
+    execFileSync(HOOK, { input: JSON.stringify(payload), env: { ...clean, LOOM_HOME: loomHome, TMUX: `${path.join(loomHome, 'no-such-tmux-server')},1,0`, TMUX_PANE: '%42', ...env }, encoding: 'utf-8' });
     const f = path.join(loomHome, 'placements.jsonl');
     return fs.existsSync(f) ? fs.readFileSync(f, 'utf-8').trim().split('\n').filter(Boolean).length : 0;
   };

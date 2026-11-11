@@ -16,7 +16,9 @@ function runHook(payload: unknown, env: Record<string, string> = {}): ReturnType
   const loomHome = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-hook-'));
   execFileSync(HOOK, {
     input: JSON.stringify(payload),
-    env: { ...process.env, LOOM_HOME: loomHome, TMUX: '/tmp/tmux-501/default,1,0', TMUX_PANE: '%42', ...env },
+    // TMUX must be set for the hook to run, but never to a real server: /tmp/tmux-501/default
+    // is the developer's own on most Macs, and the hook asks it about pane %42.
+    env: { ...process.env, LOOM_HOME: loomHome, TMUX: `${path.join(loomHome, 'no-such-tmux-server')},1,0`, TMUX_PANE: '%42', ...env },
     encoding: 'utf-8',
   });
   return readPlacements(path.join(loomHome, 'placements.jsonl'));

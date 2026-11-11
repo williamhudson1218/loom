@@ -154,6 +154,10 @@ export function makeGhConnect(deps: GhConnectDeps = {}) {
       return j;
     }
     child = c;
+    // gh can exit (or close stdin) before the newline below is written. The EPIPE
+    // then arrives as an async 'error' on the stream, which no try/catch sees; with
+    // no listener it is an uncaught exception that takes Loom's main process down.
+    c.stdin?.on('error', () => {});
     const onData = (b: Buffer) => {
       const s = String(b);
       push(j, s);

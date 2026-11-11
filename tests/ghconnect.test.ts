@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
 import { findBin, makeGhConnect, parseDeviceCode, parseGhLogin, GH_LOGIN_ARGS, type Job } from '../src/ghconnect.ts';
@@ -73,6 +75,33 @@ describe('the device login job', () => {
     expect(codes).toEqual(['AB12-CD34']);
     expect(done).not.toBeNull();
     expect(args('gh')).toBe('auth login --hostname github.com --web --git-protocol https');
+  });
+
+  it('survives gh closing stdin before the newline is written (EPIPE is an async stream error)', async () => {
+    // A stand-in child: prints the code, and its stdin fails every write the way a
+    // closed pipe does, asynchronously. Unhandled, that 'error' would throw.
+    const child = new EventEmitter() as EventEmitter & { stdin: Writable; stdout: PassThrough; stderr: PassThrough; kill: () => boolean };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write: (_c, _e, cb) => setImmediate(() => cb(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))) });
+    child.kill = () => true;
+    const c = makeGhConnect({ spawn: () => child as never });
+    c.login('/fake/gh');
+    child.stderr.write('! First copy your one-time code: AB12-CD34\n');
+    await until(() => !!c.job()?.code);
+    await new Promise((r) => setTimeout(r, 20));
+    child.emit('close', 0, null);
+    await until(() => c.job()?.state !== 'running');
+    expect(c.job()?.state).toBe('ok');
+  });
+
+  it('a real gh that exits right after printing the code does not crash Loom', async () => {
+    const gh = fake('gh', `exec 0<&-\nprintf '! First copy your one-time code: AB12-CD34\n' >&2\nexit 0`);
+    const c = makeGhConnect();
+    c.login(gh);
+    await until(() => c.job()?.state !== 'running');
+    expect(c.job()?.state).toBe('ok');
+    await new Promise((r) => setTimeout(r, 50));
   });
 
   it('reports why a login failed', async () => {
