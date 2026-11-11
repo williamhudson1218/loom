@@ -4,7 +4,10 @@ import { startPick, stopHelper, axTrusted, axRequest, warmPicker, endPick, askNe
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createServer, SERVER_PORT, startGhTicks, loomWriteHeaders } from '../src/server.ts';
+import { createServer, startGhTicks, loomWriteHeaders } from '../src/server.ts';
+import { serverPort } from '../src/serverport.ts';
+import { startListening, startFailure } from '../src/serverstart.ts';
+import { removeServerJson } from '../src/serverjson.ts';
 import { attachTerminalBridge } from '../src/ptybridge.ts';
 import { openDb, getSlackHotkey, loadTmuxSocketSetting } from '../src/db.ts';
 import { getSetting, onSettingChanged } from '../src/settingsSchema.ts';
@@ -19,7 +22,7 @@ import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
 import { currentTerminal, setInsideRaiser } from '../src/terminal.ts';
-import { SESSION_PREFIX } from '../src/paths.ts';
+import { SESSION_PREFIX, TOOL_DIR } from '../src/paths.ts';
 import { trayIcon } from './trayIcon.ts';
 import {
   liveSessions,
@@ -129,7 +132,7 @@ function createWindow(): void {
     });
   }
   // A file dropped anywhere must never navigate the window to it (or any link off Loom's own origin).
-  const own = `http://localhost:${SERVER_PORT}/`;
+  const own = `http://localhost:${serverPort()}/`;
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(own)) e.preventDefault();
   });
@@ -140,7 +143,7 @@ function createWindow(): void {
     if (/^https?:\/\//i.test(url) && !url.startsWith(own)) void shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.loadURL(`http://localhost:${SERVER_PORT}/`);
+  win.loadURL(`http://localhost:${serverPort()}/`);
   win.once('ready-to-show', () => win?.show());
   win.on('close', (e) => {
     if (!quitting) {
@@ -352,7 +355,7 @@ interface GotoReply {
 
 async function postThreadGoto(body: Record<string, unknown>): Promise<GotoReply> {
   const t = Date.now();
-  const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/slack/thread-goto`, {
+  const r = await fetch(`http://127.0.0.1:${serverPort()}/api/slack/thread-goto`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...loomWriteHeaders() },
     body: JSON.stringify(body),
@@ -669,7 +672,7 @@ app.on('before-quit', () => {
 
 ipcMain.handle('loom:pick-folder', async (event) => {
   // Only Loom's own page may ask.
-  if (!event.senderFrame?.url.startsWith(`http://localhost:${SERVER_PORT}/`)) return '';
+  if (!event.senderFrame?.url.startsWith(`http://localhost:${serverPort()}/`)) return '';
   const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] };
   const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
   return r.canceled ? '' : (r.filePaths[0] ?? '');
@@ -677,7 +680,7 @@ ipcMain.handle('loom:pick-folder', async (event) => {
 
 // Accessibility for the helper (the Slack reader and terminal scripting), polled by the
 // wizard's macOS access and shortcut steps and by Settings. Only Loom's own page may ask.
-const fromOwnPage = (event: Electron.IpcMainInvokeEvent) => !!event.senderFrame?.url.startsWith(`http://localhost:${SERVER_PORT}/`);
+const fromOwnPage = (event: Electron.IpcMainInvokeEvent) => !!event.senderFrame?.url.startsWith(`http://localhost:${serverPort()}/`);
 ipcMain.handle('loom:ax-status', async (event) => (fromOwnPage(event) ? axTrusted() : { trusted: false, helperDown: false }));
 // The Grant button: macOS's own Accessibility prompt, for the helper that needs it.
 ipcMain.handle('loom:ax-request', async (event) => (fromOwnPage(event) ? axRequest() : { trusted: false, helperDown: false }));
@@ -711,9 +714,20 @@ app.whenReady().then(() => {
   const server = createServer();
   // The embedded terminal: WebSocket + node-pty on this same server. Quitting
   // closes Loom's views of the chats; the chats themselves keep running in tmux.
-  const stopTerminals = attachTerminalBridge(server, { port: SERVER_PORT });
-  app.on('will-quit', stopTerminals);
-  server.listen(SERVER_PORT, '127.0.0.1', () => {
+  // The configured port, or the next free one when another user's Loom (or anything
+  // else) holds it. The terminal bridge attaches once the port is known.
+  void startListening(server).then((choice) => {
+    if (choice.kind !== 'bound') {
+      const { title, message } = startFailure(choice);
+      dialog.showErrorBox(title, message);
+      app.quit();
+      return;
+    }
+    const stopTerminals = attachTerminalBridge(server, { port: choice.port });
+    app.on('will-quit', () => {
+      stopTerminals();
+      removeServerJson(TOOL_DIR);
+    });
     createWindow();
   });
   // PR pipelines + ship groups (gh/git). The server.ts auto-run block never runs

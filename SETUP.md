@@ -15,7 +15,7 @@ How to build Loom on a Mac and what to expect on first launch. For what Loom is,
 | Claude Code (`claude`), logged in | Loom resumes chats with it and summarizes them with headless `claude -p` | Loom has no credentials of its own. It uses your Claude Code login. |
 | python3 | The plugin's hooks and the `loom` command use it | Included with the macOS Command Line Tools. |
 | Swift compiler (`swiftc`) | Build time only. Compiles the Keychain helper and the Accessibility helper (the Slack shortcut and terminal tab focus) | Included with the Xcode Command Line Tools (`xcode-select --install`). |
-| Free TCP port 4317 | Loom serves its dashboard on `127.0.0.1:4317` | Single instance. Changeable in Settings › Advanced › Port. |
+| A free TCP port from 4317 to 4326 | Loom serves its dashboard on `127.0.0.1:4317`, or the next free port up to 4326 | One Loom per account. The first port is changeable in Settings › Advanced › Port. |
 
 Optional:
 
@@ -241,7 +241,8 @@ The Finder-launched app does not read your shell profile, so `LOOM_HOME` in `.zs
 
 - **Two `node_modules`, two ABIs.** The root install builds `better-sqlite3` for your Node. `app/` builds it for Electron. After `cd app && yarn install`, run `yarn rebuild`, or the app fails to launch with a `NODE_MODULE_VERSION` mismatch. Do not copy `node_modules` between them.
 - **Intel output path.** `yarn dist` writes to `app/release/mac-arm64/` on Apple Silicon and `app/release/mac/` on Intel. `setup.sh` handles both.
-- **Port 4317 must be free.** A second Loom exits at once, and if another program holds the port the window does not load.
+- **Port 4317 busy.** Loom moves to the next free port, up to 4326, and Settings › Advanced › Port says which one it is using. Only when all ten are taken does it stop, with a message. A second Loom for the same account does not start; it reports the port the first one is on.
+- **Two accounts on one Mac.** `localhost` is shared by every macOS user, so the second account's Loom finds 4317 held by the first and takes 4318. Each Loom writes its port to `server.json` in its own data folder (`~/.loom`), removes it on a clean quit, and the `loom` command, the plugin hooks, the orchestrator and the install script read it from there. `$LOOM_PORT` overrides it. Do not point a script at a fixed port: it would reach the other account's Loom. Slack and Google sign-in follow the actual port; the shared Slack app's manifest lists all ten redirect URLs.
 - **Old launchd jobs.** If you ran an earlier version's `com.loom.*` or `com.chatmanager.*` jobs, unload them. The app now runs those intervals itself.
 - **Extracting from the app bundle.** `asar extract-file` writes into the current directory. Run it from a scratch folder, not from the repo.
 

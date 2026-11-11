@@ -22,6 +22,7 @@ import {
 import { buildManifest, buildSharedManifest, manifestScopes, scopeSummary } from '../slackmanifest.ts';
 import { beginAuth, exchangeCode, oauthHint, outcomeOf, recordOutcome, takeState } from '../slackoauth.ts';
 import { effectiveMode } from '../slackmode.ts';
+import { preferredPort, serverPort } from '../serverport.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Slack connection: token paste/test/disconnect, mode, manifest (§5).
@@ -69,7 +70,7 @@ const defaultDeps: SlackRouteDeps = {
 
 /** The port this request reached Loom on, so the redirect matches the running server. */
 function portOf(ctx: RouteCtx): number {
-  return ctx.req?.socket?.localPort || Number(ctx.url.port) || 4317;
+  return ctx.req?.socket?.localPort || Number(ctx.url.port) || serverPort();
 }
 
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -305,7 +306,7 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
 
   function getManifest(ctx: RouteCtx): void {
     if (flag(ctx.url.searchParams.get('shared'))) {
-      const manifest = buildSharedManifest({ port: portOf(ctx) });
+      const manifest = buildSharedManifest({ port: preferredPort() });
       return ctx.json(200, { ok: true, shared: true, manifest, text: JSON.stringify(manifest, null, 2), scopes: manifest.oauth_config.scopes.user });
     }
     const readonly = flag(ctx.url.searchParams.get('readonly'));

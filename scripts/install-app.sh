@@ -18,7 +18,7 @@
 # window of microseconds, not seconds), then open. It never kills Loom: if Loom
 # will not quit, it gives up and leaves the installed app untouched.
 #
-# Env overrides (tests): LOOM_APP_DEST, LOOM_QUIT_TIMEOUT (s), LOOM_PORT,
+# Env overrides (tests): LOOM_APP_DEST, LOOM_QUIT_TIMEOUT (s), LOOM_PORT, LOOM_HOME,
 # LOOM_INSTALL_TRACE (file the steps are appended to).
 set -euo pipefail
 
@@ -38,7 +38,8 @@ fi
 DEST="${LOOM_APP_DEST:-/Applications/Loom.app}"
 EXE="$DEST/Contents/MacOS/Loom"
 TIMEOUT="${LOOM_QUIT_TIMEOUT:-20}"
-PORT="${LOOM_PORT:-4317}"
+# shellcheck source=loom-port.sh
+. "$ROOT/scripts/loom-port.sh"
 TRACE="${LOOM_INSTALL_TRACE:-/dev/null}"
 
 trace() { echo "$*" >> "$TRACE"; }
@@ -86,7 +87,10 @@ if [ "$OPEN" = "1" ]; then
   trace "open"
   open "$DEST"
   code=000
+  PORT=4317
   for _ in $(seq 1 30); do
+    # The new Loom may take another port when 4317 is held; it writes server.json once it listens.
+    PORT=$(loom_port)
     code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/" || true)
     [ "$code" = "200" ] && break
     sleep 1

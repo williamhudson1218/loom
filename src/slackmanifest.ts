@@ -1,4 +1,5 @@
 import { redirectUri } from './slackoauth.ts';
+import { portRange } from './serverport.ts';
 import { FEATURE_METHODS, READ_FEATURES, compareScopes, scopesFor, type ScopeReport } from './slackapi.ts';
 
 // The Slack app manifest Loom asks the user to paste at api.slack.com/apps (§5.1).
@@ -59,13 +60,18 @@ export interface SharedManifest {
   settings: { org_deploy_enabled: false; socket_mode_enabled: false; token_rotation_enabled: true };
 }
 
+/**
+ * `port` is the configured base. Loom moves to the next free port when another
+ * user's Loom holds it (src/portpick.ts), and Slack matches a redirect exactly, so
+ * every port in the range is registered up front: the app is created once.
+ */
 export function buildSharedManifest(opts: { port: number }): SharedManifest {
   return {
     display_information: {
       name: 'Loom',
       description: 'Loom links your Slack threads to your Claude Code chats and sends the drafts you approve, as you.',
     },
-    oauth_config: { redirect_urls: [redirectUri(opts.port)], scopes: { user: manifestScopes(false) }, pkce_enabled: true },
+    oauth_config: { redirect_urls: portRange(opts.port).map(redirectUri), scopes: { user: manifestScopes(false) }, pkce_enabled: true },
     settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: true },
   };
 }

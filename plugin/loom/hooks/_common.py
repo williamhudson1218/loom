@@ -148,16 +148,31 @@ class LoomError(Exception):
         self.body = body
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        # ESRCH: gone. EPERM: it exists but is another user's, so not this user's Loom.
+        return False
+    return True
+
+
 def loom_port():
+    """The port this user's Loom serves on: $LOOM_PORT, then server.json (its pid alive), then 4317.
+
+    localhost is shared by every macOS user, so Loom may have moved off 4317 to the next free
+    port; server.json (in the per-user data folder) says where it went.
+    """
     env = (os.environ.get("LOOM_PORT") or "").strip()
-    if env.isdigit():
+    if env.isdigit() and 0 < int(env) <= 65535:
         return int(env)
     try:
-        with open(os.path.join(loom_home(), "port")) as f:
-            p = f.read().strip()
-        if p.isdigit():
-            return int(p)
-    except OSError:
+        with open(os.path.join(loom_home(), "server.json")) as f:
+            info = json.load(f)
+        port, pid = info.get("port"), info.get("pid")
+        if isinstance(port, int) and isinstance(pid, int) and 0 < port <= 65535 and _pid_alive(pid):
+            return port
+    except (OSError, ValueError, AttributeError):
         pass
     return DEFAULT_PORT
 

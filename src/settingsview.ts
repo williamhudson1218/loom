@@ -389,7 +389,7 @@ function sxAdvanced(){var home='';var pl=SX.data.plugin;if(pl&&pl.marketplaceDir
    sxKey('lane_view',{kind:'select',title:'Lane view',help:'How the terminal shows a chat whose tmux window has other panes. Zoom resizes the window to Loom and undoes it on close; Mirror leaves the window exactly as it is.',labels:{zoom:'Zoom the pane',mirror:'Mirror without changing the window'}})+
    sxKey('watcher_default_target',{title:'Default lane for watchers',help:'managed starts watcher chats in their own window; lane:name uses a free pane in that lane.',mono:true,w:160})+
    sxGrp('Server')+
-   sxKey('port',{title:'Port',help:'Local dashboard address.',min:1024,max:65535,after:'<span class="def">http://localhost:'+sxEsc(sxv('port'))+'</span>'})+
+   sxKey('port',{title:'Port',help:'Local dashboard address.',min:1024,max:65535,after:'<span class="def">http://localhost:'+sxEsc(DATA.port?DATA.port.actual:sxv('port'))+'</span>'+(DATA.port&&DATA.port.actual!==DATA.port.base?'<span class="def"> Using '+sxEsc(DATA.port.actual)+' because '+sxEsc(DATA.port.base)+' is taken.</span>':'')})+
    sxKey('find_chat_bin',{title:'Archive search tool',help:'The find-chat executable. Empty detects it; without one, search beyond the index window is hidden.',mono:true,ph:'Detected automatically',noDef:true,after:'<span class="def">'+(DATA.archiveSearch?'Found':'Not found')+'</span>'})+
    sxRow('Data folder','Read only. Set before launch with LOOM_HOME.',home?'<code>'+sxEsc(shortPath(home))+'</code>':sxPill('off','Unknown'))+
    sxRow('Diagnostics','Settings and counts with no tokens in them, for a bug report.',sxBtn('copydiag','Copy support info')+sxBtn('openlogs','Open logs'));}

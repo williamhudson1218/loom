@@ -131,5 +131,5 @@ cat <<EOF
      Loom's own data folder.
 
   3. Data lives in ~/.loom by default (override with \$LOOM_HOME). Nothing is
-     written into this repo. Port 4317 must be free.
+     written into this repo. Loom serves on port 4317, or the next free port up to 4326.
 EOF

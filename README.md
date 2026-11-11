@@ -108,7 +108,7 @@ Instead of every person creating their own app, a team can share ONE Slack app a
 
 For the workspace admin, once:
 
-1. In Settings › Slack, click **Copy shared-app manifest**. It has the same user scopes, a redirect to `http://localhost:4317/slack/callback` (your Loom port), PKCE on and token rotation on, and no bot user.
+1. In Settings › Slack, click **Copy shared-app manifest**. It has the same user scopes, a redirect for each port Loom may use (`http://localhost:4317/slack/callback` through `4326`, since Loom moves to the next free port when 4317 is taken), PKCE on and token rotation on, and no bot user.
 2. At api.slack.com/apps choose Create New App › From a manifest and paste it. PKCE is one-way: once on, the app is a public client and Slack will not turn it off.
 3. If the workspace requires app approval, approve the app.
 4. Share the app's **Client ID** (Basic Information). It is public, not a secret.
@@ -118,7 +118,7 @@ For each person:
 1. Paste the client id into Settings › Slack › Shared Slack app (or the wizard's Direct app step), or set `LOOM_SLACK_CLIENT_ID`, which wins.
 2. Click **Connect Slack**. Slack opens in your browser; approve, and Loom stores your token in the Keychain (items "Loom Slack token" and "Loom Slack refresh") and switches Slack to Direct.
 
-The token expires about every 12 hours and Loom refreshes it on its own. The refresh token lasts 30 days for a PKCE app, so if Loom is not used for 30 days the connection lapses: Settings › Slack and the Outbox then say **Reconnect Slack**, and one click fixes it. Everyone must run Loom on the same port the manifest's redirect names (4317 by default), or the admin adds each port's redirect URL to the app. "Use your own app instead" keeps the manifest-and-paste route above.
+The token expires about every 12 hours and Loom refreshes it on its own. The refresh token lasts 30 days for a PKCE app, so if Loom is not used for 30 days the connection lapses: Settings › Slack and the Outbox then say **Reconnect Slack**, and one click fixes it. Everyone's Loom must sit on a port the manifest's redirects name (4317 to 4326 by default), or the admin adds that port's redirect URL to the app. "Use your own app instead" keeps the manifest-and-paste route above.
 
 **MCP only.** Loom uses the Claude Slack connector you already have in Claude Code. There is no app to create, but Loom has no token of its own, so these stay **off**: watchers on Slack, parked-thread reply detection, Outbox sending, Slack names and emoji, and thread previews and unread counts. Still working: chats that read or post to Slack through the connector, thread ownership, Outbox drafts being visible, and the shortcut.
 
@@ -185,7 +185,7 @@ hooks/          placement hook for Codex and CLI-only use
 scripts/        install-app.sh, install-hook.mjs
 ```
 
-The app runs the backend, serves the dashboard at `127.0.0.1:4317`, and does the privileged work (tmux, process listing, osascript, file reads, headless `claude -p` summaries).
+The app runs the backend, serves the dashboard at `127.0.0.1:4317` (or the next free port up to 4326; the chosen port is in `~/.loom/server.json`), and does the privileged work (tmux, process listing, osascript, file reads, headless `claude -p` summaries).
 
 ## Develop
 

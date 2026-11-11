@@ -24,6 +24,7 @@ import {
 } from '../googleoauth.ts';
 import { getSetting } from '../settingsSchema.ts';
 import { chooseEmailRoute } from '../gmailapi.ts';
+import { serverPort } from '../serverport.ts';
 import { resolveEmailCli } from '../outboxemail.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
@@ -46,7 +47,7 @@ const defaultDeps: GoogleRouteDeps = {
   cliExists: (p) => !!p && fs.existsSync(p),
 };
 
-const portOf = (ctx: RouteCtx): number => ctx.req?.socket?.localPort || Number(ctx.url.port) || 4317;
+const portOf = (ctx: RouteCtx): number => ctx.req?.socket?.localPort || Number(ctx.url.port) || serverPort();
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 function callbackPage(ctx: RouteCtx, status: number, ok: boolean, text: string): void {

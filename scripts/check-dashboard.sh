@@ -3,7 +3,8 @@
 # Run after ANY dashboard.ts edit. Avoid regex literals in the template literal;
 # backslashes collapse (e.g. /\/pull\// -> //pull/ which comments the line).
 set -e
-curl -s http://localhost:4317/ | sed -n '/<script>/,/<\/script>/p' | sed '1d;$d' > /tmp/loom-inline-check.js
+. "$(dirname "$0")/loom-port.sh"
+curl -s "http://localhost:$(loom_port)/" | sed -n '/<script>/,/<\/script>/p' | sed '1d;$d' > /tmp/loom-inline-check.js
 if node --check /tmp/loom-inline-check.js 2>/tmp/loom-inline-err; then
   echo "✓ dashboard inline JS valid"
 else

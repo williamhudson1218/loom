@@ -22,6 +22,7 @@ import {
   storeToken,
 } from '../src/slackapi.ts';
 import { buildSharedManifest } from '../src/slackmanifest.ts';
+import { setServerPort } from '../src/serverport.ts';
 import { STATE_TTL_MS, beginAuth, challengeFor, exchangeCode, outcomeOf, pkcePair, resetOAuthState, takeState } from '../src/slackoauth.ts';
 import { makeSlackRoutes } from '../src/routes/slack.ts';
 import type { RouteCtx, RouteDef } from '../src/routes/index.ts';
@@ -284,7 +285,8 @@ describe('shared-app manifest', () => {
   it('has PKCE, token rotation, the localhost redirect and user scopes only', () => {
     const m = buildSharedManifest({ port: 4317 });
     expect(m.oauth_config.pkce_enabled).toBe(true);
-    expect(m.oauth_config.redirect_urls).toEqual(['http://localhost:4317/slack/callback']);
+    // Every port Loom may fall back to, so the app is created once (src/serverport.ts).
+    expect(m.oauth_config.redirect_urls).toEqual(Array.from({ length: 10 }, (_, i) => `http://localhost:${4317 + i}/slack/callback`));
     expect(m.oauth_config.scopes.user).toEqual(scopesFor());
     expect(Object.keys(m.oauth_config.scopes)).toEqual(['user']);
     expect(m.settings.token_rotation_enabled).toBe(true);
@@ -457,9 +459,16 @@ describe('Connect Slack routes', () => {
     expect(String(st.body.reconnectHint)).toMatch(/Connect Slack again/);
   });
 
-  it('the shared manifest route uses the request port', async () => {
-    const r = await hit(routes()['GET /api/slack/manifest'], { query: '?shared=1', port: 4400 });
-    expect((r.body.manifest as { oauth_config: { redirect_urls: string[] } }).oauth_config.redirect_urls).toEqual(['http://localhost:4400/slack/callback']);
+  it('the shared manifest route lists every port from the configured one, whatever port the request came in on', async () => {
+    setServerPort(4400, 4400);
+    try {
+      const r = await hit(routes()['GET /api/slack/manifest'], { query: '?shared=1', port: 4403 });
+      expect((r.body.manifest as { oauth_config: { redirect_urls: string[] } }).oauth_config.redirect_urls).toEqual(
+        Array.from({ length: 10 }, (_, i) => `http://localhost:${4400 + i}/slack/callback`),
+      );
+    } finally {
+      setServerPort(4317, 4317);
+    }
   });
 
   it('the pasted-token route still works and clears a reconnect flag', async () => {

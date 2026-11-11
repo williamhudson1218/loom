@@ -157,9 +157,9 @@ export function legacyGetPaths(routes: RouteDef[] = ROUTES): string[] {
 
 // ---- The guard ---------------------------------------------------------------
 
-// Loom's configured port (server.ts SERVER_PORT). The `port` setting feeds it
-// through setLoomPort() once that setting exists.
-let configuredPort = 4317;
+// The port Loom is serving on (src/serverport.ts), set through setLoomPort() once
+// it has bound, which may be past the configured one.
+let configuredPort = 4317; // the running port; startListening() sets it after bind
 export function setLoomPort(port: number): void {
   configuredPort = port;
 }

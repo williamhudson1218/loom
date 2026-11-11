@@ -3,6 +3,9 @@ import { tmux } from './tmux.ts';
 import { actionAllowed, attachTerminalBridge, checkSnapAuth, isPaneId, snapshotScreen, isLoomHost, isTermAction, termCommand, termToken, viewKind } from './ptybridge.ts';
 import { createTerminalSession, listTerminals } from './terminals.ts';
 import http from 'node:http';
+import { preferredPort, serverPort } from './serverport.ts';
+import { localIdentity } from './portpick.ts';
+import { startListening, startFailure } from './serverstart.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDefaultAgent, loadTmuxSocketSetting, openDb, setDefaultAgent } from './db.ts';
@@ -16,7 +19,7 @@ import { restore } from './restore.ts';
 import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath, findChatFromSettings, setFindChatBin } from './findchat.ts';
 import { startPluginStateSync } from './pluginmgr.ts';
-import { SESSION_PREFIX } from './paths.ts';
+import { SESSION_PREFIX, TOOL_DIR } from './paths.ts';
 import { paneNameMap, rememberPaneNames } from './panenames.ts';
 import { realTopicDeps } from './panetopics.ts';
 import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
@@ -84,7 +87,6 @@ import { currentLaunchSettings } from './launch.ts';
 // /resume and /branch requests still waiting on a new window's shell, by session id.
 const resumesInFlight = new Set<string>();
 
-export const SERVER_PORT = 4317;
 
 // ---- PR pipelines on the board ----------------------------------------------
 // The board shows a dot strip per chat with a PR. The poll only ever reads the
@@ -999,7 +1001,7 @@ export function withClientFetch(html: string): string {
  * Headers for a write from inside Loom's own process (the Electron main's Slack
  * hotkey): the same Origin + launch token the page sends.
  */
-export function loomWriteHeaders(port: number = SERVER_PORT): Record<string, string> {
+export function loomWriteHeaders(port: number = serverPort()): Record<string, string> {
   return { origin: `http://127.0.0.1:${port}`, 'x-loom-token': termToken() };
 }
 
@@ -1058,6 +1060,12 @@ export function createServer(): http.Server {
       return send(res, r.ok ? 200 : 500, 'application/json', JSON.stringify(r));
     }
 
+    // Who is on this port: another Loom (any user's) asks before it picks its own.
+    // Uid and a hash of the data folder only; no path, no token.
+    if (url.pathname === '/api/whoami') {
+      return send(res, 200, 'application/json', JSON.stringify(localIdentity(TOOL_DIR)));
+    }
+
     if (url.pathname === '/api/live') {
       const { live } = snapshot();
       return send(res, 200, 'application/json', JSON.stringify(live));
@@ -1075,7 +1083,7 @@ export function createServer(): http.Server {
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
       const chats = [...views, ...provisionalForLive(views, live)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -1097,7 +1105,7 @@ export function createServer(): http.Server {
 
     // ---- Projects: where New thread can start a chat ----
     if (url.pathname === '/api/projects' && req.method === 'GET') {
-      if (!isLoomHost(req.headers.host, SERVER_PORT)) return json(res, 403, { ok: false, detail: 'bad host' });
+      if (!isLoomHost(req.headers.host, serverPort())) return json(res, 403, { ok: false, detail: 'bad host' });
       return json(res, 200, { ok: true, projects: projectList(url.searchParams.get('all') === '1') });
     }
     if (url.pathname.startsWith('/api/projects/') || (url.pathname === '/api/projects' && req.method === 'POST')) {
@@ -1127,7 +1135,7 @@ export function createServer(): http.Server {
     // Reads need Loom's own Host (source code in the response); every write also
     // needs Loom's Origin and the launch token, like the terminal toolbar.
     if (url.pathname === '/api/ship/detail' || url.pathname === '/api/ship/diff') {
-      if (!isLoomHost(req.headers.host, SERVER_PORT)) return json(res, 403, { ok: false, detail: 'bad host' });
+      if (!isLoomHost(req.headers.host, serverPort())) return json(res, 403, { ok: false, detail: 'bad host' });
       const repo = url.searchParams.get('repo') || '';
       if (!isShipRepo(repo)) return json(res, 404, { ok: false, detail: 'unknown repo' });
       if (url.pathname === '/api/ship/detail') {
@@ -1614,7 +1622,7 @@ export function createServer(): http.Server {
     // First-paint snapshot for the terminal pane: the chat's current screen, so
     // the page can show it before the pty attaches. Read-only, one async tmux call.
     if (url.pathname === '/api/term/snap') {
-      const auth = checkSnapAuth(req.headers, String(req.headers['x-loom-term-token'] ?? ''), { port: SERVER_PORT, token: termToken() });
+      const auth = checkSnapAuth(req.headers, String(req.headers['x-loom-term-token'] ?? ''), { port: serverPort(), token: termToken() });
       if (!auth.ok) return json(res, auth.status, { ok: false, detail: auth.reason });
       const pane = url.searchParams.get('pane');
       if (!isPaneId(pane)) return json(res, 400, { ok: false, detail: 'bad pane' });
@@ -2005,7 +2013,7 @@ export function createServer(): http.Server {
       // The terminal token goes only into a page asked for by Loom's own host
       // name: a rebinding page (evil.example -> 127.0.0.1) gets the board
       // without it, and so can never open a terminal (see ptybridge.ts).
-      const token = isLoomHost(req.headers.host, SERVER_PORT) ? termToken() : '';
+      const token = isLoomHost(req.headers.host, serverPort()) ? termToken() : '';
       const html = renderDashboard(views, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList());
       return send(res, 200, 'text/html; charset=utf-8', withClientFetch(html));
     }
@@ -2089,9 +2097,13 @@ export function startGhTicks(): void {
 if (import.meta.url === `file://${process.argv[1]}`) {
   loadTmuxSocketSetting();
   const server = createServer();
-  attachTerminalBridge(server, { port: SERVER_PORT });
-  server.listen(SERVER_PORT, '127.0.0.1', () => {
-    console.log(`[loom] server on http://localhost:${SERVER_PORT}`);
+  void startListening(server).then((choice) => {
+    if (choice.kind !== 'bound') {
+      console.error(`[loom] ${startFailure(choice).message}`);
+      process.exit(1);
+    }
+    attachTerminalBridge(server, { port: choice.port });
+    console.log(`[loom] server on http://localhost:${choice.port}`);
   });
   // Capture a full tmux-layout snapshot for crash recovery while tmux is healthy.
   const snap = () => {
