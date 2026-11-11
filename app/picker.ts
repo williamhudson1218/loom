@@ -4,7 +4,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { pickedThread, parseSlackThread } from '../src/slackgoto.ts';
 import { NEW_THREAD_HTML, OVERLAY_HTML, PASTE_HTML, newThreadWhere } from '../src/pickpages.ts';
-import { hoverFor, needsTrustCheck, overlaysMatch, PickMachine, type HoverHit, type PickPhase } from '../src/pickstate.ts';
+import { hoverFor, needsTrustCheck, overlaysMatch, pickMayArm, pickMayLook, PickMachine, SLACK_BUNDLE_ID, type HoverHit, type PickPhase, type PickWhere } from '../src/pickstate.ts';
+import { frontBundleId } from '../src/frontapp.ts';
 import { newPressId, pickLog, type LogFields } from '../src/picklog.ts';
 import { helperExe } from '../src/nativehelpers.ts';
 import { AX_GRANT_HINT } from '../src/axcopy.ts';
@@ -216,6 +217,29 @@ export function warmPicker(): void {
   screen.on('display-metrics-changed', onDisplaysChanged);
 }
 
+/* ------------------------------------------------------------ where a pick may look */
+
+// The helper treats every Loom window as see-through (it skips our process's
+// windows so the overlay never hides Slack), so Loom's own main window counts
+// as not covering Slack. Loom therefore gates on its own windows and focus
+// (src/pickstate.ts, pickMayLook) before it asks the helper anything.
+let slackFront: boolean | null = null;
+let frontAt = 0;
+const FRONT_EVERY_MS = 500;
+async function refreshFront(): Promise<void> {
+  frontAt = Date.now();
+  const id = await frontBundleId().catch(() => null);
+  slackFront = id ? id === SLACK_BUNDLE_ID : null;
+}
+const isOverlay = (w: BrowserWindow) => overlays.some((o) => o.win === w);
+function where(): PickWhere {
+  const focused = BrowserWindow.getFocusedWindow();
+  const loomWindows = BrowserWindow.getAllWindows()
+    .filter((w) => !w.isDestroyed() && !isOverlay(w) && w.isVisible() && !w.isMinimized())
+    .map((w) => w.getBounds());
+  return { loomFocused: !!focused && !isOverlay(focused), slackFrontmost: slackFront, loomWindows };
+}
+
 function broadcast(channel: string, payload?: unknown): void {
   for (const o of overlays) if (!o.win.isDestroyed()) o.win.webContents.send(channel, payload);
 }
@@ -271,6 +295,15 @@ async function track(): Promise<void> {
   if (busy || machine.phase !== 'picking') return;
   const pt = screen.getCursorScreenPoint();
   const key = `${pt.x},${pt.y}`;
+  if (Date.now() - frontAt > FRONT_EVERY_MS) void refreshFront();
+  // Over Loom (or with Loom focused) nothing is outlined, and the helper is not asked.
+  const gate = pickMayLook(where(), pt.x, pt.y);
+  if (gate !== 'ok') {
+    if (lastPoint !== 'gated:' + gate) broadcast('rect', null);
+    hover = null;
+    lastPoint = 'gated:' + gate;
+    return;
+  }
   if (key === lastPoint) return;
   lastPoint = key;
   busy = true;
@@ -470,6 +503,14 @@ export async function startPick(deps: PickDeps): Promise<void> {
     trustedCache = true;
   }
   helperUntrusted = false;
+  // Never arm over a focused Loom window: the helper would read Slack's layout through it.
+  await refreshFront();
+  const w = where();
+  if (!pickMayArm(w)) {
+    machine.end();
+    log('refused', { reason: 'loom-focused', slack_front: slackFront });
+    return deps.notify('Switch to Slack, then press the shortcut to pick a message.');
+  }
   if (!showOverlays()) return; // ended (Esc, a second press) during the trust check
   // The overlay never takes focus (see overlayFor), so Esc can only arrive as a
   // global shortcut, held just while picking.
@@ -507,6 +548,12 @@ async function onClick(msg: ClickMsg = {}): Promise<void> {
   const cur = screen.getCursorScreenPoint();
   const x = typeof msg.x === 'number' ? msg.x : cur.x;
   const y = typeof msg.y === 'number' ? msg.y : cur.y;
+  const gate = pickMayLook(where(), x, y);
+  if (gate !== 'ok') {
+    machine.retry();
+    log('hint', { reason: gate });
+    return broadcast('hint', 'Loom is in front there. Click a message in Slack, or press Esc.');
+  }
   const tHit = Date.now();
   let r: HitReply;
   let source = 'hover';

@@ -147,3 +147,43 @@ export function hoverFor<T>(h: HoverHit<T> | null, x: number, y: number, now: nu
 export function needsTrustCheck(cachedTrusted: boolean): boolean {
   return !cachedTrusted;
 }
+
+// ---- Where a pick may look (2026-11-11) ---------------------------------------
+//
+// The AX helper decides "is Slack on top at this point" from the window list,
+// skipping every window owned by Loom's process so the pick overlay never counts
+// as covering Slack. That also skips Loom's MAIN window: wherever Loom covers
+// Slack, Slack counted as on top and AX outlined Slack's hidden layout through
+// Loom. The helper's code hash is its Accessibility grant, so the fix lives here
+// instead of in the Swift: Loom knows its own windows and focus, and asks macOS
+// which app is frontmost (lsappinfo, src/frontapp.ts).
+
+export const SLACK_BUNDLE_ID = 'com.tinyspeck.slackmacgap';
+
+export interface PickWhere {
+  /** A Loom window other than the overlay is the focused window. */
+  loomFocused: boolean;
+  /** Slack is the frontmost app: true, false, or null when unknown. */
+  slackFrontmost: boolean | null;
+  /** Visible, non-minimized Loom windows (not the overlays), in screen points. */
+  loomWindows: Rect[];
+}
+
+/** Whether a press may arm the overlay. Never over a focused Loom window. */
+export function pickMayArm(w: Pick<PickWhere, 'loomFocused' | 'slackFrontmost'>): boolean {
+  return !w.loomFocused || w.slackFrontmost === true;
+}
+
+const inRect = (r: Rect, x: number, y: number) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+
+/**
+ * Whether a point may be hit-tested in Slack. Not while Loom is focused, and not
+ * inside a Loom window unless Slack is known to be frontmost (then Slack's own
+ * windows are above Loom's, and the helper's window check is right again).
+ */
+export function pickMayLook(w: PickWhere, x: number, y: number): 'ok' | 'loom-focused' | 'over-loom' {
+  if (w.slackFrontmost === true) return 'ok';
+  if (w.loomFocused) return 'loom-focused';
+  if (w.loomWindows.some((r) => inRect(r, x, y))) return 'over-loom';
+  return 'ok';
+}
