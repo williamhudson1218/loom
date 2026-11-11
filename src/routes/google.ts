@@ -53,7 +53,7 @@ const portOf = (ctx: RouteCtx): number => ctx.req?.socket?.localPort || Number(c
 function callbackPage(ctx: RouteCtx, status: number, ok: boolean, text: string): void {
   const res = ctx.res;
   if (res.headersSent) return;
-  const html = connectDonePage({ service: 'Gmail', ok, text });
+  const html = connectDonePage({ service: 'Gmail', kind: 'google', ok, text });
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   res.end(html);
   if (ok) returnToLoom('google');
@@ -153,7 +153,7 @@ export function makeGoogleRoutes(over: Partial<GoogleRouteDeps> = {}): RouteDef[
     }
     primeGoogleToken(email, g);
     recordGoogleOutcome(state, { state: 'ok', email });
-    callbackPage(ctx, 200, true, `Gmail connected as ${email}${label !== email ? ` (${label})` : ''}. Loom is back in front. You can close this tab.`);
+    callbackPage(ctx, 200, true, `Gmail connected as ${email}${label !== email ? ` (${label})` : ''}. Returning to Loom.`);
   }
 
   const emailArg = async (ctx: RouteCtx): Promise<{ email: string; body: Record<string, unknown> | null } | null> => {

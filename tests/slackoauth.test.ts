@@ -418,7 +418,8 @@ describe('Connect Slack routes', () => {
     const r = await hit(routes()['GET /slack/callback'], { query: `?code=c0de&state=${state}` });
     expect(r.status).toBe(200);
     expect(r.html).toContain('Slack connected');
-    expect(r.html).toContain('Loom is back in front. You can close this tab.');
+    expect(r.html).toContain('Returning to Loom.');
+    expect(r.html).toContain('href="loom://connected/slack"');
     expect(raised).toEqual(['slack']);
     expect(r.html).not.toContain('xoxe');
     expect(seen!).toMatchObject({ clientId: CLIENT, code: 'c0de', redirectUri: 'http://localhost:4317/slack/callback' });

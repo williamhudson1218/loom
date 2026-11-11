@@ -32,7 +32,8 @@
       "target": "dir",
       "icon": "assets/icon.icns",
       "identity": null,
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "extendInfo": { "CFBundleURLTypes": [{ "CFBundleURLName": "com.loom.app", "CFBundleURLSchemes": ["loom"] }] }
     },
     "npmRebuild": true
   },

@@ -22,7 +22,7 @@ import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
 import { currentTerminal, setInsideRaiser } from '../src/terminal.ts';
-import { setConnectRaiser } from '../src/connectreturn.ts';
+import { LOOM_SCHEME, parseLoomUrl, raiseLoom, setConnectRaiser } from '../src/connectreturn.ts';
 import { SESSION_PREFIX, TOOL_DIR } from '../src/paths.ts';
 import { trayIcon } from './trayIcon.ts';
 import {
@@ -195,6 +195,7 @@ setAppNotifier(({ title, body, target, sound }) => {
 function showWindow(): void {
   if (!win || win.isDestroyed()) createWindow();
   else {
+    if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
   }
@@ -204,13 +205,26 @@ function showWindow(): void {
 setInsideRaiser(showWindow);
 
 // A sign-in that finished in the browser (Slack, Gmail, GitHub) brings Loom back
-// in front of the browser. steal: the browser is the active app, and macOS only
-// lets another app take focus when asked this way. The page polls the flow and
-// shows the connected state on its own.
-setConnectRaiser(() => {
-  showWindow();
-  app.focus({ steal: true });
+// in front of the browser. macOS 14+ may ignore a background app's own request
+// (see src/connectreturn.ts), so the done page also opens loom://connected/<kind>,
+// which the browser hands to Loom here, through open-url. The page polls the
+// flow and shows the connected state on its own.
+const raiseTarget = {
+  window: () => (win && !win.isDestroyed() ? win : null),
+  createWindow: () => createWindow(),
+  showApp: () => {
+    if (process.platform === 'darwin') app.show();
+  },
+  focusApp: () => app.focus({ steal: true }),
+};
+setConnectRaiser(() => raiseLoom(raiseTarget));
+// open-url can arrive before ready (Loom launched by the link): raise once ready.
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  if (parseLoomUrl(url) === null) return;
+  void app.whenReady().then(() => raiseLoom(raiseTarget));
 });
+if (!app.isDefaultProtocolClient(LOOM_SCHEME)) app.setAsDefaultProtocolClient(LOOM_SCHEME);
 
 const paneTints = new PaneTints();
 

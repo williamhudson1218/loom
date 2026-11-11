@@ -79,7 +79,7 @@ function portOf(ctx: RouteCtx): number {
 function callbackPage(ctx: RouteCtx, status: number, ok: boolean, text: string): void {
   const res = ctx.res;
   if (res.headersSent) return;
-  const html = connectDonePage({ service: 'Slack', ok, text });
+  const html = connectDonePage({ service: 'Slack', kind: 'slack', ok, text });
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   res.end(html);
   if (ok) returnToLoom('slack');
@@ -307,7 +307,7 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
     }
     recordOutcome(state, { state: 'ok' });
     const who = [r.identity.user, r.identity.team].filter(Boolean).join(' in ');
-    callbackPage(ctx, 200, true, `Slack connected${who ? ' as ' + who : ''}. Loom is back in front. You can close this tab.`);
+    callbackPage(ctx, 200, true, `Slack connected${who ? ' as ' + who : ''}. Returning to Loom.`);
   }
 
   function getManifest(ctx: RouteCtx): void {
