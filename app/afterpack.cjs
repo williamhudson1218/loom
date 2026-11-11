@@ -34,24 +34,6 @@ exports.default = async function afterPack(context) {
   const helpers = fs.existsSync(helpersDir) ? fs.readdirSync(helpersDir).map((d) => path.join(helpersDir, d, 'Loom.app')).filter((p) => fs.existsSync(p)) : [];
   const before = new Map(helpers.map((h) => [h, cdhashOf(h)]));
 
-  // node-pty ships prebuilds for every platform; only this build's arch can ever
-  // load. The others are dead weight, and an x86_64 Mach-O in an arm64 app is what
-  // macOS's Rosetta deprecation scan flags. Removed before signing, so the seal
-  // covers the trimmed bundle. (Arch enum from builder-util: 1 x64, 3 arm64.)
-  const archName = { 1: 'x64', 3: 'arm64' }[context.arch] || 'arm64';
-  const prebuilds = path.join(contents, 'Resources', 'app.asar.unpacked', 'node_modules', 'node-pty', 'prebuilds');
-  if (fs.existsSync(prebuilds)) {
-    for (const d of fs.readdirSync(prebuilds)) if (d !== `darwin-${archName}`) fs.rmSync(path.join(prebuilds, d), { recursive: true, force: true });
-  }
-
-  // node-gyp's build/node_gyp_bins (a python3 symlink to the build machine's
-  // interpreter) is a build artifact; package.json's files filter drops it, and
-  // this catches any copy that slips through, before the seal is made.
-  const unpacked = path.join(contents, 'Resources', 'app.asar.unpacked', 'node_modules');
-  if (fs.existsSync(unpacked)) {
-    for (const m of fs.readdirSync(unpacked)) fs.rmSync(path.join(unpacked, m, 'build', 'node_gyp_bins'), { recursive: true, force: true });
-  }
-
   const frameworks = path.join(contents, 'Frameworks');
   for (const f of fs.readdirSync(frameworks)) sign(path.join(frameworks, f), ['--deep']);
   // node-pty's spawn-helper and the native .node addons are Mach-O files outside
