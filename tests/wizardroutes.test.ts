@@ -14,6 +14,7 @@ import { practice } from '../src/routes/shortcut.ts';
 import {
   FALLBACK_TEMPLATES,
   discoverProjectDirs,
+  firstPaint,
   makeWizardRoutes,
   requirementRows,
   shipOptions,
@@ -249,6 +250,13 @@ describe('welcome screen', () => {
     expect(withDb((db) => getSetting(db, 'welcome_seen_at'))).toBe(1_700_000_000_000);
   });
 
+  it('the first-paint gate agrees with the view: open on a fresh install, closed once Enter is pressed', async () => {
+    const t = table();
+    expect(withDb(firstPaint)).toEqual({ welcome: true });
+    await hit(t, 'POST /api/wizard/welcome', {});
+    expect(withDb(firstPaint)).toEqual({ welcome: false });
+  });
+
   it('a finished setup never shows it, even if Enter was never pressed', async () => {
     const t = table();
     await walkTo(t, 'done');
@@ -264,6 +272,8 @@ describe('welcome screen', () => {
     seed.close();
     const r = await hit(table({ openDb: () => openDb(legacy) }), 'GET /api/wizard');
     expect(r.body.welcome).toBe(false);
+    const db = openDb(legacy);
+    try { expect(firstPaint(db)).toEqual({ welcome: false }); } finally { db.close(); }
   });
 });
 

@@ -59,3 +59,36 @@ describe('welcome page script', () => {
     expect(WELCOME_VIEW_JS).toContain('/api/wizard/welcome');
   });
 });
+
+describe('first paint on a first launch', () => {
+  const first = renderDashboard([], Date.now(), {}, 'claude', [], [], '', null, [], { welcome: true });
+  const later = renderDashboard([], Date.now(), {}, 'claude');
+
+  it('is served with the welcome screen open, ahead of the board markup', () => {
+    expect(first).toMatch(/<html lang="en" class="lw-first">/);
+    const lw = first.indexOf('<div id="lw" class="open run"');
+    expect(lw).toBeGreaterThan(-1);
+    expect(lw).toBeLessThan(first.indexOf('<header>'));
+    expect(first.match(/id="lw"/g)).toHaveLength(1);
+    expect(first).toMatch(/<div id="lw" class="open run"[^>]*aria-hidden="false"/);
+  });
+
+  it('hides everything but the welcome screen and the wizard before any script runs', () => {
+    const head = first.slice(0, first.indexOf('</head>'));
+    // The rule is in the head's first style block, so it applies from the first frame.
+    expect(head.indexOf('html.lw-first body > :not(#lw):not(#wz)')).toBeLessThan(head.indexOf(':root { color-scheme'));
+    expect(head).toContain('visibility:hidden');
+  });
+
+  it('a later launch is the plain board with the welcome screen closed', () => {
+    expect(later).not.toContain('class="lw-first"');
+    expect(later).toMatch(/<div id="lw" role="dialog"[^>]*aria-hidden="true"/);
+    expect(later.match(/id="lw"/g)).toHaveLength(1);
+  });
+
+  it('Enter lifts the gate (lwReveal) and the boot path starts the screen without waiting on the wizard view', () => {
+    expect(WELCOME_VIEW_JS).toContain("function lwReveal() { document.documentElement.classList.remove('lw-first'); }");
+    expect(first).toContain("var pre = document.documentElement.classList.contains('lw-first');");
+    expect(first).toContain('if (pre && typeof showWelcome === ');
+  });
+});

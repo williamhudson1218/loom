@@ -15,7 +15,8 @@ import { chatTagMap, listTags, type TagInfo } from './tags.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
 import { WIZARD_VIEW_CSS, WIZARD_VIEW_HTML, WIZARD_VIEW_JS } from './wizardview.ts';
-import { WELCOME_VIEW_CSS, WELCOME_VIEW_HTML, WELCOME_VIEW_JS } from './welcomeview.ts';
+import { ERROR_VIEW_CSS, ERROR_VIEW_JS } from './errorview.ts';
+import { WELCOME_BOOT_CSS, WELCOME_VIEW_CSS, WELCOME_VIEW_JS, welcomeHtml } from './welcomeview.ts';
 import { CONNECT_VIEW_CSS, CONNECT_VIEW_JS } from './connectview.ts';
 import { TOUR_VIEW_CSS, TOUR_VIEW_HTML, TOUR_VIEW_JS } from './tourview.ts';
 import { WATCHER_VIEW_CSS, WATCHER_VIEW_HTML, WATCHER_VIEW_JS } from './watcherview.ts';
@@ -156,18 +157,24 @@ export function renderDashboard(
   orch: unknown = null,
   // Tag definitions (name, colour, count); chats carry only the names.
   tags: TagInfo[] = [],
+  // First-paint gate (routes/wizard.ts firstPaint). With welcome set, the page
+  // is served with the welcome screen already open and the board hidden, so a
+  // first launch never paints a frame of the board before it.
+  boot: { welcome?: boolean } = {},
 ): string {
+  const welcomeFirst = !!boot.welcome;
   const data = JSON.stringify({ generatedAt, defaultAgent, chats: views, live, slackOwners, drafts, orch, tags })
     // Chat titles and draft text are untrusted: a literal </script> must not end the block.
     .replace(/</g, '\\u003c');
   const favicon = 'data:image/svg+xml,' + encodeURIComponent(LOGO_SVG);
   // All rendering is client-side from DATA; HTML below is a static shell.
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/>
+<html lang="en"${welcomeFirst ? ' class="lw-first"' : ''}><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${APP_NAME}</title>
 <link rel="icon" href="${favicon}"/>
 <style>
+${WELCOME_BOOT_CSS}
   :root { color-scheme: dark;
     --done:#2ea043; --waiting_on_user:#3b82f6; --warning:#d4a72c; --error:#e5484d; --pending:#6b7280; }
   body { margin:0; background:#0d0f15; color:#e6e6e6; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
@@ -950,8 +957,10 @@ ${WATCHER_VIEW_CSS}
 ${SHIPMODAL_CSS}
 ${OUTBOX_VIEW_CSS}
 ${UPDATE_VIEW_CSS}
+${ERROR_VIEW_CSS}
 </style></head>
 <body>
+${welcomeFirst ? welcomeHtml(true) : ''}
 <header>
   <div class="topbar">
     <div class="hleft">
@@ -1104,6 +1113,7 @@ ${SHIPMODAL_HTML}
 <script>
 const DATA = ${data};
 const TERM_TOKEN = ${JSON.stringify(termToken).replace(/</g, '\\u003c')};
+${ERROR_VIEW_JS}
 ${CHAT_MENU_JS}
 ${TERMDROP_JS}
 ${TERMWARM_JS}
@@ -1363,7 +1373,13 @@ if(lanes.length===1){doLaunch(sid,sourceAgent,lanes[0].lane,el,p,action,proj,sel
 ${PENDING_VIEW_JS}
 // One toast for every action result (the per-element flash it replaced would sit
 // on whichever chat the header happens to show, not the row that was clicked).
-function toast(msg,bg){const t=$('#toast');t.textContent=msg;t.style.background=bg||'#1f6f3f';t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),1800);}
+// A red toast is an error: it carries Copy details (src/errorview.ts) and stays
+// up long enough to press it, and while the pointer is on it.
+function toastIsErr(bg){const m=/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(bg||'');if(!m)return false;const r=parseInt(m[1],16),g=parseInt(m[2],16),b=parseInt(m[3],16);return r>100&&r>g*1.6&&r>b*1.6;}
+function toast(msg,bg,detail){const t=$('#toast');const err=toastIsErr(bg);t.classList.toggle('lerr-toast',err);
+  if(err)t.innerHTML='<span>'+esc(msg)+'</span>'+lerrCopyBtn({what:msg,message:msg,output:lerrOutput(detail)});else t.textContent=msg;
+  t.style.background=bg||'#1f6f3f';t.classList.add('on');clearTimeout(t._t);const hide=()=>t.classList.remove('on');t._t=setTimeout(hide,err?7000:1800);
+  t.onmouseenter=err?()=>clearTimeout(t._t):null;t.onmouseleave=err?()=>{clearTimeout(t._t);t._t=setTimeout(hide,2500);}:null;}
 function flash(el,msg,bg){toast(msg,bg);}
 function sum(o){return Object.values(o).reduce((a,b)=>a+b,0);}
 function disp(c){const t=c.title||c.first_message||'Untitled';return t.length>90?t.slice(0,90)+'…':t;}
@@ -2297,7 +2313,7 @@ loadShipCands();setInterval(visOnly(loadShipCands),15000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();loadTerminals();}});
 </script>
 ${WIZARD_VIEW_HTML}
-${WELCOME_VIEW_HTML}
+${welcomeFirst ? '' : welcomeHtml(false)}
 ${TOUR_VIEW_HTML}
 ${WATCHER_VIEW_HTML}
 </body></html>`;

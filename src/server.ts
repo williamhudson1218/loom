@@ -35,6 +35,7 @@ import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacySt
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps } from './routes/cli.ts';
+import { firstPaint } from './routes/wizard.ts';
 import { connectionsSafe } from './connections.ts';
 import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmode.ts';
 import { authTest, conversationsReplies } from './slackapi.ts';
@@ -2014,7 +2015,10 @@ export function createServer(): http.Server {
       // name: a rebinding page (evil.example -> 127.0.0.1) gets the board
       // without it, and so can never open a terminal (see ptybridge.ts).
       const token = isLoomHost(req.headers.host, serverPort()) ? termToken() : '';
-      const html = renderDashboard(views, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList());
+      // Read fresh, never from the snapshot memo: Enter on the welcome screen
+      // must not be followed by a reload that shows it again.
+      const boot = (() => { const db = openDb(); try { return firstPaint(db); } catch { return { welcome: false }; } finally { db.close(); } })();
+      const html = renderDashboard(views, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList(), boot);
       return send(res, 200, 'text/html; charset=utf-8', withClientFetch(html));
     }
 

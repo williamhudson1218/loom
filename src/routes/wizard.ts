@@ -431,6 +431,16 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 
+/**
+ * What the very first paint of the board page must show. The page HTML is
+ * rendered with the welcome screen already open (and the board hidden) when
+ * this says so, so no frame of the board appears before it on a first launch.
+ */
+export function firstPaint(db: Database.Database): { welcome: boolean } {
+  const show = shouldShow(marker(db)) && !setupDone(db);
+  return { welcome: showWelcome({ setupShow: show, seenAt: Number(getSetting(db, 'welcome_seen_at')) || 0 }) };
+}
+
 export function buildView(db: Database.Database) {
   const state = readState(db);
   const ctx = ctxOf(db);

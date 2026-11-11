@@ -73,8 +73,18 @@ const MARK = '<svg class="lw-mark" viewBox="180 180 660 640" xmlns="http://www.w
   + '<g fill="none" stroke-linecap="round" clip-path="url(#lw-x)"><path d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(-30 0)" stroke="#000" stroke-width="62"/><path d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" stroke="#000" stroke-width="62"/><path d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(30 0)" stroke="#000" stroke-width="62"/></g></mask></defs>'
   + '<g fill="none" stroke-linecap="round"><g mask="url(#lw-m)"><path d="M240 770 C380 730 560 570 600 410 C630 290 592 216 532 222" transform="translate(-30 0)" stroke="#ff5f8f" stroke-width="26" pathLength="1"/><path d="M240 770 C380 730 560 570 600 410 C630 290 592 216 532 222" stroke="#ffb238" stroke-width="26" pathLength="1"/><path d="M240 770 C380 730 560 570 600 410 C630 290 592 216 532 222" transform="translate(30 0)" stroke="#5ec8ff" stroke-width="26" pathLength="1"/></g><path class="lw-t2" d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(-30 0)" stroke="#ff5f8f" stroke-width="26" pathLength="1"/><path class="lw-t2" d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" stroke="#ffb238" stroke-width="26" pathLength="1"/><path class="lw-t2" d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(30 0)" stroke="#5ec8ff" stroke-width="26" pathLength="1"/></g></svg>';
 
-export const WELCOME_VIEW_HTML = String.raw`
-<div id="lw" role="dialog" aria-modal="true" aria-label="Welcome to Loom" aria-hidden="true">
+// In the page's first <style>, ahead of everything else. While <html> carries
+// lw-first (the server rendered the welcome screen open, see firstPaint in
+// src/routes/wizard.ts), nothing but the welcome screen and the wizard markup
+// paints, and the page background is the welcome screen's own colour, so the
+// first frame is the welcome screen. lwReveal() drops the class.
+export const WELCOME_BOOT_CSS = String.raw`
+  html.lw-first, html.lw-first body { background:#05060b !important; }
+  html.lw-first body > :not(#lw):not(#wz) { visibility:hidden !important; }
+`;
+
+const welcomeMarkup = (open: boolean): string => String.raw`
+<div id="lw"` + (open ? ' class="open run"' : '') + String.raw` role="dialog" aria-modal="true" aria-label="Welcome to Loom" aria-hidden="` + (open ? 'false' : 'true') + String.raw`">
   <canvas id="lw-sky" aria-hidden="true"></canvas>
   <div class="lw-main">
     <div class="lw-halo" aria-hidden="true"></div>
@@ -85,6 +95,13 @@ export const WELCOME_VIEW_HTML = String.raw`
   </div>
 </div>
 `;
+
+/** The welcome markup; open=true is the server-rendered first paint of a first launch. */
+export function welcomeHtml(open: boolean): string {
+  return welcomeMarkup(open);
+}
+
+export const WELCOME_VIEW_HTML = welcomeMarkup(false);
 
 export const WELCOME_VIEW_JS = String.raw`
 // ---- Welcome screen ---------------------------------------------------------------
@@ -178,9 +195,14 @@ function showWelcome(opts) {
   LW.open = true; LW.done = opts.done || null; LW.replay = !!opts.replay;
   LW.reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   LW.t0 = performance.now(); LW.shots = []; LW.nextShot = 1800; LW.ptr = { x: 0, y: 0, tx: 0, ty: 0 };
-  el.classList.remove('leaving', 'run');
-  void el.offsetWidth;
-  el.classList.add('open', 'run'); el.setAttribute('aria-hidden', 'false');
+  // Server-rendered open (a first launch): the animations are already running
+  // from the first paint, so restarting them would make the logo jump.
+  if (!(el.classList.contains('open') && el.classList.contains('run'))) {
+    el.classList.remove('leaving', 'run');
+    void el.offsetWidth;
+    el.classList.add('open', 'run');
+  }
+  el.setAttribute('aria-hidden', 'false');
   lwSize();
   lwOn(window, 'resize', function () { lwSize(); if (LW.reduce) { lwHalt(); lwKick(); } });
   if (!LW.reduce) lwOn(window, 'pointermove', function (e) { LW.ptr.tx = e.clientX / LW.W - .5; LW.ptr.ty = e.clientY / LW.H - .5; });
@@ -190,6 +212,8 @@ function showWelcome(opts) {
   lwKick();
   setTimeout(function () { var b = document.getElementById('lw-enter'); if (b && LW.open) b.focus({ preventScroll: true }); }, 50);
 }
+// Lets the board paint again once the welcome screen has handed over.
+function lwReveal() { document.documentElement.classList.remove('lw-first'); }
 function lwEnter() {
   if (!LW.open) return;
   var el = document.getElementById('lw'), done = LW.done;
@@ -197,7 +221,7 @@ function lwEnter() {
   lwHalt(); lwOffAll();
   if (typeof wzJson === 'function') wzJson('POST', '/api/wizard/welcome', {}).catch(function () {});
   var finish = function () {
-    el.classList.remove('open', 'run', 'leaving'); el.setAttribute('aria-hidden', 'true');
+    el.classList.remove('open', 'run', 'leaving'); el.setAttribute('aria-hidden', 'true'); lwReveal();
     var c = document.getElementById('lw-sky'); c.width = 1; c.height = 1;
     LW.layers = []; LW.neb = null; LW.shots = [];
   };

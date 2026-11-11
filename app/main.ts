@@ -51,6 +51,11 @@ import { setOrchNotifier, orchSettings } from '../src/orchestrator.ts';
 import { notifyUser, setAppNotifier, type NotifyTarget } from '../src/notify.ts';
 import { Updater, bundleOf, defaultCacheDir } from '../src/updater.ts';
 import { setUpdateHost } from '../src/routes/update.ts';
+import { installAppLog, setBuildInfo } from '../src/diagnostics.ts';
+
+// Loom's own log ($LOOM_HOME/loom.log): the packaged app has no terminal, so the
+// console is teed there for Copy details and Copy diagnostics (src/diagnostics.ts).
+installAppLog();
 
 // Finder-launched apps inherit a minimal PATH; restore the dirs we shell out to
 // (claude, tmux, gh, osascript): the user's extra_path, the built-ins (both
@@ -615,6 +620,7 @@ function reRegisterSlackHotkey(): void {
 // from source never updates. Version and commit are stamped by app/build.mjs.
 declare const __LOOM_BUILD__: { version: string; commit: string; channel: string } | undefined;
 const BUILD = typeof __LOOM_BUILD__ === 'object' && __LOOM_BUILD__ ? __LOOM_BUILD__ : { version: app.getVersion(), commit: '', channel: 'local' };
+setBuildInfo({ ...BUILD, version: app.getVersion() || BUILD.version });
 function autoUpdateOn(): boolean {
   const db = openDb();
   try {

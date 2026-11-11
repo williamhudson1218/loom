@@ -32,7 +32,7 @@ function dismissPending(){if(PENDING&&PENDING.state==='error')setPending(null);}
 function renderPending(){let el=$('#mpending');if(!PENDING){if(el)el.remove();return;}
   if(!el){el=document.createElement('div');el.id='mpending';$('#chatmain').appendChild(el);}
   const err=PENDING.state==='error';el.className=err?'err':'';
-  el.innerHTML='<div class="mpcard" role="status" aria-live="polite">'+(err?'':'<span class="mpspin"></span>')+'<div style="flex:1;min-width:0"><b>'+esc(PENDING.label||'')+'</b>'+(PENDING.detail?'<span class="mpd">'+esc(PENDING.detail)+'</span>':'')+'</div>'+(err?'<button type="button" class="mbtn" id="mpclose">Dismiss</button>':'')+'</div>';
+  el.innerHTML='<div class="mpcard" role="status" aria-live="polite">'+(err?'':'<span class="mpspin"></span>')+'<div style="flex:1;min-width:0"><b>'+esc(PENDING.label||'')+'</b>'+(PENDING.detail?'<span class="mpd">'+esc(PENDING.detail)+'</span>':'')+'</div>'+(err&&typeof lerrCopyBtn==='function'?lerrCopyBtn({what:PENDING.label||'Resume a chat',message:PENDING.detail||''}):'')+(err?'<button type="button" class="mbtn" id="mpclose">Dismiss</button>':'')+'</div>';
   const b=$('#mpclose');if(b)b.onclick=()=>setPending(null);}
 // Dismiss is also caught at the document, in the capture phase: it clears the card however the
 // card was rebuilt or whatever sits over it, and Escape clears an error card as well.

@@ -194,6 +194,11 @@ function wzJson(method, url, body) {
   if (body !== undefined) o.body = JSON.stringify(body);
   return fetch(url, o).then(function (r) { return r.json().then(function (j) { j.__status = r.status; return j; }); });
 }
+// A setup failure, through the page's one error component (src/errorview.ts).
+function wzErrHtml(msg, what, output) {
+  var step = (WZ.v && WZ.v.step && WZ.v.step.title) || (typeof wzCur === 'function' ? wzCur() : '') || '';
+  return loomErrorHtml({ what: what || ('Setup' + (step ? ': ' + step : '')), message: msg, output: output });
+}
 function wzGet(url) { return fetch(url).then(function (r) { return r.json(); }); }
 
 function wzFmtKey(acc) {
@@ -203,13 +208,19 @@ function wzFmtKey(acc) {
 
 /* ---------- boot, open, close ---------- */
 function wzBoot() {
-  wzGet('/api/wizard').then(function (v) {
-    if (!v || !v.ok) return;
-    WZ.v = v;
-    // A first launch shows the welcome screen first; Enter fades it into the wizard.
-    if (v.welcome && typeof showWelcome === 'function') showWelcome({ done: function () { if (WZ.v && WZ.v.show) wzOpen(); else wzResumePill(); } });
+  // A first launch is served with the welcome screen already open and the board
+  // hidden (html.lw-first, see firstPaint in src/routes/wizard.ts). Its Enter
+  // must work even if the wizard view below never loads.
+  var pre = document.documentElement.classList.contains('lw-first');
+  var p = wzGet('/api/wizard').then(function (v) { if (v && v.ok) WZ.v = v; return WZ.v; }).catch(function () { return WZ.v; });
+  // Enter fades the welcome screen into the wizard, or into the board.
+  var after = function () { p.then(function (v) { if (v && v.show) wzOpen(); else wzResumePill(); if (typeof lwReveal === 'function') lwReveal(); }); };
+  if (pre && typeof showWelcome === 'function') showWelcome({ done: after });
+  p.then(function (v) {
+    if (pre || !v) return;
+    if (v.welcome && typeof showWelcome === 'function') showWelcome({ done: after });
     else if (v.show) wzOpen(); else wzResumePill();
-  }).catch(function () {});
+  });
 }
 function wzResumePill() {
   var p = wzEl('wzresume');
@@ -274,7 +285,7 @@ function wzRender() {
   wzEl('wz-back').disabled = v.rail[0].current || WZ.busy;
   wzEl('wz-skip').style.display = st.skippable ? '' : 'none';
   wzEl('wz-skip').disabled = WZ.busy;
-  wzEl('wz-err').innerHTML = WZ.err ? '<div class="note err">' + wzEsc(WZ.err) + '</div>' : '';
+  wzEl('wz-err').innerHTML = WZ.err ? wzErrHtml(WZ.err) : '';
   var cont = wzEl('wz-cont');
   cont.innerHTML = '';
   var fn = WZ_STEPS[id];
@@ -402,12 +413,12 @@ function wzReqDraw() {
   var lg = wzEl('wz-reqlog');
   if (lg) {
     var j = WZ.job;
-    lg.innerHTML = j ? '<div class="note ' + (j.status === 'failed' ? 'err' : j.status === 'done' ? 'ok' : '') + '"><b>brew install ' + wzEsc(j.tool) + '</b> ' + (j.status === 'running' ? '<span class="spin"></span>running' : j.status === 'done' ? 'finished' : 'failed (exit ' + wzEsc(j.code) + ')') + '<pre class="log">' + wzEsc(j.log || '') + '</pre></div>' : '';
+    lg.innerHTML = j ? '<div class="note ' + (j.status === 'failed' ? 'err' : j.status === 'done' ? 'ok' : '') + '"><b>brew install ' + wzEsc(j.tool) + '</b> ' + (j.status === 'running' ? '<span class="spin"></span>running' : j.status === 'done' ? 'finished' : 'failed (exit ' + wzEsc(j.code) + ')') + '<pre class="log">' + wzEsc(j.log || '') + '</pre>' + (j.status === 'failed' ? lerrCopyBtn({ what: 'brew install ' + j.tool, message: 'exit ' + j.code, output: j.log || '' }) : '') + '</div>' : '';
   }
   var lo = wzEl('wz-reqlogin');
   if (lo) {
     var l = WZ.login;
-    lo.innerHTML = l ? (l.ok ? '<div class="note ok">Opened <b>' + wzEsc(l.session) + '</b> in Loom&#39;s Terminals list. Finish signing in there, then come back: this page checks again by itself. <button class="btn sm" data-wz-openterm="1">Open it</button></div>' : '<div class="note err">' + wzEsc(l.detail) + '</div>') : '';
+    lo.innerHTML = l ? (l.ok ? '<div class="note ok">Opened <b>' + wzEsc(l.session) + '</b> in Loom&#39;s Terminals list. Finish signing in there, then come back: this page checks again by itself. <button class="btn sm" data-wz-openterm="1">Open it</button></div>' : wzErrHtml(l.detail, 'Open the sign-in terminal')) : '';
   }
   wzFooter();
 }
@@ -531,12 +542,14 @@ function wzPluginDraw() {
   var pill = { not_installed: ['off', 'Not installed'], installed: ['ok', 'Installed v' + (s.installedVersion || '')], update_available: ['warn', 'Update available'], disabled: ['warn', 'Disabled in Claude'], error: ['err', 'Error'] }[s.status] || ['off', s.status];
   var cmds = ((s.preview && s.preview.install) || []).map(function (c) { return c.display; }).join(String.fromCharCode(10));
   var legacy = (s.legacy || []).length ? '<div class="note warn"><b>' + s.legacy.length + ' older Loom hook entr' + (s.legacy.length === 1 ? 'y' : 'ies') + ' found in your Claude settings.</b> They do nothing once the plugin is installed and are safe to remove by hand. Loom never edits that file.</div>' : '';
-  var res = WZ.pluginRes ? '<div class="note ' + (WZ.pluginRes.ok ? 'ok' : 'err') + '">' + (WZ.pluginRes.ok ? 'Installed. Running chats pick it up at their next start, or after /reload-plugins.' : wzEsc(WZ.pluginRes.detail || 'The install failed.')) + '</div>' : '';
+  var res = !WZ.pluginRes ? '' : WZ.pluginRes.ok ? '<div class="note ok">Installed. Running chats pick it up at their next start, or after /reload-plugins.</div>'
+    : wzErrHtml(WZ.pluginRes.detail || 'The install failed.', 'Install the Loom plugin', WZ.pluginRes.steps);
   var installed = s.status === 'installed' || s.status === 'update_available';
   el.innerHTML = '<div class="exp' + (WZ.S.cmdOpen ? ' open' : '') + '" id="wz-plexp"><button data-wz-toggle="wz-plexp" data-wz-setf="cmdOpen">&#9656; Preview the exact commands Install runs</button><div><pre>' + wzEsc(cmds) + '</pre><div class="def" style="margin-top:6px">' + wzEsc((s.preview && s.preview.note) || '') + '</div></div></div>'
     + legacy + res
     + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button class="btn pri" data-wz-pluginstall="1"' + (installed || WZ.pluginBusy || s.sourceMissing ? ' disabled' : '') + '>' + (WZ.pluginBusy ? 'Installing...' : installed ? 'Installed' : 'Install Loom plugin') + '</button><span class="pill ' + pill[0] + '">' + wzEsc(pill[1]) + '</span><span class="def">Remove it any time from Settings &rsaquo; Helpers.</span></div>'
-    + (s.sourceMissing ? '<div class="note err">This build of Loom has no plugin files to install.</div>' : '');
+    + (s.sourceMissing ? wzErrHtml('This build of Loom has no plugin files to install.', 'Install the Loom plugin') : '')
+    + (s.ok === false || s.status === 'error' ? wzErrHtml(s.error || s.detail || 'Loom could not read the plugin status.', 'Read the Loom plugin status') : '');
 }
 WZ_STEPS.plugin = function (c) {
   c.innerHTML = '<div class="stack"><div class="g2">'
@@ -630,7 +643,7 @@ function wzSlackRes() {
   var m = WZ.slackMsg;
   if (!m) return '';
   if (m.busy) return '<div class="def"><span class="spin"></span>Testing...</div>';
-  if (!m.ok) return '<div class="note err"><span class="st n">&#10007;</span> ' + wzEsc(m.hint || m.error || 'The test failed.') + '</div>';
+  if (!m.ok) return wzErrHtml(m.hint || m.error || 'The test failed.', 'Test the Slack connection', m.error && m.hint ? m.error : '');
   var sc = m.scopes || {};
   return '<div class="note ok"><span class="st y">&#10003;</span> Connected as ' + wzEsc((m.identity && m.identity.user) || '') + ' in ' + wzEsc((m.identity && m.identity.team) || '') + '. ' + wzEsc(sc.text || '') + (m.token ? ' Token ' + wzEsc(m.token) + '.' : '') + '</div>'
     + (sc.missing && sc.missing.length ? '<div class="note warn" style="margin-top:8px">Some features need scopes this token lacks (' + wzEsc(sc.missing.join(', ')) + '). Add them to the app and reinstall, or carry on without those features.</div>' : '');
@@ -812,7 +825,7 @@ function wzHkUse() {
   if (!r || !r.accelerator) return;
   wzJson('PUT', '/api/settings', { slack_goto_hotkey: r.accelerator }).then(function (j) {
     if (j && j.ok) { WZ.S.hotkey = r.accelerator; WZ.recRes = null; WZ.err = ''; }
-    else { WZ.err = (j && j.detail) || 'Loom could not use that shortcut.'; wzEl('wz-err').innerHTML = '<div class="note err">' + wzEsc(WZ.err) + '</div>'; }
+    else { WZ.err = (j && j.detail) || 'Loom could not use that shortcut.'; wzEl('wz-err').innerHTML = wzErrHtml(WZ.err); }
     wzHkDraw(); wzPracDraw();
   });
 }
@@ -950,7 +963,7 @@ function wzClick(e) {
     if (l && l.session) { wzClose(); if (typeof loadTerminals === 'function') loadTerminals(); setTimeout(function () { if (typeof selectTerminal === 'function') selectTerminal(l.session, l.window); }, 600); }
     return;
   }
-  if (d.wzRecheck) { WZ.reqBusy = false; return wzJson('PUT', '/api/settings', { claude_bin: (WZ.S.claude_bin || '').trim() }).then(function (j) { if (j && j.ok === false) { WZ.err = j.detail || 'That path was not accepted.'; wzEl('wz-err').innerHTML = '<div class="note err">' + wzEsc(WZ.err) + '</div>'; } else { WZ.err = ''; wzEl('wz-err').innerHTML = ''; } wzReqLoad(true); }); }
+  if (d.wzRecheck) { WZ.reqBusy = false; return wzJson('PUT', '/api/settings', { claude_bin: (WZ.S.claude_bin || '').trim() }).then(function (j) { if (j && j.ok === false) { WZ.err = j.detail || 'That path was not accepted.'; wzEl('wz-err').innerHTML = wzErrHtml(WZ.err); } else { WZ.err = ''; wzEl('wz-err').innerHTML = ''; } wzReqLoad(true); }); }
   if (d.wzPickfolder) { return window.loomNative.pickFolder().then(function (p) { if (p) wzAddProject(p); }); }
   if (d.wzAddpath) { var pi = wzEl('wz-ppath'); wzAddProject(pi.value); pi.value = ''; return; }
   if (d.wzPrm !== undefined) { var row = S.projects[+d.wzPrm]; S.projects.splice(+d.wzPrm, 1); if (row && row.existing) S.remove.push(row.path); return wzProjDraw(); }
@@ -960,7 +973,8 @@ function wzClick(e) {
   if (d.wzConfirm) { S.confirm = t.checked; return wzFooter(); }
   if (d.wzPluginstall) {
     WZ.pluginBusy = true; WZ.pluginRes = null; wzPluginDraw();
-    return wzJson('POST', '/api/plugin/install', {}).then(function (r) { WZ.pluginBusy = false; WZ.pluginRes = r; WZ.plugin = r.status || WZ.plugin; wzPluginLoad(); wzPluginDraw(); });
+    return wzJson('POST', '/api/plugin/install', {}).then(function (r) { WZ.pluginBusy = false; WZ.pluginRes = r; WZ.plugin = r.status || WZ.plugin; wzPluginLoad(); wzPluginDraw(); })
+      .catch(function (e) { WZ.pluginBusy = false; WZ.pluginRes = { ok: false, detail: 'Loom did not answer: ' + ((e && e.message) || 'no response') }; wzPluginDraw(); });
   }
   if (d.wzSlack) { S.slackChoice = d.wzSlack; WZ.slackMsg = null; return wzSlackDraw(); }
   if (d.wzSub !== undefined) { WZ.slackSub = +d.wzSub; return wzSlackDraw(); }

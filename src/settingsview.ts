@@ -123,7 +123,8 @@ var SX_SECS=[
  {id:'helpers',label:'Helpers',what:'Manages the hooks and skills Loom installs into Claude Code.',needs:'Claude Code on this machine. Loom adds a local plugin; it never edits settings.json.'},
  {id:'advanced',label:'Advanced',what:'Low-level tmux, lane, resource and server settings. Most people never need these.',needs:'Nothing.'},
  {id:'updates',label:'Updates',what:'Keeps Loom up to date from its GitHub releases: checks, downloads and verifies a new version, then installs it when Loom restarts.',needs:'Loom running as the app, installed in a folder you can write to, such as Applications.'},
- {id:'help',label:'Help',what:'Replays the welcome screen, the tour or setup, and lists keyboard shortcuts.',needs:'Nothing.'}
+ {id:'help',label:'Help',what:'Replays the welcome screen, the tour or setup, and lists keyboard shortcuts.',needs:'Nothing.'},
+ {id:'about',label:'About',what:'Shows the Loom version and copies diagnostics for a bug report.',needs:'Nothing.'}
 ];
 var SX_L={claude:'Claude Code',codex:'Codex',ask:'Ask every time',haiku:'Haiku',sonnet:'Sonnet',opus:'Opus',account:'Account default',inside:'Inside Loom',ghostty:'Ghostty',iterm2:'iTerm2',terminal:'Terminal.app',managed:'Managed windows',lanes:'Lanes',zoom:'Zoom',mirror:'Mirror',normal:'Normal',skip:'Skip permissions',send:'Send',park:'Send & park',close:'Send & close',needs_you:'Only when it asks a question',all:'On every report',off:'Off',direct:'Direct app',mcp:'MCP only',system:'System default',auto:'Automatic',on:'Always'};
 
@@ -133,7 +134,7 @@ function sxv(k){var s=sxs(k);return s?s.value:undefined;}
 function sxJ(u,o){return fetch(u,o||{}).then(function(r){return r.json().catch(function(){return {ok:false,detail:'bad response'};});});}
 function sxPost(u,b){return sxJ(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});}
 function sxErr(j){return (j&&(j.hint||j.detail||j.error))||'failed';}
-function sxBad(m){toast(m,'#8a2c2c');}
+function sxBad(m,detail){toast(m,'#8a2c2c',detail);}
 function sxRerender(force){if(tab!=='settings')return;var a=document.activeElement;if(!force&&a&&a.closest&&a.closest('#settings-body')&&(a.tagName==='INPUT'||a.tagName==='SELECT'))return;renderSettings();}
 function sxLoad(name,force){if(!force&&SX.loaded[name])return;SX.loaded[name]=1;sxJ(SX_URL[name]).then(function(j){SX.data[name]=j;sxRerender();}).catch(function(){SX.data[name]={ok:false};sxRerender();});}
 function sxLoadProjects(){fetch('/api/projects?all=1').then(function(r){return r.json();}).then(function(j){if(j.ok){ALLP=j.projects;sxRerender();}});}
@@ -205,6 +206,7 @@ function sxStatus(id){var sl=SX.data.slack,mode=sxv('slack_mode'),pl=SX.data.plu
   if(id==='helpers'){if(!pl)return ['off','Checking'];if(pl.status==='installed')return ['ok','Installed'];if(pl.status==='update_available')return ['warn','Update available'];if(pl.status==='not_installed')return ['warn','Not installed'];if(pl.status==='disabled')return ['warn','Disabled'];return ['err','Error'];}
   if(id==='advanced'){var ch=Object.keys(SET.settings).filter(function(k){var s=SET.settings[k];return s.section==='advanced'&&s.source==='stored'&&JSON.stringify(s.value)!==JSON.stringify(s['default']);}).length;return ch?['off',ch+' changed']:['ok','Defaults'];}
   if(id==='updates')return sxUpdatesStatus();
+  if(id==='about'){var us=(typeof UPD!=='undefined'&&UPD&&UPD.state)||{};return ['off',us.current?'Loom '+us.current:'Version'];}
   return ['ok','Tour and setup'];}
 
 /* ---- sections ---- */
@@ -410,7 +412,11 @@ function sxHelp(){var hk=sxv('slack_goto_hotkey');
    '<div class="def" style="margin-top:12px">Loom data is kept in your Loom data folder; see Advanced.</div>';}
 
 /* ---- the page ---- */
-function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();if(id==='updates')return sxUpdates();return sxHelp();}
+function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();if(id==='updates')return sxUpdates();if(id==='about')return sxAbout();return sxHelp();}
+// Settings > About. Copy diagnostics is Copy details with no error in it (src/errorview.ts).
+function sxAbout(){var s=(typeof UPD!=='undefined'&&UPD&&UPD.state)||{};
+  return sxRow('Version','The version running now, and the commit it was built from.',sxPill('off','Loom '+(s.current||'?'))+(s.commit?'<span class="def"><code>'+sxEsc(String(s.commit).slice(0,12))+'</code></span>':''))+
+   sxRow('Diagnostics','Copies the Loom, macOS, architecture and Claude Code versions and the last 100 lines of the Loom log, with tokens, emails and your home folder removed. Safe to paste into a GitHub issue.',sxBtn('aboutdiag','Copy diagnostics',{pri:true,sm:false})+sxBtn('openlogs','Open logs',{sm:false}));}
 function renderSettings(){var el=$('#settings-body');
   if(!SET){el.innerHTML='<p class="meta">loading…</p>';sxLoadSettings();return;}
   sxPrefetch();
@@ -501,10 +507,11 @@ function sxAct(a,arg,btn){
   if(a==='gogh'){SX.sec='github';try{lsSet('loom.settingsSec',SX.sec);}catch(x){}renderSettings();return;}
   if(a==='gowatch'){tab='watch';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();return;}
   if(a==='hcmds'){SX.cmds=!SX.cmds;renderSettings();return;}
-  if(a==='hinst'||a==='hupd'){var pv=SX.data.plugin;var run=function(){btn.disabled=true;btn.textContent=a==='hinst'?'Installing…':'Updating…';sxPost('/api/plugin/'+(a==='hinst'?'install':'update'),{}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast(a==='hinst'?'Helpers installed':'Helpers updated');sxLoad('plugin',true);});};
+  if(a==='hinst'||a==='hupd'){var pv=SX.data.plugin;var run=function(){btn.disabled=true;btn.textContent=a==='hinst'?'Installing…':'Updating…';sxPost('/api/plugin/'+(a==='hinst'?'install':'update'),{}).then(function(j){if(!j.ok)sxBad(sxErr(j),j.steps);else toast(a==='hinst'?'Helpers installed':'Helpers updated');sxLoad('plugin',true);});};
    if(a==='hinst'&&pv&&pv.preview){sxConfirm({title:'Install the Loom helpers',body:'Loom adds a local plugin to Claude Code by running:<pre class="sxpre">'+sxEsc((pv.preview.install||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>It does not edit your settings.json. Remove undoes it.',ok:'Install'}).then(function(y){if(y)run();});}else run();return;}
   if(a==='hrm'){var pr=SX.data.plugin;sxConfirm({title:'Remove the Loom helpers',body:'Loom runs:<pre class="sxpre">'+sxEsc(((pr&&pr.preview&&pr.preview.remove)||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>Chats stop recording drafts, thread ownership and ship labels until you install them again.',ok:'Remove',danger:true}).then(function(y){if(y)sxPost('/api/plugin/remove',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoad('plugin',true);});});return;}
   if(a==='tour'){if(typeof startTour==='function')startTour();else window.dispatchEvent(new CustomEvent('loom:start-tour'));return;}
+  if(a==='aboutdiag'){if(typeof loomCopyDetails==='function')loomCopyDetails({},btn);return;}
   if(a==='welcome'){if(typeof showWelcome==='function')showWelcome({replay:true});return;}
   if(a==='setup'){if(typeof openWizard==='function')openWizard();else window.dispatchEvent(new CustomEvent('loom:open-wizard'));return;}
   if(a==='copydiag'){var snap={},ks=Object.keys(SET.settings);ks.forEach(function(k){var s=SET.settings[k];if(k==='slack_identity'||k==='slack_scopes_granted'||k==='channel_projects')return;snap[k]=s.value;});

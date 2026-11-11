@@ -33,7 +33,9 @@ var CN_K_WZ={btn:'btn sm',pri:'btn pri',ghost:'btn sm ghost',danger:'btn sm dang
 var CN_DEVICE='https://github.com/login/device';
 function cnEsc(s){return String(s==null?'':s).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;');}
 function cnB(K,act,label,o){o=o||{};var c=o.pri?K.pri:o.danger?K.danger:o.ghost?K.ghost:K.btn;return '<button type="button" class="'+c+'" data-cn="'+act+'"'+(o.arg!=null?' data-arg="'+cnEsc(o.arg)+'"':'')+(o.dis?' disabled':'')+'>'+cnEsc(label)+'</button>';}
-function cnNote(K,t,kind){return '<div class="'+K.note+(kind?' '+kind:'')+'">'+t+'</div>';}
+// An error note carries Copy details (src/errorview.ts); what names the Connect flow.
+function cnNote(K,t,kind,what){var copy='';if(kind==='err'&&typeof lerrCopyBtn==='function'){var d=document.createElement('div');d.innerHTML=t;copy=' '+lerrCopyBtn({what:what||'Connect',message:d.textContent||''});}
+  return '<div class="'+K.note+(kind?' '+kind:'')+'">'+t+copy+'</div>';}
 function cnPill(cls,t){return '<span class="pill '+cls+'">'+cnEsc(t)+'</span>';}
 function cnJ(u,o){return fetch(u,o||{}).then(function(r){return r.json().catch(function(){return {ok:false,error:'bad response'};});});}
 function cnPost(u,b){return cnJ(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});}
@@ -62,9 +64,9 @@ function cnGhEnded(j){if(!j)return;if(j.state==='ok')CN.ghMsg=j.kind==='install'
   else if(j.state==='cancelled')CN.ghMsg={kind:'',text:j.kind==='install'?'The install was cancelled.':'The GitHub sign-in was cancelled. Nothing changed.'};
   else CN.ghMsg={kind:'err',text:(j.kind==='install'?'The install failed: ':'The GitHub sign-in did not finish: ')+(j.error||'unknown error')};}
 function cnGhHtml(K){var st=CN.gh,v=cnGhView(st),h='';
-  var msg=CN.ghMsg?cnNote(K,cnEsc(CN.ghMsg.text),CN.ghMsg.kind):'';
+  var msg=CN.ghMsg?cnNote(K,cnEsc(CN.ghMsg.text),CN.ghMsg.kind,'Connect GitHub'):'';
   if(v.kind==='checking')return '<div class="cn-stack">'+cnPill('off','Checking')+'</div>';
-  if(v.kind==='error')return '<div class="cn-stack">'+cnNote(K,'Loom could not check gh.','err')+cnB(K,'ghrefresh','Check again')+'</div>';
+  if(v.kind==='error')return '<div class="cn-stack">'+cnNote(K,'Loom could not check gh.','err','Connect GitHub')+cnB(K,'ghrefresh','Check again')+'</div>';
   var j=st.job;
   if(v.kind==='installing'){h+='<div class="cn-row">'+cnPill('warn','Installing gh with Homebrew')+cnB(K,'ghcancel','Cancel',{ghost:true})+'</div><pre class="cn-log">'+cnEsc((j.log||[]).join(String.fromCharCode(10))||'Starting brew install gh')+'</pre>';return '<div class="cn-stack">'+h+'</div>';}
   if(v.kind==='waiting'){
@@ -110,9 +112,9 @@ var CN_GHELP='<details class="cn-help"><summary>How to create the Google client 
 // o.fields: show the client id and secret inputs here (the wizard). Settings shows them as its own rows.
 function cnGmHtml(K,o){o=o||{};var st=CN.gm,v=cnGmView(st),h='';
   if(v.kind==='checking')return '<div class="cn-stack">'+cnPill('off','Checking')+'</div>';
-  if(v.kind==='error')return '<div class="cn-stack">'+cnNote(K,'Loom could not read the Gmail connection.','err')+cnB(K,'gmrefresh','Check again')+'</div>';
+  if(v.kind==='error')return '<div class="cn-stack">'+cnNote(K,'Loom could not read the Gmail connection.','err','Connect Gmail')+cnB(K,'gmrefresh','Check again')+'</div>';
   var acc=st.accounts||[];
-  if(CN.gmMsg)h+=cnNote(K,cnEsc(CN.gmMsg.text),CN.gmMsg.kind);
+  if(CN.gmMsg)h+=cnNote(K,cnEsc(CN.gmMsg.text),CN.gmMsg.kind,'Connect Gmail');
   if(o.fields){
    h+='<div class="cn-row"><input type="text" id="cn-gcid" class="mono" placeholder="Client id, ends in .apps.googleusercontent.com" value="'+cnEsc(st.clientId||'')+'" style="flex:2;min-width:220px"'+(st.clientIdFromEnv?' disabled':'')+'><input type="password" id="cn-gsec" placeholder="'+(st.hasSecret?'Client secret saved':'Client secret')+'" autocomplete="off" style="flex:1;min-width:140px">'+cnB(K,'gmsave','Save')+'</div>';}
   if(!st.clientId)h+='<div class="def">Connect Gmail needs your own Google client id and secret first.</div>';
