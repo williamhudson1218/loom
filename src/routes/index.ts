@@ -14,6 +14,8 @@ import { routes as watcherRoutes } from './watchers.ts';
 import { routes as cliRoutes } from './cli.ts';
 import { routes as settingsExtraRoutes } from './settingsextra.ts';
 import { routes as treeRoutes } from './trees.ts';
+import { routes as googleRoutes } from './google.ts';
+import { routes as githubRoutes } from './github.ts';
 
 // ---- The route table and the one write guard (§13) --------------------------
 //
@@ -142,6 +144,8 @@ export const MODULE_ROUTES: RouteDef[] = [
   ...cliRoutes,
   ...settingsExtraRoutes,
   ...treeRoutes,
+  ...googleRoutes,
+  ...githubRoutes,
 ];
 
 export const ROUTES: RouteDef[] = [...CORE_ROUTES, ...MODULE_ROUTES];

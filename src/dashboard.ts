@@ -15,6 +15,7 @@ import { chatTagMap, listTags, type TagInfo } from './tags.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
 import { WIZARD_VIEW_CSS, WIZARD_VIEW_HTML, WIZARD_VIEW_JS } from './wizardview.ts';
+import { CONNECT_VIEW_CSS, CONNECT_VIEW_JS } from './connectview.ts';
 import { TOUR_VIEW_CSS, TOUR_VIEW_HTML, TOUR_VIEW_JS } from './tourview.ts';
 import { WATCHER_VIEW_CSS, WATCHER_VIEW_HTML, WATCHER_VIEW_JS } from './watcherview.ts';
 import { pageKeymapJson } from './keymap.ts';
@@ -224,6 +225,7 @@ export function renderDashboard(
   .tab.watchtab.on:hover { background:#45345a; }
   #watch-section, #settings-section { display:none; padding:0 20px 24px; }
 ${SETTINGS_VIEW_CSS}
+${CONNECT_VIEW_CSS}
 ${PRUNE_VIEW_CSS}
   .emrow.w-on { border-left-color:var(--done); }
   .emrow.w-err { border-left-color:var(--error); }
@@ -1104,6 +1106,7 @@ ${SIDESEARCH_JS}
 ${JUMP_PURE_JS}
 ${JUMP_VIEW_JS}
 ${ORCH_VIEW_JS}
+${CONNECT_VIEW_JS}
 ${WIZARD_VIEW_JS}
 ${TOUR_VIEW_JS}
 ${WATCHER_VIEW_JS}

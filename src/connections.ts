@@ -1,6 +1,7 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { openDb } from './db.ts';
+import { findBin, ghStatusVia, type GhStatus } from './ghconnect.ts';
+import { listGoogleAccounts } from './googleoauth.ts';
 import { getSetting } from './settingsSchema.ts';
 import { resolveEmailCli } from './outboxemail.ts';
 import { slackMode } from './slackmode.ts';
@@ -10,8 +11,8 @@ import { slackMode } from './slackmode.ts';
 //   warn  amber  set up but needs attention
 //   off   grey   not set up
 // Slack comes from the effective Slack mode, GitHub from `gh auth status` (cached; never
-// run per poll), Gmail from the email CLI setting resolving to a file that exists. None of
-// them calls the service itself.
+// run per poll), Gmail from the connected Google accounts (src/googleoauth.ts) or else the
+// email CLI setting resolving to a file that exists. None of them calls the service itself.
 
 export type ConnState = 'ok' | 'warn' | 'off';
 export type GhState = 'ok' | 'unauth' | 'missing' | 'unknown';
@@ -33,6 +34,13 @@ export interface ConnInputs {
   /** What resolveEmailCli returned ('' when email is off). */
   emailCli: string;
   emailCliExists: boolean;
+  /** The gh account name, when gh said. */
+  ghLogin?: string;
+  /** Connected Gmail accounts, and how many need reconnecting. */
+  gmailAccounts?: number;
+  gmailReconnect?: number;
+  /** The email_via setting: auto | gmail | cli. */
+  emailVia?: string;
 }
 
 export function connectionStates(i: ConnInputs): Connection[] {
@@ -45,19 +53,24 @@ export function connectionStates(i: ConnInputs): Connection[] {
   else slack = { state: 'off', detail: 'Slack: not set up.' };
 
   let gh: Pick<Connection, 'state' | 'detail'>;
-  if (i.gh === 'ok') gh = { state: 'ok', detail: 'GitHub: gh is signed in.' };
-  else if (i.gh === 'unauth') gh = { state: 'warn', detail: 'GitHub: gh is installed but not signed in. Run gh auth login.' };
-  else if (i.gh === 'missing') gh = { state: 'off', detail: 'GitHub: gh is not installed.' };
+  if (i.gh === 'ok') gh = { state: 'ok', detail: `GitHub: gh is signed in${i.ghLogin ? ' as ' + i.ghLogin : ''}.` };
+  else if (i.gh === 'unauth') gh = { state: 'warn', detail: 'GitHub: gh is installed but not signed in. Click to connect.' };
+  else if (i.gh === 'missing') gh = { state: 'off', detail: 'GitHub: gh is not installed. Click to set it up.' };
   else gh = { state: 'off', detail: 'GitHub: checking.' };
 
   let gmail: Pick<Connection, 'state' | 'detail'>;
-  if (i.emailCli && i.emailCliExists) gmail = { state: 'ok', detail: 'Gmail: the email CLI is set up.' };
+  const nG = i.gmailAccounts ?? 0;
+  const useCli = i.emailVia === 'cli' || (!nG && i.emailVia !== 'gmail');
+  if (!useCli && nG && (i.gmailReconnect ?? 0) > 0) gmail = { state: 'warn', detail: 'Gmail: a connected account needs reconnecting. Click to reconnect.' };
+  else if (!useCli && nG) gmail = { state: 'ok', detail: `Gmail: ${nG === 1 ? 'one account' : nG + ' accounts'} connected.` };
+  else if (!useCli) gmail = { state: 'warn', detail: 'Gmail: email is set to send through Gmail, but no account is connected.' };
+  else if (i.emailCli && i.emailCliExists) gmail = { state: 'ok', detail: 'Gmail: the email CLI is set up.' };
   else if (i.emailSetting.trim()) gmail = { state: 'warn', detail: 'Gmail: the Email CLI setting points at a file that does not exist.' };
-  else gmail = { state: 'off', detail: 'Gmail: no email CLI set up.' };
+  else gmail = { state: 'off', detail: 'Gmail: not set up. Click to connect Gmail.' };
 
   return [
     { id: 'slack', label: 'Slack', ...slack, section: 'slack' },
-    { id: 'github', label: 'GitHub', ...gh, section: 'general' },
+    { id: 'github', label: 'GitHub', ...gh, section: 'github' },
     { id: 'gmail', label: 'Gmail', ...gmail, section: 'outbox' },
   ];
 }
@@ -67,61 +80,67 @@ export function connectionStates(i: ConnInputs): Connection[] {
 export const GH_TTL_MS = 5 * 60_000;
 export type GhRun = () => Promise<GhState>;
 
-/** `gh auth status`: exit 0 is signed in, ENOENT is missing, any other exit is not signed in. */
-export const runGhAuth: GhRun = () =>
-  new Promise((resolve) => {
-    try {
-      execFile('gh', ['auth', 'status'], { timeout: 5000 }, (err) => {
-        if (!err) return resolve('ok');
-        const e = err as NodeJS.ErrnoException & { killed?: boolean };
-        if (e.code === 'ENOENT') return resolve('missing');
-        if (e.killed) return resolve('unknown');
-        resolve('unauth');
-      });
-    } catch {
-      resolve('unknown');
-    }
-  });
-
 /** Stale-while-revalidate: always answers from the cache at once; a stale or empty cache starts one background run. */
-export function makeGhCache(run: GhRun = runGhAuth, ttl: number = GH_TTL_MS, now: () => number = Date.now) {
-  let value: GhState = 'unknown';
+export function makeGhCache<T = GhState>(run: () => Promise<T>, ttl: number = GH_TTL_MS, now: () => number = Date.now, initial: T = 'unknown' as T) {
+  let value: T = initial;
   let at = -Infinity;
   let inflight = false;
+  const start = () => {
+    inflight = true;
+    run()
+      .then((v) => {
+        value = v;
+        at = now();
+      })
+      .catch(() => {
+        at = now();
+      })
+      .finally(() => {
+        inflight = false;
+      });
+  };
   return {
-    get(): GhState {
-      if (!inflight && now() - at >= ttl) {
-        inflight = true;
-        run()
-          .then((v) => {
-            value = v;
-            at = now();
-          })
-          .catch(() => {
-            at = now();
-          })
-          .finally(() => {
-            inflight = false;
-          });
-      }
+    get(): T {
+      if (!inflight && now() - at >= ttl) start();
       return value;
+    },
+    /** Take a known answer now (Connect GitHub just finished). */
+    set(v: T): void {
+      value = v;
+      at = now();
+    },
+    /** Forget the answer so the next get() runs again. */
+    invalidate(): void {
+      at = -Infinity;
     },
   };
 }
 
-const ghCache = makeGhCache();
+const ghCache = makeGhCache<GhStatus>(() => ghStatusVia(findBin('gh')), GH_TTL_MS, Date.now, { state: 'unknown', login: '' });
+
+/** Connect GitHub ended (or gh was installed): record the fresh status for the header. */
+export function setGhStatus(s: GhStatus): void {
+  ghCache.set(s);
+}
+export function invalidateGhStatus(): void {
+  ghCache.invalidate();
+}
 
 /** The header data for /api/data. Never throws. */
 export function connectionsSafe(): Connection[] {
   let reconnect = '';
   let setting = '';
   let mode = 'off';
+  let via = 'auto';
+  let accts: { reconnect?: string }[] = [];
   try {
     const db = openDb();
     try {
       reconnect = getSetting(db, 'slack_reconnect');
       setting = getSetting(db, 'email_cli', { env: false });
       mode = slackMode(db);
+      via = getSetting(db, 'email_via');
+      accts = listGoogleAccounts(db);
     } finally {
       db.close();
     }
@@ -132,7 +151,13 @@ export function connectionsSafe(): Connection[] {
   return connectionStates({
     slackMode: mode,
     slackReconnect: reconnect,
-    gh: ghCache.get(),
+    ...(() => {
+      const g = ghCache.get();
+      return { gh: g.state, ghLogin: g.login };
+    })(),
+    gmailAccounts: accts.length,
+    gmailReconnect: accts.filter((a) => a.reconnect).length,
+    emailVia: via,
     emailSetting: setting,
     emailCli: cli,
     emailCliExists: !!cli && fs.existsSync(cli),

@@ -563,6 +563,8 @@ var WZ_SCOPES = [
   ['emoji:read', 'Load your workspace custom emoji so they render', 'Emoji in transcripts and previews']
 ];
 function wzSlackDraw() {
+  var tb = wzEl('wz-cntabs');
+  if (tb) tb.innerHTML = wzConnTabsHtml();
   var el = wzEl('wz-slack');
   if (!el) return;
   var S = WZ.S, s = WZ.slack, ch = S.slackChoice;
@@ -664,10 +666,50 @@ function wzOAuthStart() {
     }, 2000);
   }).catch(function () { if (w) w.close(); WZ.oauthMsg = { ok: false, text: 'Loom did not answer.' }; wzSlackDraw(); });
 }
+/* -- connections: Slack, GitHub and Gmail side by side (the step id stays 'slack') -- */
+function wzSlackPill() {
+  var s = WZ.slack;
+  if (!s) return ['off', 'Checking'];
+  if (s.connected && s.mode === 'direct') return ['ok', 'Connected' + (s.identity && s.identity.team ? ' to ' + s.identity.team : '')];
+  if (s.mode === 'mcp') return ['ok', 'MCP only'];
+  if (s.reconnect) return ['warn', 'Reconnect Slack'];
+  return ['off', 'Not connected'];
+}
+var WZ_CONN = [
+  ['slack', 'Slack', 'Send from the Outbox, watch channels, follow parked threads.'],
+  ['github', 'GitHub', 'Pull request status, checks, reviews and Ship, through gh.'],
+  ['gmail', 'Gmail', 'Send email drafts as you and check their threads first.']
+];
+function wzConnTabsHtml() {
+  var tab = WZ.cnTab || 'slack';
+  return WZ_CONN.map(function (r) {
+    var p = r[0] === 'slack' ? wzSlackPill() : r[0] === 'github' ? cnGhView(CN.gh).pill : cnGmView(CN.gm).pill;
+    return '<button class="opt' + (tab === r[0] ? ' sel' : '') + '" data-wz-cntab="' + r[0] + '"><b>' + wzEsc(r[1]) + '</b><span class="d">' + wzEsc(r[2]) + '</span><span class="pill ' + p[0] + '">' + wzEsc(p[1]) + '</span></button>';
+  }).join('');
+}
+function wzConnPanelHtml() {
+  var tab = WZ.cnTab || 'slack';
+  if (tab === 'github') return cnGhHtml(CN_K_WZ);
+  if (tab === 'gmail') return cnGmHtml(CN_K_WZ, { fields: true });
+  return '<div class="stack" id="wz-slack"></div>';
+}
+function wzConnDraw() {
+  if (!WZ.v || wzCur() !== 'slack') return;
+  var t = wzEl('wz-cntabs');
+  if (t) t.innerHTML = wzConnTabsHtml();
+  var p = wzEl('wz-cnpanel');
+  if (!p) return;
+  if ((WZ.cnTab || 'slack') === 'slack') { if (!wzEl('wz-slack')) p.innerHTML = wzConnPanelHtml(); wzSlackDraw(); }
+  else { var a = document.activeElement; if (a && a.tagName === 'INPUT' && p.contains(a)) return; p.innerHTML = wzConnPanelHtml(); }
+}
 WZ_STEPS.slack = function (c) {
-  c.innerHTML = '<div class="stack" id="wz-slack"></div>';
+  WZ.cnTab = WZ.cnTab || 'slack';
+  c.innerHTML = '<div class="stack"><div class="cards cn-tabs" id="wz-cntabs">' + wzConnTabsHtml() + '</div><div id="wz-cnpanel">' + wzConnPanelHtml() + '</div>'
+    + '<div class="def">Each connection is optional. Continue keeps what you connected; Skip leaves the rest for Settings.</div></div>';
   wzSlackDraw();
   wzSlackLoad();
+  cnGhLoad(wzConnDraw);
+  cnGmLoad(wzConnDraw);
 };
 
 /* -- shortcut -- */
@@ -891,6 +933,8 @@ function wzClick(e) {
   var t = e.target.closest ? e.target.closest('button, a, [data-wz-confirm], [data-wz-readonly], [data-wz-psug], [data-wz-orch], [data-wz-orchtrust], [data-wz-shipt]') : null;
   if (!t) return;
   var d = t.dataset || {}, S = WZ.S;
+  if (d.cn) { cnAct(d.cn, d.arg, wzConnDraw, t); return; }
+  if (d.wzCntab) { WZ.cnTab = d.wzCntab; return wzConnDraw(); }
   if (t.id === 'wz-x') return wzClose();
   if (t.id === 'wz-back') return wzBack();
   if (t.id === 'wz-skip') return wzSkip();
@@ -947,6 +991,7 @@ function wzClick(e) {
 function wzInput(e) {
   var t = e.target, d = t.dataset || {}, S = WZ.S;
   if (!S) return;
+  if (d.cnLabel != null) { if (e.type === 'change') cnChange(t, wzConnDraw); return; }
   if (d.wzF) { S[d.wzF] = t.value; if (d.wzF === 'permW' || d.wzF === 'permO') { var p = wzEl('wz-skipconf'); if (p) p.style.display = (S.perm === 'skip' || S.permW === 'skip' || S.permO === 'skip') ? 'flex' : 'none'; wzFooter(); } return; }
   if (d.wzPname !== undefined) { S.projects[+d.wzPname].name = t.value; return; }
   if (d.wzShip !== undefined) { S.ship[+d.wzShip][d.k] = t.value; return; }

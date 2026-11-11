@@ -66,6 +66,16 @@ claude plugin marketplace remove loom-local
 
 Start new Claude sessions after installing; running sessions keep the hooks they began with. Codex has no plugin system, so Loom adds its placement hook to `~/.codex/hooks.json` only if you say yes, after showing you the change.
 
+## Connections
+
+The header shows a dot for Slack, GitHub and Gmail; click one to open its Settings section. The setup wizard's Connections step puts all three side by side, each optional.
+
+- **GitHub**: Connect GitHub runs `gh auth login --web` for you, shows the one-time code with a Copy button and opens github.com/login/device. If gh is missing, Loom installs it with Homebrew or links to cli.github.com. An existing gh login is never changed unless you choose Sign in again.
+- **Gmail**: Connect Gmail signs in to Google with your own Desktop app OAuth client (scopes `gmail.send` and `gmail.metadata`, plus your address) and keeps each account's refresh token in the Keychain. Email drafts then send through Gmail directly. Without it, an Email CLI script works as before.
+- **Slack**: see below.
+
+Setup steps, scopes and the Google client walkthrough are in [SETUP.md](SETUP.md#5a-connections-github-and-gmail).
+
 ## Slack
 
 Slack is optional. Pick one mode in the wizard or Settings › Slack.

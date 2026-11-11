@@ -41,6 +41,8 @@ import { emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restore
 import { OutboxWatch } from './outboxwatch.ts';
 import { cachedHead, ghRun, githubPoster, headMoved } from './outboxreview.ts';
 import { cliAdapter, cliRunner, EMAIL_OFF_DETAIL, resolveEmailCli, type EmailAdapter } from './outboxemail.ts';
+import { chooseEmailRoute, gmailAdapter } from './gmailapi.ts';
+import { googleAccessToken, listGoogleAccounts, markGoogleReconnect, type GoogleAccount } from './googleoauth.ts';
 import { cachedFresh, clearFreshCache, currentSeen, ghActivityVia, ghMeVia, type FreshDeps } from './outboxfresh.ts';
 import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
@@ -304,13 +306,21 @@ function chatIsSending(id: string): boolean {
   return since !== undefined && Date.now() - since < CHAT_SENDING_MS;
 }
 
-/** The email CLI from the `email_cli` setting (or the default script), or null when email is off. */
+/**
+ * The email adapter drafts send through: the built-in Gmail sender once an account
+ * is connected (email_via auto or gmail), else the email CLI from the `email_cli`
+ * setting or the default script; null when email is off. See chooseEmailRoute.
+ */
 function emailAdapter(): EmailAdapter | null {
   let setting = '';
+  let via = 'auto';
+  let accounts: GoogleAccount[] = [];
   try {
     const db = openDb();
     try {
       setting = getSetting(db, 'email_cli', { env: false });
+      via = getSetting(db, 'email_via');
+      accounts = listGoogleAccounts(db);
     } finally {
       db.close();
     }
@@ -318,7 +328,29 @@ function emailAdapter(): EmailAdapter | null {
     /* the default */
   }
   const cli = resolveEmailCli(setting);
-  return cli ? cliAdapter(cliRunner(cli)) : null;
+  const route = chooseEmailRoute({ via, gmailAccounts: accounts.length, cli });
+  if (route === 'cli') return cliAdapter(cliRunner(cli));
+  if (route === 'gmail') {
+    return gmailAdapter({
+      accounts: () => accounts,
+      token: (email, force) => googleAccessToken(email, { force, onReconnect: markReconnectSafe }),
+    });
+  }
+  return null;
+}
+
+/** A refused Google refresh: flag the account so the header goes amber and Settings asks for a reconnect. */
+function markReconnectSafe(email: string, reason: string): void {
+  try {
+    const db = openDb();
+    try {
+      markGoogleReconnect(db, email, reason || 'refresh_failed');
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* the send still reports the failure */
+  }
 }
 
 let slackMeCache: { at: number; id: string } | null = null;

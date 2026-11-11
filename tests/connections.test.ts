@@ -27,7 +27,7 @@ describe('connection states', () => {
   });
   it('points each click at a settings section and says the state in words', () => {
     const c = by({ gh: 'unauth' });
-    expect([c.slack.section, c.github.section, c.gmail.section]).toEqual(['slack', 'general', 'outbox']);
+    expect([c.slack.section, c.github.section, c.gmail.section]).toEqual(['slack', 'github', 'outbox']);
     expect(c.github.detail).toMatch(/not signed in/);
   });
 });

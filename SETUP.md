@@ -61,7 +61,7 @@ Loom opens the wizard on first launch. Only the **Requirements** step blocks you
 | macOS access | Accessibility for the Slack shortcut and Ghostty tab focus, with a Grant access button and live status. See section 6. |
 | Agent permissions | Normal (default) or skip permissions, for chats, watcher chats and the orchestrator. |
 | Loom plugin | Installs the plugin. Loom shows the exact `claude plugin` commands first. |
-| Slack connection | Direct app, MCP only, or off. See section 5. |
+| Connections | Slack, GitHub and Gmail side by side, each with its status and Connect button, each optional. Slack keeps its Direct app, MCP only and off choices (section 5); GitHub and Gmail are in section 5a. |
 | Slack shortcut | Hidden when Slack is off. See section 6. |
 | Ship | Add the repos you ship from. |
 | Orchestrator | A supervising chat. Off by default. Loom asks before it trusts the orchestrator's folder in `~/.claude.json`. |
@@ -135,6 +135,54 @@ These still work: chats that read or post through the connector, thread ownershi
 Nothing Slack-related appears, and Loom makes no Slack call. Choosing Direct without a token behaves the same until you add one.
 
 To disconnect, use Settings › Slack › Disconnect. It deletes the token from the Keychain and turns Slack off.
+
+## 5a. Connections: GitHub and Gmail
+
+The header shows one dot per connection (green working, amber needs attention, grey not set up). Click a dot to open its Settings section. The wizard's Connections step shows the same three side by side.
+
+### GitHub
+
+Loom uses the GitHub CLI (`gh`) for pull request status, checks, reviews and Ship. Settings › GitHub, or the GitHub card in the wizard:
+
+- **gh missing.** With Homebrew, click **Install with Homebrew**: Loom runs `brew install gh` and shows its output. Without Homebrew, get gh from [cli.github.com](https://cli.github.com), then click Check again.
+- **gh not signed in.** Click **Connect GitHub**. Loom runs `gh auth login --hostname github.com --web --git-protocol https`, shows the one-time code with a Copy button, and opens github.com/login/device in your browser. Paste the code there and approve. Loom notices when gh finishes. Cancel stops gh.
+- **gh signed in.** The card reads "Connected as <login>". Loom never changes an existing login. **Sign in again** asks first, then runs the same login; gh adds the account you approve and makes it active. Sign out or switch with `gh auth logout` and `gh auth switch`.
+
+gh keeps its token in its own credential store. Loom never reads it.
+
+### Gmail
+
+Email drafts in the Outbox send as you. There are two ways, picked by Settings › Outbox › **Send email through**:
+
+- **Automatic** (the default): a connected Gmail account if there is one, else the Email CLI.
+- **Gmail** or **Email CLI**: always that one.
+
+So an existing Email CLI setup keeps sending exactly as before until you connect a Gmail account.
+
+**Connect Gmail (built in)** signs in to Google with your own OAuth client. Create it once (about five minutes):
+
+1. In [console.cloud.google.com](https://console.cloud.google.com), create a project.
+2. APIs and Services › Library: enable the **Gmail API**.
+3. OAuth consent screen (Google Auth Platform): choose **External**, leave publishing status in **Testing**, and add every address you will connect as a **test user**.
+4. Data access: add the scopes `gmail.send` and `gmail.metadata`.
+5. Clients › Create client › **Desktop app**. Copy the client id and client secret into Settings › Outbox (or set `LOOM_GOOGLE_CLIENT_ID` and `LOOM_GOOGLE_CLIENT_SECRET`).
+6. Click **Connect Gmail**. Google shows "Google hasn’t verified this app" because it is your own Testing app: click Continue, then allow.
+
+Google treats a Desktop app's client secret as not confidential, so Loom keeps it with your settings. PKCE protects the sign-in, and the redirect goes to Loom on `http://127.0.0.1:<port>/google/callback`.
+
+What Loom asks for, and why:
+
+| Scope | Used for |
+|---|---|
+| `openid`, `email` | Your address: the From line and the address that counts as you in the before-send check |
+| `gmail.send` | Sending a draft. It grants no read access. |
+| `gmail.metadata` | Reading a draft's thread for the before-send check and parked replies: From, Date, Message-ID, labels and the snippet. No message bodies or attachments. |
+
+Loom does not ask for `gmail.readonly` or `gmail.settings.basic`, so the built-in sender does not append your Gmail signature and does not list send-as aliases (messages you sent are still recognised through their SENT label). If you need either, use the Email CLI.
+
+Each account's refresh token is kept in your macOS Keychain (item "Loom Google refresh", one per address). Connect more than one account with **Add another account**. The first is the default; a draft names another by its **Draft label** or its address in `account`. A Testing app's sign-in lasts seven days; when it lapses the Gmail dot turns amber and the account shows Reconnect. Disconnect deletes the Keychain item and revokes the grant at Google.
+
+**Email CLI** is the alternative: any Gmail-CLI-compatible script (`send`, `thread`, `send-as`). Empty uses `~/.claude/tools/gmail/gmail.mjs` when it exists. Loom only runs it; the script holds its own credentials.
 
 ## 6. macOS permissions and the shortcut
 

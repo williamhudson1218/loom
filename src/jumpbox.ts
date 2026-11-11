@@ -98,7 +98,7 @@ var JUMP={open:false,q:'',sel:0,sections:[],flat:[],hits:[],archQ:'',archState:'
 function jumpReduce(){return window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;}
 function jumpTab(t){if(tab===t)return;tab=t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();}
 function jumpToBoard(){if(tab==='board'||tab==='saved')return;jumpTab('board');}
-function openSettingsAt(sec){try{SX.sec=sec;lsSet('loom.settingsSec',sec);}catch(e){}if(tab==='settings'){if(typeof renderSettings==='function')renderSettings();}else openSettings();}
+function openSettingsAt(sec){try{SX.sec=sec;SX.ghLoaded=0;SX.gmLoaded=0;lsSet('loom.settingsSec',sec);}catch(e){}if(tab==='settings'){if(typeof renderSettings==='function')renderSettings();}else openSettings();}
 function jumpCommands(){
   var tabs=[['board','Board'],['saved','Saved'],['tickets','Tickets'],['watch','Watchers'],['trees','Trees']];
   var c=[

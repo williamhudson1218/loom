@@ -114,8 +114,9 @@ var SX_SECS=[
  {id:'terminal',label:'Terminal',what:'Chooses where a chat opens, how it looks and how Ghostty tabs are rehomed.',needs:'Ghostty: Accessibility and Automation. iTerm2 and Terminal.app: Automation.'},
  {id:'agents',label:'Agents & permissions',what:'Sets how chats, watcher workers and the orchestrator are launched, including whether they skip permission prompts.',needs:'Nothing, but Skip permissions carries real risk.'},
  {id:'slack',label:'Slack',what:'Connects Loom to Slack so it can send from the Outbox, poll parked threads and label channels.',needs:'A Slack user token (kept in the macOS Keychain) or the Claude Slack connector.'},
+ {id:'github',label:'GitHub',what:'Signs the GitHub CLI (gh) in, which Loom uses for pull request status, checks, reviews and Ship.',needs:'gh. Loom can install it with Homebrew, or get it from cli.github.com.'},
  {id:'shortcut',label:'Slack shortcut',what:'Jump to or start a chat for the Slack message under your pointer.',needs:'Slack desktop app and Accessibility. Needs Slack connected for names.'},
- {id:'outbox',label:'Outbox',what:'Controls how drafts from chats are reviewed, sent and followed up.',needs:'Slack connected (Direct app) to send; helpers installed to record drafts.'},
+ {id:'outbox',label:'Outbox',what:'Controls how drafts from chats are reviewed, sent and followed up, and connects Gmail for email drafts.',needs:'Slack connected (Direct app) to send Slack drafts; Gmail connected, or an email CLI, to send email drafts; helpers installed to record drafts.'},
  {id:'ship',label:'Ship',what:'Lists the repos you ship from and the command the Ship button runs.',needs:'A git repo with a remote and gh logged in.'},
  {id:'orch',label:'Orchestrator',what:'Runs a supervising chat that summarises and manages your other chats.',needs:'Claude Code login. Optional Remote Control needs a supported account.'},
  {id:'watchers',label:'Watchers',what:'Watches a Slack channel, your live chats or pull requests, and starts a chat, messages one, notifies you or tells the orchestrator when a rule matches.',needs:'Slack source: Direct app. Pull requests: gh. Chats: nothing.'},
@@ -142,6 +143,7 @@ function sxPut(o){return sxPost('/api/settings',o).then(function(j){if(j.ok){SET
   if(o.terminal!==undefined&&j.terminal)DATA.terminal={kind:j.terminal.effective,label:j.terminal.label};
   if(o.default_agent!==undefined){DATA.defaultAgent=o.default_agent;if(typeof syncDefaultAgent==='function')syncDefaultAgent();}
   if(o.slack_mode!==undefined)DATA.slackMode=o.slack_mode;
+  if(o.google_client_id!==undefined||o.google_client_secret!==undefined||o.email_via!==undefined||o.email_cli!==undefined)cnGmLoad(function(){sxRerender(true);});
   renderSettings();}else{sxBad(sxErr(j));renderSettings();}return j;}).catch(function(){sxBad('server off?');});}
 
 /* ---- small builders ---- */
@@ -193,6 +195,7 @@ function sxStatus(id){var sl=SX.data.slack,mode=sxv('slack_mode'),pl=SX.data.plu
   if(id==='terminal'){var t=SET.terminal;return ['ok',t?t.label:'Inside Loom'];}
   if(id==='agents'){var sk=['perm_chats','perm_watchers','perm_orchestrator'].filter(function(k){return sxv(k)==='skip';}).length;return sk?['warn','Skip permissions on']:['ok','Normal permissions'];}
   if(id==='slack'){if(mode==='off')return ['off','Off'];if(mode==='mcp')return ['ok','MCP only'];if(!sl)return ['off','Checking'];if(!sl.connected)return ['warn',sl.reconnect?'Reconnect Slack':'Not connected'];var miss=sl.scopes&&sl.scopes.missing?sl.scopes.missing.length:0;return miss?['warn','Connected, '+miss+(miss===1?' scope missing':' scopes missing')]:['ok','Connected'];}
+  if(id==='github'){var gv=cnGhView(CN.gh);if(gv.kind!=='checking')return gv.pill;var gc=(DATA.connections||[]).filter(function(c){return c.id==='github';})[0];return gc?[gc.state==='ok'?'ok':gc.state==='warn'?'warn':'off',gc.state==='ok'?'Connected':gc.state==='warn'?'Not signed in':'Not set up']:['off','Checking'];}
   if(id==='shortcut'){var hk=sxv('slack_goto_hotkey');return hk==='off'?['off','Off']:['ok',sxFmtAcc(hk)];}
   if(id==='outbox'){return mode==='direct'?['ok','On']:['off','Needs Slack (Direct app)'];}
   if(id==='ship'){if(!sh||!sh.projects)return ['off','Checking'];var e=sh.projects.filter(function(p){return p.enabled;}).length;return e?['ok',e+(e===1?' repo':' repos')]:['off','No repos'];}
@@ -217,10 +220,10 @@ function sxGeneral(){var cv=DATA.codexVisible;var aopts=cv||sxv('default_agent')
    sxGrp('Tools Loom runs')+
    sxKey('claude_bin',{title:'Claude Code binary',help:'Detected through your shell when empty. Set it if Claude lives somewhere unusual, such as an nvm global.',note:sxDetected('claude'),ph:sxPr('claude')||'Detected automatically',mono:true,noDef:true,after:sxBtn('detect','Detect')})+
    sxKey('extra_path',{title:'Extra PATH entries',help:'Searched before launching claude, tmux, gh and node, separated by colons. Apps started from Finder do not inherit your shell PATH.',ph:'~/.local/bin:/opt/homebrew/bin'})+
-   sxRow('GitHub CLI','PR status, checks and Ship.',sxGh());}
+   sxRow('GitHub CLI','PR status, checks and Ship.',sxGh()+sxBtn('gogh','Set up in GitHub',{ghost:true}));}
 function sxPr(n){var p=SX.data.probe;return p&&p.ok&&p.probe[n]&&p.probe[n].found?p.probe[n].path||'':'';}
 function sxDetected(n){var p=sxPr(n);return p?' <span class="def">Detected: <b>'+sxEsc(shortPath(p))+'</b>.</span>':'';}
-function sxGh(){var p=SX.data.probe;if(!p)return sxPill('off','Checking');if(!p.ok)return sxPill('off','Could not check');var g=p.probe.gh;if(!g.found)return sxPill('warn','gh not found');var v=g.version?'gh '+g.version.raw:'gh';return g.auth&&g.auth.loggedIn?sxPill('ok',v+' · logged in'+(g.auth.hosts&&g.auth.hosts.length?' to '+g.auth.hosts[0]:'')):sxPill('warn',v+' · not logged in')+'<span class="def">Run gh auth login in a terminal.</span>';}
+function sxGh(){var p=SX.data.probe;if(!p)return sxPill('off','Checking');if(!p.ok)return sxPill('off','Could not check');var g=p.probe.gh;if(!g.found)return sxPill('warn','gh not found');var v=g.version?'gh '+g.version.raw:'gh';return g.auth&&g.auth.loggedIn?sxPill('ok',v+' · logged in'+(g.auth.hosts&&g.auth.hosts.length?' to '+g.auth.hosts[0]:'')):sxPill('warn',v+' · not logged in')+'<span class="def">Connect it in the GitHub section.</span>';}
 function sxProjects(){if(!ALLP)return '<p class="sxempty">loading…</p>';var cp=sxv('channel_projects')||{};
   var rows=ALLP.map(function(p){var ch=Object.keys(cp).filter(function(c){return cp[c]===p.path;}).join(', ');var n=DATA.chats.filter(function(c){return c.project_dir===p.path;}).length;
    return '<tr><td><input type="text" data-pname="'+p.id+'" value="'+sxEsc(p.name)+'" style="width:150px"></td><td><code>'+sxEsc(shortPath(p.path))+'</code></td><td>'+(ch?sxEsc(ch):'–')+'</td><td>'+n+'</td><td style="white-space:nowrap">'+(p.hidden?sxPill('off','Hidden')+' ':'')+sxBtn('phide',p.hidden?'Unhide':'Hide',{arg:p.id})+' '+sxBtn('prm','Remove',{arg:p.id,danger:true})+'</td></tr>';}).join('');
@@ -318,8 +321,15 @@ function sxOutbox(){var slOn=sxv('slack_mode')==='direct';
    sxKey('auto_resume_parked',{title:'Reopen parked chats when a reply arrives',help:'Reopens each one in a managed pane with the reply as its first prompt. Off leaves a Resume button.'})+
    sxKey('outbox_slack_drafts',{title:'Also save to Slack Drafts',help:'Uses an unofficial Slack endpoint.'})+
    sxKey('outbox_chat_drafts',{title:'Let chats add drafts to the Outbox',help:'Needs the outbox hook and slack-drafting skill from Helpers, and a Direct Slack connection.',after:sxHelperPill('outbox-recording')})+
-   sxKey('email_cli',{title:'Email CLI',help:'Sends email drafts as you and reads their threads for the before-send check. A Gmail-CLI-compatible script (send, thread, send-as). Empty uses ~/.claude/tools/gmail/gmail.mjs when it exists; without one, email drafts can be reviewed but not sent.',mono:true,ph:'~/.claude/tools/gmail/gmail.mjs if present',noDef:true})+
+   sxGrp('Email drafts')+
+   sxKey('email_via',{kind:'seg',title:'Send email through',help:'Automatic sends through a connected Gmail account, else the Email CLI. Pin one to use it even when the other is set up.',labels:{auto:'Automatic',gmail:'Gmail',cli:'Email CLI'}})+
+   sxRow('Connect Gmail','Built in: Loom signs in to Google with your own Desktop app client, keeps each account’s sign-in in your macOS Keychain, and sends as you.',cnGmHtml(CN_K_SX),true)+
+   sxKey('google_client_id',{title:'Google client id',help:'From Google Cloud, Clients, a Desktop app client. Not a secret.',mono:true,ph:'1234-abc.apps.googleusercontent.com',noDef:true})+
+   sxKey('google_client_secret',{title:'Google client secret',help:'Shown next to the client id. Google treats a Desktop app’s secret as not confidential; it is stored with your settings.',mono:true,ph:'GOCSPX-…',noDef:true})+
+   sxKey('email_cli',{title:'Email CLI',help:'The alternative to Connect Gmail: a Gmail-CLI-compatible script (send, thread, send-as) that sends email drafts as you. Empty uses ~/.claude/tools/gmail/gmail.mjs when it exists.',mono:true,ph:'~/.claude/tools/gmail/gmail.mjs if present',noDef:true})+
    sxKey('outbox_keep_days',{title:'Keep sent and discarded drafts',help:'Then they are removed from the Outbox.',unit:'days',min:1});}
+function sxGithub(){return sxRow('GitHub CLI','Connect GitHub runs gh auth login for github.com. It never changes a login gh already has unless you choose Sign in again.',cnGhHtml(CN_K_SX),true)+
+   sxNote('Sign out or switch accounts with <code>gh auth logout</code> and <code>gh auth switch</code> in a terminal.');}
 function sxHelperPill(name){var pl=SX.data.plugin;if(!pl)return '';return pl.status==='not_installed'?sxPill('warn','Helpers not installed'):sxPill('ok','Installed');}
 function sxShip(){var sh=SX.data.ship;if(!sh)return '<p class="sxempty">loading…</p>';var rows=sh.projects||[];
   var tb=rows.length?'<div class="sxtbl"><table><tr><th>Repo</th><th>Base branch</th><th>Ship command</th><th>Label staged work</th><th>Ship lock</th><th>On</th><th></th></tr>'+rows.map(function(p){var d=sxEsc(p.project_dir);
@@ -397,11 +407,11 @@ function sxHelp(){var hk=sxv('slack_goto_hotkey');
    '<div class="def" style="margin-top:12px">Loom data is kept in your Loom data folder; see Advanced.</div>';}
 
 /* ---- the page ---- */
-function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();return sxHelp();}
+function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();return sxHelp();}
 function renderSettings(){var el=$('#settings-body');
   if(!SET){el.innerHTML='<p class="meta">loading…</p>';sxLoadSettings();return;}
   sxPrefetch();
-  if(SX.sec==='general')sxLoad('probe');if(SX.sec==='orch')sxLoad('prompt');if(SX.sec==='slack')sxLoad('dir');
+  if(SX.sec==='general')sxLoad('probe');if(SX.sec==='github'&&!SX.ghLoaded){SX.ghLoaded=1;cnGhLoad(sxRerender);}if(SX.sec==='outbox'&&!SX.gmLoaded){SX.gmLoaded=1;cnGmLoad(sxRerender);}if(SX.sec==='orch')sxLoad('prompt');if(SX.sec==='slack')sxLoad('dir');
   var old=$('#sxpane'),top=old?old.scrollTop:0;
   var sec=SX_SECS.filter(function(s){return s.id===SX.sec;})[0]||SX_SECS[0];SX.sec=sec.id;
   var restartKeys=Object.keys(SX.restart);
@@ -413,10 +423,12 @@ function renderSettings(){var el=$('#settings-body');
   var pane=$('#sxpane');pane.scrollTop=top;
   el.onclick=sxClick;el.onchange=sxChange;}
 function sxClick(e){var t=e.target;
-  var nb=t.closest&&t.closest('[data-sec]');if(nb&&nb.parentNode&&nb.parentNode.id==='sxnav'){SX.sec=nb.dataset.sec;try{lsSet('loom.settingsSec',SX.sec);}catch(x){}SX.recMsg='';sxStopRec();renderSettings();var p=$('#sxpane');if(p)p.scrollTop=0;return;}
+  var nb=t.closest&&t.closest('[data-sec]');if(nb&&nb.parentNode&&nb.parentNode.id==='sxnav'){SX.sec=nb.dataset.sec;SX.ghLoaded=0;SX.gmLoaded=0;try{lsSet('loom.settingsSec',SX.sec);}catch(x){}SX.recMsg='';sxStopRec();renderSettings();var p=$('#sxpane');if(p)p.scrollTop=0;return;}
   var sg=t.closest&&t.closest('[data-sxseg]');if(sg&&!sg.disabled){sxSet(sg.dataset.sxseg,sg.dataset.v);return;}
+  var cb=t.closest&&t.closest('[data-cn]');if(cb){if(!cb.disabled)cnAct(cb.dataset.cn,cb.dataset.arg,function(){sxRerender(true);},cb);return;}
   var b=t.closest&&t.closest('[data-act]');if(!b||b.disabled)return;sxAct(b.dataset.act,b.dataset.arg,b);}
 function sxChange(e){var t=e.target;
+  if(cnChange(t,function(){sxRerender(true);}))return;
   if(t.dataset.chsel){fetch('/api/slack/channel-projects',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({channel:t.dataset.chsel,project:t.value})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoadSettings();});return;}
   if(t.dataset.pname){sxPost('/api/projects/update',{id:+t.dataset.pname,name:t.value}).then(function(j){if(!j.ok)sxBad(sxErr(j));else{sxProjRefresh();}});return;}
   if(t.dataset.ship){var f=t.dataset.f,v=t.type==='checkbox'?t.checked:t.value;var o={project_dir:t.dataset.ship};o[f]=v;sxPost('/api/ship/projects/update',o).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoad('ship',true);});return;}
@@ -482,6 +494,7 @@ function sxAct(a,arg,btn){
   if(a==='pcancel'){sxPost('/api/shortcut/practice',{action:'cancel'}).then(function(j){if(j.ok){SX.practice=j.practice;renderSettings();}});return;}
   if(a==='shadd'){var sel=$('#sx-shipadd');if(!sel||!sel.value)return;sxPost('/api/ship/projects',{path:sel.value}).then(function(j){if(!j.ok){var m3=$('#sx-shmsg');if(m3)m3.textContent=sxErr(j);return;}sxLoad('ship',true);});return;}
   if(a==='shrm'){sxConfirm({title:'Take this repo off Ship',body:'The Ship button stops offering it. The repo itself is not touched.',ok:'Remove'}).then(function(y){if(y)sxPost('/api/ship/projects/remove',{project_dir:arg}).then(function(){sxLoad('ship',true);});});return;}
+  if(a==='gogh'){SX.sec='github';try{lsSet('loom.settingsSec',SX.sec);}catch(x){}renderSettings();return;}
   if(a==='gowatch'){tab='watch';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();return;}
   if(a==='hcmds'){SX.cmds=!SX.cmds;renderSettings();return;}
   if(a==='hinst'||a==='hupd'){var pv=SX.data.plugin;var run=function(){btn.disabled=true;btn.textContent=a==='hinst'?'Installing…':'Updating…';sxPost('/api/plugin/'+(a==='hinst'?'install':'update'),{}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast(a==='hinst'?'Helpers installed':'Helpers updated');sxLoad('plugin',true);});};

@@ -79,9 +79,10 @@ export const STEPS: readonly StepMeta[] = [
     unlocks: ['Reliable Jump, Resume and live state (pane state hook)', 'Slack thread ownership and the Outbox', 'Ship labels: who contributed what', 'Named panes and messages between chats'],
   },
   {
-    id: 'slack', title: 'Slack connection', optional: true, blocking: false, skippable: true,
-    why: 'Lets Loom read and post to Slack as you.',
-    unlocks: ['Direct app: Outbox sending, parked-thread replies, watchers, names and emoji', 'MCP only: chats can use Slack, Loom itself cannot', 'Skip: nothing Slack-related appears'],
+    // The id stays 'slack' so recorded setup progress and the shortcut step's gate keep working.
+    id: 'slack', title: 'Connections', optional: true, blocking: false, skippable: true,
+    why: 'Connects Loom to Slack, GitHub and Gmail. Each one is optional and can be set up later in Settings.',
+    unlocks: ['Slack: Outbox sending, parked-thread replies, watchers, names and emoji', 'GitHub: pull request status, checks, reviews and Ship (through gh)', 'Gmail: send email drafts as you and check their threads before sending'],
   },
   {
     id: 'shortcut', title: 'Slack shortcut', optional: true, blocking: false, skippable: true,

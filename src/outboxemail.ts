@@ -16,7 +16,7 @@ import { CLAUDE_HOME } from './paths.ts';
 // the draft claimed rather than inviting a second send.
 
 export interface DraftEmail {
-  /** The CLI's account label (token.<label>.json); absent = the default account. */
+  /** The account: a CLI label (token.<label>.json) or a connected Gmail account's label or address; absent = the default account. */
   account?: string;
   /** A send-as address to send from; absent = the account's primary address. */
   from?: string;
@@ -47,7 +47,8 @@ export interface SentEmail {
 }
 
 const ADDR_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
-const ACCOUNT_RE = /^[A-Za-z0-9_.-]{1,40}$/;
+// A CLI label (token.<label>.json) or a connected Gmail account's label or address.
+const ACCOUNT_RE = /^[A-Za-z0-9_.@+-]{1,64}$/;
 export const MAX_RECIPIENTS = 50;
 export const MAX_ATTACHMENTS = 10;
 
@@ -85,7 +86,7 @@ export function cleanEmail(v: unknown): { ok: true; email: DraftEmail } | { ok: 
   const body = typeof r.body === 'string' ? r.body.replace(/\r\n/g, '\n').replace(/^\n+|\s+$/g, '') : '';
   if (!body) return { ok: false, detail: 'email.body is required' };
   const account = typeof r.account === 'string' ? r.account.trim() : '';
-  if (account && !ACCOUNT_RE.test(account)) return { ok: false, detail: 'email.account must be an account label (letters, digits, . _ -)' };
+  if (account && !ACCOUNT_RE.test(account)) return { ok: false, detail: 'email.account must be an account label or address (letters, digits, . _ - @ +)' };
   const from = typeof r.from === 'string' ? r.from.trim() : '';
   if (from && !addressOf(from)) return { ok: false, detail: 'email.from must be an address' };
   const str = (k: string) => (typeof r[k] === 'string' ? (r[k] as string).trim() : '');
@@ -263,7 +264,7 @@ export function resolveEmailCli(setting: string, exists: (p: string) => boolean 
 }
 
 export const EMAIL_OFF_DETAIL =
-  'Email is off: no email CLI is set up. Set "Email CLI" in Settings > Outbox to a Gmail-CLI-compatible script (send / thread / send-as), then send again.';
+  'Email is off: no Gmail account is connected and no email CLI is set up. Connect Gmail in Settings > Outbox (or set "Email CLI" to a Gmail-CLI-compatible script), then send again.';
 
 const addrCache = new Map<string, { at: number; list: string[] }>();
 export const ADDR_TTL_MS = 10 * 60_000;

@@ -184,6 +184,18 @@ function channelMap(v: unknown): Check<Record<string, string>> {
   return ok(out);
 }
 
+/** Connected Gmail accounts: [{email, label, reconnect?}], no secrets. */
+function googleAccounts(v: unknown): Check<{ email: string; label: string; reconnect?: string }[]> {
+  if (!Array.isArray(v)) return bad('google_accounts must be a list');
+  const out: { email: string; label: string; reconnect?: string }[] = [];
+  for (const a of v) {
+    if (!isPlainObject(a) || typeof a.email !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(a.email)) return bad('google_accounts: each entry needs an email');
+    const label = typeof a.label === 'string' && a.label.trim() ? a.label.trim().slice(0, 64) : a.email;
+    out.push({ email: a.email.toLowerCase(), label, ...(typeof a.reconnect === 'string' && a.reconnect ? { reconnect: a.reconnect } : {}) });
+  }
+  return ok(out);
+}
+
 /* ------------------------------------------------------------ the registry */
 
 export const SETTINGS = [
@@ -381,6 +393,27 @@ export const SETTINGS = [
     key: 'email_cli', section: 'outbox', label: 'Email CLI',
     help: 'A Gmail-CLI-compatible script (send, thread, send-as) that sends email drafts as you. Empty uses ~/.claude/tools/gmail/gmail.mjs when it exists.',
     defaultNew: '', legacyUnset: '', restart: false,
+  }),
+  enumDef(['auto', 'gmail', 'cli'] as const, {
+    key: 'email_via', section: 'outbox', label: 'Send email through',
+    help: 'Automatic uses a connected Gmail account when there is one, else the Email CLI.',
+    defaultNew: 'auto', legacyUnset: 'auto', restart: false,
+  }),
+  // Connect Gmail: the person's own Google "Desktop app" OAuth client. Google documents
+  // that an installed app's secret cannot be kept confidential, so both live here.
+  strDef((s) => (s === '' || /^[0-9A-Za-z-]+\.apps\.googleusercontent\.com$/.test(s) ? null : 'must end in .apps.googleusercontent.com'), {
+    key: 'google_client_id', section: 'outbox', label: 'Google client id', help: 'The OAuth client id of a Desktop app client in Google Cloud. Turns on Connect Gmail.',
+    defaultNew: '', legacyUnset: '', restart: false, envName: 'LOOM_GOOGLE_CLIENT_ID',
+    env: (env) => env.LOOM_GOOGLE_CLIENT_ID?.trim() || undefined,
+  }),
+  strDef((s) => (/^[A-Za-z0-9_-]{0,100}$/.test(s) ? null : 'must be the client secret Google shows (letters, digits, - _)'), {
+    key: 'google_client_secret', section: 'outbox', label: 'Google client secret', help: 'Shown next to the client id. Not confidential for a Desktop app client.',
+    defaultNew: '', legacyUnset: '', restart: false, envName: 'LOOM_GOOGLE_CLIENT_SECRET',
+    env: (env) => env.LOOM_GOOGLE_CLIENT_SECRET?.trim() || undefined,
+  }),
+  jsonDef(googleAccounts, {
+    key: 'google_accounts', section: 'outbox', label: 'Connected Gmail accounts', help: 'Email addresses and draft labels. The refresh tokens are in the Keychain.',
+    defaultNew: [], legacyUnset: [], restart: false, internal: true,
   }),
   intDef(1, 365, {
     key: 'outbox_keep_days', section: 'outbox', label: 'Keep sent drafts (days)', help: 'How long sent and dismissed drafts stay listed.',
