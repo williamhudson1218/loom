@@ -20,6 +20,21 @@ export const CONNECT_VIEW_CSS = String.raw`
   .cn-help summary { cursor:pointer; color:#6ea2ff; }
   .cn-help ol { margin:6px 0 0; padding-left:18px; }
   .cn-help li { margin:3px 0; }
+  .cn-sub { border:1px solid #2b3040; border-left:3px solid var(--cn-tone,#6ea2ff); border-radius:9px; background:rgba(255,255,255,.025); padding:10px 12px; margin-left:14px; }
+  .cn-sub > * + * { margin-top:9px; }
+  .cn-subh { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:#8b93a7; }
+  .cn-subh svg { width:13px; height:13px; }
+  .cn-status { display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#e6e6e6; }
+  .cn-status .dot { width:8px; height:8px; border-radius:50%; flex:none; margin-top:6px; background:#6b7280; }
+  .cn-status .dot.ok { background:#56d364; } .cn-status .dot.warn { background:#e8b04a; }
+  .cn-status .src { color:#8b93a7; }
+  .cn-seg { display:inline-flex; flex-wrap:wrap; border:1px solid #2b3040; border-radius:8px; overflow:hidden; background:#0d0f15; }
+  .cn-seg button { display:inline-flex; align-items:center; gap:6px; padding:6px 11px; font:500 12.5px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; color:#c4ccdc; background:transparent; border:0; border-right:1px solid #2b3040; cursor:pointer; }
+  .cn-seg button:last-child { border-right:0; }
+  .cn-seg button:hover { background:#151925; }
+  .cn-seg button[aria-checked="true"] { background:#1a2033; color:#fff; box-shadow:inset 0 -2px 0 var(--cn-tone,#6ea2ff); }
+  .cn-seg .tag { font-size:10.5px; padding:1px 6px; border-radius:999px; background:rgba(86,211,100,.12); color:#56d364; }
+  .cn-seg .tag.warn { background:rgba(232,176,74,.14); color:#e8b04a; }
   .cn-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
   .cn-tabs .opt { min-height:86px; }
   .cn-tabs .opt .pill { margin-top:6px; }
@@ -36,6 +51,10 @@ function cnB(K,act,label,o){o=o||{};var c=o.pri?K.pri:o.danger?K.danger:o.ghost?
 // An error note carries Copy details (src/errorview.ts); what names the Connect flow.
 function cnNote(K,t,kind,what){var copy='';if(kind==='err'&&typeof lerrCopyBtn==='function'){var d=document.createElement('div');d.innerHTML=t;copy=' '+lerrCopyBtn({what:what||'Connect',message:d.textContent||''});}
   return '<div class="'+K.note+(kind?' '+kind:'')+'">'+t+copy+'</div>';}
+// One honest status line: what is connected and how it got there.
+function cnStatus(tone,html,src){return '<div class="cn-status"><span class="dot '+tone+'"></span><div>'+html+(src?' <span class="src">'+src+'</span>':'')+'</div></div>';}
+// A nested option group under a connection: a small label, then its controls.
+function cnSub(label,icon,html){return '<div class="cn-sub"><div class="cn-subh">'+(icon?brandIcon(icon):'')+cnEsc(label)+'</div>'+html+'</div>';}
 function cnPill(cls,t){return '<span class="pill '+cls+'">'+cnEsc(t)+'</span>';}
 function cnJ(u,o){return fetch(u,o||{}).then(function(r){return r.json().catch(function(){return {ok:false,error:'bad response'};});});}
 function cnPost(u,b){return cnJ(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});}
@@ -52,7 +71,7 @@ function cnGhView(st){
   if(st.ok===false)return {kind:'error',pill:['off','Could not check']};
   var j=st.job;
   if(j&&j.state==='running')return j.kind==='install'?{kind:'installing',pill:['warn','Installing gh']}:{kind:'waiting',pill:['warn',j.code?'Waiting for approval':'Starting']};
-  if(st.state==='ok')return {kind:'ok',pill:['ok',st.login?'Connected as '+st.login:'Connected']};
+  if(st.state==='ok')return {kind:'ok',pill:['ok',st.origin==='loom'?(st.login?'Connected as '+st.login:'Connected'):(st.login?'Found gh sign-in as '+st.login:'Found a gh sign-in')]};
   if(st.state==='missing'||!st.gh)return {kind:'missing',pill:['off','gh not installed']};
   if(st.state==='unauth')return {kind:'unauth',pill:['warn','Not signed in']};
   return {kind:'checking',pill:['off','Checking']};}
@@ -78,8 +97,11 @@ function cnGhHtml(K){var st=CN.gh,v=cnGhView(st),h='';
    h+=st.brew?'<div class="cn-row">'+cnB(K,'ghinstall','Install with Homebrew',{pri:true})+'<span class="def">Runs brew install gh.</span></div>':'<div class="cn-row"><a href="https://cli.github.com" target="_blank" rel="noopener">Download gh from cli.github.com</a>'+cnB(K,'ghrefresh','Check again')+'</div>';
    return '<div class="cn-stack">'+msg+h+'</div>';}
   if(v.kind==='unauth'){h+='<div class="cn-row">'+cnPill('warn','Not signed in')+cnB(K,'ghlogin','Connect GitHub',{pri:true,icon:'github'})+'</div><div class="def">Loom runs gh auth login. GitHub shows a one-time code here and opens its sign-in page in your browser. gh keeps the token; Loom never sees it.</div>';return '<div class="cn-stack">'+msg+h+'</div>';}
-  h+='<div class="cn-row">'+cnPill('ok',v.pill[1])+(CN.ghConfirm?'':cnB(K,'ghagain','Sign in again',{ghost:true}))+cnB(K,'ghrefresh','Check again',{ghost:true})+'</div>';
-  if(CN.ghConfirm)h+=cnNote(K,'Signing in again runs gh auth login for github.com. gh adds the account you approve and makes it the active one; your current login stays in gh.','warn')+'<div class="cn-row">'+cnB(K,'ghagainyes','Sign in again',{pri:true})+cnB(K,'ghagainno','Keep the current login',{ghost:true})+'</div>';
+  var who='<b>'+cnEsc(st.login||'your account')+'</b>';
+  h+=st.origin==='loom'?cnStatus('ok','Connected through Loom as '+who+'.','gh keeps the token.')
+    :cnStatus('ok','Found an existing gh sign-in as '+who+'.','Loom uses it through gh and did not change it.');
+  h+=cnSub('GitHub account','github','<div class="cn-row">'+cnB(K,'ghagainyes','Use a different account')+cnB(K,'ghrefresh','Check again',{ghost:true})+'</div>'+
+   '<div class="def">Use a different account runs gh auth login. gh adds the account you approve and makes it the active one; the current sign-in stays in gh.</div>');
   return '<div class="cn-stack">'+msg+h+'</div>';}
 
 /* ---- Gmail ---- */
@@ -90,7 +112,7 @@ function cnGmView(st){
   if(CN.gmO)return {kind:'waiting',pill:['warn','Waiting for Google']};
   if(acc.length&&rc)return {kind:'reconnect',pill:['warn',rc===1?'An account needs reconnecting':rc+' accounts need reconnecting']};
   if(acc.length)return {kind:'ok',pill:['ok',acc.length===1?'Connected as '+acc[0].email:acc.length+' accounts connected']};
-  if(st.route==='cli')return {kind:'cli',pill:['ok','Using the email CLI']};
+  if(st.route==='cli')return {kind:'cli',pill:['ok','Found an email CLI']};
   if(!st.clientId)return {kind:'noclient',pill:['off','Not set up']};
   return {kind:'ready',pill:['off','Not connected']};}
 function cnGmLoad(redraw){cnJ('/api/google/status').then(function(j){CN.gm=j;if(redraw)redraw();}).catch(function(){CN.gm={ok:false};if(redraw)redraw();});}
@@ -113,21 +135,28 @@ var CN_GHELP='<details class="cn-help"><summary>How to create the Google client 
 function cnGmHtml(K,o){o=o||{};var st=CN.gm,v=cnGmView(st),h='';
   if(v.kind==='checking')return '<div class="cn-stack">'+cnPill('off','Checking')+'</div>';
   if(v.kind==='error')return '<div class="cn-stack">'+cnNote(K,'Loom could not read the Gmail connection.','err','Connect Gmail')+cnB(K,'gmrefresh','Check again')+'</div>';
-  var acc=st.accounts||[];
+  var acc=st.accounts||[],cli=st.cliDisplay||st.cli||'';
   if(CN.gmMsg)h+=cnNote(K,cnEsc(CN.gmMsg.text),CN.gmMsg.kind,'Connect Gmail');
-  if(o.fields){
-   h+='<div class="cn-row"><input type="text" id="cn-gcid" class="mono" placeholder="Client id, ends in .apps.googleusercontent.com" value="'+cnEsc(st.clientId||'')+'" style="flex:2;min-width:220px"'+(st.clientIdFromEnv?' disabled':'')+'><input type="password" id="cn-gsec" placeholder="'+(st.hasSecret?'Client secret saved':'Client secret')+'" autocomplete="off" style="flex:1;min-width:140px">'+cnB(K,'gmsave','Save')+'</div>';}
-  if(!st.clientId)h+='<div class="def">Connect Gmail needs your own Google client id and secret first.</div>';
-  h+=CN_GHELP;
-  if(acc.length)h+=acc.map(function(a){return '<div class="cn-acct"><span class="e">'+cnEsc(a.email)+'</span>'+
+  // What is in place, and how it got there.
+  if(acc.length)h+=cnStatus(v.kind==='reconnect'?'warn':'ok','Gmail connected through Loom as <b>'+acc.map(function(a){return cnEsc(a.email);}).join(', ')+'</b>.',cli?'Also found an email CLI at '+cnEsc(cli)+'; Gmail is used first.':'');
+  else if(st.route==='cli')h+=cnStatus('ok','Found an email CLI at <code>'+cnEsc(cli)+'</code>.','Email drafts send through it. Loom did not set it up.');
+  else h+=cnStatus('','Not connected.','Email drafts cannot send yet.');
+  // How Loom sends email: the found CLI, or Gmail directly.
+  var send='';
+  if(acc.length)send+=acc.map(function(a){return '<div class="cn-acct"><span class="e">'+cnEsc(a.email)+'</span>'+
     '<label class="def">Draft label <input type="text" data-cn-label="'+cnEsc(a.email)+'" value="'+cnEsc(a.label===a.email?'':a.label)+'" placeholder="'+cnEsc(a.email)+'"></label>'+
     (a.isDefault?cnPill('ok','Default'):cnB(K,'gmdefault','Make default',{arg:a.email,ghost:true}))+
     (a.reconnect?cnPill('warn','Needs reconnecting')+cnB(K,'gmreconnect','Reconnect',{arg:a.email,pri:true}):'')+
     cnB(K,'gmdisc','Disconnect',{arg:a.email,danger:true})+'</div>';}).join('');
-  if(CN.gmO)h+='<div class="cn-row"><span class="def">Waiting for you to approve in Google.</span><a href="'+cnEsc(CN.gmO.url)+'" target="_blank" rel="noopener">Open the Google page</a>'+cnB(K,'gmcancel','Cancel',{ghost:true})+'</div>';
-  else h+='<div class="cn-row">'+cnB(K,'gmconnect',acc.length?'Add another account':'Connect Gmail',{pri:!acc.length,dis:!st.clientId,icon:'gmail'})+'<span class="def">'+(acc.length?'The default account sends drafts that name no account. A draft names an account by its label or address.':'Sends email drafts as you and reads their threads (headers and snippets only) for the before-send check.')+'</span></div>';
-  var rt=st.route==='gmail'?'Email drafts send through Gmail, built in.':st.route==='cli'?'Email drafts send through the Email CLI'+(st.cli?' ('+cnEsc(st.cli)+')':'')+'.':'Email drafts cannot send yet.';
-  h+='<div class="def">'+rt+'</div>';
+  if(CN.gmO)send+='<div class="cn-row"><span class="def">Waiting for you to approve in Google.</span><a href="'+cnEsc(CN.gmO.url)+'" target="_blank" rel="noopener">Open the Google page</a>'+cnB(K,'gmcancel','Cancel',{ghost:true})+'</div>';
+  else if(acc.length)send+='<div class="cn-row">'+cnB(K,'gmconnect','Add another account',{icon:'gmail'})+'<span class="def">The default account sends drafts that name no account. A draft names an account by its label or address.</span></div>';
+  else if(st.route==='cli')send+='<div class="cn-row">'+(st.clientId?cnB(K,'gmconnect','Connect Gmail directly instead',{icon:'gmail'}):'')+'<span class="def">'+(st.clientId?'Sends as you through the Gmail API and checks threads (headers and snippets only) before sending.':'To connect Gmail directly instead, add a Google client below.')+'</span></div>';
+  else send+='<div class="cn-row">'+cnB(K,'gmconnect','Connect Gmail',{pri:true,dis:!st.clientId,icon:'gmail'})+'<span class="def">'+(st.clientId?'Sends email drafts as you and reads their threads (headers and snippets only) for the before-send check.':'Connect Gmail needs your own Google client id and secret first.')+'</span></div>';
+  h+=cnSub('How Loom sends email','gmail',send);
+  var client='';
+  if(o.fields)client+='<div class="cn-row"><input type="text" id="cn-gcid" class="mono" placeholder="Client id, ends in .apps.googleusercontent.com" value="'+cnEsc(st.clientId||'')+'" style="flex:2;min-width:220px"'+(st.clientIdFromEnv?' disabled':'')+'><input type="password" id="cn-gsec" placeholder="'+(st.hasSecret?'Client secret saved':'Client secret')+'" autocomplete="off" style="flex:1;min-width:140px">'+cnB(K,'gmsave','Save')+'</div>';
+  client+=CN_GHELP;
+  h+=o.fields?cnSub('Google client','',client):client;
   return '<div class="cn-stack">'+h+'</div>';}
 
 /* ---- actions; returns true when it handled the click ---- */

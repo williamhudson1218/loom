@@ -56,7 +56,7 @@ describe('the GitHub panel', () => {
     ['not signed in', { ok: true, state: 'unauth', gh: '/opt/homebrew/bin/gh', brew: true, job: null }, ['Connect GitHub', 'data-cn="ghlogin"']],
     ['starting', { ok: true, state: 'unknown', gh: '/x', job: { id: 2, kind: 'login', state: 'running', code: '', url: 'https://github.com/login/device', log: [] } }, ['Starting gh', 'Cancel']],
     ['code shown', { ok: true, state: 'unknown', gh: '/x', job: { id: 2, kind: 'login', state: 'running', code: 'AB12-CD34', url: 'https://github.com/login/device', log: [] } }, ['AB12-CD34', 'Copy code', 'github.com/login/device', 'Cancel']],
-    ['signed in', { ok: true, state: 'ok', login: 'octo-cat', gh: '/x', job: null }, ['Connected as octo-cat', 'Sign in again']],
+    ['signed in', { ok: true, state: 'ok', login: 'octo-cat', gh: '/x', job: null }, ['Found an existing gh sign-in as <b>octo-cat</b>', 'Use a different account']],
   ];
   for (const [name, st, want] of states) {
     it(`renders ${name}`, () => {
@@ -66,13 +66,19 @@ describe('the GitHub panel', () => {
       for (const w of want) expect(h).toContain(w);
     });
   }
-  it('a signed-in gh offers Sign in again only behind a second, explicit step', () => {
+  it('a gh sign-in Loom found says so, and offers a different account through the device flow with again', () => {
     const p = page();
-    p.CN.gh = { ok: true, state: 'ok', login: 'octo-cat', gh: '/x', job: null };
-    expect(p.cnGhHtml(K(p))).not.toContain('data-cn="ghagainyes"');
-    p.cnAct('ghagain', null, () => {});
-    expect(p.cnGhHtml(K(p))).toContain('data-cn="ghagainyes"');
-    expect(p.cnGhHtml(K(p))).toContain('Keep the current login');
+    p.CN.gh = { ok: true, state: 'ok', login: 'octo-cat', gh: '/x', job: null, origin: 'found' };
+    const h = p.cnGhHtml(K(p));
+    expect(h).toContain('Found an existing gh sign-in as <b>octo-cat</b>.');
+    expect(h).not.toContain('Connected through Loom');
+    expect(h).toMatch(/data-cn="ghagainyes">Use a different account/);
+    expect(h).toContain('GitHub account');
+    expect(p.cnGhView(p.CN.gh).pill).toEqual(['ok', 'Found gh sign-in as octo-cat']);
+    // Loom ran the sign-in: then, and only then, it says connected.
+    p.CN.gh = { ...p.CN.gh, origin: 'loom' };
+    expect(p.cnGhHtml(K(p))).toContain('Connected through Loom as <b>octo-cat</b>.');
+    expect(p.cnGhView(p.CN.gh).pill).toEqual(['ok', 'Connected as octo-cat']);
   });
   it('opens the device page once the code shows', () => {
     const p = page();
@@ -113,9 +119,16 @@ describe('the Gmail panel', () => {
     p.CN.gm = { ok: true, clientId: 'x.apps.googleusercontent.com', accounts: [], route: null };
     expect(p.cnGmHtml(K(p))).toMatch(/data-cn="gmconnect">(<svg[^>]*>.*?<\/svg>)?Connect Gmail/);
     expect(p.cnGmView(p.CN.gm).kind).toBe('ready');
-    p.CN.gm = { ok: true, clientId: null, accounts: [], route: 'cli', cli: '/home/x/gmail.mjs' };
-    expect(p.cnGmHtml(K(p))).toContain('send through the Email CLI (/home/x/gmail.mjs)');
-    expect(p.cnGmView(p.CN.gm).pill[1]).toBe('Using the email CLI');
+    p.CN.gm = { ok: true, clientId: null, accounts: [], route: 'cli', cli: '/Users/x/.claude/tools/gmail/gmail.mjs', cliDisplay: '~/.claude/tools/gmail/gmail.mjs' };
+    let h = p.cnGmHtml(K(p));
+    expect(h).toContain('Found an email CLI at <code>~/.claude/tools/gmail/gmail.mjs</code>.');
+    expect(h).toContain('Loom did not set it up.');
+    expect(h).not.toContain('Connect Gmail directly instead'); // no Google client yet
+    expect(h).toContain('To connect Gmail directly instead, add a Google client below.');
+    expect(p.cnGmView(p.CN.gm).pill[1]).toBe('Found an email CLI');
+    p.CN.gm = { ...p.CN.gm, clientId: 'x.apps.googleusercontent.com' };
+    h = p.cnGmHtml(K(p));
+    expect(h).toMatch(/data-cn="gmconnect">(<svg[^>]*>.*?<\/svg>)?Connect Gmail directly instead/);
   });
   it('lists accounts with labels, default, reconnect and disconnect', () => {
     const p = page();
@@ -129,7 +142,8 @@ describe('the Gmail panel', () => {
     expect(h).toContain('data-cn="gmreconnect" data-arg="alex@work.example.com"');
     expect(h).toContain('data-cn="gmdisc"');
     expect(h).toContain('Add another account');
-    expect(h).toContain('send through Gmail, built in');
+    expect(h).toContain('Gmail connected through Loom as <b>alex@example.com, alex@work.example.com</b>.');
+    expect(h).toContain('How Loom sends email');
     expect(p.cnGmView(p.CN.gm)).toMatchObject({ kind: 'reconnect', pill: ['warn', 'An account needs reconnecting'] });
   });
   it('shows the wait while Google is open', () => {
@@ -154,18 +168,31 @@ describe('the wizard Connections step', () => {
     // Nothing loaded yet: every card says Checking.
     p.WZ_STEPS.slack(c);
     expect((c.innerHTML.match(/data-wz-cntab=/g) ?? []).length).toBe(3);
-    for (const name of ['Slack', 'GitHub', 'Gmail']) expect(c.innerHTML).toContain('<b>' + name + '</b>');
+    for (const name of ['Slack', 'GitHub', 'Gmail']) expect(c.innerHTML).toMatch(new RegExp('<b class="cn-tb">(<svg[^>]*>.*?</svg>)?' + name + '</b>'));
     expect((c.innerHTML.match(/Checking/g) ?? []).length).toBe(3);
     expect(c.innerHTML).toContain('id="wz-slack"');
     // Loaded: each card carries its own state.
-    p.WZ.slack = { connected: true, mode: 'direct', identity: { team: 'Acme' } };
+    p.WZ.slack = { connected: true, mode: 'direct', origin: 'connect', identity: { team: 'Acme' } };
     p.CN.gh = { ok: true, state: 'unauth', gh: '/x', job: null };
     p.CN.gm = { ok: true, clientId: null, accounts: [{ email: 'alex@example.com', label: 'alex@example.com', isDefault: true }], route: 'gmail' };
     const tabs = p.wzConnTabsHtml();
     expect(tabs).toContain('Connected to Acme');
     expect(tabs).toContain('Not signed in');
     expect(tabs).toContain('Connected as alex@example.com');
-    // Each tab shows its own panel; Slack keeps its existing options.
+    // A token Loom did not connect says it was found, not connected.
+    expect(p.wzConnTabsHtml.call(null) && (p.WZ.slack.origin = 'earlier', p.wzConnTabsHtml())).toContain('Found a token for Acme');
+    p.WZ.slack.origin = 'pasted';
+    expect(p.wzConnTabsHtml()).toContain('Pasted token for Acme');
+    p.WZ.slack.origin = 'connect';
+    // Each tab is a section: name and icon, a status line, then its options nested under it.
+    p.WZ.cnTab = 'slack';
+    p.WZ_STEPS.slack(c);
+    expect(c.innerHTML).toContain('<section class="cn-panel"');
+    // Slack's modes sit inside the Slack section, under "How Loom uses Slack", as a radio group.
+    expect(p.wzSlackStatus()).toContain('Connected through Connect Slack');
+    p.WZ.slack.origin = 'earlier';
+    expect(p.wzSlackStatus()).toContain('Found a Slack token stored earlier');
+    p.WZ.slack.origin = 'connect';
     p.WZ.cnTab = 'github';
     p.WZ_STEPS.slack(c);
     expect(c.innerHTML).toContain('data-cn="ghlogin"');

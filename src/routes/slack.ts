@@ -24,6 +24,7 @@ import { RELAY_PORT_MAX, RELAY_PORT_MIN, beginAuth, exchangeCode, oauthHint, out
 import { effectiveMode } from '../slackmode.ts';
 import { preferredPort, serverPort } from '../serverport.ts';
 import { connectDonePage, returnToLoom } from '../connectreturn.ts';
+import { recordOrigin, slackOrigin } from '../connorigin.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Slack connection: token paste/test/disconnect, mode, manifest (§5).
@@ -153,6 +154,7 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
     }
     await withDb((db) => {
       storeToken(token, r.identity.team_id);
+      recordOrigin('slack', 'pasted', r.identity.team_id);
       record(db, r.identity, r.scopes, readonly);
       setSetting(db, 'slack_mode', 'direct');
       setSetting(db, 'slack_reconnect', '');
@@ -218,6 +220,8 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
         mode: effectiveMode(setting, connected),
         connected,
         tokenSource: slackTokenSource(),
+        // How the token got here, so the page never claims Loom connected one it found.
+        origin: slackOrigin({ connected, tokenSource: slackTokenSource(), teamId: identity.team_id ?? null }),
         identity: identity.team_id ? identity : null,
         scopes: connected && granted.length ? { list: granted, ...scopeSummary(granted, readonly) } : null,
         // Connect Slack: the shared app's client id (public), and why a connection lapsed.
@@ -293,6 +297,7 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
     try {
       await withDb((db) => {
         storeGrant(grant, flow.clientId, r.identity.team_id);
+        recordOrigin('slack', 'connect', r.identity.team_id);
         record(db, r.identity, r.scopes, flow.readonly);
         setSetting(db, 'slack_mode', 'direct');
         setSetting(db, 'slack_reconnect', '');

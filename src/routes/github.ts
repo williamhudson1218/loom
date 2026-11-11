@@ -1,6 +1,7 @@
 import { findBin, ghStatusVia, makeGhConnect, type GhStatus, type Job } from '../ghconnect.ts';
 import { setGhStatus } from '../connections.ts';
 import { returnToLoom } from '../connectreturn.ts';
+import { githubOrigin, recordOrigin } from '../connorigin.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Connect GitHub: status, start a device login, install gh with Homebrew, cancel.
@@ -26,7 +27,11 @@ export function makeGithubRoutes(over: Partial<GithubRouteDeps> = {}): RouteDef[
   // Refresh the header's dot from a fresh read once a login or install ends.
   const onDone = (j: Job) => {
     raiseAfterGhJob(j);
-    void status(ghBin()).then(setGhStatus, () => {});
+    void status(ghBin()).then((st) => {
+      // A login Loom ran is recorded, so the page can tell it from one that was already there.
+      if (j.kind === 'login' && j.state === 'ok' && st.state === 'ok' && st.login) recordOrigin('github', 'loom', st.login);
+      setGhStatus(st);
+    }, () => {});
   };
   const deps: GithubRouteDeps = {
     ghBin,
@@ -38,7 +43,7 @@ export function makeGithubRoutes(over: Partial<GithubRouteDeps> = {}): RouteDef[
   async function view(fresh = true) {
     const bin = deps.ghBin();
     const st = fresh ? await deps.status(bin) : { state: 'unknown' as const, login: '' };
-    return { ok: true, state: st.state, login: st.login || null, gh: bin || null, brew: !!deps.brewBin(), job: deps.connect.job() };
+    return { ok: true, state: st.state, login: st.login || null, origin: st.state === 'ok' ? githubOrigin(st.login) : null, gh: bin || null, brew: !!deps.brewBin(), job: deps.connect.job() };
   }
 
   async function getStatus(ctx: RouteCtx): Promise<void> {

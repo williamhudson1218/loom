@@ -105,6 +105,15 @@ export const WIZARD_VIEW_CSS = String.raw`
   #wz .opt ul { margin:6px 0 0; padding-left:16px; font-size:12px; color:var(--wz-text2); }
   #wz .opt .rec { position:absolute; top:8px; right:8px; }
   #wz .opt .ic { font-size:20px; margin-bottom:4px; }
+  #wz .cn-tabs .opt.sel { border-color:var(--wz-accent); }
+  #wz .cn-tabs .opt.sel::after { content:''; position:absolute; left:50%; bottom:-11px; width:12px; height:12px; transform:translateX(-50%) rotate(45deg); background:var(--wz-panel); border-right:1px solid var(--wz-accent); border-bottom:1px solid var(--wz-accent); z-index:1; }
+  #wz .cn-tb { display:flex; align-items:center; gap:7px; }
+  #wz .cn-tb svg { width:16px; height:16px; flex:none; }
+  #wz .cn-panel { border:1px solid var(--wz-accent); border-radius:12px; background:var(--wz-panel); padding:14px 16px; margin-top:4px; }
+  #wz .cn-panel > * + * { margin-top:12px; }
+  #wz .cn-ph { display:flex; align-items:center; gap:8px; font-size:14px; }
+  #wz .cn-ph svg { width:18px; height:18px; }
+  #wz .cn-panel .cards { grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
   #wz .subs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
   #wz .chk { display:flex; gap:9px; align-items:flex-start; font-size:13px; }
   #wz .chk input { margin-top:3px; }
@@ -601,10 +610,14 @@ function wzSlackDraw() {
   var el = wzEl('wz-slack');
   if (!el) return;
   var S = WZ.S, s = WZ.slack, ch = S.slackChoice;
-  var cards = '<div class="cards" id="wz-slcards">'
-    + '<button class="opt' + (ch === 'direct' ? ' sel' : '') + '" data-wz-slack="direct"><span class="pill ok rec">Full features</span><b>Direct app</b><span class="d">You create a small Slack app that only your account uses. Loom reads and posts with your own token.</span></button>'
-    + '<button class="opt' + (ch === 'mcp' ? ' sel' : '') + '" data-wz-slack="mcp"><span class="pill warn rec">Reduced</span><b>MCP only</b><span class="d">Use the Claude Slack connector you already have. No Slack app to create, fewer features.</span></button>'
-    + '<button class="opt' + (ch === 'skip' ? ' sel' : '') + '" data-wz-slack="skip"><b>Skip</b><span class="d">Leave Slack off. Chats and ship still work. Connect later in Settings &rsaquo; Slack.</span></button></div>';
+  // How Loom uses Slack: a small radio group nested in the Slack section, not peers of the connections.
+  var modes = [['direct', 'Direct app', '<span class="tag">Full features</span>', 'Loom reads and posts with your own Slack token, through the Loom app or one you create.'],
+    ['mcp', 'MCP only', '<span class="tag warn">Reduced</span>', 'Use the Claude Slack connector you already have. No Slack token in Loom, fewer features.'],
+    ['skip', 'Skip', '', 'Leave Slack off. Chats and ship still work. Connect later in Settings &rsaquo; Slack.']];
+  var cur = modes.filter(function (m) { return m[0] === ch; })[0] || modes[0];
+  var cards = '<div class="cn-seg" role="radiogroup" aria-label="How Loom uses Slack" id="wz-slcards">' + modes.map(function (m) {
+    return '<button type="button" role="radio" aria-checked="' + (m[0] === ch ? 'true' : 'false') + '" data-wz-slack="' + m[0] + '">' + m[1] + (m[2] ? ' ' + m[2] : '') + '</button>';
+  }).join('') + '</div><div class="def">' + cur[3] + '</div>';
   var sub = '';
   if (ch === 'direct') {
     var tabs = ['1 Create the app', '2 Install', '3 Paste token'];
@@ -613,11 +626,13 @@ function wzSlackDraw() {
     // Connect Slack (the built-in Loom app, or another shared app; OAuth with PKCE) leads when a client id is set, which it is by default.
     if (cid && !envTk) {
       var oa = WZ.oauth;
-      sub += '<div class="stack"><div class="lrow"><span class="st ' + (connected ? 'y' : 'w') + '">' + (connected ? '&#10003;' : '!') + '</span><div class="t"><b>Connect Slack</b><span>Slack opens in your browser. Approve there and Loom stores your own token in the Keychain. Posts are sent as you. If your workspace restricts apps, an admin approves Loom once.</span></div>'
-        + (oa ? '<button class="btn sm" data-wz-oauthcancel="1">Cancel</button>' : '<button class="btn pri" data-wz-oauth="1">' + (connected ? 'Connect again' : s.reconnect ? 'Reconnect Slack' : 'Connect Slack') + '</button>') + '</div>'
+      // A check and "Connect again" only when Connect Slack made this connection; a found token is not Loom's.
+      var viaConnect = connected && s.origin === 'connect';
+      sub += '<div class="stack"><div class="lrow"><span class="st ' + (viaConnect ? 'y' : 'w') + '">' + (viaConnect ? '&#10003;' : '!') + '</span><div class="t"><b>Connect Slack</b><span>Slack opens in your browser. Approve there and Loom stores your own token in the Keychain. Posts are sent as you. If your workspace restricts apps, an admin approves Loom once.</span></div>'
+        + (oa ? '<button class="btn sm" data-wz-oauthcancel="1">Cancel</button>' : '<button class="btn pri" data-wz-oauth="1">' + (viaConnect ? 'Connect again' : s.reconnect ? 'Reconnect Slack' : 'Connect Slack') + '</button>') + '</div>'
         + (oa ? '<div class="def"><span class="spin"></span>Waiting for you to approve in Slack. <a href="' + wzEsc(oa.url) + '" target="_blank" rel="noopener">Open the Slack page</a> if it did not open.</div>' : '')
         + (WZ.oauthMsg ? '<div class="note ' + (WZ.oauthMsg.ok ? 'ok' : 'err') + '">' + wzEsc(WZ.oauthMsg.text) + '</div>' : '')
-        + (connected && !WZ.oauthMsg ? '<div class="note ok"><span class="st y">&#10003;</span> Connected' + (s.identity ? ' as ' + wzEsc(s.identity.user || '') + ' in ' + wzEsc(s.identity.team || '') : '') + '.</div>' : '')
+
         + (WZ.ownApp ? '' : '<div><button class="btn sm" data-wz-ownapp="1">Use your own app instead</button></div>') + '</div>';
     } else if (!envTk) {
       sub += '<div class="fld" style="margin-bottom:8px"><label for="wz-cid">Team shared app client id (optional)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="wz-cid" autocomplete="off" spellcheck="false" placeholder="1234567890.1234567890" style="flex:1;min-width:200px"><button class="btn sm" data-wz-cidsave="1">Save</button></div><div class="def">If your team set up one shared Loom app in Slack, paste its client id to connect without creating your own app.</div>' + (WZ.cidErr ? '<div class="note err">' + wzEsc(WZ.cidErr) + '</div>' : '') + '</div>';
@@ -640,7 +655,7 @@ function wzSlackDraw() {
         + (envTok ? '<div><button class="btn pri" data-wz-slacktest="1">Test</button></div>' : '')
         + '<div class="def">&#128274; Stored in your macOS Keychain, item &quot;Loom Slack token&quot;. It is never written to Loom&#39;s data folder or sent anywhere except slack.com.</div>'
         + '<div id="wz-slackres">' + wzSlackRes() + '</div>'
-        + (connected && !WZ.slackMsg ? '<div class="note ok"><span class="st y">&#10003;</span> Connected' + (s.identity ? ' as ' + wzEsc(s.identity.user || '') + ' in ' + wzEsc(s.identity.team || '') : '') + '.' + (s.scopes ? ' ' + wzEsc(s.scopes.text || '') : '') + '</div>' : '')
+
         + '</div>';
     }
     }
@@ -655,7 +670,22 @@ function wzSlackDraw() {
   } else {
     sub += '<div class="note">Slack stays off. The Outbox, watchers, the shortcut step and parked threads are hidden until you connect Slack in Settings.</div>';
   }
-  el.innerHTML = cards + sub;
+  el.innerHTML = wzSlackStatus() + cnSub('How Loom uses Slack', 'slack', cards + '<div class="stack">' + sub + '</div>');
+}
+// The Slack section's status line: what is connected, and how the token got here.
+function wzSlackStatus() {
+  var s = WZ.slack;
+  if (!s) return cnStatus('', 'Checking Slack...');
+  var who = s.identity ? ' for <b>' + wzEsc(s.identity.user || '') + '</b> in <b>' + wzEsc(s.identity.team || '') + '</b>' : '';
+  if (s.connected) {
+    if (s.origin === 'connect') return cnStatus('ok', 'Connected through Connect Slack' + who + '.', 'The token is in your Keychain.');
+    if (s.origin === 'pasted') return cnStatus('ok', 'Using a token you pasted into Loom' + who + '.', 'It is in your Keychain.');
+    if (s.origin === 'env') return cnStatus('ok', 'Using the token in the SLACK_USER_TOKEN environment variable' + who + '.', '');
+    return cnStatus('ok', 'Found a Slack token stored earlier' + who + '.', 'Loom did not connect it in this setup. Connect Slack replaces it.');
+  }
+  if (s.mode === 'mcp') return cnStatus('ok', 'Using the Claude Slack connector.', 'Loom has no Slack token of its own.');
+  if (s.reconnect) return cnStatus('warn', 'Slack needs reconnecting.', wzEsc(s.reconnectHint || ''));
+  return cnStatus('', 'Not connected.');
 }
 function wzSlackRes() {
   var m = WZ.slackMsg;
@@ -703,7 +733,13 @@ function wzOAuthStart() {
 function wzSlackPill() {
   var s = WZ.slack;
   if (!s) return ['off', 'Checking'];
-  if (s.connected && s.mode === 'direct') return ['ok', 'Connected' + (s.identity && s.identity.team ? ' to ' + s.identity.team : '')];
+  var team = s.identity && s.identity.team ? s.identity.team : '';
+  if (s.connected && s.mode === 'direct') {
+    if (s.origin === 'connect') return ['ok', 'Connected' + (team ? ' to ' + team : '')];
+    if (s.origin === 'pasted') return ['ok', 'Pasted token' + (team ? ' for ' + team : '')];
+    if (s.origin === 'env') return ['ok', 'Token from the environment'];
+    return ['ok', 'Found a token' + (team ? ' for ' + team : '')];
+  }
   if (s.mode === 'mcp') return ['ok', 'MCP only'];
   if (s.reconnect) return ['warn', 'Reconnect Slack'];
   return ['off', 'Not connected'];
@@ -717,14 +753,16 @@ function wzConnTabsHtml() {
   var tab = WZ.cnTab || 'slack';
   return WZ_CONN.map(function (r) {
     var p = r[0] === 'slack' ? wzSlackPill() : r[0] === 'github' ? cnGhView(CN.gh).pill : cnGmView(CN.gm).pill;
-    return '<button class="opt' + (tab === r[0] ? ' sel' : '') + '" data-wz-cntab="' + r[0] + '"><b>' + wzEsc(r[1]) + '</b><span class="d">' + wzEsc(r[2]) + '</span><span class="pill ' + p[0] + '">' + wzEsc(p[1]) + '</span></button>';
+    return '<button class="opt' + (tab === r[0] ? ' sel' : '') + '" data-wz-cntab="' + r[0] + '" style="--cn-tone:' + WZ_TONE[r[0]] + '"><b class="cn-tb">' + brandIcon(r[0] === 'gmail' ? 'gmail' : r[0]) + wzEsc(r[1]) + '</b><span class="d">' + wzEsc(r[2]) + '</span><span class="pill ' + p[0] + '">' + wzEsc(p[1]) + '</span></button>';
   }).join('');
 }
+// Each connection's section: its name and icon, the status line, then its options nested under it.
+var WZ_TONE = { slack: '#e01e5a', github: '#8b949e', gmail: '#ea4335' };
 function wzConnPanelHtml() {
   var tab = WZ.cnTab || 'slack';
-  if (tab === 'github') return cnGhHtml(CN_K_WZ);
-  if (tab === 'gmail') return cnGmHtml(CN_K_WZ, { fields: true });
-  return '<div class="stack" id="wz-slack"></div>';
+  var name = { slack: 'Slack', github: 'GitHub', gmail: 'Gmail' }[tab];
+  var body = tab === 'github' ? cnGhHtml(CN_K_WZ) : tab === 'gmail' ? cnGmHtml(CN_K_WZ, { fields: true }) : '<div class="cn-stack" id="wz-slack"></div>';
+  return '<section class="cn-panel" style="--cn-tone:' + WZ_TONE[tab] + '" aria-label="' + name + '"><div class="cn-ph">' + brandIcon(tab) + '<b>' + name + '</b></div>' + body + '</section>';
 }
 function wzConnDraw() {
   if (!WZ.v || wzCur() !== 'slack') return;

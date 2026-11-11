@@ -27,6 +27,7 @@ import { chooseEmailRoute } from '../gmailapi.ts';
 import { serverPort } from '../serverport.ts';
 import { resolveEmailCli } from '../outboxemail.ts';
 import { connectDonePage, returnToLoom } from '../connectreturn.ts';
+import { homeTilde } from '../connorigin.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Connect Gmail: start, Google's loopback redirect, status, and per-account
@@ -87,6 +88,8 @@ export function makeGoogleRoutes(over: Partial<GoogleRouteDeps> = {}): RouteDef[
       accounts: accounts.map((a, i) => ({ email: a.email, label: a.label, isDefault: i === 0, reconnect: a.reconnect ?? null, reconnectHint: a.reconnect ? googleHint('reconnect_gmail') : null })),
       via,
       cli: cliOk ? cli : null,
+      // The CLI is something Loom found on this Mac; shown with ~ for the home folder.
+      cliDisplay: cliOk ? homeTilde(cli) : null,
       route: chooseEmailRoute({ via, gmailAccounts: accounts.length, cli: cliOk ? cli : '' }),
     };
   }
