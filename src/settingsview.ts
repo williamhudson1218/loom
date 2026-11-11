@@ -123,7 +123,7 @@ var SX_SECS=[
  {id:'helpers',label:'Helpers',what:'Manages the hooks and skills Loom installs into Claude Code.',needs:'Claude Code on this machine. Loom adds a local plugin; it never edits settings.json.'},
  {id:'advanced',label:'Advanced',what:'Low-level tmux, lane, resource and server settings. Most people never need these.',needs:'Nothing.'},
  {id:'updates',label:'Updates',what:'Keeps Loom up to date from its GitHub releases: checks, downloads and verifies a new version, then installs it when Loom restarts.',needs:'Loom running as the app, installed in a folder you can write to, such as Applications.'},
- {id:'help',label:'Help',what:'Replays the tour or setup, and lists keyboard shortcuts.',needs:'Nothing.'}
+ {id:'help',label:'Help',what:'Replays the welcome screen, the tour or setup, and lists keyboard shortcuts.',needs:'Nothing.'}
 ];
 var SX_L={claude:'Claude Code',codex:'Codex',ask:'Ask every time',haiku:'Haiku',sonnet:'Sonnet',opus:'Opus',account:'Account default',inside:'Inside Loom',ghostty:'Ghostty',iterm2:'iTerm2',terminal:'Terminal.app',managed:'Managed windows',lanes:'Lanes',zoom:'Zoom',mirror:'Mirror',normal:'Normal',skip:'Skip permissions',send:'Send',park:'Send & park',close:'Send & close',needs_you:'Only when it asks a question',all:'On every report',off:'Off',direct:'Direct app',mcp:'MCP only',system:'System default',auto:'Automatic',on:'Always'};
 
@@ -399,11 +399,12 @@ function sxHelp(){var hk=sxv('slack_goto_hotkey');
   var rows=SX_KEYMAP.filter(function(k){return k.scope!=='dialog'||true;}).map(function(k){var keys=k.keys;if(k.setting){var v=sxv(k.setting);if(!v||v==='off')return '';keys=sxFmtAcc(v);}
    return '<tr><td><span class="kbd">'+sxEsc(keys)+'</span></td><td>'+sxEsc(k.label)+'</td></tr>';}).join('');
   var done=sxv('setup_completed_at'),origin=sxv('setup_origin'),tour=sxv('tour_completed_at')||sxv('tour_skipped_at');var ss=sxv('setup_state')||{};var steps=ss.steps?Object.keys(ss.steps):[];
-  return '<div class="sxrow" style="margin-top:0">'+sxBtn('tour','Take the tour',{pri:true,sm:false})+sxBtn('setup','Run setup again',{sm:false})+'</div>'+
+  return '<div class="sxrow" style="margin-top:0">'+sxBtn('tour','Take the tour',{pri:true,sm:false})+sxBtn('setup','Run setup again',{sm:false})+sxBtn('welcome','Show welcome screen',{sm:false})+'</div>'+
    sxGrp('Keyboard shortcuts')+'<div class="sxtbl"><table><tr><th>Shortcut</th><th>Action</th></tr>'+rows+'</table></div>'+
    sxGrp('Setup and tour')+
    sxRow('Setup','Recorded when the setup wizard finishes, or when an existing install was migrated.',done?sxPill('ok',(origin==='migrated'?'Migrated ':'Finished ')+sxWhen(done)):sxPill('warn','Not finished'))+
    sxRow('Setup steps','What the wizard recorded for each step.',steps.length?steps.map(function(s){return sxPill(ss.steps[s].status==='done'?'ok':'off',s);}).join(''):sxPill('off','None recorded'))+
+   sxRow('Welcome screen','Shown in front of setup on a first launch. Show welcome screen replays it.',sxv('welcome_seen_at')?sxPill('ok','Seen '+sxWhen(sxv('welcome_seen_at'))):sxPill('off','Not seen'))+
    sxRow('Tour','Whether the guided tour has been taken or skipped.',tour?sxPill('ok',(sxv('tour_completed_at')?'Taken ':'Skipped ')+sxWhen(tour)):sxPill('off','Not taken'))+
    sxRow('Settings version','Loom upgrades older settings once and records the version.',sxPill('off','schema '+sxv('settings_schema')))+
    '<div class="def" style="margin-top:12px">Loom data is kept in your Loom data folder; see Advanced.</div>';}
@@ -504,6 +505,7 @@ function sxAct(a,arg,btn){
    if(a==='hinst'&&pv&&pv.preview){sxConfirm({title:'Install the Loom helpers',body:'Loom adds a local plugin to Claude Code by running:<pre class="sxpre">'+sxEsc((pv.preview.install||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>It does not edit your settings.json. Remove undoes it.',ok:'Install'}).then(function(y){if(y)run();});}else run();return;}
   if(a==='hrm'){var pr=SX.data.plugin;sxConfirm({title:'Remove the Loom helpers',body:'Loom runs:<pre class="sxpre">'+sxEsc(((pr&&pr.preview&&pr.preview.remove)||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>Chats stop recording drafts, thread ownership and ship labels until you install them again.',ok:'Remove',danger:true}).then(function(y){if(y)sxPost('/api/plugin/remove',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoad('plugin',true);});});return;}
   if(a==='tour'){if(typeof startTour==='function')startTour();else window.dispatchEvent(new CustomEvent('loom:start-tour'));return;}
+  if(a==='welcome'){if(typeof showWelcome==='function')showWelcome({replay:true});return;}
   if(a==='setup'){if(typeof openWizard==='function')openWizard();else window.dispatchEvent(new CustomEvent('loom:open-wizard'));return;}
   if(a==='copydiag'){var snap={},ks=Object.keys(SET.settings);ks.forEach(function(k){var s=SET.settings[k];if(k==='slack_identity'||k==='slack_scopes_granted'||k==='channel_projects')return;snap[k]=s.value;});
    var txt2=JSON.stringify({settings:snap,chats:DATA.chats.length,projects:(ALLP||[]).length,slackMode:DATA.slackMode,codexVisible:!!DATA.codexVisible,archiveSearch:!!DATA.archiveSearch,helpers:SX.data.plugin?SX.data.plugin.status:null,page:location.origin},null,2);

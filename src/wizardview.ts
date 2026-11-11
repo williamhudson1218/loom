@@ -206,7 +206,9 @@ function wzBoot() {
   wzGet('/api/wizard').then(function (v) {
     if (!v || !v.ok) return;
     WZ.v = v;
-    if (v.show) wzOpen(); else wzResumePill();
+    // A first launch shows the welcome screen first; Enter fades it into the wizard.
+    if (v.welcome && typeof showWelcome === 'function') showWelcome({ done: function () { if (WZ.v && WZ.v.show) wzOpen(); else wzResumePill(); } });
+    else if (v.show) wzOpen(); else wzResumePill();
   }).catch(function () {});
 }
 function wzResumePill() {

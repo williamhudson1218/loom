@@ -236,6 +236,37 @@ describe('GET /api/wizard', () => {
   });
 });
 
+describe('welcome screen', () => {
+  it('a fresh install shows it in front of the wizard until Enter records it', async () => {
+    const t = table();
+    const first = await hit(t, 'GET /api/wizard');
+    expect(first.body.welcome).toBe(true);
+    expect(first.body.show).toBe(true);
+    const r = await hit(t, 'POST /api/wizard/welcome', {});
+    expect(r.status).toBe(200);
+    expect(r.body.view.welcome).toBe(false);
+    expect(r.body.view.show).toBe(true); // the wizard still opens next
+    expect(withDb((db) => getSetting(db, 'welcome_seen_at'))).toBe(1_700_000_000_000);
+  });
+
+  it('a finished setup never shows it, even if Enter was never pressed', async () => {
+    const t = table();
+    await walkTo(t, 'done');
+    const done = await hit(t, 'POST /api/wizard/finish', {});
+    expect(done.body.view.welcome).toBe(false);
+  });
+
+  it('a migrated install never shows it', async () => {
+    const legacy = path.join(dir, 'legacy3', 'manager.db');
+    const seed = openDb(legacy, { migrate: false });
+    seed.prepare(`DELETE FROM settings`).run();
+    seed.prepare(`INSERT INTO projects (path, name, added_at) VALUES ('/p', 'p', 1)`).run();
+    seed.close();
+    const r = await hit(table({ openDb: () => openDb(legacy) }), 'GET /api/wizard');
+    expect(r.body.welcome).toBe(false);
+  });
+});
+
 describe('requirements', () => {
   it('rows say what is missing and what the fix does', () => {
     const bad = goodReport();

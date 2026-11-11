@@ -15,6 +15,7 @@ import { chatTagMap, listTags, type TagInfo } from './tags.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
 import { WIZARD_VIEW_CSS, WIZARD_VIEW_HTML, WIZARD_VIEW_JS } from './wizardview.ts';
+import { WELCOME_VIEW_CSS, WELCOME_VIEW_HTML, WELCOME_VIEW_JS } from './welcomeview.ts';
 import { CONNECT_VIEW_CSS, CONNECT_VIEW_JS } from './connectview.ts';
 import { TOUR_VIEW_CSS, TOUR_VIEW_HTML, TOUR_VIEW_JS } from './tourview.ts';
 import { WATCHER_VIEW_CSS, WATCHER_VIEW_HTML, WATCHER_VIEW_JS } from './watcherview.ts';
@@ -943,6 +944,7 @@ ${TEST_LINKS_CSS}
 ${JUMP_CSS}
 ${ORCH_VIEW_CSS}
 ${WIZARD_VIEW_CSS}
+${WELCOME_VIEW_CSS}
 ${TOUR_VIEW_CSS}
 ${WATCHER_VIEW_CSS}
 ${SHIPMODAL_CSS}
@@ -1114,6 +1116,7 @@ ${UPDATE_VIEW_JS}
 ${ORCH_VIEW_JS}
 ${CONNECT_VIEW_JS}
 ${WIZARD_VIEW_JS}
+${WELCOME_VIEW_JS}
 ${TOUR_VIEW_JS}
 ${WATCHER_VIEW_JS}
 ${SHIPMODAL_JS}
@@ -2294,6 +2297,7 @@ loadShipCands();setInterval(visOnly(loadShipCands),15000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();loadTerminals();}});
 </script>
 ${WIZARD_VIEW_HTML}
+${WELCOME_VIEW_HTML}
 ${TOUR_VIEW_HTML}
 ${WATCHER_VIEW_HTML}
 </body></html>`;

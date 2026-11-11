@@ -53,7 +53,7 @@ const DESIGN_KEYS = [
   'plugin_state', 'codex_hook',
   'last_project_dir', // kept beside new_thread_dir=last
   'tmux_socket', 'session_prefix', 'tmux_tmpdir', 'reap_idle_min', 'min_free_mb', 'max_load_per_cpu', 'port', 'find_chat_bin',
-  'settings_schema', 'setup_state', 'setup_completed_at', 'setup_origin', 'tour_completed_at', 'tour_skipped_at',
+  'settings_schema', 'setup_state', 'setup_completed_at', 'setup_origin', 'welcome_seen_at', 'tour_completed_at', 'tour_skipped_at',
   'trees_prune_after_ship',
 ];
 
@@ -136,6 +136,7 @@ const TODAY: Record<string, unknown> = {
   setup_origin: '',
   tour_completed_at: 0,
   tour_skipped_at: 0,
+  welcome_seen_at: 0,
   trees_prune_after_ship: true, // new, and on for existing installs too (asked for as the default)
 };
 

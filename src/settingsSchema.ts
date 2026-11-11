@@ -566,6 +566,10 @@ export const SETTINGS = [
     defaultNew: '', legacyUnset: '', restart: false, internal: true,
   }),
   intDef(0, Number.MAX_SAFE_INTEGER, {
+    key: 'welcome_seen_at', section: 'help', label: 'Welcome screen seen', help: 'When Enter was pressed on the welcome screen (epoch ms); 0 = not yet.',
+    defaultNew: 0, legacyUnset: 0, restart: false, internal: true,
+  }),
+  intDef(0, Number.MAX_SAFE_INTEGER, {
     key: 'tour_completed_at', section: 'help', label: 'Tour completed', help: 'When the tour was finished (epoch ms).',
     defaultNew: 0, legacyUnset: 0, restart: false, internal: true,
   }),

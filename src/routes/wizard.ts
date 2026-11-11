@@ -7,6 +7,7 @@ import { openDb } from '../db.ts';
 import { TOOL_DIR } from '../paths.ts';
 import { formatAccelerator } from '../keymap.ts';
 import { setupDone } from '../migrate.ts';
+import { showWelcome } from '../welcome.ts';
 import { writePluginStateFile } from '../pluginmgr.ts';
 import { clearProbeMemo, probeEnvironment, type ProbeReport } from '../probe.ts';
 import {
@@ -435,9 +436,12 @@ export function buildView(db: Database.Database) {
   const ctx = ctxOf(db);
   const m = marker(db);
   const cur = stepMeta(state.current);
+  const show = shouldShow(m) && !setupDone(db);
   return {
     ok: true,
-    show: shouldShow(m) && !setupDone(db),
+    show,
+    // The welcome screen goes in front of the wizard until Enter is pressed once.
+    welcome: showWelcome({ setupShow: show, seenAt: Number(getSetting(db, 'welcome_seen_at')) || 0 }),
     origin: m.origin,
     completedAt: m.completedAt,
     tourCompletedAt: Number(getSetting(db, 'tour_completed_at')) || 0,
@@ -742,6 +746,13 @@ export function makeWizardRoutes(over: Partial<WizardDeps> = {}): RouteDef[] {
     });
   }
 
+  async function postWelcome(c: RouteCtx): Promise<void> {
+    await withDb((db) => {
+      setSetting(db, 'welcome_seen_at', deps.now());
+      c.json(200, { ok: true, view: buildView(db) });
+    });
+  }
+
   async function getWizard(c: RouteCtx): Promise<void> {
     await withDb((db) => c.json(200, buildView(db)));
   }
@@ -862,6 +873,7 @@ export function makeWizardRoutes(over: Partial<WizardDeps> = {}): RouteDef[] {
     { method: 'POST', path: '/api/wizard/goto', kind: 'browser', handler: postGoto },
     { method: 'POST', path: '/api/wizard/close', kind: 'browser', handler: postClose },
     { method: 'POST', path: '/api/wizard/rerun', kind: 'browser', handler: postRerun },
+    { method: 'POST', path: '/api/wizard/welcome', kind: 'browser', handler: postWelcome },
     { method: 'POST', path: '/api/wizard/finish', kind: 'browser', handler: postFinish },
     { method: 'POST', path: '/api/wizard/tour', kind: 'browser', handler: postTour },
   ];
