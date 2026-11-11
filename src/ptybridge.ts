@@ -12,6 +12,7 @@ import { VIEW_SESSION_PREFIX, isViewSession, tmux as runTmux, tmuxArgs } from '.
 import { pickLog } from './picklog.ts';
 import { agentPaneIds, listTmuxPanes } from './placements.ts';
 import { isTerminalWindow } from './terminals.ts';
+import { toolBin } from './toolpath.ts';
 import { getLaneView, openDb, type LaneView } from './db.ts';
 
 // The embedded terminal: a WebSocket on Loom's own :4317 server that streams a
@@ -681,7 +682,7 @@ export function parseSnapshotOut(out: string): SnapshotReply | null {
 /** Run argv through tmux without blocking the event loop. */
 export function runTmuxAsync(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('tmux', tmuxArgs(args), { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    execFile(toolBin('tmux'), tmuxArgs(args), { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
   });
 }
 
@@ -934,7 +935,7 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
   function runAttach(ws: WebSocket, view: string, cols: number, rows: number, mode: TermMode, paneId = ''): void {
     let pty: PtyLike;
     try {
-      pty = spawn!('tmux', attachArgs(view), { name: 'xterm-256color', cols, rows, cwd: os.homedir(), env: clientEnv() });
+      pty = spawn!(toolBin('tmux'), attachArgs(view), { name: 'xterm-256color', cols, rows, cwd: os.homedir(), env: clientEnv() });
     } catch (e) {
       closeView(view, tmux);
       ws.close(1011, 'spawn failed');

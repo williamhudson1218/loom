@@ -37,6 +37,7 @@ import {
   type RelayDeps,
 } from './orchestrator.ts';
 import { callOrchTool, type ChatInfo, type OrchToolDeps } from './orchtools.ts';
+import { toolBin, toolEnv } from './toolpath.ts';
 import {
   ensureOrchFiles,
   ensureOrchToken,
@@ -143,7 +144,7 @@ export function relayDeps(getSnap: () => Snap, run: TmuxRunner = defaultRun): Re
 
 const gh = (args: string[]) =>
   new Promise<string>((resolve, reject) =>
-    execFile('gh', args, { encoding: 'utf-8', timeout: 20_000 }, (err, out) => (err ? reject(err) : resolve(out))),
+    execFile(toolBin('gh'), args, { encoding: 'utf-8', timeout: 20_000, env: toolEnv(toolBin('gh')) }, (err, out) => (err ? reject(err) : resolve(out))),
   );
 
 export function toolDeps(getSnap: () => Snap): OrchToolDeps {

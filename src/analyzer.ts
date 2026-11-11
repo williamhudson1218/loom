@@ -11,6 +11,7 @@ import {
 } from './paths.ts';
 import type { Agent, Summary, ChatRow, ChatState } from './types.ts';
 import { CHAT_STATES } from './types.ts';
+import { resolveTool, toolEnv } from './toolpath.ts';
 
 // `model` is the value for `claude --model`; absent means pass no flag (the account default).
 export interface RunnerOpts {
@@ -160,10 +161,11 @@ export function parseSummary(raw: string): Summary {
 //       to disk (otherwise chat-manager would index its own summarization prompts).
 export const defaultRunner: ClaudeRunner = (prompt: string, opts: RunnerOpts = {}) =>
   new Promise((resolve, reject) => {
+    const bin = resolveTool('claude', { setting: opts.claudeBin }) ?? (opts.claudeBin || 'claude');
     execFile(
-      opts.claudeBin || 'claude',
+      bin,
       ['-p', '--safe-mode', '--no-session-persistence', ...(opts.model ? ['--model', opts.model] : []), prompt],
-      { cwd: TOOL_DIR, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+      { cwd: TOOL_DIR, maxBuffer: 10 * 1024 * 1024, timeout: 120_000, env: toolEnv(bin) },
       (err, stdout) => {
         if (err) reject(err);
         else resolve(stdout);

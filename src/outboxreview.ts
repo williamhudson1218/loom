@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { toolBin, toolEnv } from './toolpath.ts';
 
 // The GitHub half of an outbox draft: a pull request review (body, verdict and
 // inline comments) that posts as the person, through their own `gh` login, when
@@ -151,7 +152,7 @@ export type GhRun = (args: string[], input?: string) => Promise<string>;
 
 export const ghRun: GhRun = (args, input) =>
   new Promise((resolve, reject) => {
-    const p = spawn('gh', args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } });
+    const p = spawn(toolBin('gh'), args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...toolEnv(toolBin('gh')), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } });
     let out = '';
     let err = '';
     const timer = setTimeout(() => p.kill('SIGTERM'), 60_000);

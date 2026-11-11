@@ -1,5 +1,5 @@
-import { openDb } from '../db.ts';
-import { getSetting } from '../settingsSchema.ts';
+import { claudePath } from '../toolbins.ts';
+import { toolEnv } from '../toolpath.ts';
 import { defaultRunner, parseClaudeVersion } from '../probe.ts';
 import { currentEnv, diagnosticsText } from '../diagnostics.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
@@ -13,21 +13,8 @@ const CLAUDE_TTL_MS = 5 * 60_000;
 
 async function claudeVersion(): Promise<string | null> {
   if (claudeMemo && Date.now() - claudeMemo.at < CLAUDE_TTL_MS) return claudeMemo.v;
-  let bin = 'claude';
-  let extra: string[] = [];
-  try {
-    const db = openDb();
-    try {
-      bin = (getSetting(db, 'claude_bin', { env: false }) as string) || 'claude';
-      extra = (getSetting(db, 'extra_path', { env: false }) as string[]) || [];
-    } finally {
-      db.close();
-    }
-  } catch {
-    /* defaults */
-  }
-  const env = { ...process.env, PATH: [...extra, process.env.PATH ?? ''].filter(Boolean).join(':') };
-  const r = await defaultRunner(bin, ['--version'], { timeoutMs: 4000, env });
+  const bin = claudePath();
+  const r = await defaultRunner(bin, ['--version'], { timeoutMs: 4000, env: toolEnv(bin) });
   const v = r.missing ? 'not found' : r.code === 0 ? (parseClaudeVersion(r.stdout)?.raw ?? r.stdout.trim().split('\n')[0] ?? null) : null;
   claudeMemo = { at: Date.now(), v };
   return v;

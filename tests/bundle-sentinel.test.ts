@@ -50,7 +50,8 @@ describe('the bundle import.meta.url sentinel', () => {
   });
 
   it('bundledPluginDir() works when bundled the way the app is', async () => {
-    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-bundle-'));
+    // Inside the repo so the bundle's externals (better-sqlite3) resolve from node_modules.
+    const out = fs.mkdtempSync(path.join(ROOT, 'node_modules', '.loom-bundle-'));
     const file = path.join(out, 'pluginmgr.cjs');
     await build({
       entryPoints: [path.join(ROOT, 'src', 'pluginmgr.ts')],

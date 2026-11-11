@@ -10,6 +10,7 @@ import { readTranscript } from './transcript.ts';
 import type { ChatView, LiveLoc } from './dashboard.ts';
 import { threadsFor, type OwnedThread } from './slack.ts';
 import { chatThreadList, type ChatThread } from './slackthreads.ts';
+import { toolBin, toolEnv } from './toolpath.ts';
 import { nudgePipeline, parsePrRef, wantPipeline, type Pipeline } from './pipeline.ts';
 
 // The board's detail panel: everything about ONE chat that is too expensive for
@@ -246,7 +247,7 @@ export async function filesFor(
 export type GhRunner = (args: string[], cwd: string) => Promise<string>;
 export const defaultGh: GhRunner = (args, cwd) =>
   new Promise((resolve, reject) =>
-    execFile('gh', args, { cwd, encoding: 'utf-8', timeout: 20_000 }, (err, out) => (err ? reject(err) : resolve(out))),
+    execFile(toolBin('gh'), args, { cwd, encoding: 'utf-8', timeout: 20_000, env: toolEnv(toolBin('gh')) }, (err, out) => (err ? reject(err) : resolve(out))),
   );
 
 const PR_TTL_MS = 60_000;

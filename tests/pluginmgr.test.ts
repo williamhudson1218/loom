@@ -16,6 +16,7 @@ import {
   startPluginStateSync,
   writePluginStateFile,
 } from '../src/pluginmgr.ts';
+import { rememberTools } from '../src/toolpath.ts';
 
 const SRC = bundledPluginDir()!;
 let tmp: string;
@@ -129,9 +130,40 @@ describe('claude argv', () => {
   });
 
   it('missing claude is a clear failure', async () => {
-    const r = await mgr({ claudeBin: path.join(tmp, 'nope') }).install();
+    const r = await mgr({ claudeBin: path.join(tmp, 'nope'), home: tmp, env: { PATH: '/nonexistent' }, knownDirs: [] }).install();
     expect(r.ok).toBe(false);
     expect(r.detail).toMatch(/claude was not found/);
+  });
+
+  // 0.1.103 on a fresh Mac: launched from Finder, PATH is /usr/bin:/bin:/usr/sbin:/sbin.
+  // The wizard's probe found claude through the login shell; the plugin step then
+  // spawned a bare `claude` on the minimal PATH and said it was not found.
+  it('installs with a Finder PATH when claude is reachable only through the login shell', async () => {
+    const loginBin = path.join(tmp, 'login-only-bin');
+    fs.mkdirSync(loginBin);
+    fs.renameSync(path.join(tmp, 'claude'), path.join(loginBin, 'claude'));
+    // npm-style: claude is a script whose interpreter sits next to it, as node does under nvm.
+    fs.writeFileSync(path.join(loginBin, 'fakenode'), '#!/bin/sh\nexec /bin/sh "$@"\n', { mode: 0o755 });
+    const script = fs.readFileSync(path.join(loginBin, 'claude'), 'utf8').replace('#!/bin/sh', '#!/usr/bin/env fakenode');
+    fs.writeFileSync(path.join(loginBin, 'claude'), script, { mode: 0o755 });
+    // What the probe records after its login-shell lookup (src/probe.ts, rememberTools).
+    rememberTools({}, [loginBin], home);
+    const r = await mgr({ claudeBin: undefined, home: tmp, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', FAKE_DIR: tmp }, knownDirs: [] }).install();
+    expect(r.detail).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(r.steps[0].display).toContain(path.join(loginBin, 'claude'));
+    expect(argv()).toContain(`plugin install ${PLUGIN_ID} --scope user --json`);
+  });
+
+  it('uses the absolute claude the probe remembered, ahead of any PATH', async () => {
+    const elsewhere = path.join(tmp, 'remembered');
+    fs.mkdirSync(elsewhere);
+    fs.copyFileSync(path.join(tmp, 'claude'), path.join(elsewhere, 'claude'));
+    fs.chmodSync(path.join(elsewhere, 'claude'), 0o755);
+    rememberTools({ claude: path.join(elsewhere, 'claude') }, null, home);
+    const r = await mgr({ claudeBin: undefined, home: tmp, env: { PATH: '/usr/bin:/bin', FAKE_DIR: tmp }, knownDirs: [] }).install();
+    expect(r.ok).toBe(true);
+    expect(r.steps[0].display).toContain(path.join(elsewhere, 'claude'));
   });
 
   it('remove uninstalls, drops the marketplace, deletes the dir, rotates the token, clears state', async () => {

@@ -539,7 +539,7 @@ describe('orchestrator view', () => {
     });
     expect(html).toContain('Needs you · 2');
     expect(html).toContain('data-jump="1">Open chat');
-    expect(html).toContain('data-jump="2">Open PR');
+    expect(html).toMatch(/data-jump="2"><svg[^>]*>.*<\/svg>Open PR/);
     expect(html).toContain('<b>Alex</b>: confirmation of the rollup');
     expect(html).toContain('Moving · 2');
     expect(html).toContain('<b>blue-vanilla</b> · R03 retry');

@@ -8,6 +8,8 @@ import type { LiveInfo } from './placements.ts';
 import { threadsFor } from './slack.ts';
 import { getSetting } from './settingsSchema.ts';
 import type Database from 'better-sqlite3';
+import { claudePath } from './toolbins.ts';
+import { toolEnv } from './toolpath.ts';
 
 // Every live Claude chat in a workspace pane carries two labels beside its @name:
 //
@@ -409,9 +411,10 @@ export const realTopicDeps: TopicDeps = {
     // --safe-mode keeps the call from firing the user's hooks, --no-session-persistence
     // keeps it from being indexed as a session. Run from $HOME, outside any repo.
     return new Promise((resolve, reject) => {
-      execFile('claude', ['-p', '--safe-mode', '--no-session-persistence', '--model', model,
+      const bin = claudePath();
+      execFile(bin, ['-p', '--safe-mode', '--no-session-persistence', '--model', model,
         '--system-prompt', LABEL_SYSTEM, ask],
-        { cwd: os.homedir(), timeout: HAIKU_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+        { cwd: os.homedir(), timeout: HAIKU_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: toolEnv(bin) },
         (err, stdout) => (err ? reject(err) : resolve(stdout)));
     });
   },

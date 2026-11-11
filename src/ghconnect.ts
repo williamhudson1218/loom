@@ -1,6 +1,7 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveTool, toolEnv } from './toolpath.ts';
 
 // Connect GitHub: Loom runs `gh auth login --web` for the person, shows the
 // one-time code gh prints with a Copy button, opens github.com/login/device in the
@@ -40,6 +41,9 @@ export function findBin(name: string, env: NodeJS.ProcessEnv = process.env, exis
     const p = path.join(d, name);
     if (exists(p)) return p;
   }
+  // Then what the probe remembered and the other usual places (src/toolpath.ts).
+  // Only for the live process: a caller passing its own env or exists keeps to them.
+  if (env === process.env && exists === isExec) return resolveTool(name) ?? '';
   return '';
 }
 
@@ -64,7 +68,7 @@ export function ghStatusVia(bin: string, timeoutMs = 8000): Promise<GhStatus> {
   if (!bin) return Promise.resolve({ state: 'missing', login: '' });
   return new Promise((resolve) => {
     try {
-      execFile(bin, ['auth', 'status', '--hostname', 'github.com'], { timeout: timeoutMs, env: { ...process.env, NO_COLOR: '1', GH_PROMPT_DISABLED: '1' } }, (err, out, errOut) => {
+      execFile(bin, ['auth', 'status', '--hostname', 'github.com'], { timeout: timeoutMs, env: { ...toolEnv(bin), NO_COLOR: '1', GH_PROMPT_DISABLED: '1' } }, (err, out, errOut) => {
         const text = String(out ?? '') + '\n' + String(errOut ?? '');
         if (!err) return resolve({ state: 'ok', login: parseGhLogin(text) });
         const e = err as NodeJS.ErrnoException & { killed?: boolean };

@@ -1,6 +1,7 @@
 import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { toolBin } from './toolpath.ts';
 import { TOOL_DIR } from './paths.ts';
 
 // The one door every tmux call goes through.
@@ -103,14 +104,14 @@ const startsServer = (args: string[]): boolean => args[0] === 'new-session' || a
 
 /** execFileSync('tmux', …) with the socket applied. Returns stdout as a string. */
 export function tmux(args: string[], opts: Omit<ExecFileSyncOptions, 'encoding'> = {}): string {
-  const out = execFileSync('tmux', tmuxArgs(args, { startsServer: startsServer(args) }), { ...opts, encoding: 'utf-8' });
+  const out = execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), { ...opts, encoding: 'utf-8' });
   return typeof out === 'string' ? out : '';
 }
 
 /** Same, swallowing failure (a pane or window vanished between listing it and writing to it). */
 export function tmuxQuiet(args: string[]): void {
   try {
-    execFileSync('tmux', tmuxArgs(args, { startsServer: startsServer(args) }), { stdio: 'ignore' });
+    execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), { stdio: 'ignore' });
   } catch {
     /* gone */
   }

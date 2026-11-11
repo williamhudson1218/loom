@@ -153,6 +153,22 @@ describe('probeEnvironment', () => {
     expect(r.loginPath).toEqual(['/opt/homebrew/bin', '/usr/bin']);
   });
 
+  it('a claude on disk that will not start is not found, and says why', async () => {
+    const t = { ...FULL, 'claude --version': { code: 127, stdout: '', stderr: 'env: node: No such file or directory\n' } };
+    const r = await probeEnvironment({ ...base, runner: fakeRunner(t), exists: () => true });
+    expect(r.claude.found).toBe(false);
+    expect(r.claude.broken).toBe('it exited with 127: env: node: No such file or directory');
+    expect(r.ready).toBe(false);
+  });
+
+  it('finds claude in a known place the login shell does not list (~/.claude/local)', async () => {
+    const t: Record<string, Reply> = { ...FULL };
+    delete t['which claude'];
+    const local = '/Users/u/.claude/local/claude';
+    const r = await probeEnvironment({ ...base, runner: fakeRunner(t), exists: (p) => p === local || !p.endsWith('/claude') });
+    expect(r.claude).toMatchObject({ found: true, path: local });
+  });
+
   it('nothing installed', async () => {
     const r = await probeEnvironment({ ...base, runner: fakeRunner({}), exists: () => false });
     expect(r.ready).toBe(false);

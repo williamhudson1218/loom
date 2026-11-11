@@ -83,7 +83,7 @@ describe('launchInPane', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-goto-'));
     const placementFile = path.join(dir, 'placements.jsonl');
     vi.mocked(execFileSync).mockImplementation((command, args) => {
-      if (command === 'tmux' && args?.[0] === 'display-message') {
+      if ((command === 'tmux' || String(command).endsWith('/tmux')) && args?.[0] === 'display-message') {
         return 'loom-work~|LOOM|~2~|LOOM|~1~|LOOM|~/work';
       }
       return '';

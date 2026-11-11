@@ -7,6 +7,7 @@ import { getSetting, onSettingChanged, setSetting } from './settingsSchema.ts';
 import { TOOL_DIR } from './paths.ts';
 import { resolveLoomRepoDir } from './repodir.ts';
 import { moduleDirOf } from './moduledir.ts';
+import { resolveTool, toolEnv } from './toolpath.ts';
 
 // Plugin manager (design §4): installs, updates and removes the Loom Claude Code
 // plugin. Loom never edits ~/.claude/settings.json; it asks `claude plugin ...` to,
@@ -72,6 +73,10 @@ export interface PluginMgrDeps {
   appVersion?: string;
   /** Rotate $LOOM_HOME/cli-token on Remove. Defaults to routes/index.ts's. */
   rotateToken?: (dir: string) => void | Promise<void>;
+  /** For the tool resolver (tests): $HOME and the process env it searches. */
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  knownDirs?: string[];
 }
 
 // ---------- locating things ----------
@@ -382,9 +387,13 @@ export class PluginManager {
     this.loomHome = d.loomHome ?? TOOL_DIR;
     this.bundledDir = d.bundledDir === undefined ? bundledPluginDir() : d.bundledDir;
     this.runner = d.runner ?? defaultRunner;
-    this.claude = d.claudeBin || (getSetting(d.db, 'claude_bin', { env: false }) as string) || 'claude';
     const extra = d.extraPath ?? (getSetting(d.db, 'extra_path', { env: false }) as string[]);
-    this.env = { ...process.env, PATH: [...extra, process.env.PATH ?? ''].filter(Boolean).join(path.delimiter) };
+    // The same claude the wizard's check found (src/toolpath.ts), never a bare
+    // name looked up on a Finder-launched app's minimal PATH.
+    const setting = d.claudeBin || (getSetting(d.db, 'claude_bin', { env: false }) as string) || '';
+    const ro = { setting, extra, loomHome: this.loomHome, home: d.home, env: d.env, knownDirs: d.knownDirs };
+    this.claude = resolveTool('claude', ro) ?? (setting || 'claude');
+    this.env = toolEnv(this.claude, ro);
     this.settingsPath = d.claudeSettingsPath ?? path.join(os.homedir(), '.claude', 'settings.json');
   }
 
@@ -396,6 +405,13 @@ export class PluginManager {
     const r = await this.runner(this.claude, argv, { timeoutMs, env: this.env });
     const output = (r.stdout + (r.stderr ? `\n${r.stderr}` : '')).trim();
     return { display, code: r.code, output, stdout: r.stdout, missing: r.missing };
+  }
+
+  /** Why claude could not be run, naming what was tried. */
+  private missingDetail(): string {
+    if (path.isAbsolute(this.claude) && fs.existsSync(this.claude))
+      return `claude at ${this.claude} could not start. If it is a Node script, its node was not found on PATH (${this.env.PATH}).`;
+    return 'claude was not found. Install Claude Code or set its path in Settings > General > Claude Code binary.';
   }
 
   preview(): PluginStatus['preview'] {
@@ -464,7 +480,7 @@ export class PluginManager {
     const dir = installFiles(this.bundledDir, this.loomHome, this.stamp());
     // add the marketplace unless Claude already has it pointing at this directory
     const ml = await this.run(['plugin', 'marketplace', 'list', '--json'], 20_000);
-    if (ml.missing) return this.result(false, steps, 'claude was not found. Install Claude Code or set its path in Settings.');
+    if (ml.missing) return this.result(false, [ml], this.missingDetail());
     let have = false;
     try {
       const arr = JSON.parse(ml.stdout);

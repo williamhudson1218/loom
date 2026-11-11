@@ -104,7 +104,9 @@ export function requirementRows(r: ProbeReport, brew: BrewInfo): RequirementRow[
   });
   rows.push({
     id: 'claude', required: true, ok: r.claude.found, title: 'Claude Code installed',
-    detail: r.claude.found ? `Found at ${r.claude.path}${verText(r.claude.version) ? ', version ' + verText(r.claude.version) : ''}` : 'Not found. Install Claude Code, then check again. If it is installed somewhere unusual, set its path in Settings › General.',
+    detail: r.claude.found ? `Found at ${r.claude.path}${verText(r.claude.version) ? ', version ' + verText(r.claude.version) : ''}`
+      : r.claude.broken ? `Found at ${r.claude.path}, but ${r.claude.broken}. Reinstall Claude Code, or set a working path in Settings › General.`
+      : 'Not found. Install Claude Code, then check again. If it is installed somewhere unusual, set its path in Settings › General.',
     fix: 'none',
   });
   const loggedIn = !!r.claude.auth?.loggedIn;

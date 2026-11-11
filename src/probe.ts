@@ -5,6 +5,8 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
+import { clearToolCache, rememberTools, resolveTool } from './toolpath.ts';
+import { clearClaudePath } from './toolbins.ts';
 import path from 'node:path';
 
 export interface RunResult {
@@ -182,6 +184,8 @@ export interface ToolProbe {
   path?: string;
   version?: Version | null;
   warning?: string | null;
+  /** Found on disk but `--version` did not run (claude only): why, for the wizard. */
+  broken?: string;
 }
 
 export interface ProbeReport {
@@ -213,6 +217,8 @@ export interface ProbeOpts {
   claudeBin?: string;
   extraPath?: string[];
   noMemo?: boolean;
+  /** Record what was found in $LOOM_HOME/tool-paths.json (src/toolpath.ts). Defaults to on for a real run. */
+  remember?: boolean;
 }
 
 const TTL_MS = 10_000;
@@ -259,8 +265,13 @@ async function runProbe(opts: ProbeOpts, now: () => number): Promise<ProbeReport
     const line = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean).pop();
     return r.code === 0 && line && line.startsWith('/') ? line : undefined;
   };
+  // The login shell is the first word; the shared resolver's other places
+  // (~/.claude/local, nvm, Homebrew...) catch a tool the shell's rc files add
+  // only for interactive shells.
+  const fallback = (bin: string) =>
+    resolveTool(bin, { store: { tools: {}, loginPath }, extra: opts.extraPath, home, env: { PATH: '' }, isExec: exists }) ?? undefined;
   const tool = async (bin: string, args: string[], explicit?: string) => {
-    const p = explicit && exists(explicit) ? explicit : await which(bin);
+    const p = explicit && exists(explicit) ? explicit : (await which(bin)) ?? fallback(bin);
     if (!p) return { path: undefined as string | undefined, out: '', res: null as RunResult | null };
     const res = await run(p, args, { timeoutMs: 8000, env: toolEnv });
     return { path: p, out: res.stdout + (res.stdout ? '' : res.stderr), res };
@@ -276,13 +287,28 @@ async function runProbe(opts: ProbeOpts, now: () => number): Promise<ProbeReport
 
   const tmuxV = tmuxT.path ? parseTmuxVersion(tmuxT.out) : null;
   const claudeV = claudeT.path ? parseClaudeVersion(claudeT.out) : null;
+  // A claude that is on disk but will not start (an npm script whose node is
+  // missing, a broken symlink target) is not found: the Claude step says so,
+  // rather than the plugin step failing later with "claude was not found".
+  const claudeRes = claudeT.res;
+  const claudeBroken = claudeT.path && claudeRes && (claudeRes.missing || claudeRes.code !== 0)
+    ? (claudeRes.missing ? 'it could not be started' : `it exited with ${claudeRes.code}`) + (claudeRes.stderr.trim() ? `: ${claudeRes.stderr.trim().split('\n')[0].slice(0, 200)}` : '')
+    : undefined;
   const pyV = pyT.path ? parsePythonVersion(pyT.out) : null;
+
+  // Remember the absolute paths, so later spawns (plugin install, summaries)
+  // run exactly the binary this check found and showed the user.
+  if (opts.remember ?? !opts.runner) {
+    rememberTools({ claude: claudeBroken ? undefined : claudeT.path, gh: ghT.path, tmux: tmuxT.path, codex: codexT.path, python3: pyT.path }, pathRes.code === 0 ? loginPath : null);
+    clearToolCache();
+    clearClaudePath();
+  }
 
   // claude: auth + MCP list (only meaningful when the binary exists)
   let auth: ClaudeAuth | null = null;
   let authVia: 'auth-status' | 'print' | undefined;
   let mcpServers: McpServer[] = [];
-  if (claudeT.path) {
+  if (claudeT.path && !claudeBroken) {
     const [a, m] = await Promise.all([
       run(claudeT.path, ['auth', 'status', '--json'], { timeoutMs: 15_000, env: toolEnv }),
       run(claudeT.path, ['mcp', 'list'], { timeoutMs: 30_000, env: toolEnv }),
@@ -325,7 +351,7 @@ async function runProbe(opts: ProbeOpts, now: () => number): Promise<ProbeReport
     shell,
     loginPath,
     tmux: { found: !!tmuxT.path, path: tmuxT.path, version: tmuxV, warning: tmuxWarning(tmuxV) },
-    claude: { found: !!claudeT.path, path: claudeT.path, version: claudeV, auth, authVia },
+    claude: { found: !!claudeT.path && !claudeBroken, path: claudeT.path, version: claudeV, auth, authVia, ...(claudeBroken ? { broken: claudeBroken } : {}) },
     // /usr/bin/python3 is a stub that prompts for Xcode CLT when none is installed:
     // it exists on PATH but prints no version, so found requires a parsed version.
     python3: { found: !!pyT.path && !!pyV, path: pyT.path, version: pyV },
