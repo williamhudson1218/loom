@@ -1,3 +1,4 @@
+import { setConnectRaiser } from '../src/connectreturn.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -167,9 +168,13 @@ describe('Connect Gmail: routes', () => {
     const start = await call('POST /api/google/oauth/start', '/api/google/oauth/start');
     expect(start.status).toBe(200);
     const state = start.body!.state as string;
+    const raised: string[] = [];
+    setConnectRaiser((k) => void raised.push(k));
     const cb = await call('GET /google/callback', `/google/callback?state=${state}&code=4/abc`);
+    setConnectRaiser(null);
     expect(cb.status).toBe(200);
     expect(cb.html).toContain('Gmail connected as alex@example.com');
+    expect(raised).toEqual(['google']);
     expect(seen[0]).toMatchObject({ clientId: CID, clientSecret: SECRET, code: '4/abc', redirectUri: 'http://127.0.0.1:4317/google/callback' });
     expect(JSON.parse(kc.get(GOOGLE_REFRESH_SERVICE, 'alex@example.com')!)).toEqual({ refresh_token: '1//refresh', client_id: CID, client_secret: SECRET });
     const d2 = db();

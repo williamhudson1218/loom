@@ -25,6 +25,7 @@ import { buildSharedManifest } from '../src/slackmanifest.ts';
 import { setServerPort } from '../src/serverport.ts';
 import { STATE_TTL_MS, beginAuth, challengeFor, exchangeCode, outcomeOf, pkcePair, resetOAuthState, takeState } from '../src/slackoauth.ts';
 import { makeSlackRoutes } from '../src/routes/slack.ts';
+import { setConnectRaiser } from '../src/connectreturn.ts';
 import type { RouteCtx, RouteDef } from '../src/routes/index.ts';
 import type { ProbeReport } from '../src/probe.ts';
 
@@ -412,10 +413,13 @@ describe('Connect Slack routes', () => {
       seen = p;
       return { access_token: ACCESS, refresh_token: REFRESH, expires_in: 43200 };
     };
+    const raised: string[] = [];
+    setConnectRaiser((k) => void raised.push(k));
     const r = await hit(routes()['GET /slack/callback'], { query: `?code=c0de&state=${state}` });
     expect(r.status).toBe(200);
     expect(r.html).toContain('Slack connected');
-    expect(r.html).toContain('You can close this tab and return to Loom.');
+    expect(r.html).toContain('Loom is back in front. You can close this tab.');
+    expect(raised).toEqual(['slack']);
     expect(r.html).not.toContain('xoxe');
     expect(seen!).toMatchObject({ clientId: CLIENT, code: 'c0de', redirectUri: 'http://localhost:4317/slack/callback' });
     expect(authCalls).toEqual([ACCESS]);
@@ -427,13 +431,16 @@ describe('Connect Slack routes', () => {
     const st = await hit(routes()['GET /api/slack/status'], { query: `?oauth=${state}` });
     expect(st.body.oauth).toEqual({ state: 'ok' });
     expect(st.body.connected).toBe(true);
-    // A second use of the same state is refused before any exchange.
+    // A second use of the same state is refused before any exchange, and raises nothing.
+    raised.length = 0;
     exchangeImpl = async () => {
       throw new Error('must not exchange');
     };
     const again = await hit(routes()['GET /slack/callback'], { query: `?code=c0de&state=${state}` });
     expect(again.status).toBe(400);
     expect(again.html).toContain('expired or was already used');
+    expect(raised).toEqual([]);
+    setConnectRaiser(null);
   });
 
   it('callback with error=access_denied stores nothing and reports it to the page', async () => {

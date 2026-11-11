@@ -1,5 +1,6 @@
 import { findBin, ghStatusVia, makeGhConnect, type GhStatus, type Job } from '../ghconnect.ts';
 import { setGhStatus } from '../connections.ts';
+import { returnToLoom } from '../connectreturn.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Connect GitHub: status, start a device login, install gh with Homebrew, cancel.
@@ -14,11 +15,19 @@ export interface GithubRouteDeps {
   connect: ReturnType<typeof makeGhConnect>;
 }
 
+/** A device login that ended signed in brings Loom back in front of the browser. */
+export function raiseAfterGhJob(j: Pick<Job, 'kind' | 'state'>): void {
+  if (j.kind === 'login' && j.state === 'ok') returnToLoom('github');
+}
+
 export function makeGithubRoutes(over: Partial<GithubRouteDeps> = {}): RouteDef[] {
   const ghBin = over.ghBin ?? (() => findBin('gh'));
   const status = over.status ?? ((b: string) => ghStatusVia(b));
   // Refresh the header's dot from a fresh read once a login or install ends.
-  const onDone = (_j: Job) => void status(ghBin()).then(setGhStatus, () => {});
+  const onDone = (j: Job) => {
+    raiseAfterGhJob(j);
+    void status(ghBin()).then(setGhStatus, () => {});
+  };
   const deps: GithubRouteDeps = {
     ghBin,
     brewBin: over.brewBin ?? (() => findBin('brew')),

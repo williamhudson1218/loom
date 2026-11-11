@@ -22,6 +22,7 @@ import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
 import { currentTerminal, setInsideRaiser } from '../src/terminal.ts';
+import { setConnectRaiser } from '../src/connectreturn.ts';
 import { SESSION_PREFIX, TOOL_DIR } from '../src/paths.ts';
 import { trayIcon } from './trayIcon.ts';
 import {
@@ -201,6 +202,15 @@ function showWindow(): void {
 
 // "Jump" with the terminal set to inside Loom: raise this window; the page opens the chat.
 setInsideRaiser(showWindow);
+
+// A sign-in that finished in the browser (Slack, Gmail, GitHub) brings Loom back
+// in front of the browser. steal: the browser is the active app, and macOS only
+// lets another app take focus when asked this way. The page polls the flow and
+// shows the connected state on its own.
+setConnectRaiser(() => {
+  showWindow();
+  app.focus({ steal: true });
+});
 
 const paneTints = new PaneTints();
 

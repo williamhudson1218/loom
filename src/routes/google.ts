@@ -26,6 +26,7 @@ import { getSetting } from '../settingsSchema.ts';
 import { chooseEmailRoute } from '../gmailapi.ts';
 import { serverPort } from '../serverport.ts';
 import { resolveEmailCli } from '../outboxemail.ts';
+import { connectDonePage, returnToLoom } from '../connectreturn.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Connect Gmail: start, Google's loopback redirect, status, and per-account
@@ -48,18 +49,13 @@ const defaultDeps: GoogleRouteDeps = {
 };
 
 const portOf = (ctx: RouteCtx): number => ctx.req?.socket?.localPort || Number(ctx.url.port) || serverPort();
-const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-
 function callbackPage(ctx: RouteCtx, status: number, ok: boolean, text: string): void {
   const res = ctx.res;
   if (res.headersSent) return;
-  const title = ok ? 'Gmail connected' : 'Gmail not connected';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · Loom</title>
-<style>body{font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#f6f6f8;color:#1d1d22}
-@media (prefers-color-scheme:dark){body{background:#17171b;color:#e8e8ee}}main{max-width:420px;padding:24px}h1{font-size:18px;margin:0 0 8px}</style></head>
-<body><main><h1>${title}</h1><p>${esc(text)}</p></main></body></html>`;
+  const html = connectDonePage({ service: 'Gmail', ok, text });
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   res.end(html);
+  if (ok) returnToLoom('google');
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+$/;
@@ -154,7 +150,7 @@ export function makeGoogleRoutes(over: Partial<GoogleRouteDeps> = {}): RouteDef[
     }
     primeGoogleToken(email, g);
     recordGoogleOutcome(state, { state: 'ok', email });
-    callbackPage(ctx, 200, true, `Gmail connected as ${email}${label !== email ? ` (${label})` : ''}. You can close this tab and return to Loom.`);
+    callbackPage(ctx, 200, true, `Gmail connected as ${email}${label !== email ? ` (${label})` : ''}. Loom is back in front. You can close this tab.`);
   }
 
   const emailArg = async (ctx: RouteCtx): Promise<{ email: string; body: Record<string, unknown> | null } | null> => {

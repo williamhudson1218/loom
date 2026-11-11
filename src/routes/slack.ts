@@ -23,6 +23,7 @@ import { buildManifest, buildSharedManifest, manifestScopes, scopeSummary } from
 import { RELAY_PORT_MAX, RELAY_PORT_MIN, beginAuth, exchangeCode, oauthHint, outcomeOf, recordOutcome, redirectFor, redirectUri, takeState } from '../slackoauth.ts';
 import { effectiveMode } from '../slackmode.ts';
 import { preferredPort, serverPort } from '../serverport.ts';
+import { connectDonePage, returnToLoom } from '../connectreturn.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Slack connection: token paste/test/disconnect, mode, manifest (§5).
@@ -73,19 +74,14 @@ function portOf(ctx: RouteCtx): number {
   return ctx.req?.socket?.localPort || Number(ctx.url.port) || serverPort();
 }
 
-const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-
 /** The small page the browser tab shows after Slack redirects back. */
 function callbackPage(ctx: RouteCtx, status: number, ok: boolean, text: string): void {
   const res = ctx.res;
   if (res.headersSent) return;
-  const title = ok ? 'Slack connected' : 'Slack not connected';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · Loom</title>
-<style>body{font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#f6f6f8;color:#1d1d22}
-@media (prefers-color-scheme:dark){body{background:#17171b;color:#e8e8ee}}main{max-width:420px;padding:24px}h1{font-size:18px;margin:0 0 8px}</style></head>
-<body><main><h1>${title}</h1><p>${esc(text)}</p></main></body></html>`;
+  const html = connectDonePage({ service: 'Slack', ok, text });
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   res.end(html);
+  if (ok) returnToLoom('slack');
 }
 
 const flag = (v: unknown): boolean => v === true || v === '1' || v === 'true' || v === 1;
@@ -306,7 +302,7 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
     }
     recordOutcome(state, { state: 'ok' });
     const who = [r.identity.user, r.identity.team].filter(Boolean).join(' in ');
-    callbackPage(ctx, 200, true, `Slack connected${who ? ' as ' + who : ''}. You can close this tab and return to Loom.`);
+    callbackPage(ctx, 200, true, `Slack connected${who ? ' as ' + who : ''}. Loom is back in front. You can close this tab.`);
   }
 
   function getManifest(ctx: RouteCtx): void {
