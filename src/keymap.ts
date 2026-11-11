@@ -40,6 +40,8 @@ export const KEYMAP: KeyBinding[] = [
     match: { key: ',', meta: true }, accelerator: 'Command+,' },
   { action: 'newThread', keys: '⌘N', scope: 'global', label: 'New thread', bound: 'page',
     match: { key: 'n', meta: true }, accelerator: 'Command+N' },
+  { action: 'jump', keys: '⌘K', scope: 'global', label: 'Jump to a chat, ticket or command', bound: 'page',
+    match: { key: 'k', meta: true } },
   { action: 'dismiss', keys: 'Esc', scope: 'page', label: 'Close the open menu or deselect the chat', bound: 'page',
     match: { key: 'Escape' } },
   { action: 'slackPick', keys: '⌘⇧L', scope: 'global', label: 'Pick a Slack message to open its chat', bound: 'native',

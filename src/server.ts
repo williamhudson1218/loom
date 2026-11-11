@@ -32,6 +32,7 @@ import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacySt
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps } from './routes/cli.ts';
+import { connectionsSafe } from './connections.ts';
 import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmode.ts';
 import { authTest, conversationsReplies } from './slackapi.ts';
 import { getSetting, onSettingChanged } from './settingsSchema.ts';
@@ -1042,7 +1043,7 @@ export function createServer(): http.Server {
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
       const chats = [...views, ...provisionalForLive(views, live)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), archiveSearch: findChatBin !== null, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately

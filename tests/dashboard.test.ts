@@ -54,14 +54,15 @@ describe('dashboard', () => {
     expect(html).toContain('watchBadge()');
   });
 
-  it('has the stale and unreachable header indicator and the Slack chip', () => {
+  it('has the stale and unreachable header indicator and the connections group', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     expect(html).toContain('id="stale"');
-    expect(html).toContain('id="slackchip"');
+    expect(html).toContain('id="conns"');
+    expect(html).not.toContain('id="slackchip"');
     expect(html).toContain('Loom server not reachable');
     expect(html).toContain('age>30000');
-    expect(html).toContain('Slack connected');
-    expect(html).toContain('Slack: MCP');
+    expect(html).toContain('function renderConns(');
+    expect(html).toContain('DATA.connections');
   });
 
   it('carries the eight tour anchors', () => {
@@ -111,9 +112,16 @@ describe('dashboard', () => {
     const at = (str: string) => html.indexOf(str);
     const header = html.slice(html.indexOf('<header>'), html.indexOf('</header>'));
 
-    // Header: brand, heatmap, actions, then the view tabs. The filters moved out.
-    expect(header.indexOf('class="brand"')).toBeLessThan(header.indexOf('id="heatmap"'));
-    expect(header.indexOf('id="heatmap"')).toBeLessThan(header.indexOf('class="actions"'));
+    // Header: brand, jump box, connections, actions, then the view tabs. No heatmap.
+    expect(header).not.toContain('heatmap');
+    expect(html).not.toContain('function heat(');
+    expect(header.indexOf('class="brand"')).toBeLessThan(header.indexOf('id="jumpbtn"'));
+    expect(header.indexOf('id="jumpbtn"')).toBeLessThan(header.indexOf('id="conns"'));
+    expect(header.indexOf('id="conns"')).toBeLessThan(header.indexOf('class="actions"'));
+    expect(header).toContain('id="agentbtn"'); // split New thread
+    expect(header).toContain('id="moremenu"'); // Restore lives in the more menu
+    expect(header.indexOf('id="moremenu"')).toBeLessThan(header.indexOf('id="setbtn"'));
+    expect(html).toContain('id="jump"');
     expect(header.indexOf('class="actions"')).toBeLessThan(header.indexOf('id="tabs"'));
     expect(header).toContain('id="sidetoggle"');
     expect(header).not.toContain('id="q"');

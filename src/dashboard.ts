@@ -10,6 +10,7 @@ import { TERMWARM_JS } from './termwarm.ts';
 import { GROUPING_JS } from './grouping.ts';
 import { SIDESORT_JS } from './sidesort.ts';
 import { SIDESEARCH_JS } from './sidesearch.ts';
+import { JUMP_CSS, JUMP_PURE_JS, JUMP_VIEW_JS } from './jumpbox.ts';
 import { chatTagMap, listTags, type TagInfo } from './tags.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
@@ -169,7 +170,7 @@ export function renderDashboard(
   body { margin:0; background:#0d0f15; color:#e6e6e6; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
   header { padding:14px 20px; border-bottom:1px solid #232634; position:sticky; top:0; z-index:5;
     background:linear-gradient(180deg,#141826,#0d0f15); }
-  /* Three rows: brand + heatmap + actions / tabs + filters / chips + live toggle.
+  /* Header: brand + jump box + connections + actions / tabs. Nothing wraps to a third row.
      Every control in them is 32px tall with an 8px radius and the same border,
      except the chips, which are deliberately smaller so the tabs read as primary. */
   .topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; }
@@ -185,12 +186,6 @@ export function renderDashboard(
   .brand .sub { color:#8b93a7; font-size:12px; }
   .stalechip { color:#e0b050 !important; }
   .stalechip.bad { color:#ee7b7b !important; }
-  .slackchip { font-size:11.5px; padding:2px 9px; border-radius:11px; background:#15301d; color:#9fe0aa; white-space:nowrap; }
-  .slackchip.mcp { background:#23262f; color:#9aa3b2; }
-  .heatwrap { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; gap:8px; }
-  .heatlbl { color:#6b7280; font-size:11px; }
-  #heatmap { display:flex; gap:2px; }
-  @media (max-width:900px) { .heatwrap { display:none; } }
   /* Primary view switch — a segmented control, kept distinct from the filters below */
   .tabs { display:inline-flex; flex:none; height:32px; box-sizing:border-box; background:#141826; border:1px solid #2b3040; border-radius:8px; padding:2px; gap:2px; }
   .tab { height:26px; background:transparent; border:0; color:#8b93a7; border-radius:6px; padding:0 14px; cursor:pointer; font-size:13px; font-weight:600; transition:background .15s, color .15s; }
@@ -200,7 +195,6 @@ export function renderDashboard(
   .tab .cnt { opacity:.6; margin-left:6px; }
   .tab.savedtab.on { background:#3a3826; color:#f0dfa0; }
   .tab.savedtab.on:hover { background:#46432e; }
-  .hcell { width:10px; height:10px; border-radius:2px; background:#1b1f2a; }
   .row2 { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
   .controls { flex:1; min-width:0; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   input,select { background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; }
@@ -941,6 +935,7 @@ ${TEST_LINKS_CSS}
   .qwrap.has .qclear { opacity:1; transform:translateY(-50%) scale(1) rotate(0); pointer-events:auto; }
   .qclear:hover { background:#454c66; color:#fff; }
   @media (prefers-reduced-motion:reduce) { .qclear { transition:none; } }
+${JUMP_CSS}
 ${ORCH_VIEW_CSS}
 ${WIZARD_VIEW_CSS}
 ${TOUR_VIEW_CSS}
@@ -952,17 +947,30 @@ ${OUTBOX_VIEW_CSS}
 <header>
   <div class="topbar">
     <div class="brand"><h1 class="wordmark" aria-label="${APP_NAME}">${WORDMARK_L_SVG}<span aria-hidden="true">${APP_NAME.slice(1)}</span></h1><span class="sub stalechip" id="stale" hidden></span></div>
-    <div class="heatwrap"><span class="heatlbl" id="heatlbl">14d</span><div id="heatmap"></div></div>
+    <div class="jumpwrap"><button type="button" id="jumpbtn" class="jumpbtn" aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="Jump to a chat, ticket or command (${'\u2318'}K)" aria-label="Jump to a chat, ticket or command"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><span class="jl">Jump to a chat, ticket or command</span><span class="kbd">\u2318K</span></button></div>
+    <div class="conns" id="conns" role="group" aria-label="Connections" hidden></div>
     <div class="actions">
-      <label for="default-agent" class="muted">Launch with</label>
-      <select id="default-agent" aria-label="Default launch agent" title="which agent's action is highlighted as the default on every card">
+      <select id="default-agent" hidden aria-hidden="true" tabindex="-1">
         <option value="claude">Claude Code</option>
         <option value="codex">Codex</option>
         <option value="ask">Ask every time</option>
       </select>
-      <button id="newbtn" class="open" title="start a new thread in an open pane (n)">＋ New thread</button>
-      <button id="restorebtn" class="open" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each">⟲ Restore</button>
-      <span class="slackchip" id="slackchip" hidden></span>
+      <div class="split">
+        <button id="newbtn" class="open" title="start a new thread (n)">\uFF0B New thread</button>
+        <button type="button" id="agentbtn" class="open splitcaret" aria-haspopup="menu" aria-expanded="false" aria-controls="agentmenu" title="Launch with" aria-label="Launch with"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg></button>
+        <div class="hmenu" id="agentmenu" role="menu" aria-label="Launch with">
+          <div class="hlbl">Launch with</div>
+          <button type="button" role="menuitemradio" data-agent="claude"><span class="ck"></span>Claude Code</button>
+          <button type="button" role="menuitemradio" data-agent="codex"><span class="ck"></span>Codex</button>
+          <button type="button" role="menuitemradio" data-agent="ask"><span class="ck"></span>Ask every time</button>
+        </div>
+      </div>
+      <div class="moresel">
+        <button type="button" id="morebtn" class="morebtn" aria-haspopup="menu" aria-expanded="false" aria-controls="moremenu" title="More" aria-label="More actions">\u22EF</button>
+        <div class="hmenu" id="moremenu" role="menu" aria-label="More actions">
+          <button type="button" role="menuitem" id="restorebtn" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each"><span class="ck">\u27F2</span><span class="mi">Restore sessions<span class="hint">Rebuild every loom-* tmux session from the last snapshot</span></span></button>
+        </div>
+      </div>
       <button id="setbtn" class="gearbtn" data-tour="gear" type="button" title="Settings (⌘,)" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg></button>
     </div>
   </div>
@@ -971,6 +979,7 @@ ${OUTBOX_VIEW_CSS}
     <div class="tabs" id="tabs"></div>
   </div>
 </header>
+<div id="jump" role="dialog" aria-modal="true" aria-label="Jump" aria-hidden="true"><div class="jbox"><div class="jin"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input id="jin" type="text" placeholder="Jump to a chat, ticket or command" autocomplete="off" spellcheck="false" aria-label="Jump to a chat, ticket or command"/></div><div class="jlist" id="jlist" role="listbox"></div><div class="jfoot"><span>\u2191\u2193 move</span><span>\u21B5 open</span><span>esc close</span></div></div></div>
 <div id="boardwrap">
 <aside id="side" aria-label="Sessions">
   <div class="sidetop" data-tour="filters">
@@ -1092,6 +1101,8 @@ ${TERMWARM_JS}
 ${GROUPING_JS}
 ${SIDESORT_JS}
 ${SIDESEARCH_JS}
+${JUMP_PURE_JS}
+${JUMP_VIEW_JS}
 ${ORCH_VIEW_JS}
 ${WIZARD_VIEW_JS}
 ${TOUR_VIEW_JS}
@@ -1111,8 +1122,6 @@ function spark(act){const days=[];const now=new Date();for(let i=13;i>=0;i--){co
 // 14-day activity strip — matches the board's ~1-week data window (plus a few
 // days of in-chat history) so the cells are actually populated, and mirrors the
 // per-card spark-line's span. Shading scales to the busiest visible day.
-const HEAT_DAYS=14;
-function heat(){const map={};DATA.chats.forEach(c=>{for(const k in c.activity)map[k]=(map[k]||0)+c.activity[k];});const el=$('#heatmap');const now=new Date();const cells=[];for(let i=HEAT_DAYS-1;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');cells.push({k,v:map[k]||0});}const max=Math.max(1,...cells.map(c=>c.v));$('#heatlbl').textContent=HEAT_DAYS+'d';el.innerHTML='';for(const {k,v} of cells){const cell=document.createElement('div');cell.className='hcell';cell.title=k+': '+v;if(v){const a=0.25+0.75*Math.min(1,v/max);cell.style.background='rgba(88,166,255,'+a+')';}el.appendChild(cell);}}
 function projects(){const cur=$('#proj').value;const set=DATA.projects?[...new Set(DATA.projects.map(p=>p.path.split('/').pop()))].sort():[...new Set(DATA.chats.map(c=>c.project))].sort();const sel=$('#proj');sel.innerHTML='<option value="">all projects</option>'+set.map(p=>'<option>'+p+'</option>').join('');if(cur&&set.indexOf(cur)>=0)sel.value=cur;}
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 var stateFilter='all';
@@ -1166,7 +1175,7 @@ function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(
   if(pollFailed){el.textContent='Loom server not reachable';el.className='sub stalechip bad';el.hidden=false;}
   else if(age>30000){el.textContent='Updated '+(age<90000?Math.round(age/1000)+'s':Math.round(age/60000)+'m')+' ago';el.className='sub stalechip';el.hidden=false;}
   else{el.hidden=true;}
-  const sc=$('#slackchip');if(sc){const m=DATA.slackMode;if(m==='direct'){sc.textContent='Slack connected';sc.className='slackchip';sc.hidden=false;}else if(m==='mcp'){sc.textContent='Slack: MCP';sc.className='slackchip mcp';sc.hidden=false;}else{sc.hidden=true;}}}
+  renderConns();}
 // Live-only toggle is a Board concept; hide it on the Saved tab (saved chats are
 // usually closed, so filtering them by "live" is meaningless).
 // The Trees, Watchers and Settings tabs show something other than chats, so every
@@ -1470,7 +1479,7 @@ function selectChat(sid,agent,arch){leaveOrch();leaveTerminal();if(sel&&sel.sid=
   $('#mmsgs').innerHTML='<p class="muted">loading…</p>';$('#mdetail').innerHTML='';$('#mfoot').innerHTML='';
   renderMain();loadTranscript(true);clearInterval(detailTimer);clearTimeout(detailRetry);
   if(!sel.arch){loadDetail();detailTimer=setInterval(loadDetail,20000);}}
-function archChatOf(sid){const h=archHits.find(x=>x.session_id===sid);return h?archChat(h):null;}
+function archChatOf(sid){const h=archHits.find(x=>x.session_id===sid)||JUMP.hits.find(x=>x.session_id===sid);return h?archChat(h):null;}
 function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);closeCtx();document.querySelectorAll('#sidelist .srow.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));renderMain();}
 // A Tickets card opens its chat in the Sessions view, where the terminal lives.
 function openInBoard(sid,agent){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);tab=c&&c.saved?'saved':'board';stateFilter='all';selectChat(sid,agent,null);syncControls();liveToggle();chips();render();}
@@ -1696,7 +1705,8 @@ const KEYMAP=${pageKeymapJson()};
 const KEY_ACTIONS={
   settings:function(e){openSettings();return true;},
   newThread:function(e){if(!composerOpen)openComposer();return true;},
-  dismiss:function(e){if(e.target&&e.target.closest&&e.target.closest('#mterm,#oterm,.xterm'))return false;if(ctxState){closeCtx();return false;}if(sel)deselect();return false;}
+  jump:function(e){jumpToggle();return true;},
+  dismiss:function(e){if(hmenuClose())return false;if(e.target&&e.target.closest&&e.target.closest('#mterm,#oterm,.xterm'))return false;if(ctxState){closeCtx();return false;}if(sel)deselect();return false;}
 };
 function keyMatches(e,m){if(String(e.key).toLowerCase()!==m.key.toLowerCase())return false;
   if(m.plain)return !e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.shiftKey;
@@ -1780,13 +1790,13 @@ $('#termbox').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagat
 loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
 function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{});}
-function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;}
-function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.archiveSearch=!!d.archiveSearch;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMenuSync();}
+function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];DATA.archiveSearch=!!d.archiveSearch;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{pollFailed=true;renderStale();});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
-function restoreWorkspace(){const b=$('#restorebtn');const orig=b.textContent;b.disabled=true;b.textContent='⟲ restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{b.disabled=false;b.textContent=orig;},2600);});}
+function restoreWorkspace(){const btn=$('#restorebtn');const b=btn.querySelector('.mi')||btn;const orig=b.innerHTML;btn.disabled=true;b.textContent='restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{btn.disabled=false;b.innerHTML=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
 // ── Archive search ────────────────────────────────────────────────────────────
 // #q filters the board client-side. This searches every chat on disk via find-chat
@@ -2257,15 +2267,17 @@ $('#q').addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#q').value){e.pre
 $('#qclear').addEventListener('mousedown',e=>e.preventDefault());
 $('#qclear').addEventListener('click',clearQuery);
 setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
-wireMain();wireShipModal();heat();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();refreshWatch();refreshTrees(false);
+wireMain();wireShipModal();wireJump();wireHeaderMenus();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();refreshWatch();refreshTrees(false);
 $('#default-agent').onchange=updateDefaultAgent;
 // Codex is offered only when ~/.codex exists (or the codex_visible setting says so).
-if(!DATA.codexVisible){['#default-agent','#cagent'].forEach(function(id){const o=$(id+' option[value="codex"]');if(o)o.remove();});}
+if(!DATA.codexVisible){['#default-agent','#cagent'].forEach(function(id){const o=$(id+' option[value="codex"]');if(o)o.remove();});const cb=$('#agentmenu [data-agent="codex"]');if(cb)cb.remove();}
 ['#q','#proj','#sort'].forEach(s=>$(s).addEventListener('input',render));
 setInterval(visOnly(refresh),5000);
 // Shown again (the hotkey raised the window, or Cmd-Tab): catch up now, not on the next tick.
 document.addEventListener('visibilitychange',function(){if(!document.hidden)refresh();});
 setInterval(renderStale,5000);renderStale();
+// The header's connections come with /api/data, not the first paint: fetch once now rather than after the first 5 s tick.
+setTimeout(refresh,0);
 setInterval(visOnly(function(){refreshTrees(false);}),300000);
 setInterval(visOnly(refreshWatch),15000);
 loadShipCands();setInterval(visOnly(loadShipCands),15000);
