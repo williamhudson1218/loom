@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb } from '../src/db.ts';
-import { getSetting, setSetting } from '../src/settingsSchema.ts';
+import { LOOM_SLACK_CLIENT_ID, getSetting, setSetting } from '../src/settingsSchema.ts';
 import { memoryBackend, setKeychainBackend } from '../src/secrets.ts';
 import {
   KEYCHAIN_SERVICE,
@@ -282,11 +282,11 @@ describe('refresh', () => {
 });
 
 describe('shared-app manifest', () => {
-  it('has PKCE, token rotation, the localhost redirect and user scopes only', () => {
+  it('has PKCE, token rotation, the HTTPS relay redirect and user scopes only', () => {
     const m = buildSharedManifest({ port: 4317 });
     expect(m.oauth_config.pkce_enabled).toBe(true);
-    // Every port Loom may fall back to, so the app is created once (src/serverport.ts).
-    expect(m.oauth_config.redirect_urls).toEqual(Array.from({ length: 10 }, (_, i) => `http://localhost:${4317 + i}/slack/callback`));
+    // One HTTPS relay serves every port Loom may fall back to (src/slackoauth.ts).
+    expect(m.oauth_config.redirect_urls).toEqual(['https://williamhudson1218.github.io/loom/slack-callback/']);
     expect(m.oauth_config.scopes.user).toEqual(scopesFor());
     expect(Object.keys(m.oauth_config.scopes)).toEqual(['user']);
     expect(m.settings.token_rotation_enabled).toBe(true);
@@ -374,7 +374,23 @@ describe('Connect Slack routes', () => {
     return r.body as { url: string; state: string };
   };
 
-  it('start refuses without a client id', async () => {
+  it('start uses the built-in Loom app and its HTTPS relay when no client id is set', async () => {
+    const r = await hit(routes()['POST /api/slack/oauth/start'], { port: 4320 });
+    expect(r.status).toBe(200);
+    const u = new URL(String(r.body.url));
+    expect(u.searchParams.get('client_id')).toBe(LOOM_SLACK_CLIENT_ID);
+    expect(u.searchParams.get('redirect_uri')).toBe('https://williamhudson1218.github.io/loom/slack-callback/');
+    expect(u.searchParams.get('state')).toMatch(/^4320\./);
+  });
+
+  it('start refuses the built-in app on a port the relay will not forward to', async () => {
+    const r = await hit(routes()['POST /api/slack/oauth/start'], { port: 5123 });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('port_out_of_range');
+  });
+
+  it('start refuses when the client id is set to empty', async () => {
+    peek((db) => setSetting(db, 'slack_client_id', ''));
     const r = await hit(routes()['POST /api/slack/oauth/start']);
     expect(r.status).toBe(409);
     expect(r.body.error).toBe('no_client_id');
@@ -459,13 +475,13 @@ describe('Connect Slack routes', () => {
     expect(String(st.body.reconnectHint)).toMatch(/Connect Slack again/);
   });
 
-  it('the shared manifest route lists every port from the configured one, whatever port the request came in on', async () => {
+  it('the shared manifest route lists only the HTTPS relay, whatever port Loom runs on', async () => {
     setServerPort(4400, 4400);
     try {
       const r = await hit(routes()['GET /api/slack/manifest'], { query: '?shared=1', port: 4403 });
-      expect((r.body.manifest as { oauth_config: { redirect_urls: string[] } }).oauth_config.redirect_urls).toEqual(
-        Array.from({ length: 10 }, (_, i) => `http://localhost:${4400 + i}/slack/callback`),
-      );
+      expect((r.body.manifest as { oauth_config: { redirect_urls: string[] } }).oauth_config.redirect_urls).toEqual([
+        'https://williamhudson1218.github.io/loom/slack-callback/',
+      ]);
     } finally {
       setServerPort(4317, 4317);
     }

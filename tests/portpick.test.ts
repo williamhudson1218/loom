@@ -8,6 +8,7 @@ import { classify, listenOnFirstFree, localIdentity, pickPort, probeWhoami, type
 import { portRange } from '../src/serverport.ts';
 import { readServerJson, removeServerJson, resolveLoomPort, writeServerJson } from '../src/serverjson.ts';
 import { buildSharedManifest } from '../src/slackmanifest.ts';
+import { SLACK_RELAY_URL, buildState, statePort } from '../src/slackoauth.ts';
 import { createServer } from '../src/server.ts';
 
 // Port choice never binds 4317 here: the real-listener tests use random high ports.
@@ -223,9 +224,8 @@ describe('server.json and client resolution', () => {
 });
 
 describe('the shared Slack manifest', () => {
-  it('registers a redirect for every port Loom may land on', () => {
-    const urls = buildSharedManifest({ port: 4317 }).oauth_config.redirect_urls;
-    expect(urls).toEqual(portRange(4317).map((p) => `http://localhost:${p}/slack/callback`));
-    expect(urls).toContain('http://localhost:4326/slack/callback');
+  it('has one HTTPS relay redirect, and the relay accepts every port Loom may land on', () => {
+    expect(buildSharedManifest({ port: 4317 }).oauth_config.redirect_urls).toEqual([SLACK_RELAY_URL]);
+    for (const p of portRange(4317)) expect(statePort(buildState(p))).toBe(p);
   });
 });

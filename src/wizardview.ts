@@ -579,10 +579,10 @@ function wzSlackDraw() {
     var tabs = ['1 Create the app', '2 Install', '3 Paste token'];
     var connected = s && s.connected && s.mode === 'direct';
     var cid = s && s.clientId, envTk = s && s.tokenSource === 'env';
-    // Connect Slack (the team's shared app, OAuth with PKCE) leads when a client id is set.
+    // Connect Slack (the built-in Loom app, or another shared app; OAuth with PKCE) leads when a client id is set, which it is by default.
     if (cid && !envTk) {
       var oa = WZ.oauth;
-      sub += '<div class="stack"><div class="lrow"><span class="st ' + (connected ? 'y' : 'w') + '">' + (connected ? '&#10003;' : '!') + '</span><div class="t"><b>Connect with your team&#39;s Slack app</b><span>Slack opens in your browser. Approve there and Loom stores your own token in the Keychain. Posts are sent as you.</span></div>'
+      sub += '<div class="stack"><div class="lrow"><span class="st ' + (connected ? 'y' : 'w') + '">' + (connected ? '&#10003;' : '!') + '</span><div class="t"><b>Connect Slack</b><span>Slack opens in your browser. Approve there and Loom stores your own token in the Keychain. Posts are sent as you. If your workspace restricts apps, an admin approves Loom once.</span></div>'
         + (oa ? '<button class="btn sm" data-wz-oauthcancel="1">Cancel</button>' : '<button class="btn pri" data-wz-oauth="1">' + (connected ? 'Connect again' : s.reconnect ? 'Reconnect Slack' : 'Connect Slack') + '</button>') + '</div>'
         + (oa ? '<div class="def"><span class="spin"></span>Waiting for you to approve in Slack. <a href="' + wzEsc(oa.url) + '" target="_blank" rel="noopener">Open the Slack page</a> if it did not open.</div>' : '')
         + (WZ.oauthMsg ? '<div class="note ' + (WZ.oauthMsg.ok ? 'ok' : 'err') + '">' + wzEsc(WZ.oauthMsg.text) + '</div>' : '')

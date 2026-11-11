@@ -92,7 +92,7 @@ Setup steps, scopes and the Google client walkthrough are in [SETUP.md](SETUP.md
 
 Slack is optional. Pick one mode in the wizard or Settings › Slack.
 
-**Direct app.** You create a small Slack app in your own workspace from a manifest Loom shows you, install it, and paste the User OAuth Token (starts with `xoxp-`) into Loom. The token is stored in the macOS login Keychain, not in a file. This turns on everything:
+**Direct (Connect Slack).** Click **Connect Slack** in the wizard or Settings › Slack. Slack opens in your browser; approve there, and Loom stores your own user token in the macOS login Keychain (items "Loom Slack token" and "Loom Slack refresh"), not in a file. It works out of the box: Loom ships with a public Slack app named **Loom**, so there is no app to create and no client secret anywhere (OAuth with PKCE). Posts are sent as you. If your workspace restricts which apps people may install, a workspace admin approves "Loom" once; after that everyone can connect. This turns on everything:
 
 - Slack watchers (polling channels)
 - parked-thread reply detection and the "reply received" notification
@@ -102,7 +102,7 @@ Slack is optional. Pick one mode in the wizard or Settings › Slack.
 - reconciling sent drafts against Slack
 - reactions from the `loom thread` command
 
-The app asks for user scopes only (no bot user, no events):
+Loom asks for user scopes only (no bot user, no events):
 
 ```
 channels:history  groups:history  im:history  mpim:history
@@ -112,25 +112,11 @@ chat:write        im:write        mpim:write  files:write
 reactions:write   search:read
 ```
 
-There is a read-only manifest that leaves out the five write scopes (`chat:write`, `im:write`, `mpim:write`, `files:write`, `reactions:write`). Loom then reads and never posts. After connecting, Settings › Slack shows how many scopes were granted and which are missing. Some workspaces need an admin to approve a new app; if you see "Request to install", ask your admin or use MCP only.
+The token expires about every 12 hours and Loom refreshes it on its own. The refresh token lasts 30 days, so if Loom is not used for 30 days the connection lapses: Settings › Slack and the Outbox then say **Reconnect Slack**, and one click fixes it.
 
-### Team setup: one shared Slack app
+Slack sends you back to Loom through a small static page, `https://williamhudson1218.github.io/loom/slack-callback/` (source in `site/slack-callback/`), because a public Slack app must use an HTTPS redirect. It only forwards to Loom on your Mac (`127.0.0.1`, ports 4317 to 4326) and never anywhere else. It sees the one-time sign-in code, but that code is useless without the PKCE verifier, which never leaves your Mac. See SETUP.md section 5.
 
-Instead of every person creating their own app, a team can share ONE Slack app and each person clicks **Connect Slack**. Each person still gets their own user token, so posts are attributed to them. The app uses OAuth with PKCE, so there is no client secret anywhere.
-
-For the workspace admin, once:
-
-1. In Settings › Slack, click **Copy shared-app manifest**. It has the same user scopes, a redirect for each port Loom may use (`http://localhost:4317/slack/callback` through `4326`, since Loom moves to the next free port when 4317 is taken), PKCE on and token rotation on, and no bot user.
-2. At api.slack.com/apps choose Create New App › From a manifest and paste it. PKCE is one-way: once on, the app is a public client and Slack will not turn it off.
-3. If the workspace requires app approval, approve the app.
-4. Share the app's **Client ID** (Basic Information). It is public, not a secret.
-
-For each person:
-
-1. Paste the client id into Settings › Slack › Shared Slack app (or the wizard's Direct app step), or set `LOOM_SLACK_CLIENT_ID`, which wins.
-2. Click **Connect Slack**. Slack opens in your browser; approve, and Loom stores your token in the Keychain (items "Loom Slack token" and "Loom Slack refresh") and switches Slack to Direct.
-
-The token expires about every 12 hours and Loom refreshes it on its own. The refresh token lasts 30 days for a PKCE app, so if Loom is not used for 30 days the connection lapses: Settings › Slack and the Outbox then say **Reconnect Slack**, and one click fixes it. Everyone's Loom must sit on a port the manifest's redirects name (4317 to 4326 by default), or the admin adds that port's redirect URL to the app. "Use your own app instead" keeps the manifest-and-paste route above.
+**Your own app instead.** "Use your own app instead" still works: create a small Slack app from the manifest Loom shows you, install it, and paste its User OAuth Token (starts with `xoxp-`). There is a read-only manifest that leaves out the five write scopes (`chat:write`, `im:write`, `mpim:write`, `files:write`, `reactions:write`); Loom then reads and never posts. After connecting, Settings › Slack shows how many scopes were granted and which are missing. A Slack app of your own with Connect Slack also works: put its client id in Settings › Slack › Shared Slack app (or `LOOM_SLACK_CLIENT_ID`), and it signs in through `http://localhost:<port>/slack/callback` directly.
 
 **MCP only.** Loom uses the Claude Slack connector you already have in Claude Code. There is no app to create, but Loom has no token of its own, so these stay **off**: watchers on Slack, parked-thread reply detection, Outbox sending, Slack names and emoji, and thread previews and unread counts. Still working: chats that read or post to Slack through the connector, thread ownership, Outbox drafts being visible, and the shortcut.
 

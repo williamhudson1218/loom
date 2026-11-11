@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { OAUTH_URL, SlackError, redact, userGrant, type OAuthGrant } from './slackapi.ts';
+import { LOOM_SLACK_CLIENT_ID } from './settingsSchema.ts';
 
 // "Connect Slack": OAuth v2 with PKCE against ONE shared Slack app, so each
 // person gets their own user token without creating an app. A PKCE app is a
@@ -9,8 +10,19 @@ import { OAUTH_URL, SlackError, redact, userGrant, type OAuthGrant } from './sla
 // The flow: POST /api/slack/oauth/start makes a verifier, its S256 challenge and
 // a state, remembers {state -> verifier} here for 10 minutes, and returns the
 // authorize URL; the page opens it in the user's browser. Slack redirects to
-// http://localhost:<port>/slack/callback, which takes the state (single use),
-// exchanges the code and stores the token (src/routes/slack.ts).
+// the redirect URI, which lands on http://127.0.0.1:<port>/slack/callback; that
+// takes the state (single use), exchanges the code and stores the token
+// (src/routes/slack.ts).
+//
+// The built-in Loom app is publicly distributed, and Slack requires HTTPS
+// redirect URLs for that, so its redirect is a static relay page on GitHub
+// Pages (site/slack-callback/index.html). The relay reads the port out of the
+// state (`<port>.<random>`), accepts only 4317-4326, and forwards the query to
+// http://127.0.0.1:<port>/slack/callback. Nothing else. The relay sees the
+// authorization code, but the code is useless without the PKCE verifier, which
+// is made here and never leaves this Mac; the state is still single use and
+// checked exactly as before. A Slack app of your own (another client id) keeps
+// the direct localhost redirect.
 
 export const AUTHORIZE_URL = 'https://slack.com/oauth/v2/authorize';
 export const CALLBACK_PATH = '/slack/callback';
@@ -29,8 +41,37 @@ export function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge: challengeFor(verifier) };
 }
 
+/** The direct loopback redirect, used by a Slack app of your own. */
 export function redirectUri(port: number): string {
   return `http://localhost:${port}${CALLBACK_PATH}`;
+}
+
+/** The HTTPS relay the built-in app redirects to. `LOOM_SLACK_RELAY_URL` overrides it. */
+export const SLACK_RELAY_URL = 'https://williamhudson1218.github.io/loom/slack-callback/';
+export function relayUrl(): string {
+  return process.env.LOOM_SLACK_RELAY_URL?.trim() || SLACK_RELAY_URL;
+}
+
+/** The ports the relay forwards to. Fixed: it is a static page and cannot read Loom's settings. */
+export const RELAY_PORT_MIN = 4317;
+export const RELAY_PORT_MAX = 4326;
+
+/** The redirect for a flow: the relay for the built-in app, localhost for any other. */
+export function redirectFor(clientId: string, port: number): string {
+  return clientId === LOOM_SLACK_CLIENT_ID ? relayUrl() : redirectUri(port);
+}
+
+/** `<port>.<random>`: the relay page reads the port from it. */
+export function buildState(port: number, random: string = b64url(randomBytes(24))): string {
+  return `${port}.${random}`;
+}
+
+/** The port in a state, or null unless it is a whole number in the relay's range. */
+export function statePort(state: string): number | null {
+  const m = /^([0-9]{4})\.[A-Za-z0-9_-]+$/.exec(state);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n >= RELAY_PORT_MIN && n <= RELAY_PORT_MAX ? n : null;
 }
 
 /* ----------------------------------------------------------- pending flows */
@@ -59,8 +100,8 @@ export function beginAuth(p: { clientId: string; port: number; scopes: string[];
   const now = p.now ?? Date.now();
   sweep(now);
   const { verifier, challenge } = pkcePair();
-  const state = b64url(randomBytes(24));
-  const redirect = redirectUri(p.port);
+  const state = buildState(p.port);
+  const redirect = redirectFor(p.clientId, p.port);
   pending.set(state, { verifier, readonly: p.readonly, clientId: p.clientId, redirectUri: redirect, createdAt: now });
   const q = new URLSearchParams({
     client_id: p.clientId,

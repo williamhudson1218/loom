@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import path from 'node:path';
 import { openDb, getDefaultAgent, getLaneView, getSlackHotkey, getTmuxSocket, watchersFeatureOn, DEFAULT_SLACK_HOTKEY } from '../src/db.ts';
 import {
+  LOOM_SLACK_CLIENT_ID,
   SETTINGS,
   SETTING_KEYS,
   applySettingsPatch,
@@ -90,7 +91,7 @@ const TODAY: Record<string, unknown> = {
   slack_mode: 'direct', // Slack ran whenever its CLI was present
   slack_identity: {},
   slack_scopes_granted: [],
-  slack_client_id: '',
+  slack_client_id: LOOM_SLACK_CLIENT_ID,
   slack_reconnect: '',
   slack_poll_parked: true,
   channel_projects: {},

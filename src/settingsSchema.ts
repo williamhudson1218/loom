@@ -3,6 +3,9 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { CLAUDE_HOME } from './paths.ts';
 
+// The public Loom Slack app (PKCE, no secret). A client id is not a secret.
+export const LOOM_SLACK_CLIENT_ID = '12576411632882.12576424089186';
+
 // The settings registry: every key Loom stores in the `settings(key, value)`
 // table, with its type, where it shows in Settings, and two defaults:
 //
@@ -339,8 +342,8 @@ export const SETTINGS = [
   // The shared Slack app's client id for Connect Slack (OAuth with PKCE). Public,
   // not a secret: a PKCE app has no client secret at all.
   strDef((s) => (s === '' || /^[0-9]+\.[0-9]+$/.test(s) ? null : 'must look like 1234567890.1234567890'), {
-    key: 'slack_client_id', section: 'slack', label: 'Shared Slack app client id', help: 'From the shared Slack app (Basic Information, Client ID). Turns on Connect Slack.',
-    defaultNew: '', legacyUnset: '', restart: false, envName: 'LOOM_SLACK_CLIENT_ID',
+    key: 'slack_client_id', section: 'slack', label: 'Shared Slack app client id', help: 'Client ID of the Slack app Connect Slack signs in through. Loom ships with its own; change it only to use a Slack app of your own.',
+    defaultNew: LOOM_SLACK_CLIENT_ID, legacyUnset: LOOM_SLACK_CLIENT_ID, restart: false, envName: 'LOOM_SLACK_CLIENT_ID',
     env: (env) => env.LOOM_SLACK_CLIENT_ID?.trim() || undefined,
   }),
   strDef(() => null, {

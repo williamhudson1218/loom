@@ -122,14 +122,28 @@ Codex has no plugin system. If `~/.codex` exists, Loom adds `hooks/record-placem
 
 Pick a mode in the wizard or Settings › Slack. You can change it later.
 
-### Direct app
+### Direct: Connect Slack
+
+Click **Connect Slack** (wizard or Settings › Slack). Slack opens in your browser; approve there, and Loom stores your own user token in the login Keychain and switches Slack to Direct. Nothing to create: Loom ships with a public Slack app named **Loom** (client id built in, OAuth with PKCE, no client secret). Posts are sent as you.
+
+If your workspace restricts apps, the first person sees "Request to install". A workspace admin approves **Loom** once, and then everyone in the workspace can connect.
+
+How the sign-in gets back to Loom: a public Slack app must use an HTTPS redirect, so Slack redirects to a static relay page, `https://williamhudson1218.github.io/loom/slack-callback/` (source in `site/slack-callback/index.html`, published from `site/` by `.github/workflows/pages.yml`). Loom puts its port in the OAuth state (`<port>.<random>`); the page reads it, accepts only a whole number from 4317 to 4326, and forwards Slack's answer to `http://127.0.0.1:<port>/slack/callback`. It never forwards anywhere else and loads nothing external. The page does see the one-time authorization code, but the code is useless without the PKCE verifier, which Loom makes and keeps on your Mac, and the state is still single use and expires in 10 minutes. A Loom on a port outside 4317 to 4326 cannot use Connect Slack; use your own app instead.
+
+`LOOM_SLACK_RELAY_URL` points the built-in app at a different relay (for testing; the Slack app must list it).
+
+### Your own app instead
+
+Choose "Use your own app instead", or use this if Connect Slack is not an option for your workspace.
 
 1. In Loom, copy the app manifest it shows you (Settings › Slack). It uses your name in the app title.
 2. At [api.slack.com/apps](https://api.slack.com/apps), choose Create New App, From a manifest, and paste it.
 3. Install the app to your workspace. Some workspaces need an admin to approve it.
 4. Copy the **User OAuth Token** (it starts with `xoxp-`) and paste it into Loom. Loom checks it, shows the workspace and user, and stores it in the macOS login Keychain.
 
-The app asks for these user scopes. There is no bot user, no event subscription and no socket.
+To use Connect Slack with a Slack app of your own instead of the built-in one, set its client id in Settings › Slack › Shared Slack app (or `LOOM_SLACK_CLIENT_ID`, which wins). An app of your own signs in through `http://localhost:<port>/slack/callback` directly, so its redirect URLs must list Loom's ports. Setting the client id to empty turns Connect Slack off.
+
+Either way, Loom asks for these user scopes. There is no bot user, no event subscription and no socket.
 
 | Needed for | Scopes |
 |---|---|
@@ -270,7 +284,7 @@ The Finder-launched app does not read your shell profile, so `LOOM_HOME` in `.zs
 - **Two `node_modules`, two ABIs.** The root install builds `better-sqlite3` for your Node. `app/` builds it for Electron. After `cd app && yarn install`, run `yarn rebuild`, or the app fails to launch with a `NODE_MODULE_VERSION` mismatch. Do not copy `node_modules` between them.
 - **Intel output path.** `yarn dist` writes to `app/release/mac-arm64/` on Apple Silicon and `app/release/mac/` on Intel. `setup.sh` handles both.
 - **Port 4317 busy.** Loom moves to the next free port, up to 4326, and Settings › Advanced › Port says which one it is using. Only when all ten are taken does it stop, with a message. A second Loom for the same account does not start; it reports the port the first one is on.
-- **Two accounts on one Mac.** `localhost` is shared by every macOS user, so the second account's Loom finds 4317 held by the first and takes 4318. Each Loom writes its port to `server.json` in its own data folder (`~/.loom`), removes it on a clean quit, and the `loom` command, the plugin hooks, the orchestrator and the install script read it from there. `$LOOM_PORT` overrides it. Do not point a script at a fixed port: it would reach the other account's Loom. Slack and Google sign-in follow the actual port; the shared Slack app's manifest lists all ten redirect URLs.
+- **Two accounts on one Mac.** `localhost` is shared by every macOS user, so the second account's Loom finds 4317 held by the first and takes 4318. Each Loom writes its port to `server.json` in its own data folder (`~/.loom`), removes it on a clean quit, and the `loom` command, the plugin hooks, the orchestrator and the install script read it from there. `$LOOM_PORT` overrides it. Do not point a script at a fixed port: it would reach the other account's Loom. Slack and Google sign-in follow the actual port; the Slack relay forwards to any port from 4317 to 4326.
 - **Old launchd jobs.** If you ran an earlier version's `com.loom.*` or `com.chatmanager.*` jobs, unload them. The app now runs those intervals itself.
 - **Extracting from the app bundle.** `asar extract-file` writes into the current directory. Run it from a scratch folder, not from the repo.
 

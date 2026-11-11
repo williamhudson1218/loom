@@ -20,7 +20,7 @@ import {
   type SlackIdentity,
 } from '../slackapi.ts';
 import { buildManifest, buildSharedManifest, manifestScopes, scopeSummary } from '../slackmanifest.ts';
-import { beginAuth, exchangeCode, oauthHint, outcomeOf, recordOutcome, takeState } from '../slackoauth.ts';
+import { RELAY_PORT_MAX, RELAY_PORT_MIN, beginAuth, exchangeCode, oauthHint, outcomeOf, recordOutcome, redirectFor, redirectUri, takeState } from '../slackoauth.ts';
 import { effectiveMode } from '../slackmode.ts';
 import { preferredPort, serverPort } from '../serverport.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
@@ -251,7 +251,12 @@ export function makeSlackRoutes(over: Partial<SlackRouteDeps> = {}): RouteDef[] 
     }
     const clientId = await withDb((db) => getSetting(db, 'slack_client_id') as string);
     if (!clientId) return ctx.json(409, { ok: false, error: 'no_client_id', hint: 'Enter the shared Slack app client id first.' });
-    const { state, url } = beginAuth({ clientId, port: portOf(ctx), scopes: manifestScopes(readonly), readonly });
+    const port = portOf(ctx);
+    // The built-in app's HTTPS relay forwards only to 4317-4326 (site/slack-callback/).
+    if (redirectFor(clientId, port) !== redirectUri(port) && (port < RELAY_PORT_MIN || port > RELAY_PORT_MAX)) {
+      return ctx.json(409, { ok: false, error: 'port_out_of_range', hint: `Connect Slack needs Loom on a port from ${RELAY_PORT_MIN} to ${RELAY_PORT_MAX}; this Loom is on ${port}. Use your own app instead.` });
+    }
+    const { state, url } = beginAuth({ clientId, port, scopes: manifestScopes(readonly), readonly });
     ctx.json(200, { ok: true, url, state });
   }
 

@@ -1,5 +1,4 @@
-import { redirectUri } from './slackoauth.ts';
-import { portRange } from './serverport.ts';
+import { relayUrl } from './slackoauth.ts';
 import { FEATURE_METHODS, READ_FEATURES, compareScopes, scopesFor, type ScopeReport } from './slackapi.ts';
 
 // The Slack app manifest Loom asks the user to paste at api.slack.com/apps (§5.1).
@@ -46,13 +45,13 @@ export function buildManifest(opts: ManifestOpts = {}): SlackManifest {
 }
 
 /**
- * The ONE shared app a workspace admin creates for Connect Slack: the same user
- * scopes, a localhost redirect, and PKCE on, which makes it a public client with
- * no client secret (one-way: Slack cannot turn PKCE off again). Token rotation
- * is on, so a token expires after 12 hours and refreshes; a PKCE app's refresh
- * token lasts 30 days. Still no bot user and no bot scopes: a localhost
- * redirect counts as a desktop redirect under PKCE, and those cannot take bot
- * scopes anyway. A read-only person asks for fewer scopes at authorize time.
+ * The ONE shared Loom app behind Connect Slack: the same user scopes, the HTTPS
+ * relay as its only redirect (public distribution refuses http redirects; see
+ * src/slackoauth.ts), and PKCE on, which makes it a public client with no client
+ * secret (one-way: Slack cannot turn PKCE off again). Token rotation is on, so a
+ * token expires after 12 hours and refreshes; a PKCE app's refresh token lasts
+ * 30 days. Still no bot user and no bot scopes. A read-only person asks for
+ * fewer scopes at authorize time.
  */
 export interface SharedManifest {
   display_information: { name: string; description: string };
@@ -61,17 +60,17 @@ export interface SharedManifest {
 }
 
 /**
- * `port` is the configured base. Loom moves to the next free port when another
- * user's Loom holds it (src/portpick.ts), and Slack matches a redirect exactly, so
- * every port in the range is registered up front: the app is created once.
+ * One redirect for every port: the relay forwards to whichever port is in the
+ * state, so Loom moving to the next free port (src/portpick.ts) needs no change
+ * to the app. `port` is accepted for callers that still pass it, and ignored.
  */
-export function buildSharedManifest(opts: { port: number }): SharedManifest {
+export function buildSharedManifest(_opts: { port?: number } = {}): SharedManifest {
   return {
     display_information: {
       name: 'Loom',
       description: 'Loom links your Slack threads to your Claude Code chats and sends the drafts you approve, as you.',
     },
-    oauth_config: { redirect_urls: portRange(opts.port).map(redirectUri), scopes: { user: manifestScopes(false) }, pkce_enabled: true },
+    oauth_config: { redirect_urls: [relayUrl()], scopes: { user: manifestScopes(false) }, pkce_enabled: true },
     settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: true },
   };
 }

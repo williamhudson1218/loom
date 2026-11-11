@@ -275,9 +275,9 @@ function sxSlackSection(){var sl=SX.data.slack,mode=sxv('slack_mode'),st=sxs('sl
   var env=sl.tokenSource==='env';var conn=sl.connected;
   var tok=conn?(env?sxPill('ok','Token from environment'):'<input type="password" disabled value="xoxp-••••••••••••••••" style="max-width:190px">'+sxBtn('stest','Test')+sxBtn('sreplace','Replace')+sxBtn('sdisc','Disconnect',{danger:true})):'';
   if(conn&&env)tok+=sxBtn('stest','Test');
-  // Connect Slack (one shared app, OAuth with PKCE) leads when a client id is set; pasting a token from your own app stays as the secondary route.
+  // Connect Slack (the built-in Loom app by default, OAuth with PKCE) leads when a client id is set; pasting a token from your own app stays as the secondary route.
   var cid=sxv('slack_client_id'),oa=SX.oauth;
-  if(!env)h+=sxKey('slack_client_id',{title:'Shared Slack app',help:'The client id of your team’s shared Loom app (Basic Information, Client ID). With it, Connect Slack signs you in through Slack and stores your own token. Leave it empty to use your own app.',mono:true,w:230,ph:'1234567890.1234567890',noDef:true,after:sxBtn('ssharedmanifest','Copy shared-app manifest',{ghost:true})});
+  if(!env)h+=sxKey('slack_client_id',{title:'Shared Slack app',help:'The Slack app Connect Slack signs in through. Loom ships with its own, so leave this as it is unless you run a Slack app of your own. Empty turns Connect Slack off and leaves token paste.',mono:true,w:230,ph:'1234567890.1234567890',noDef:true,after:sxBtn('ssharedmanifest','Copy shared-app manifest',{ghost:true})});
   if(!conn&&sl.reconnect)h+=sxNote(sxEsc(sl.reconnectHint||'The Slack connection expired. Reconnect Slack.'),'warn');
   var oauthBtn=cid&&!env?(oa?'<span class="def">Waiting for you to approve in Slack…</span>'+(oa.url?' <a href="'+sxEsc(oa.url)+'" target="_blank" rel="noopener">Open the Slack page</a> ':'')+sxBtn('soauthcancel','Cancel',{ghost:true}):sxBtn('soauth',sl.reconnect&&!conn?'Reconnect Slack':conn?'Connect again':'Connect Slack',{pri:!conn})):'';
   var showPaste=!cid||SX.ownApp||SX.pwOpen;
