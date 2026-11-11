@@ -55,7 +55,7 @@ if [ "$WANT_RELEASE" = 1 ]; then
   tag=""; [ -n "$RELEASE" ] && tag="v${RELEASE#v}"
   # shellcheck disable=SC2086
   gh release download $tag -R williamhudson1218/loom -p 'Loom-*.zip' -p SHA256SUMS -D "$UNPACK" || { cleanup_unpack; echo "install-app: could not download the release" >&2; exit 1; }
-  (cd "$UNPACK" && shasum -a 256 -c SHA256SUMS) || { cleanup_unpack; echo "install-app: the release zip does not match SHA256SUMS" >&2; exit 1; }
+  (cd "$UNPACK" && shasum -a 256 --ignore-missing -c SHA256SUMS) || { cleanup_unpack; echo "install-app: the release zip does not match SHA256SUMS" >&2; exit 1; }
   SRC="$(find "$UNPACK" -maxdepth 1 -name 'Loom-*.zip' | head -1)"
 fi
 # A zip (a release asset, or share-app.sh's output): unpack it with ditto first.

@@ -116,7 +116,24 @@ jobs:
           cat out/SHA256SUMS
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
 
+      # A run that queued behind newer pushes (concurrency only cancels the one in
+      # progress) must not publish: its commit count is lower, and --latest would
+      # point every Loom back at older code. Checked right before publishing.
+      - name: Still the newest commit
+        id: gate
+        run: |
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          newest=$(gh release list --exclude-pre-releases -L 1 --json tagName --jq '.[0].tagName // ""')
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "main is at $head now, not $GITHUB_SHA: not publishing (the run for $head will)"; echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "${newest#v}" "${{ steps.v.outputs.version }}" | sort -V | tail -1)" != "${{ steps.v.outputs.version }}" ] || [ "$newest" = "v${{ steps.v.outputs.version }}" ]; then
+            echo "$newest is already published, not newer than ${{ steps.v.outputs.version }}: not publishing"; echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Release
+        if: steps.gate.outputs.publish == 'true'
         run: |
           v=${{ steps.v.outputs.version }}
           {
