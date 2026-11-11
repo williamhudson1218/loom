@@ -14,6 +14,8 @@ describe('bashWrittenFiles: files a shell command writes or stages', () => {
     // A multi-line git add with quoted Next.js paths (brackets, route groups, spaces).
     expect(bashWrittenFiles('cd /repo && git add -- \\\n  "apps/x/[id]/route.ts" "apps/(auth)/page.tsx" \\\n  \'apps/a b/c.ts\'', R).sort()).toEqual(['/repo/apps/(auth)/page.tsx', '/repo/apps/a b/c.ts', '/repo/apps/x/[id]/route.ts']);
     expect(bashWrittenFiles('git add "$F"', R)).toEqual([]);
+    // A python heredoc that reuses one variable for several files writes each of them.
+    expect(bashWrittenFiles("python3 - <<'EOF'\np='apps/[id]/a.ts'\ns=open(p).read()\nopen(p,'w').write(s)\np='apps/[id]/b.ts'\nopen(p,'w').write(s)\nEOF", R).sort()).toEqual(['/repo/apps/[id]/a.ts', '/repo/apps/[id]/b.ts']);
     expect(bashWrittenFiles('git add .', R)).toEqual([]);
   });
   it('a leading cd moves the base', () => {

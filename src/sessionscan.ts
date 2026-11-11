@@ -82,15 +82,21 @@ export function bashWrittenFiles(cmd: string, cwd: string): string[] {
     if (quoted ? !!v && !/[$`]/.test(v) && !v.startsWith('-') && /[/.]/.test(v) : usable(v)) out.add(path.resolve(base, v));
   };
   const pyWrites = (code: string) => {
-    const vars = new Map<string, string>();
-    for (const m of code.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(['"])([^'"\n]+)\2/g)) vars.set(m[1], m[3]);
-    const lit = (t: string) => (/^['"]/.test(t) ? t.slice(1, -1) : vars.get(t));
+    // A variable may be reassigned between writes (p = 'a' … write … p = 'b' … write),
+    // so each write takes the variable's last assignment before it.
+    const assigns = [...code.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(['"])([^'"\n]+)\2/g)].map((m) => ({ name: m[1], val: m[3], at: m.index ?? 0 }));
+    const lit = (t: string, at: number) => {
+      if (/^['"]/.test(t)) return t.slice(1, -1);
+      let v: string | undefined;
+      for (const a of assigns) if (a.name === t && a.at < at) v = a.val;
+      return v;
+    };
     for (const m of code.matchAll(/\bopen\(\s*('[^']+'|"[^"]+"|[A-Za-z_]\w*)\s*,\s*['"][wa]b?\+?['"]/g)) {
-      const v = lit(m[1]);
+      const v = lit(m[1], m.index ?? 0);
       if (v) add(v);
     }
     for (const m of code.matchAll(/\bPath\(\s*('[^']+'|"[^"]+"|[A-Za-z_]\w*)\s*\)\.write_(?:text|bytes)\(/g)) {
-      const v = lit(m[1]);
+      const v = lit(m[1], m.index ?? 0);
       if (v) add(v);
     }
   };
