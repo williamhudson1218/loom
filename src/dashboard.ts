@@ -24,6 +24,7 @@ import { PRUNE_HIST_HTML, PRUNE_VIEW_CSS, PRUNE_VIEW_HTML, PRUNE_VIEW_JS } from 
 import { SLACK_MENU_CSS, SLACK_MENU_PURE_JS, SLACK_MENU_VIEW_JS } from './slackmenu.ts';
 import { PRCI_CSS, PRCI_PURE_JS, PRCI_VIEW_JS } from './prci.ts';
 import { OUTBOX_PURE_JS, OUTBOX_VIEW_CSS, OUTBOX_VIEW_JS } from './outboxview.ts';
+import { UPDATE_HEADER_HTML, UPDATE_VIEW_CSS, UPDATE_VIEW_JS } from './updateview.ts';
 import { SLACKMD_JS } from './slackmd.ts';
 import { SHIPMODAL_CSS, SHIPMODAL_HTML, SHIPMODAL_JS } from './shipmodal.ts';
 import type { Agent, ChatRow, LaunchPreference } from './types.ts';
@@ -944,6 +945,7 @@ ${TOUR_VIEW_CSS}
 ${WATCHER_VIEW_CSS}
 ${SHIPMODAL_CSS}
 ${OUTBOX_VIEW_CSS}
+${UPDATE_VIEW_CSS}
 </style></head>
 <body>
 <header>
@@ -977,6 +979,7 @@ ${OUTBOX_VIEW_CSS}
           <button type="button" role="menuitem" id="restorebtn" title="rebuild every loom-* tmux session from the last snapshot and open a Ghostty tab for each"><span class="ck">\u27F2</span><span class="mi">Restore sessions<span class="hint">Rebuild every loom-* tmux session from the last snapshot</span></span></button>
         </div>
       </div>
+      ${UPDATE_HEADER_HTML}
       <button id="setbtn" class="gearbtn" data-tour="gear" type="button" title="Settings (⌘,)" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg></button>
     </div>
   </div>
@@ -1105,6 +1108,7 @@ ${SIDESORT_JS}
 ${SIDESEARCH_JS}
 ${JUMP_PURE_JS}
 ${JUMP_VIEW_JS}
+${UPDATE_VIEW_JS}
 ${ORCH_VIEW_JS}
 ${CONNECT_VIEW_JS}
 ${WIZARD_VIEW_JS}
@@ -2270,7 +2274,7 @@ $('#q').addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#q').value){e.pre
 $('#qclear').addEventListener('mousedown',e=>e.preventDefault());
 $('#qclear').addEventListener('click',clearQuery);
 setHeaderHeight();window.addEventListener('resize',setHeaderHeight);if(window.ResizeObserver)new ResizeObserver(setHeaderHeight).observe($('header'));
-wireMain();wireShipModal();wireJump();wireHeaderMenus();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();refreshWatch();refreshTrees(false);
+wireMain();wireShipModal();wireJump();wireHeaderMenus();wireUpdates();projects();reloadProjects();syncDefaultAgent();liveToggle();chips();render();refreshWatch();refreshTrees(false);
 $('#default-agent').onchange=updateDefaultAgent;
 // Codex is offered only when ~/.codex exists (or the codex_visible setting says so).
 if(!DATA.codexVisible){['#default-agent','#cagent'].forEach(function(id){const o=$(id+' option[value="codex"]');if(o)o.remove();});const cb=$('#agentmenu [data-agent="codex"]');if(cb)cb.remove();}

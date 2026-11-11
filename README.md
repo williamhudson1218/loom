@@ -1,10 +1,16 @@
 # Loom
 
+[![Latest release](https://img.shields.io/github/v/release/williamhudson1218/loom?sort=semver&label=download)](https://github.com/williamhudson1218/loom/releases/latest)
+
 Loom is a macOS app that shows all of your [Claude Code](https://claude.com/claude-code) chats in one place. It indexes every chat, summarizes it, tells you which ones are running and whose turn it is, and lets you open, resume, branch, park and message any of them.
 
 macOS only. tmux is required. It keeps chats alive when Loom quits and is how Loom types into them. Loom installs it, runs it on its own socket and shows each chat as a terminal inside the app, so you never have to learn it.
 
 ## Get started
+
+Download the latest `Loom-<version>-arm64.zip` from [Releases](https://github.com/williamhudson1218/loom/releases/latest), move Loom to Applications and open it; the first time, macOS needs System Settings › Privacy & Security › **Open Anyway** ([details](SETUP.md#2-install-a-release)). Loom updates itself from GitHub Releases after that.
+
+Or build it from source:
 
 ```bash
 git clone <this repo's URL> loom
@@ -195,7 +201,7 @@ yarn test
 ./bin/chat-manager run        # one index pass, writes the dashboard
 ```
 
-Build the app by hand with `cd app && yarn install && yarn build && yarn rebuild && yarn dist`. Install it with `scripts/install-app.sh`, which quits a running Loom, swaps the bundle in and relaunches. Never delete and copy over a running Loom; opening it mid-copy crashes it.
+Releases are cut by CI: every push to `main` that touches the app runs the tests, builds, checks the bundle for personal data and publishes a GitHub Release, and running Looms update themselves (`src/updater.ts`, SETUP.md [Updates](SETUP.md#updates)). Build the app by hand with `cd app && yarn install && yarn build && yarn rebuild && yarn dist`. Install a build with `scripts/install-app.sh` (it also takes a release zip, or `--release`), which quits a running Loom, swaps the bundle in and relaunches. Never delete and copy over a running Loom; opening it mid-copy crashes it.
 
 The app is not signed with a Developer ID or notarized; it is ad-hoc signed. Built locally it opens directly. To give it to someone else, zip it with `scripts/share-app.sh` and see [Sharing Loom](SETUP.md#6a-sharing-loom) for the one-time Open Anyway step on their Mac.
 

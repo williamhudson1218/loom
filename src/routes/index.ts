@@ -16,6 +16,7 @@ import { routes as settingsExtraRoutes } from './settingsextra.ts';
 import { routes as treeRoutes } from './trees.ts';
 import { routes as googleRoutes } from './google.ts';
 import { routes as githubRoutes } from './github.ts';
+import { routes as updateRoutes } from './update.ts';
 
 // ---- The route table and the one write guard (§13) --------------------------
 //
@@ -146,6 +147,7 @@ export const MODULE_ROUTES: RouteDef[] = [
   ...treeRoutes,
   ...googleRoutes,
   ...githubRoutes,
+  ...updateRoutes,
 ];
 
 export const ROUTES: RouteDef[] = [...CORE_ROUTES, ...MODULE_ROUTES];

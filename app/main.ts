@@ -49,6 +49,8 @@ import { tmux } from '../src/tmux.ts';
 import { configureOrchestrator } from '../src/orchserver.ts';
 import { setOrchNotifier, orchSettings } from '../src/orchestrator.ts';
 import { notifyUser, setAppNotifier, type NotifyTarget } from '../src/notify.ts';
+import { Updater, bundleOf, defaultCacheDir } from '../src/updater.ts';
+import { setUpdateHost } from '../src/routes/update.ts';
 
 // Finder-launched apps inherit a minimal PATH; restore the dirs we shell out to
 // (claude, tmux, gh, osascript): the user's extra_path, the built-ins (both
@@ -609,6 +611,52 @@ function reRegisterSlackHotkey(): void {
   buildTrayMenu();
 }
 
+// Self-update from GitHub Releases (src/updater.ts). Packaged apps only; a run
+// from source never updates. Version and commit are stamped by app/build.mjs.
+declare const __LOOM_BUILD__: { version: string; commit: string; channel: string } | undefined;
+const BUILD = typeof __LOOM_BUILD__ === 'object' && __LOOM_BUILD__ ? __LOOM_BUILD__ : { version: app.getVersion(), commit: '', channel: 'local' };
+function autoUpdateOn(): boolean {
+  const db = openDb();
+  try {
+    return getSetting(db, 'auto_update');
+  } finally {
+    db.close();
+  }
+}
+const updater = new Updater({
+  current: app.getVersion(),
+  commit: BUILD.commit,
+  channel: BUILD.channel,
+  app: bundleOf(process.execPath),
+  packaged: app.isPackaged,
+  auto: autoUpdateOn,
+  onChange: (st) => {
+    // The tray's Restart to update item comes and goes with a ready update.
+    if ((st.status === 'ready') !== trayShowsUpdate) buildTrayMenu();
+  },
+});
+// install-app.sh drops this file before it quits Loom, so the quit it causes does
+// not also start an update swap of its own.
+const SKIP_QUIT_APPLY = path.join(defaultCacheDir(), 'skip-apply-on-quit');
+let updateHandedOff = false;
+function restartToUpdate(): { ok: true; version: string } | { ok: false; detail: string } {
+  const ready = updater.state().ready;
+  const r = updater.apply({ pid: process.pid, relaunch: true, loomHome: TOOL_DIR });
+  if (!r.ok) return r;
+  updateHandedOff = true;
+  // Answer the page first; the apply script waits for this process to exit.
+  setTimeout(() => {
+    quitting = true;
+    app.quit();
+  }, 400);
+  return { ok: true, version: ready?.version ?? '' };
+}
+setUpdateHost({
+  state: () => updater.state(),
+  check: () => updater.check({ manual: true }),
+  restart: restartToUpdate,
+});
+
 setShortcutHost({
   // The conflict check: would register() succeed? Loom's own current shortcut counts as free.
   tryRegister(accel) {
@@ -620,14 +668,24 @@ setShortcutHost({
   },
 });
 
+function autoUpdateOnSafe(): boolean {
+  try {
+    return autoUpdateOn();
+  } catch {
+    return true;
+  }
+}
+
 function buildTray(): void {
   tray = new Tray(trayIcon());
   tray.on('click', showWindow);
   buildTrayMenu();
 }
 
+let trayShowsUpdate = false;
 function buildTrayMenu(): void {
   if (!tray) return;
+  trayShowsUpdate = updater.state().status === 'ready';
   trayMenu = Menu.buildFromTemplate([
     { label: 'Open Loom', click: showWindow },
     { type: 'separator' },
@@ -647,6 +705,7 @@ function buildTrayMenu(): void {
       label: 'Pick a Slack message to open its chat' + (slackAccel ? `  (${slackAccel.replace(/Command/g, 'Cmd').replace(/Control/g, 'Ctrl').replace(/Alt/g, 'Option')})` : ''),
       click: slackThreadGoto,
     },
+    ...(updater.state().status === 'ready' ? [{ type: 'separator' as const }, { label: `Restart to update to ${updater.state().ready?.version ?? ''}`, click: () => void restartToUpdate() }] : []),
     { type: 'separator' },
     { label: 'Quit Loom', click: () => { quitting = true; app.quit(); } },
   ]);
@@ -660,6 +719,18 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => {
   quitting = true;
+  // A verified update waiting when Loom quits for any other reason is installed
+  // then, without relaunching. Not when install-app.sh is the one quitting it.
+  if (!updateHandedOff && updater.state().status === 'ready' && autoUpdateOnSafe()) {
+    let skip = false;
+    try {
+      skip = Date.now() - fs.statSync(SKIP_QUIT_APPLY).mtimeMs < 5 * 60 * 1000;
+      fs.rmSync(SKIP_QUIT_APPLY, { force: true });
+    } catch {
+      /* no marker */
+    }
+    if (!skip && updater.apply({ pid: process.pid, relaunch: false, loomHome: TOOL_DIR }).ok) updateHandedOff = true;
+  }
   globalShortcut.unregisterAll();
   stopHelper();
   // Bracket the quit: the line written here and the one the watcher writes if
@@ -743,6 +814,8 @@ app.whenReady().then(() => {
   // startGhTicks runs, restarted when it dies. Its MCP server is dist/orchmcp.js,
   // run by this same binary as plain node; asarUnpack keeps it a real file.
   startOrchestratorSession();
+  // Updates: once shortly after launch, then every 4 hours (src/updater.ts).
+  updater.start();
 
   // The real crash recovery. before-quit handles a clean exit, but nothing fires
   // on SIGKILL, so a killed Loom leaves stale tints on panes it will never see

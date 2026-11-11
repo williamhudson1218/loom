@@ -9,6 +9,8 @@
 // Not when the toolchain updates: the old binary still runs. Pure: no I/O, so
 // the decision is unit-tested.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const CACHE_VERSION = 1;
 
@@ -56,4 +58,23 @@ export function helperInfoPlist({ id, exe, version }) {
 </dict>
 </plist>
 `;
+}
+
+/** The helper bundles (see build.mjs). `src` is relative to app/. */
+export const HELPERS = [
+  { dir: 'ax', exe: 'loom-ax', id: 'com.loom.app.ax', src: 'native/loom-ax.swift' },
+  { dir: 'keychain', exe: 'loom-keychain', id: 'com.loom.app.keychain', src: 'native/loom-keychain.swift' },
+];
+
+/**
+ * A helper's cache key from the files in `appDir`. The release workflow keys the
+ * shared helper cache by it (app/helperkeys.mjs), so a CI build reuses the exact
+ * bytes of the last helper built from the same inputs.
+ */
+export function helperKeyFor(h, appDir) {
+  const plist = helperInfoPlist({ id: h.id, exe: h.exe, version: String(CACHE_VERSION) });
+  const icon = fs.readFileSync(path.join(appDir, 'assets', 'icon.icns'));
+  // Not the compiler version: a Command Line Tools update would otherwise rebuild
+  // every helper and revoke every grant, for no change a user could see.
+  return helperCacheKey([fs.readFileSync(path.join(appDir, h.src)), plist, icon, h.id, h.exe]);
 }

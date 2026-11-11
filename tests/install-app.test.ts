@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,6 +58,7 @@ function run(args: string[] = []) {
       LOOM_APP_DEST: dest,
       LOOM_QUIT_TIMEOUT: '3',
       LOOM_INSTALL_TRACE: events,
+      LOOM_UPDATE_CACHE: path.join(tmp, 'cache'),
     },
   });
 }
@@ -110,6 +111,41 @@ describe('install-app.sh', () => {
     const r = run(['--no-open']);
     expect(r.status, r.stderr).toBe(0);
     expect(log()).toEqual(['stage', 'swap']);
+    expect(marker()).toBe('new');
+  });
+
+  it('takes the updater’s swap lock: while it is held, nothing is touched', () => {
+    stubs('quits');
+    fs.mkdirSync(path.join(tmp, 'cache', 'swap.lock'), { recursive: true });
+    const r = run(['--no-open']);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/update is being installed/);
+    expect(marker()).toBe('old');
+    expect(fs.existsSync(path.join(tmp, 'cache', 'swap.lock'))).toBe(true);
+  });
+
+  it('marks its quit so Loom does not also install a downloaded update, then clears the mark and the lock', () => {
+    stubs('quits');
+    // The stub quit records whether the mark was there when Loom was asked to quit.
+    fs.writeFileSync(path.join(bin, 'osascript'), `#!/bin/bash\n[ -e "${path.join(tmp, 'cache', 'skip-apply-on-quit')}" ] && echo marked >> "${events}"\nrm -f "${running}"\n`, { mode: 0o755 });
+    fs.writeFileSync(running, '');
+    const r = run(['--no-open']);
+    expect(r.status, r.stderr).toBe(0);
+    expect(log()).toContain('marked');
+    expect(fs.existsSync(path.join(tmp, 'cache', 'skip-apply-on-quit'))).toBe(false);
+    expect(fs.existsSync(path.join(tmp, 'cache', 'swap.lock'))).toBe(false);
+  });
+
+  it('installs from a release zip after checking its signature', () => {
+    stubs('quits');
+    execFileSync('codesign', ['--force', '--sign', '-', src], { stdio: 'ignore' });
+    const zip = path.join(tmp, 'Loom-0.1.9-arm64.zip');
+    execFileSync('ditto', ['-c', '-k', '--keepParent', src, zip]);
+    const r = spawnSync('bash', [SCRIPT, zip, '--no-open'], {
+      encoding: 'utf-8',
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, LOOM_APP_DEST: dest, LOOM_QUIT_TIMEOUT: '3', LOOM_INSTALL_TRACE: events, LOOM_UPDATE_CACHE: path.join(tmp, 'cache') },
+    });
+    expect(r.status, r.stderr).toBe(0);
     expect(marker()).toBe('new');
   });
 

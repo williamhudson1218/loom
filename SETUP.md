@@ -2,7 +2,7 @@
 
 How to build Loom on a Mac and what to expect on first launch. For what Loom is, see [README.md](./README.md).
 
-> **Short version.** Clone the repo, run `./setup.sh --install`, open Loom, and follow the setup wizard.
+> **Short version.** Download the latest `Loom-<version>-arm64.zip` from the [Releases page](https://github.com/williamhudson1218/loom/releases/latest), move Loom to Applications, open it (see [Installing a release](#2-install-a-release)), and follow the setup wizard. It updates itself from then on.
 
 ## 1. Requirements
 
@@ -26,7 +26,35 @@ Optional:
 
 Loom uploads nothing. It reads `~/.claude/projects`, talks to local tmux and the local `claude` CLI, and calls Slack only if you connect it.
 
-## 2. Build and install
+## 2. Install a release
+
+Every change to the app on `main` is published as a [GitHub Release](https://github.com/williamhudson1218/loom/releases) by `.github/workflows/release.yml` (Apple Silicon only). To install:
+
+1. Download `Loom-<version>-arm64.zip` from the [latest release](https://github.com/williamhudson1218/loom/releases/latest) and unzip it.
+2. Drag **Loom** into Applications (or `~/Applications`).
+3. Open Loom. macOS says "Apple could not verify “Loom” is free of malware". Choose **Done**.
+4. Open System Settings › Privacy & Security, scroll to Security, and click **Open Anyway** next to "“Loom” was blocked". Authenticate, then choose **Open Anyway** again. Once per Mac; updates do not ask again.
+
+Loom is ad-hoc signed, not signed with an Apple Developer ID, which is why step 4 is needed. `SHA256SUMS` in each release lists the zip's checksum.
+
+You still need tmux, Claude Code and python3 (see Requirements); the setup wizard checks them. Node, yarn and Swift are only needed to build from source.
+
+### Updates
+
+Loom checks GitHub for a new release soon after it opens and every 4 hours. When there is one it downloads it to `~/Library/Caches/Loom/updates/`, checks the zip against the sha256 the release publishes, unpacks it, and checks that the app passes `codesign --verify --deep --strict` and is Loom at the expected version. Then the header shows **Update ready**.
+
+- **Restart to update** (from Update ready, the menu bar icon, or Settings › Updates) quits Loom, swaps the new app in where the old one was, and opens it. Chats keep running in tmux the whole time.
+- Otherwise the update is installed the next time Loom quits.
+- If the new version does not start and answer within 90 seconds, the old one is put back and opened, and Settings › Updates says what failed.
+- Settings › Updates shows the version and commit, when Loom last checked, a **Check for updates** button and an **Update automatically** switch (on by default; off means Loom only says a release exists).
+- Loom must be able to write to the folder it is in. If it cannot (an admin-only folder, or a copy opened straight from Downloads, which macOS runs from a temporary read-only location), Settings › Updates says so: move Loom to Applications.
+- A run from source (`tsx`, `yarn start`) never updates itself.
+
+Permissions survive updates: Accessibility, Automation and the Keychain item belong to the small helpers inside Loom (see section 6), and a release ships the same helper bytes as the last one unless the helper's own source changed.
+
+If the updater itself is broken, install by hand: `scripts/install-app.sh --release` downloads the newest release with `gh`, checks it against `SHA256SUMS` and swaps it in safely (or pass a version, a zip or a built `Loom.app`).
+
+## 2b. Build from source
 
 ```bash
 git clone <this repo's URL> loom
@@ -46,7 +74,7 @@ cd loom
 
 It does not edit `~/.claude/settings.json`, and it does not write Loom's settings. The first time Loom opens, it sees a brand-new data folder and starts the setup wizard.
 
-To install a build by hand, use `scripts/install-app.sh app/release/mac-arm64/Loom.app`. It quits a running Loom, waits for it to exit, swaps the bundle in and relaunches. Do not delete and copy over a running Loom; opening it mid-copy crashes it.
+To install a build by hand, use `scripts/install-app.sh app/release/mac-arm64/Loom.app`. It quits a running Loom, waits for it to exit, swaps the bundle in and relaunches. Do not delete and copy over a running Loom; opening it mid-copy crashes it. A local build is stamped `0.1.<commit count>`, like a release, so it updates itself to the next release published after it.
 
 To use the CLI without the app: `yarn install`, then `./bin/chat-manager run` for one indexing pass.
 
@@ -198,7 +226,7 @@ The row named Loom belongs to a small helper inside the app (`Loom.app/Contents/
 
 Loom is not signed with an Apple Developer ID or notarized, so a copy someone downloads needs one extra step the first time. It is ad-hoc signed with a valid seal, so macOS treats it as an unverified app, not a damaged one.
 
-To make the file: `cd app && yarn dist`, then `scripts/share-app.sh`. It checks the signature and writes `app/release/Loom-<version>-<arch>.zip`. Build on the same kind of Mac (Apple Silicon or Intel) as the person you are sending it to.
+The easiest way to share Loom is a link to the [latest release](https://github.com/williamhudson1218/loom/releases/latest); the steps are in [Install a release](#2-install-a-release). To make a file from a local build instead: `cd app && yarn dist`, then `scripts/share-app.sh`. It checks the signature and writes `app/release/Loom-<version>-<arch>.zip`. Build on the same kind of Mac (Apple Silicon or Intel) as the person you are sending it to.
 
 On the other Mac (macOS 15 or later):
 

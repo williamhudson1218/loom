@@ -32,6 +32,7 @@ export const SECTIONS = [
   'watchers',
   'helpers',
   'advanced',
+  'updates',
   'help',
 ] as const;
 export type Section = (typeof SECTIONS)[number];
@@ -262,6 +263,11 @@ export const SETTINGS = [
     key: 'lane_view', section: 'terminal', label: 'Shared-window panes',
     help: 'zoom attaches and zooms a pane that shares its window; mirror streams it without touching the window.',
     defaultNew: 'zoom', legacyUnset: 'zoom', restart: false,
+  }),
+  boolDef({
+    key: 'auto_update', section: 'updates', label: 'Update automatically',
+    help: 'Download and verify new releases from GitHub in the background, and install one on restart or the next quit.',
+    defaultNew: true, legacyUnset: true, restart: false,
   }),
   boolDef({
     key: 'ghostty_rehome', section: 'terminal', label: 'Reuse Ghostty tabs', help: 'Restore re-homes sessions into their existing Ghostty tabs.',

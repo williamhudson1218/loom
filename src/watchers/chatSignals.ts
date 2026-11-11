@@ -5,6 +5,7 @@ import type { Agent } from '../types.ts';
 import type { LiveLoc } from '../dashboard.ts';
 import { agentSessionKey } from '../placements.ts';
 import { readContextUsage, type ContextUsage } from './context.ts';
+import { resolveLoomRepoDir as resolveCheckout } from '../repodir.ts';
 
 // Per-chat signals for the chats source (moved from the EM's signals.ts). Pure
 // apart from a stat and bounded tail reads of each LIVE chat's transcript; the
@@ -50,8 +51,8 @@ export interface ChatSignal {
   pendingToolSince: number;
 }
 
-// Stamped in at bundle time by app/build.mjs. The packaged app lives in
-// /Applications and has no module path pointing back at the source tree.
+// Stamped in at bundle time by app/build.mjs ('' in a release build). The packaged
+// app lives in /Applications and has no module path pointing back at the source tree.
 declare const __LOOM_REPO_DIR__: string | undefined;
 
 // Where Loom's own source lives, so its sessions are never watched (a watcher
@@ -69,7 +70,8 @@ function resolveLoomRepoDir(): string {
   try {
     return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   } catch {
-    return '';
+    // The bundle, and a release bundle stamps '': look for a checkout instead.
+    return resolveCheckout();
   }
 }
 

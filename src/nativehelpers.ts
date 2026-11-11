@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveLoomRepoDir } from './repodir.ts';
 
 // Where Loom's native helpers live, and the one way Loom runs AppleScript.
 //
@@ -12,8 +13,6 @@ import path from 'node:path';
 //
 // From source (tsx, tests, the standalone server) the same bundles are in
 // app/build-native/<kind>/Loom.app.
-
-declare const __LOOM_REPO_DIR__: string | undefined;
 
 export type HelperKind = 'ax' | 'keychain';
 const EXE: Record<HelperKind, string> = { ax: 'loom-ax', keychain: 'loom-keychain' };
@@ -33,7 +32,8 @@ export function findHelper(kind: HelperKind): string | null {
   const candidates: string[] = [];
   const res = (process as { resourcesPath?: string }).resourcesPath;
   if (res) candidates.push(helperExe(path.join(res, '..', 'Helpers'), kind));
-  if (typeof __LOOM_REPO_DIR__ === 'string' && __LOOM_REPO_DIR__) candidates.push(helperExe(path.join(__LOOM_REPO_DIR__, 'app', 'build-native'), kind));
+  const repo = resolveLoomRepoDir();
+  if (repo) candidates.push(helperExe(path.join(repo, 'app', 'build-native'), kind));
   candidates.push(helperExe(path.join(process.cwd(), 'app', 'build-native'), kind));
   candidates.push(helperExe(path.join(process.cwd(), 'build-native'), kind));
   return candidates.find(isExecutable) ?? null;

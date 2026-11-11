@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import vm from 'node:vm';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from '../src/settingsview.ts';
+import { UPDATE_VIEW_JS } from '../src/updateview.ts';
 import { SETTINGS } from '../src/settingsSchema.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
 // Watchers keys belong to the Watchers editor (T20), which has its own view.
-const OTHER_VIEW = new Set(['watchers_enabled', 'watcher_brief_prune_days', 'watchers_ignore_self']);
+// auto_update is the Updates section's, drawn by src/updateview.ts.
+const OTHER_VIEW = new Set(['watchers_enabled', 'watcher_brief_prune_days', 'watchers_ignore_self', 'auto_update']);
 
 // Loom's own bookkeeping (ids it wrote itself); nothing a person could act on.
 // slack_reconnect is written by a refused token refresh and reaches the page as
@@ -30,6 +32,11 @@ describe('settings view', () => {
     const missing = SETTINGS.map((d) => d.key).filter((k) => !OTHER_VIEW.has(k) && !BOOKKEEPING.has(k) && k !== 'watcher_default_target' && !SETTINGS_VIEW_JS.includes("'" + k + "'"));
     expect(missing).toEqual([]);
     expect(SETTINGS_VIEW_JS).toContain("'watcher_default_target'");
+  });
+
+  it('the Updates section edits auto_update and names no person', () => {
+    expect(UPDATE_VIEW_JS).toContain("'auto_update'");
+    expect(UPDATE_VIEW_JS).not.toMatch(/Will\b|Tax Pilot|willhudson|loom-tp/);
   });
 
   it('names no person, company or personal path', () => {

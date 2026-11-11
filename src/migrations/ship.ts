@@ -4,8 +4,8 @@ import type Database from 'better-sqlite3';
 import type { MigrationStep } from '../migrate.ts';
 import { DEFAULT_SHIP_COMMAND, defaultSyncGit, detectBaseBranch, detectRepoSlug, type SyncGit } from '../projects.ts';
 import { MAX_LABEL, SHIP_LABELS_FILE, readLabelsFile } from '../shipview.ts';
+import { resolveLoomRepoDir } from '../repodir.ts';
 
-declare const __LOOM_REPO_DIR__: string | undefined;
 
 // Ship, legacy install (§12 step 3 and the ship-labels part of step 5).
 //
@@ -59,7 +59,8 @@ export function migrateShip(db: Database.Database, opts: ShipMigrationOpts = {})
   }
 
   let loomAdded = false;
-  const loom = opts.loomRepoDir ?? (typeof __LOOM_REPO_DIR__ === 'string' ? __LOOM_REPO_DIR__ : '');
+  // $LOOM_REPO_DIR or the build's stamp only: a legacy install never probed $HOME, so neither does this.
+  const loom = opts.loomRepoDir ?? resolveLoomRepoDir({ home: '' });
   if (loom && isGitRepo(loom) && !repos.includes(loom)) loomAdded = insertRow(db, loom, DEFAULT_SHIP_COMMAND, false, false, git, now);
 
   // A label with no repo of its own belonged to the legacy ship repo.

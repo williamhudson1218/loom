@@ -1,4 +1,4 @@
-// The Settings page: thirteen sections in the mock's frame C layout (a left nav and a
+// The Settings page: fifteen sections in the mock's frame C layout (a left nav and a
 // pane that opens each section with what it does, what it needs and a status pill).
 // Plain browser CSS/HTML/JS in strings, spliced verbatim by dashboard.ts like orchview.ts.
 // String.raw so nothing here needs double escaping; it must never contain a dollar-brace
@@ -122,6 +122,7 @@ var SX_SECS=[
  {id:'watchers',label:'Watchers',what:'Watches a Slack channel, your live chats or pull requests, and starts a chat, messages one, notifies you or tells the orchestrator when a rule matches.',needs:'Slack source: Direct app. Pull requests: gh. Chats: nothing.'},
  {id:'helpers',label:'Helpers',what:'Manages the hooks and skills Loom installs into Claude Code.',needs:'Claude Code on this machine. Loom adds a local plugin; it never edits settings.json.'},
  {id:'advanced',label:'Advanced',what:'Low-level tmux, lane, resource and server settings. Most people never need these.',needs:'Nothing.'},
+ {id:'updates',label:'Updates',what:'Keeps Loom up to date from its GitHub releases: checks, downloads and verifies a new version, then installs it when Loom restarts.',needs:'Loom running as the app, installed in a folder you can write to, such as Applications.'},
  {id:'help',label:'Help',what:'Replays the tour or setup, and lists keyboard shortcuts.',needs:'Nothing.'}
 ];
 var SX_L={claude:'Claude Code',codex:'Codex',ask:'Ask every time',haiku:'Haiku',sonnet:'Sonnet',opus:'Opus',account:'Account default',inside:'Inside Loom',ghostty:'Ghostty',iterm2:'iTerm2',terminal:'Terminal.app',managed:'Managed windows',lanes:'Lanes',zoom:'Zoom',mirror:'Mirror',normal:'Normal',skip:'Skip permissions',send:'Send',park:'Send & park',close:'Send & close',needs_you:'Only when it asks a question',all:'On every report',off:'Off',direct:'Direct app',mcp:'MCP only',system:'System default',auto:'Automatic',on:'Always'};
@@ -203,6 +204,7 @@ function sxStatus(id){var sl=SX.data.slack,mode=sxv('slack_mode'),pl=SX.data.plu
   if(id==='watchers')return sxv('watchers_enabled')?['ok','On']:['off','Off'];
   if(id==='helpers'){if(!pl)return ['off','Checking'];if(pl.status==='installed')return ['ok','Installed'];if(pl.status==='update_available')return ['warn','Update available'];if(pl.status==='not_installed')return ['warn','Not installed'];if(pl.status==='disabled')return ['warn','Disabled'];return ['err','Error'];}
   if(id==='advanced'){var ch=Object.keys(SET.settings).filter(function(k){var s=SET.settings[k];return s.section==='advanced'&&s.source==='stored'&&JSON.stringify(s.value)!==JSON.stringify(s['default']);}).length;return ch?['off',ch+' changed']:['ok','Defaults'];}
+  if(id==='updates')return sxUpdatesStatus();
   return ['ok','Tour and setup'];}
 
 /* ---- sections ---- */
@@ -407,7 +409,7 @@ function sxHelp(){var hk=sxv('slack_goto_hotkey');
    '<div class="def" style="margin-top:12px">Loom data is kept in your Loom data folder; see Advanced.</div>';}
 
 /* ---- the page ---- */
-function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();return sxHelp();}
+function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();if(id==='updates')return sxUpdates();return sxHelp();}
 function renderSettings(){var el=$('#settings-body');
   if(!SET){el.innerHTML='<p class="meta">loading…</p>';sxLoadSettings();return;}
   sxPrefetch();
@@ -463,6 +465,7 @@ function sxStartRec(){SX.rec=true;SX.recMsg='';SX.recH=function(ev){ev.preventDe
   window.addEventListener('keydown',SX.recH,true);}
 function sxPollPractice(){clearTimeout(SX.pollT);sxJ('/api/shortcut/practice').then(function(j){if(!j.ok)return;SX.practice=j.practice;sxRerender();if(j.practice&&j.practice.state==='armed'&&tab==='settings'&&SX.sec==='shortcut')SX.pollT=setTimeout(sxPollPractice,1500);});}
 function sxAct(a,arg,btn){
+  if(a==='updcheck'||a==='updapply'){sxUpdatesAct(a,btn);return;}
   if(a==='prm'){sxConfirm({title:'Remove this project',body:'Loom stops listing its chats. Files and sessions are not touched.',ok:'Remove'}).then(function(y){if(y)sxPost('/api/projects/remove',{id:+arg}).then(function(){sxProjRefresh();});});return;}
   if(a==='phide'){var p=(ALLP||[]).filter(function(x){return x.id===+arg;})[0];if(p)sxPost('/api/projects/update',{id:p.id,hidden:!p.hidden}).then(function(){sxProjRefresh();});return;}
   if(a==='padd'){var inp=$('#sx-newproj');var pick=(window.loomNative&&window.loomNative.pickFolder)?window.loomNative.pickFolder().then(function(pp){return pp?sxPost('/api/projects',{path:pp}):null;}):Promise.resolve(sxPost('/api/projects',{path:(inp&&inp.value||'').trim()}));pick.then(function(j){if(!j)return;if(!j.ok){var m=$('#sx-pmsg');if(m)m.textContent=sxErr(j);return;}sxProjRefresh();});return;}

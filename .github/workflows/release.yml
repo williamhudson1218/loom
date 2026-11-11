@@ -1,0 +1,118 @@
+# Every push to main that changes the app cuts a Loom release: tests, a signed
+# (ad-hoc) arm64 build, the personal-data check, then a GitHub Release with the
+# zip, SHA256SUMS and latest.json. Running Looms find it through
+# releases/latest/download/latest.json and update themselves (src/updater.ts).
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'app/**'
+      - 'plugin/**'
+      - 'bin/**'
+      - 'hooks/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'tsconfig.json'
+      - 'vitest.config.ts'
+      - 'tests/**'
+      - 'scripts/share-app.sh'
+      - 'scripts/release/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+# Rapid pushes: the newest wins, an older run still building is cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - name: Version
+        id: v
+        run: |
+          n=$(git rev-list --count HEAD)
+          echo "version=0.1.$n" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Loom 0.1.$n"
+
+      - name: Install
+        run: |
+          yarn install --frozen-lockfile
+          cd app && yarn install --frozen-lockfile
+
+      - name: Tests
+        run: yarn vitest run
+
+      - name: Restore cached helpers
+        run: scripts/release/helpers.sh fetch
+
+      - name: Build
+        working-directory: app
+        env:
+          LOOM_RELEASE: '1'
+          LOOM_VERSION: ${{ steps.v.outputs.version }}
+          LOOM_COMMIT: ${{ steps.v.outputs.sha }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: yarn dist
+
+      - name: Publish newly built helpers
+        run: scripts/release/helpers.sh publish
+
+      - name: Verify
+        run: |
+          APP=app/release/mac-arm64/Loom.app
+          codesign --verify --deep --strict "$APP"
+          got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
+          [ "$got" = "${{ steps.v.outputs.version }}" ] || { echo "built $got, expected ${{ steps.v.outputs.version }}"; exit 1; }
+          for h in "$APP"/Contents/Helpers/*/Loom.app; do echo "$h: $(codesign -dvvv "$h" 2>&1 | sed -n 's/^CDHash=//p')"; done
+          scripts/release/check-personal-data.sh "$APP"
+
+      - name: Package
+        id: pkg
+        run: |
+          v=${{ steps.v.outputs.version }}
+          mkdir -p out
+          zip=$(scripts/share-app.sh app/release/mac-arm64/Loom.app "out/Loom-$v-arm64.zip")
+          prev=$(git tag -l 'v0.*' --sort=-v:refname | head -1)
+          if [ -n "$prev" ]; then git log --no-merges --format='%s' "$prev..HEAD" > out/notes.txt; else git log --no-merges --format='%s' -20 > out/notes.txt; fi
+          node scripts/release/latest.mjs "$v" "${{ steps.v.outputs.sha }}" "$zip" out/latest.json out/notes.txt
+          (cd out && shasum -a 256 "Loom-$v-arm64.zip" latest.json > SHA256SUMS)
+          cat out/SHA256SUMS
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Release
+        run: |
+          v=${{ steps.v.outputs.version }}
+          {
+            echo "Loom $v ($(git rev-parse --short HEAD))"
+            echo
+            sed 's/^/- /' out/notes.txt
+            echo
+            echo "Install: download Loom-$v-arm64.zip, unzip, move Loom to Applications, open it, then System Settings > Privacy & Security > Open Anyway. Running copies update themselves."
+          } > out/body.md
+          gh release create "v$v" --target "${{ steps.v.outputs.sha }}" --title "Loom $v" --notes-file out/body.md --latest \
+            "${{ steps.pkg.outputs.zip }}" out/SHA256SUMS out/latest.json

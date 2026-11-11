@@ -5,12 +5,12 @@ import type Database from 'better-sqlite3';
 import { defaultRunner, type Runner } from './probe.ts';
 import { getSetting, onSettingChanged, setSetting } from './settingsSchema.ts';
 import { TOOL_DIR } from './paths.ts';
+import { resolveLoomRepoDir } from './repodir.ts';
 
 // Plugin manager (design §4): installs, updates and removes the Loom Claude Code
 // plugin. Loom never edits ~/.claude/settings.json; it asks `claude plugin ...` to,
 // and only reads that file to list legacy hook entries the plugin replaces.
 
-declare const __LOOM_REPO_DIR__: string | undefined;
 
 export const MARKETPLACE_NAME = 'loom-local';
 export const PLUGIN_NAME = 'loom';
@@ -82,7 +82,8 @@ export function bundledPluginDir(): string | null {
   if (env) candidates.push(env);
   const res = (process as { resourcesPath?: string }).resourcesPath;
   if (res) candidates.push(path.join(res, 'plugin'));
-  if (typeof __LOOM_REPO_DIR__ === 'string' && __LOOM_REPO_DIR__) candidates.push(path.join(__LOOM_REPO_DIR__, 'plugin'));
+  const repo = resolveLoomRepoDir();
+  if (repo) candidates.push(path.join(repo, 'plugin'));
   candidates.push(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'plugin'));
   for (const c of candidates) {
     try {

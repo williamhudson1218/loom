@@ -43,6 +43,7 @@ afterEach(() => {
 const DESIGN_KEYS = [
   'default_agent', 'summary_model', 'analyze_cap', 'analyze_concurrency', 'active_window_days', 'new_thread_dir', 'notify_sound',
   'claude_bin', 'extra_path', 'codex_visible',
+  'auto_update',
   'terminal', 'launch_target', 'lane_view', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
   'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill',
   'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_client_id', 'slack_reconnect', 'slack_poll_parked', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_goto_confirm_new', 'slack_ax_last_result',
@@ -60,6 +61,7 @@ const DESIGN_KEYS = [
 // what the pre-registry code did with no row (the comment names where), so an
 // existing install sees no change until its migration writes rows.
 const TODAY: Record<string, unknown> = {
+  auto_update: true,
   default_agent: 'claude', // db.getDefaultAgent
   summary_model: 'account', // analyzer passes no --model
   analyze_cap: ANALYZE_CAP,

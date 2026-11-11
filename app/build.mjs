@@ -3,9 +3,16 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { helperCacheKey, helperInfoPlist, shouldRebuild, CACHE_VERSION } from './nativecache.mjs';
+import { HELPERS, helperKeyFor, helperInfoPlist, shouldRebuild, CACHE_VERSION } from './nativecache.mjs';
+import { buildInfo } from './version.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// A release build (CI, LOOM_RELEASE=1) is downloaded by other people: it must not
+// carry the build machine's checkout path, so it stamps '' and src/repodir.ts
+// looks for a checkout at run time instead.
+const RELEASE = process.env.LOOM_RELEASE === '1';
+const BUILD = buildInfo(REPO_ROOT);
+console.log(`loom ${BUILD.version} (${BUILD.commit.slice(0, 12)}, ${BUILD.channel})`);
 
 // Bundle the Electron main process + all imported ../src/*.ts into one CJS file.
 // better-sqlite3 stays external (native, loaded from node_modules at runtime).
@@ -30,7 +37,8 @@ await build({
   external: ['electron', 'better-sqlite3', 'node-pty', 'bufferutil', 'utf-8-validate'],
   define: {
     'import.meta.url': '"loom-bundled"',
-    __LOOM_REPO_DIR__: JSON.stringify(REPO_ROOT),
+    __LOOM_REPO_DIR__: JSON.stringify(RELEASE ? '' : REPO_ROOT),
+    __LOOM_BUILD__: JSON.stringify(BUILD),
   },
   logLevel: 'info',
 });
@@ -92,12 +100,10 @@ console.log('copied dist/vendor (xterm)');
 // electron-builder ships both under Contents/Helpers (package.json extraFiles).
 // They are ad-hoc signed, and macOS keys an ad-hoc grant to the code hash, so a
 // helper is only rebuilt when its inputs change (nativecache.mjs): a normal Loom
-// update keeps every grant. Two bundles, not one, so editing the Slack reader
+// update keeps every grant. A release build (CI) first restores the helper bundle
+// last built from the same inputs from the repo's `helpers` release
+// (scripts/release/helpers.sh), so every user gets those exact bytes. Two bundles, not one, so editing the Slack reader
 // does not also re-prompt for the Keychain. Needs the Xcode command line tools.
-const HELPERS = [
-  { dir: 'ax', exe: 'loom-ax', id: 'com.loom.app.ax', src: 'native/loom-ax.swift' },
-  { dir: 'keychain', exe: 'loom-keychain', id: 'com.loom.app.keychain', src: 'native/loom-keychain.swift' },
-];
 fs.mkdirSync('build-native', { recursive: true });
 // The pre-bundle outputs; nothing reads them any more.
 for (const old of ['slack-ax', 'loom-keychain']) fs.rmSync(path.join('build-native', old), { force: true });
@@ -106,9 +112,7 @@ for (const h of HELPERS) {
   const bundle = path.join('build-native', h.dir, 'Loom.app');
   const keyFile = path.join('build-native', h.dir, 'Loom.app.key');
   const plist = helperInfoPlist({ id: h.id, exe: h.exe, version: String(CACHE_VERSION) });
-  // Not the compiler version: a Command Line Tools update would otherwise rebuild
-  // every helper and revoke every grant, for no change a user could see.
-  const key = helperCacheKey([fs.readFileSync(h.src), plist, icon, h.id, h.exe]);
+  const key = helperKeyFor(h, '.');
   let bundleValid = false;
   try {
     execFileSync('codesign', ['--verify', '--strict', bundle], { stdio: 'ignore' });
