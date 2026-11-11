@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import { tmux } from './tmux.ts';
+import { runOsascript } from './nativehelpers.ts';
 import { isViewSession, paneHome } from './tmux.ts';
 import { parseLane } from './compact.ts';
 import { openDb } from './db.ts';
@@ -367,7 +368,7 @@ export function forgetTerminalMemo(): void {
 
 export const realJumpDeps = (): JumpDeps => ({
   tmux: (a) => tmux(a),
-  osascript: (script, args) => execFileSync('osascript', ['-e', script, ...args], { encoding: 'utf-8' }),
+  osascript: (script, args) => runOsascript(script, args),
   open: (app) => {
     execFileSync('open', ['-a', app]);
   },

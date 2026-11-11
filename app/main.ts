@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, Notification, shell, screen } from 'electron';
 import { loadWinState, saveWinState, restoreBounds } from '../src/winstate.ts';
-import { startPick, stopHelper, axTrusted, warmPicker, endPick, askNewThread, pickEvent, type GotoOutcome } from './picker.ts';
+import { startPick, stopHelper, axTrusted, axRequest, warmPicker, endPick, askNewThread, pickEvent, type GotoOutcome } from './picker.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -675,9 +675,12 @@ ipcMain.handle('loom:pick-folder', async (event) => {
   return r.canceled ? '' : (r.filePaths[0] ?? '');
 });
 
-// Accessibility for the Slack reader, polled by the shortcut step. Only Loom's own page may ask.
+// Accessibility for the helper (the Slack reader and terminal scripting), polled by the
+// wizard's macOS access and shortcut steps and by Settings. Only Loom's own page may ask.
 const fromOwnPage = (event: Electron.IpcMainInvokeEvent) => !!event.senderFrame?.url.startsWith(`http://localhost:${SERVER_PORT}/`);
 ipcMain.handle('loom:ax-status', async (event) => (fromOwnPage(event) ? axTrusted() : { trusted: false, helperDown: false }));
+// The Grant button: macOS's own Accessibility prompt, for the helper that needs it.
+ipcMain.handle('loom:ax-request', async (event) => (fromOwnPage(event) ? axRequest() : { trusted: false, helperDown: false }));
 ipcMain.handle('loom:open-accessibility', async (event) => {
   if (fromOwnPage(event)) await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
 });

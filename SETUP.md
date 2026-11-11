@@ -14,7 +14,7 @@ How to build Loom on a Mac and what to expect on first launch. For what Loom is,
 | tmux | Keeps chats alive when Loom quits and is how Loom types into them | `setup.sh` installs it with Homebrew if missing. It warns on 3.6a, which crashes in copy-mode. Loom runs its own server (`tmux -L loom`, config `~/.loom/tmux.conf`), so your tmux and `~/.tmux.conf` are untouched. |
 | Claude Code (`claude`), logged in | Loom resumes chats with it and summarizes them with headless `claude -p` | Loom has no credentials of its own. It uses your Claude Code login. |
 | python3 | The plugin's hooks and the `loom` command use it | Included with the macOS Command Line Tools. |
-| Swift compiler (`swiftc`) | Build time only. Compiles the Keychain helper and the Slack shortcut helper | Included with the Xcode Command Line Tools (`xcode-select --install`). |
+| Swift compiler (`swiftc`) | Build time only. Compiles the Keychain helper and the Accessibility helper (the Slack shortcut and terminal tab focus) | Included with the Xcode Command Line Tools (`xcode-select --install`). |
 | Free TCP port 4317 | Loom serves its dashboard on `127.0.0.1:4317` | Single instance. Changeable in Settings › Advanced › Port. |
 
 Optional:
@@ -58,6 +58,7 @@ Loom opens the wizard on first launch. Only the **Requirements** step blocks you
 |---|---|
 | Projects | Pick the folders you work in. Chats are grouped by project and new chats start there. |
 | Terminal | Inside Loom (default), Ghostty, iTerm2 or Terminal.app. |
+| macOS access | Accessibility for the Slack shortcut and Ghostty tab focus, with a Grant access button and live status. See section 6. |
 | Agent permissions | Normal (default) or skip permissions, for chats, watcher chats and the orchestrator. |
 | Loom plugin | Installs the plugin. Loom shows the exact `claude plugin` commands first. |
 | Slack connection | Direct app, MCP only, or off. See section 5. |
@@ -137,12 +138,29 @@ To disconnect, use Settings › Slack › Disconnect. It deletes the token from 
 
 ## 6. macOS permissions and the shortcut
 
-Grant these to **Loom.app** in System Settings › Privacy & Security. Grant only what you use. The embedded terminal, the sidebar, the orchestrator and the Outbox need none of them.
+Loom appears as **Loom**, with its icon, everywhere macOS asks. The wizard's **macOS access** step (and Settings › Terminal and Settings › Shortcut) shows whether Accessibility is on and has a **Grant access** button. Grant only what you use. The embedded terminal, the sidebar, the orchestrator and the Outbox need none of them.
 
-- **Accessibility.** Needed for the Slack shortcut (<kbd>⌘⇧L</kbd>, or the key you choose in Settings › Shortcut), which reads the message under the pointer, and for Ghostty tab focus. After you grant it, press the shortcut again. The wizard's shortcut step can test it.
-- **Automation.** Needed only for an external terminal: Ghostty (and System Events), iTerm2 or Terminal.app. Without it tmux still selects the pane; only the window or tab focus fails, and Loom says so.
+- **Accessibility** (System Settings › Privacy & Security › Accessibility, the row named **Loom**). Needed for the Slack shortcut (<kbd>⌘⇧L</kbd>, or the key you choose in Settings › Shortcut), which reads the message under the pointer, and for Ghostty tab focus. Grant access shows the macOS prompt and adds the row switched off; switch it on. After you grant it, press the shortcut again. The wizard's shortcut step can test it.
+- **Automation** (Privacy & Security › Automation, under **Loom**). Needed only for an external terminal: Ghostty (and System Events), iTerm2 or Terminal.app. macOS asks "“Loom” wants access to control …" the first time Loom reads or switches a tab; choose Allow. Without it tmux still selects the pane; only the window or tab focus fails, and Loom says so.
+- **Keychain.** With Slack Direct, Loom keeps its token in the login Keychain. If macOS asks whether **Loom** may use "Loom Slack token", enter your login password and choose **Always Allow**.
 
-The app is unsigned. If you built it locally it opens directly. If you downloaded or moved it and macOS objects, run `xattr -dr com.apple.quarantine /Applications/Loom.app` or right-click it and choose Open once.
+The row named Loom belongs to a small helper inside the app (`Loom.app/Contents/Helpers/ax/Loom.app`), not to Loom.app itself. Loom.app is re-signed on every build, and macOS ties an unsigned app's permission to its exact code, so a permission held by Loom.app would be lost on every update. The helper is rebuilt only when its own source changes, so its permissions survive ordinary updates. When a release does change it, the old row stops working and macOS asks again: remove the old Loom row with the minus button, then grant the new one.
+
+## 6a. Sharing Loom
+
+Loom is not signed with an Apple Developer ID or notarized, so a copy someone downloads needs one extra step the first time. It is ad-hoc signed with a valid seal, so macOS treats it as an unverified app, not a damaged one.
+
+To make the file: `cd app && yarn dist`, then `scripts/share-app.sh`. It checks the signature and writes `app/release/Loom-<version>-<arch>.zip`. Build on the same kind of Mac (Apple Silicon or Intel) as the person you are sending it to.
+
+On the other Mac (macOS 15 or later):
+
+1. Unzip it and drag **Loom** into Applications.
+2. Open Loom. macOS says "Apple could not verify “Loom” is free of malware". Choose **Done** (not Move to Trash).
+3. Open System Settings › Privacy & Security, scroll to Security, and click **Open Anyway** next to "“Loom” was blocked". Authenticate, then choose **Open Anyway** in the dialog. This is needed once per copy. Right-click › Open no longer skips this on macOS 15.
+4. Or, instead of steps 2 and 3, run `xattr -dr com.apple.quarantine /Applications/Loom.app` in Terminal, then open Loom normally.
+5. Loom starts the setup wizard. In **macOS access**, choose Grant access and switch on **Loom** in Accessibility for the Slack shortcut or Ghostty tab focus. Automation and Keychain are asked for when first used, as above.
+
+If macOS ever says "Loom is damaged and can't be opened", the copy's signature is broken (an older build, or a bundle edited after signing). Rebuild with `yarn dist` and share it again.
 
 ## 7. Watchers and Ship
 

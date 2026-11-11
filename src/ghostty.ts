@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { DEFAULT_SOCKET, tmuxSocket } from './tmux.ts';
+import { runOsascript } from './nativehelpers.ts';
 
 export interface OpenTabsResult {
   ok: boolean;
@@ -128,7 +129,7 @@ export function windowsFromTabs(tabs: GhosttyTab[]): GhosttyWindow[] {
 // granted) just means "no windows to reuse", which degrades to opening new ones.
 export function readGhosttyWindows(): GhosttyWindow[] {
   try {
-    return parseWindows(execFileSync('osascript', ['-e', READ_TABS_SCRIPT], { encoding: 'utf-8' }));
+    return parseWindows(runOsascript(READ_TABS_SCRIPT));
   } catch {
     return [];
   }
@@ -433,7 +434,7 @@ export interface AttachOpts {
 // Attach each session to a Ghostty tab in the window it was saved in, reusing
 // the windows and tabs already on screen and only opening new ones when there
 // aren't enough. Best-effort keystroke automation (requires Accessibility
-// permission, same as goto.ts). If Ghostty isn't running it's launched first and
+// permission, same as goto.ts; see runOsascript for whose). If Ghostty isn't running it's launched first and
 // its initial empty window is reused like any other free window.
 export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): OpenTabsResult {
   const none = { ok: true, opened: 0, reused: 0, leftover: 0, script: '' };
@@ -465,13 +466,13 @@ export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): Op
   if (opts.dryRun) return { ok: true, ...counts, detail: 'dry-run', script };
 
   try {
-    execFileSync('osascript', ['-e', script], { encoding: 'utf-8' });
+    runOsascript(script);
     return { ok: true, ...counts, detail, script };
   } catch (e) {
     return {
       ...none,
       ok: false,
-      detail: 'osascript failed (grant Accessibility to your terminal): ' + (e as Error).message,
+      detail: 'osascript failed (grant Accessibility: "Loom" in the Loom app, your terminal from the command line): ' + (e as Error).message,
       script,
     };
   }

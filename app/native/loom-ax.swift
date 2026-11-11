@@ -1,8 +1,19 @@
-// slack-ax: reads which Slack message is at a screen point, via macOS
-// Accessibility. Long-lived: one JSON request per stdin line, one JSON reply per
-// stdout line, so Loom's pick overlay can hit-test as the mouse moves without a
-// spawn per move. Read-only toward Slack: it sets AXManualAccessibility (which
-// makes Slack's Electron renderer expose its DOM tree) and reads attributes.
+// loom-ax: Loom's Accessibility helper. It is the main executable of a small
+// helper bundle (Contents/Helpers/ax/Loom.app, bundle id com.loom.app.ax, see
+// app/build.mjs), so its Privacy & Security rows read "Loom" with Loom's icon.
+// Two modes:
+//
+//   loom-ax                 the Slack reader: which Slack message is at a screen
+//                           point. Long-lived: one JSON request per stdin line, one
+//                           JSON reply per stdout line, so the pick overlay can
+//                           hit-test as the mouse moves without a spawn per move.
+//                           Read-only toward Slack: it sets AXManualAccessibility
+//                           (which makes Slack's Electron renderer expose its DOM
+//                           tree) and reads attributes.
+//   loom-ax osascript ARGS  runs /usr/bin/osascript ARGS as this helper's child, so
+//                           the Ghostty / iTerm2 / Terminal.app scripting Loom does
+//                           is charged to this helper's Accessibility and Automation
+//                           grants. stdio is inherited; the exit status is relayed.
 //
 //   {"op":"trust","prompt":false}      -> {"trusted":true}
 //   {"op":"hit","x":900,"y":400}       -> {"ok":true,"url":"…","rect":{x,y,w,h},"inThread":false,"rootUrl":null,"text":"…","author":"…"}
@@ -141,7 +152,7 @@ func describe(_ item: AXUIElement, _ list: AXUIElement?, withRoot: Bool) -> [Str
 /// (the pick overlay) are skipped. Owner pids and bounds need no extra grant.
 func slackOnTop(_ x: Double, _ y: Double) -> Bool {
   guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return true }
-  let me = getppid()
+  let me = ownerPid
   for w in info {
     guard (w[kCGWindowLayer as String] as? Int) == 0,
           let pid = w[kCGWindowOwnerPID as String] as? pid_t, pid != me,
@@ -220,17 +231,23 @@ func reply(_ obj: [String: Any]) {
 
 // ---------- run as our own responsible process ----------
 //
-// macOS charges a child's Accessibility use to its "responsible" process, the
-// app that launched it: here Loom.app. tccd validates that app's signature on
-// disk, and an electron-builder bundle with no identity fails static validation
-// (the Electron ad-hoc seal no longer matches the resources), so Loom passes
-// AXIsProcessTrusted in-process while this helper is refused. So the helper
-// re-launches itself with responsibility disclaimed: it becomes its own
-// responsible process, gets its own "slack-ax" row in Privacy & Security ›
-// Accessibility, and that grant holds as long as this binary is unchanged.
-// stdin/stdout/stderr are inherited, so the parent just waits and relays the
-// exit status; the child leaves when its parent does.
-let DISCLAIMED = "LOOM_SLACK_AX_DISCLAIMED"
+// macOS charges a child's Accessibility and Automation use to its "responsible"
+// process, the app that launched it: here Loom.app. Loom.app is re-sealed on
+// every build (app/afterpack.cjs), and an ad-hoc grant is keyed to the code
+// hash, so a grant held by Loom.app would be revoked by every update. This
+// helper is built once per source change and cached (app/build.mjs), so its
+// hash, and the grant on it, survive a normal Loom update.
+//
+// So the helper re-launches itself with responsibility disclaimed: it becomes
+// its own responsible process and gets its own "Loom" row in Privacy & Security
+// › Accessibility. Children it spawns (osascript mode) inherit that
+// responsibility. stdin/stdout/stderr are inherited, so the launcher just waits
+// and relays the exit status; the child leaves when its launcher does.
+let DISCLAIMED = "LOOM_AX_DISCLAIMED"
+let OWNER = "LOOM_AX_OWNER_PID"
+// The process that started the launcher (Loom). Its windows (the pick overlay)
+// are not Slack's, so slackOnTop skips them.
+let ownerPid: pid_t = getenv(OWNER).flatMap { pid_t(String(cString: $0)) } ?? getppid()
 typealias SetDisclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
 if getenv(DISCLAIMED) == nil, let sym = dlsym(dlopen(nil, RTLD_NOW), "responsibility_spawnattrs_setdisclaim") {
   let setDisclaim = unsafeBitCast(sym, to: SetDisclaim.self)
@@ -238,6 +255,7 @@ if getenv(DISCLAIMED) == nil, let sym = dlsym(dlopen(nil, RTLD_NOW), "responsibi
   posix_spawnattr_init(&attr)
   _ = setDisclaim(&attr, 1)
   setenv(DISCLAIMED, "1", 1)
+  setenv(OWNER, String(getppid()), 1)
   let path = CommandLine.arguments[0]
   var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.arguments.map { strdup($0) } + [nil]
   var child: pid_t = 0
@@ -250,13 +268,30 @@ if getenv(DISCLAIMED) == nil, let sym = dlsym(dlopen(nil, RTLD_NOW), "responsibi
     exit((status & 0x7f) == 0 ? (status >> 8) & 0xff : 1)
   }
   // Could not re-launch: carry on undisclaimed rather than not at all.
-  fputs("slack-ax: disclaimed spawn failed (\(rc)); running attributed to the parent\n", stderr)
+  fputs("loom-ax: disclaimed spawn failed (\(rc)); running attributed to the parent\n", stderr)
 } else if getenv(DISCLAIMED) != nil {
   // Our launcher is the process Loom holds; if it goes, so do we.
   let launcher = getppid()
   Thread.detachNewThread {
     while true { sleep(1); if getppid() != launcher { exit(0) } }
   }
+}
+
+// ---------- osascript mode ----------
+//
+// A plain child, not an exec: an exec'd osascript would be its own responsible
+// process (com.apple.osascript), while a child inherits ours.
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "osascript" {
+  let args = ["osascript"] + CommandLine.arguments.dropFirst(2)
+  var argv: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) } + [nil]
+  var child: pid_t = 0
+  let rc = posix_spawn(&child, "/usr/bin/osascript", nil, nil, &argv, environ)
+  if rc != 0 { fputs("loom-ax: could not run osascript (\(rc))\n", stderr); exit(1) }
+  childPid = child
+  for sig in [SIGTERM, SIGINT, SIGHUP] { signal(sig) { s in kill(childPid, s); exit(1) } }
+  var status: Int32 = 0
+  while waitpid(child, &status, 0) == -1 && errno == EINTR {}
+  exit((status & 0x7f) == 0 ? (status >> 8) & 0xff : 1)
 }
 
 setvbuf(stdout, nil, _IOLBF, 0)

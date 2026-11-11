@@ -21,14 +21,15 @@ The wizard steps:
 1. **Requirements.** tmux, Claude Code (logged in) and python3 must be present.
 2. **Projects.** The folders you work in.
 3. **Terminal.** Where Jump and Resume open a chat. The default is inside Loom.
-4. **Agent permissions.** Whether chats Loom starts ask before running commands. The default is normal permissions.
-5. **Loom plugin.** Installs the hooks and skills that connect chats to Loom.
-6. **Slack connection.** Direct app, MCP only, or off.
-7. **Slack shortcut.** Shown when Slack is on.
-8. **Ship.** The repos you ship from.
-9. **Orchestrator.** A supervising chat. Off by default.
-10. **Watchers.** Rules that react to events. Off by default.
-11. **Done.** A summary of what is on and off, then a short tour.
+4. **macOS access.** Accessibility for the Slack shortcut and Ghostty tab focus, granted to the row named Loom. Optional.
+5. **Agent permissions.** Whether chats Loom starts ask before running commands. The default is normal permissions.
+6. **Loom plugin.** Installs the hooks and skills that connect chats to Loom.
+7. **Slack connection.** Direct app, MCP only, or off.
+8. **Slack shortcut.** Shown when Slack is on.
+9. **Ship.** The repos you ship from.
+10. **Orchestrator.** A supervising chat. Off by default.
+11. **Watchers.** Rules that react to events. Off by default.
+12. **Done.** A summary of what is on and off, then a short tour.
 
 You can reopen the tour or the wizard from Settings › Help (**Take the tour**, **Run setup again**).
 
@@ -117,7 +118,7 @@ The token expires about every 12 hours and Loom refreshes it on its own. The ref
 
 Press <kbd>⌘⇧L</kbd> anywhere. Loom shows a crosshair over every display and outlines the Slack message under the pointer. Click one, and Loom jumps to the chat that owns that thread, or starts a chat for it in the project mapped to that channel (Settings › Slack › Channel folders). <kbd>Esc</kbd> cancels. You can change the key in Settings › Shortcut.
 
-Loom reads the message through the macOS Accessibility API, so grant **Loom.app** Accessibility in System Settings › Privacy & Security › Accessibility. If a message cannot be read, Loom can fall back to the link you copy (the clipboard fallback). The Accessibility grant is also what Ghostty tab focus needs. The embedded terminal needs no permissions at all.
+Loom reads the message through the macOS Accessibility API, so switch on **Loom** in System Settings › Privacy & Security › Accessibility (the setup wizard's macOS access step has a Grant access button). If a message cannot be read, Loom can fall back to the link you copy (the clipboard fallback). The Accessibility grant is also what Ghostty tab focus needs. The embedded terminal needs no permissions at all.
 
 ## Watchers and templates
 
@@ -186,7 +187,7 @@ yarn test
 
 Build the app by hand with `cd app && yarn install && yarn build && yarn rebuild && yarn dist`. Install it with `scripts/install-app.sh`, which quits a running Loom, swaps the bundle in and relaunches. Never delete and copy over a running Loom; opening it mid-copy crashes it.
 
-The app is unsigned. Built locally it opens directly.
+The app is not signed with a Developer ID or notarized; it is ad-hoc signed. Built locally it opens directly. To give it to someone else, zip it with `scripts/share-app.sh` and see [Sharing Loom](SETUP.md#6a-sharing-loom) for the one-time Open Anyway step on their Mac.
 
 ## License
 

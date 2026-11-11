@@ -45,8 +45,8 @@ function walkTo(id: StepId, ctx: WizardCtx = direct): WizardState {
 }
 
 describe('the step list', () => {
-  it('has the 12 steps in the design order', () => {
-    expect(STEP_IDS).toEqual(['welcome', 'requirements', 'projects', 'terminal', 'permissions', 'plugin', 'slack', 'shortcut', 'ship', 'orchestrator', 'watchers', 'done']);
+  it('has the 13 steps in the design order', () => {
+    expect(STEP_IDS).toEqual(['welcome', 'requirements', 'projects', 'terminal', 'macos', 'permissions', 'plugin', 'slack', 'shortcut', 'ship', 'orchestrator', 'watchers', 'done']);
     expect(STEPS.map((s) => s.id)).toEqual([...STEP_IDS]);
   });
   it('blocks only requirements; only welcome, requirements and done cannot be skipped', () => {
@@ -71,8 +71,8 @@ describe('guards', () => {
     expect(isVisible('shortcut', mcp)).toBe(true);
     expect(isVisible('shortcut', off)).toBe(false);
     for (const id of STEP_IDS) if (id !== 'shortcut') expect(isVisible(id, off)).toBe(true);
-    expect(visibleSteps(off)).toHaveLength(11);
-    expect(visibleSteps(direct)).toHaveLength(12);
+    expect(visibleSteps(off)).toHaveLength(12);
+    expect(visibleSteps(direct)).toHaveLength(13);
   });
   it('next and previous skip a hidden step', () => {
     expect(nextVisible('slack', direct)).toBe('shortcut');
@@ -301,8 +301,8 @@ describe('rail and progress', () => {
     expect(rail(s, off).find((x) => x.id === 'shortcut')!.visible).toBe(false);
   });
   it('counts only visible steps', () => {
-    expect(progress(freshState(), direct)).toEqual({ index: 1, total: 12, percent: 8 });
-    expect(progress(walkTo('ship', off), off)).toEqual({ index: 8, total: 11, percent: 73 });
+    expect(progress(freshState(), direct)).toEqual({ index: 1, total: 13, percent: 8 });
+    expect(progress(walkTo('ship', off), off)).toEqual({ index: 9, total: 12, percent: 75 });
     expect(progress(walkTo('done'), direct).percent).toBe(100);
   });
 });

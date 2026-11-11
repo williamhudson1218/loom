@@ -228,14 +228,14 @@ function sxProjects(){if(!ALLP)return '<p class="sxempty">loading…</p>';var cp
   return (rows?'<div class="sxtbl"><table><tr><th>Name</th><th>Folder</th><th>Slack channels</th><th>Chats</th><th></th></tr>'+rows+'</table></div>':'<p class="sxempty">No folders yet. Add the folders you work in so New thread can start chats there.</p>')+
    '<div class="sxrow">'+(nat?'':'<input type="text" id="sx-newproj" class="mono" placeholder="/absolute/path/to/folder" style="width:300px">')+sxBtn('padd','+ Add folder…',{sm:false})+'<span class="def" id="sx-pmsg">Removing a project hides its chats from the list. It never deletes files or sessions.</span></div>';}
 function sxAxRow(){var a=SX.ax;var pill=!a?sxPill('off','Checking'):a.unavailable?sxPill('off','Only in the Loom app'):a.helperDown?sxPill('warn','Helper not running'):a.trusted?sxPill('ok','Granted'):sxPill('warn','Not granted');
-  return pill+(a&&!a.unavailable&&!a.trusted?sxBtn('axopen','Open System Settings'):'');}
+  return pill+(a&&!a.unavailable&&!a.helperDown&&!a.trusted?sxBtn('axgrant','Grant access')+sxBtn('axopen','Open System Settings',{ghost:true}):'');}
 function sxTerminal(){var T=SET.terminal||{};
   return sxKey('terminal',{kind:'select',title:'Open chats in',help:'Where Jump and Open in external terminal land.',eff:T.effective,noDef:true,note:T.stored?'':'<span class="def">Not set: using '+sxEsc(T.label||T.effective)+'.</span>'})+
    sxKey('launch_target',{kind:'seg',title:'Where new chats run',help:'Managed windows are created and closed by Loom, one tmux window per chat. Lanes are numbered tmux sessions you arrange yourself (see Advanced).',eff:(SET.launch_target||{}).effective,labels:{managed:'Managed windows',lanes:'Lanes'}})+
    sxGrp('Ghostty')+
    sxKey('ghostty_rehome',{title:'Re-home tabs after a restore',help:'After tmux restarts, reattach each session to its Ghostty tab. Applies only when Ghostty is the terminal.'})+
    sxKey('ghostty_attach_cmd',{title:'Attach command typed into a tab',help:'The command Loom types to attach a tab to its session.',mono:true,noDef:false})+
-   sxRow('macOS permissions','Accessibility and Automation, needed to read and click Ghostty tabs.',sxAxRow())+
+   sxRow('macOS permissions','Accessibility (the "Loom" row in Privacy & Security) reads and switches Ghostty tabs. macOS asks for Automation the first time Loom switches a tab.',sxAxRow())+
    sxGrp('Pane appearance')+
    sxKey('pane_labels',{title:'Pane labels (topic and stage)',help:'A short title and a stage glyph on each tmux pane border. Costs one small model call per change.',after:sxKey_sel('pane_label_model')})+
    sxKey('pane_tint',{title:'Tint stale panes',help:'Fade panes that have been idle. Colours derive from the base colour.',after:sxKey_text('pane_tint_base')});}
@@ -299,7 +299,7 @@ function sxShortcut(){var hk=sxv('slack_goto_hotkey'),sa=SX.data.slackapp,pr=SX.
   var h=sxRow('Shortcut','Global. Works while Slack is focused. Default ⌘⇧L. Needs a modifier key.',recbox+sxBtn('srec',SX.rec?'Cancel':'Record')+sxBtn('sreset','Reset',{ghost:true})+sxBtn('soff','Turn off',{ghost:true}));
   if(SX.recMsg)h+=sxNote(sxEsc(SX.recMsg),SX.recKind||'');
   h+=sxRow('Slack desktop app','The browser version cannot be read.',!sa?sxPill('off','Checking'):sa.found?sxPill('ok','Found'):sxPill('warn','Not found'));
-  h+=sxRow('Accessibility','Lets Loom see which message is under the pointer.',sxAxRow());
+  h+=sxRow('Accessibility','The "Loom" row in Privacy & Security › Accessibility. Lets Loom see which message is under the pointer.',sxAxRow());
   h+=sxKey('slack_paste_fallback',{title:'If the message cannot be read',help:'Slack changes its page structure now and then. The fallback asks you to paste the thread link.',after:'<span class="def">Show a paste-link box</span>'});
   h+=sxKey('slack_goto_confirm_new',{title:'Ask before starting a new chat',help:'When no chat owns the thread, Loom asks for optional context first. Off starts the chat at once.',after:'<span class="def">Ask first</span>'});
   var res='';if(pr&&pr.state==='armed')res=sxPill('warn','Waiting for the shortcut…')+sxBtn('pcancel','Cancel');
@@ -461,6 +461,7 @@ function sxAct(a,arg,btn){
   if(a==='psave'){var ta=$('#sx-prompt');if(!ta)return;var pd=SX.data.prompt;var txt3=ta.value;if(pd&&txt3.trim()===pd['default'].trim())txt3='';sxJ('/api/orchestrator/prompt-override',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({text:txt3})}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast(j.active==='override'?'Prompt saved':'Using the default prompt');sxLoad('prompt',true);});return;}
   if(a==='preset'){sxJ('/api/orchestrator/prompt-override',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({text:''})}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast('Using the default prompt');sxLoad('prompt',true);});return;}
   if(a==='openlogs'){sxPost('/api/logs/open',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));});return;}
+  if(a==='axgrant'){if(window.loomNative&&window.loomNative.axRequest)window.loomNative.axRequest().then(function(r){SX.ax=r;sxRerender();}).catch(function(){});else if(window.loomNative&&window.loomNative.openAccessibility)window.loomNative.openAccessibility();setTimeout(sxAx,1500);return;}
   if(a==='axopen'){if(window.loomNative&&window.loomNative.openAccessibility)window.loomNative.openAccessibility();setTimeout(sxAx,1500);return;}
   if(a==='smode'){sxPost('/api/slack/mode',{mode:arg}).then(function(j){if(!j.ok)sxBad(sxErr(j));return sxLoadSettings();}).then(function(){DATA.slackMode=sxv('slack_mode');sxLoad('slack',true);});return;}
   if(a==='sconn'){var tk=$('#sx-tok');var tv=tk?tk.value.trim():'';if(!tv){sxBad('Paste the token first');return;}sxPost('/api/slack/token',{token:tv}).then(function(j){if(!j.ok){sxBad(sxErr(j));return;}SX.pwOpen=false;toast('Slack connected');sxLoadSettings().then(function(){DATA.slackMode=sxv('slack_mode');sxLoad('slack',true);});});return;}

@@ -21,10 +21,13 @@
     "files": ["dist/**", "node_modules/**", "package.json"],
     "asarUnpack": ["**/node_modules/better-sqlite3/**", "**/node_modules/node-pty/**", "dist/orchmcp.js"],
     "extraResources": [
-      { "from": "build-native/slack-ax", "to": "slack-ax" },
-      { "from": "build-native/loom-keychain", "to": "loom-keychain" },
       { "from": "build-plugin", "to": "plugin" }
     ],
+    "extraFiles": [
+      { "from": "build-native/ax/Loom.app", "to": "Helpers/ax/Loom.app" },
+      { "from": "build-native/keychain/Loom.app", "to": "Helpers/keychain/Loom.app" }
+    ],
+    "afterPack": "./afterpack.cjs",
     "mac": {
       "target": "dir",
       "icon": "assets/icon.icns",

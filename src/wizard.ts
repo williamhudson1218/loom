@@ -11,6 +11,7 @@ export const STEP_IDS = [
   'requirements',
   'projects',
   'terminal',
+  'macos',
   'permissions',
   'plugin',
   'slack',
@@ -60,6 +61,12 @@ export const STEPS: readonly StepMeta[] = [
     id: 'terminal', title: 'Terminal', optional: true, blocking: false, skippable: true,
     why: 'Chooses where a chat opens when you click Jump or Resume.',
     unlocks: ['Inside Loom: a built-in terminal, no permissions needed', 'External terminals: jump to the existing tab (needs macOS permissions)'],
+  },
+  {
+    // macOS privacy permissions, not Claude Code's: kept apart from Agent permissions by name.
+    id: 'macos', title: 'macOS access', optional: true, blocking: false, skippable: true,
+    why: 'Lets macOS allow the parts of Loom that read or control other apps. Loom appears as "Loom" in System Settings.',
+    unlocks: ['Accessibility: the Slack shortcut reads the message under the pointer', 'Accessibility: Jump switches to the chat\'s tab in Ghostty', 'Automation: asked by macOS the first time Loom switches a terminal tab'],
   },
   {
     id: 'permissions', title: 'Agent permissions', optional: true, blocking: false, skippable: true,

@@ -6,6 +6,8 @@ import { pickedThread, parseSlackThread } from '../src/slackgoto.ts';
 import { NEW_THREAD_HTML, OVERLAY_HTML, PASTE_HTML, newThreadWhere } from '../src/pickpages.ts';
 import { hoverFor, needsTrustCheck, overlaysMatch, PickMachine, type HoverHit, type PickPhase } from '../src/pickstate.ts';
 import { newPressId, pickLog, type LogFields } from '../src/picklog.ts';
+import { helperExe } from '../src/nativehelpers.ts';
+import { AX_GRANT_HINT } from '../src/axcopy.ts';
 
 // Pick mode for "open the chat for this Slack thread", shaped like the macOS
 // screenshot crosshairs: the hotkey covers every display with a transparent,
@@ -13,10 +15,11 @@ import { newPressId, pickLog, type LogFields } from '../src/picklog.ts';
 // the mouse moves, a click on one resolves it to its thread parent and hands
 // that permalink to /api/slack/thread-goto, and Esc backs out.
 //
-// What is under the cursor comes from slack-ax (app/native/slack-ax.swift), a
-// long-lived helper that hit-tests Slack's Accessibility tree. It disclaims
-// Loom as its responsible process, so the Accessibility grant belongs to the
-// helper ("slack-ax" in the list), not to Loom.app.
+// What is under the cursor comes from loom-ax (app/native/loom-ax.swift), a
+// long-lived helper that hit-tests Slack's Accessibility tree. It is its own
+// small app bundle named "Loom" and disclaims Loom.app as its responsible
+// process, so the Accessibility grant belongs to the helper (the "Loom" row in
+// the list), whose code hash survives Loom updates.
 
 export interface AxRect { x: number; y: number; w: number; h: number }
 type HitReply =
@@ -26,9 +29,9 @@ type HitReply =
 const HIT_EVERY_MS = 100; // ~10 hit-tests a second while the mouse moves
 
 function helperPath(): string {
-  // Packaged: extraResources puts it beside app.asar. Dev (`yarn start`): the
-  // build output next to dist/.
-  return app.isPackaged ? path.join(process.resourcesPath, 'slack-ax') : path.join(__dirname, '..', 'build-native', 'slack-ax');
+  // Packaged: extraFiles puts the bundle in Contents/Helpers. Dev (`yarn start`):
+  // the build output next to dist/.
+  return helperExe(app.isPackaged ? path.join(process.resourcesPath, '..', 'Helpers') : path.join(__dirname, '..', 'build-native'), 'ax');
 }
 
 /* ------------------------------------------------------------ the helper */
@@ -45,14 +48,14 @@ function ensureHelper(): ChildProcessWithoutNullStreams {
   queues.set(p, waiting);
   // Replies come back in request order, one line each.
   readline.createInterface({ input: p.stdout }).on('line', (line) => waiting.shift()?.(line));
-  p.stderr.on('data', (d: Buffer) => console.error('[loom] slack-ax:', d.toString().trim()));
+  p.stderr.on('data', (d: Buffer) => console.error('[loom] loom-ax:', d.toString().trim()));
   const fail = () => {
     if (helper === p) helper = null;
     for (const w of waiting.splice(0)) w('{"ok":false,"reason":"helper_down"}');
   };
   p.on('exit', fail);
   p.on('error', (e) => {
-    console.error('[loom] slack-ax failed to start:', e.message);
+    console.error('[loom] loom-ax failed to start:', e.message);
     fail();
   });
   helper = p;
@@ -301,8 +304,31 @@ export interface PickDeps {
  * The grant belongs to the helper, not to Loom.app, so this asks the helper.
  * `helper_down` means it could not start (not built, or killed).
  */
+let statusSaidNo = 0; // when a status poll last heard "not trusted"
 export async function axTrusted(): Promise<{ trusted: boolean; helperDown: boolean }> {
+  // A process can keep answering no after the switch is turned on, so a helper
+  // that said no is restarted before it is asked again (at most every 3 s, the
+  // wizard and Settings poll faster than that).
+  if (statusSaidNo && Date.now() - statusSaidNo > 3000) {
+    stopHelper();
+    statusSaidNo = 0;
+  }
   const t = await ask<{ trusted?: boolean; reason?: string }>({ op: 'trust' });
+  const trusted = t.trusted === true;
+  if (!trusted && t.reason !== 'helper_down' && !statusSaidNo) statusSaidNo = Date.now();
+  if (trusted) statusSaidNo = 0;
+  return { trusted, helperDown: t.reason === 'helper_down' };
+}
+
+/**
+ * The Grant button (wizard, Settings): ask macOS to show its Accessibility
+ * prompt for the helper. The prompt names "Loom" and adds the helper's row to
+ * the list, switched off; its Open System Settings button goes to that list.
+ * Already trusted: no prompt, just the answer.
+ */
+export async function axRequest(): Promise<{ trusted: boolean; helperDown: boolean }> {
+  const t = await ask<{ trusted?: boolean; reason?: string }>({ op: 'trust', prompt: true });
+  prompted = true;
   return { trusted: t.trusted === true, helperDown: t.reason === 'helper_down' };
 }
 
@@ -401,14 +427,14 @@ let trustedCache = false; // the helper has said yes; cleared by an 'untrusted' 
 let prompted = false; // the system dialog has been shown this run
 let pickDeps: PickDeps | null = null;
 
-const GRANT_HINT = 'Switch on "slack-ax" in System Settings, Privacy & Security, Accessibility, then press the hotkey again.';
+const GRANT_HINT = AX_GRANT_HINT + ' Then press the shortcut again.';
 
 /**
  * Enter pick mode, or say why not. Pressing the hotkey again while picking
  * cancels, like a second Esc.
  *
- * The trust that matters is slack-ax's own, not Loom's: the helper disclaims
- * Loom's responsibility (see the top of slack-ax.swift), so it has its own row
+ * The trust that matters is the helper's own, not Loom.app's: it disclaims
+ * Loom's responsibility (see the top of loom-ax.swift), so it has its own row
  * in the Accessibility list. A helper that last said no is restarted first,
  * since a process can keep answering no after the switch is turned on.
  */
@@ -431,15 +457,15 @@ export async function startPick(deps: PickDeps): Promise<void> {
       machine.end();
       if (t.reason === 'helper_down') {
         if (await pasteInstead(deps, 'The Slack reader could not start. Copy the message link in Slack (right-click, Copy link) and paste it here.')) return;
-        return deps.notify('The Slack reader (slack-ax) failed to start');
+        return deps.notify('The Slack reader failed to start. Quit and reopen Loom.');
       }
       helperUntrusted = true;
-      // The prompt adds slack-ax to the list (switched off) and shows the system
+      // The prompt adds the helper to the list (switched off) and shows the system
       // dialog that links to it. Once per run: after that the row exists.
       if (!prompted) await ask({ op: 'trust', prompt: true });
       prompted = true;
       if (await pasteInstead(deps, 'Loom cannot read Slack without Accessibility access. Copy the message link in Slack and paste it here.')) return;
-      return deps.notify('Loom reads Slack through its helper, slack-ax. ' + GRANT_HINT);
+      return deps.notify(`Loom needs Accessibility access to read Slack. ${GRANT_HINT}`);
     }
     trustedCache = true;
   }

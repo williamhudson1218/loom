@@ -5,8 +5,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 contextBridge.exposeInMainWorld('loomNative', {
   // The native macOS folder picker; resolves to the chosen absolute path, or '' when cancelled.
   pickFolder: (): Promise<string> => ipcRenderer.invoke('loom:pick-folder'),
-  // Accessibility for the Slack reader (the helper's grant, polled by the shortcut step).
+  // Accessibility for the "Loom" helper (the Slack reader and terminal scripting), polled.
   axStatus: (): Promise<{ trusted: boolean; helperDown: boolean }> => ipcRenderer.invoke('loom:ax-status'),
+  // Shows macOS's Accessibility prompt for that helper (adds its "Loom" row, switched off).
+  axRequest: (): Promise<{ trusted: boolean; helperDown: boolean }> => ipcRenderer.invoke('loom:ax-request'),
   // Opens System Settings at Privacy & Security, Accessibility.
   openAccessibility: (): Promise<void> => ipcRenderer.invoke('loom:open-accessibility'),
   pathForFile: (f: File): string => {

@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
+import { findHelper } from './nativehelpers.ts';
 
 // Secrets live in the macOS login Keychain, reached through the small
-// `loom-keychain` helper (app/native/loom-keychain.swift). The secret crosses
+// `loom-keychain` helper (app/native/loom-keychain.swift), which macOS shows
+// as "Loom" in Keychain prompts. The secret crosses
 // the process boundary on stdin/stdout only, never as an argument, so it never
 // shows up in `ps`. Nothing here writes a secret to disk, logs one, or puts one
 // in an error message.
@@ -21,32 +22,22 @@ export interface KeychainBackend {
 
 const NOT_FOUND = 44;
 
-declare const __LOOM_REPO_DIR__: string | undefined;
-
 /**
- * Where the helper binary is. Packaged: electron-builder puts it beside
- * app.asar (process.resourcesPath). From source (tsx, tests, the standalone
- * server): app/build-native/, where app/build.mjs compiles it. LOOM_KEYCHAIN_BIN
- * overrides both.
+ * Where the helper binary is: the keychain helper bundle, packaged under
+ * Contents/Helpers or in a source checkout's app/build-native (see
+ * src/nativehelpers.ts). LOOM_KEYCHAIN_BIN overrides both.
  */
 export function keychainHelperPath(): string | null {
-  const candidates: string[] = [];
   const env = process.env.LOOM_KEYCHAIN_BIN?.trim();
-  if (env) candidates.push(env);
-  const res = (process as { resourcesPath?: string }).resourcesPath;
-  if (res) candidates.push(path.join(res, 'loom-keychain'));
-  if (typeof __LOOM_REPO_DIR__ === 'string' && __LOOM_REPO_DIR__) candidates.push(path.join(__LOOM_REPO_DIR__, 'app', 'build-native', 'loom-keychain'));
-  candidates.push(path.join(process.cwd(), 'app', 'build-native', 'loom-keychain'));
-  candidates.push(path.join(process.cwd(), 'build-native', 'loom-keychain'));
-  for (const c of candidates) {
+  if (env) {
     try {
-      fs.accessSync(c, fs.constants.X_OK);
-      return c;
+      fs.accessSync(env, fs.constants.X_OK);
+      return env;
     } catch {
-      /* next */
+      /* fall through */
     }
   }
-  return null;
+  return findHelper('keychain');
 }
 
 /** The redacted reason a helper call failed: its stderr, which never carries the secret. */
@@ -58,7 +49,7 @@ function reason(e: unknown): string {
 
 export function helperBackend(bin: string | null = keychainHelperPath()): KeychainBackend {
   const run = (op: string, service: string, account: string, input?: string): Buffer => {
-    if (!bin) throw new Error('keychain helper not built (app/build-native/loom-keychain)');
+    if (!bin) throw new Error('keychain helper not built (app/build-native/keychain/Loom.app)');
     return execFileSync(bin, [op, '--service', service, '--account', account], {
       input: input ?? '',
       timeout: 15_000,

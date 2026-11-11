@@ -185,7 +185,7 @@ export const WIZARD_VIEW_JS = String.raw`
 // ---- Setup wizard ---------------------------------------------------------------
 var WZ = { v: null, open: false, busy: false, S: null, loaded: {}, req: null, reqT: null, reqBusy: false, job: null, jobT: null,
   login: null, plugin: null, slack: null, slackSub: 0, manifest: null, slackBusy: false, slackMsg: null, tpl: null, ship: null,
-  proj: null, ax: null, axT: null, axNative: false, slackApp: null, rec: false, recRes: null, prac: null, pracT: null, summary: null, err: '' };
+  proj: null, ax: null, axT: null, axNative: false, axAsked: false, slackApp: null, rec: false, recRes: null, prac: null, pracT: null, summary: null, err: '' };
 
 function wzEsc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); }
 function wzEl(id) { return document.getElementById(id); }
@@ -483,10 +483,22 @@ WZ_STEPS.terminal = function (c) {
     ['terminal', 'Terminal.app', 'Use the macOS Terminal. Needs Automation access.', false]
   ];
   var note = WZ.S.terminal === 'inside' ? 'Inside Loom needs no macOS permissions. You can still attach from any terminal with <code>tmux -L loom attach</code>.'
-    : '<b>' + wzEsc({ ghostty: 'Ghostty', iterm2: 'iTerm2', terminal: 'Terminal.app' }[WZ.S.terminal]) + '</b> needs macOS ' + (WZ.S.terminal === 'ghostty' ? 'Accessibility and Automation' : 'Automation') + ' permission. macOS asks the first time you jump to a chat; nothing is requested until then.';
+    : '<b>' + wzEsc({ ghostty: 'Ghostty', iterm2: 'iTerm2', terminal: 'Terminal.app' }[WZ.S.terminal]) + '</b> needs macOS ' + (WZ.S.terminal === 'ghostty' ? 'Accessibility and Automation' : 'Automation') + ' permission, for the "Loom" rows in System Settings. ' + (WZ.S.terminal === 'ghostty' ? 'The next step grants Accessibility. ' : '') + 'macOS asks for Automation the first time Loom switches a tab.';
   c.innerHTML = '<div class="stack"><div class="cards" id="wz-term">' + T.map(function (t) {
     return '<button class="opt' + (WZ.S.terminal === t[0] ? ' sel' : '') + '" data-wz-term="' + t[0] + '">' + (t[3] ? '<span class="pill ok rec">Recommended</span>' : '') + '<b>' + t[1] + '</b><span class="d">' + t[2] + '</span></button>';
   }).join('') + '</div><div class="note" id="wz-termnote">' + note + '</div></div>';
+};
+
+/* -- macos access (macOS privacy permissions; not the Agent permissions step) -- */
+WZ_STEPS.macos = function (c) {
+  var term = WZ.S.terminal;
+  c.innerHTML = '<div class="stack">'
+    + '<div class="note">macOS lists Loom as <b>Loom</b> in System Settings &rsaquo; Privacy &amp; Security. Nothing here is required: Loom runs without it, and everything can be granted later from Settings.</div>'
+    + '<div class="g2">' + wzAxRow()
+    + '<div class="lrow"><span class="st o">&ndash;</span><div class="t"><b>Automation</b><span>' + (term === 'inside' ? 'Not needed while chats open inside Loom.' : 'macOS asks "Loom wants access to control ..." the first time Loom switches a terminal tab. Choose Allow.') + '</span></div><span class="pill off">Asked on first use</span></div></div>'
+    + '<div class="def">Accessibility lets the Slack shortcut read which message is under the pointer, and lets Jump switch to the chat&#39;s tab in Ghostty. If Slack is connected, macOS may also ask once whether Loom can use its Keychain item; choose Always Allow.</div>'
+    + '</div>';
+  wzAxPoll();
 };
 
 /* -- permissions -- */
@@ -659,20 +671,30 @@ WZ_STEPS.slack = function (c) {
 };
 
 /* -- shortcut -- */
+// What one Accessibility row shows, from the helper's live answer. Pure, so it is tested.
+// a: {trusted, helperDown} or null (not answered yet); native: inside the Loom app; asked: Grant was pressed.
+function wzAxView(a, native, asked) {
+  if (!native) return { st: 'w', mark: '!', pill: 'off', label: 'Not checked', btn: '', text: 'Open this page in the Loom app to check Accessibility.' };
+  if (!a) return { st: 'o', mark: '&hellip;', pill: 'off', label: 'Checking', btn: '', text: 'Checking...' };
+  if (a.trusted) return { st: 'y', mark: '&#10003;', pill: 'ok', label: 'Granted', btn: '', text: 'Granted. "Loom" is switched on in Privacy &amp; Security &rsaquo; Accessibility.' };
+  if (a.helperDown) return { st: 'n', mark: '&#10007;', pill: 'warn', label: 'Helper not running', btn: '', text: 'The part of Loom that holds this permission is not running. Quit and reopen Loom, then check again.' };
+  return asked
+    ? { st: 'w', mark: '!', pill: 'warn', label: 'Not granted', btn: 'open', text: 'Switch on "Loom" in System Settings &rsaquo; Privacy &amp; Security &rsaquo; Accessibility. This updates on its own.' }
+    : { st: 'w', mark: '!', pill: 'warn', label: 'Not granted', btn: 'grant', text: 'Not granted. Grant access shows the macOS prompt and adds "Loom" to the Accessibility list, switched off.' };
+}
 function wzAxDraw() {
-  var a = WZ.ax, pill = wzEl('wz-axpill'), st = wzEl('wz-axst'), tx = wzEl('wz-axtx'), btn = wzEl('wz-axbtn');
+  var pill = wzEl('wz-axpill'), st = wzEl('wz-axst'), tx = wzEl('wz-axtx'), btn = wzEl('wz-axbtn');
   if (!pill) return;
-  if (!WZ.axNative) {
-    st.className = 'st w'; st.textContent = '!'; pill.className = 'pill off'; pill.textContent = 'Not checked';
-    tx.textContent = 'Open this page in the Loom app to check Accessibility. The shortcut itself needs the app.';
-    btn.style.display = 'none';
-    return;
-  }
-  var ok = a && a.trusted;
-  st.className = 'st ' + (ok ? 'y' : 'w'); st.textContent = ok ? '✓' : '!';
-  pill.className = 'pill ' + (ok ? 'ok' : 'warn'); pill.textContent = ok ? 'Granted' : a && a.helperDown ? 'Helper not running' : 'Not granted';
-  tx.textContent = ok ? 'Granted. Loom can read which message is under the pointer.' : a && a.helperDown ? 'The small helper that reads the pointer is not running. Restart Loom, then check again.' : 'Not granted. Loom reads which message is under the pointer, and macOS asks you to allow that.';
-  btn.style.display = ok ? 'none' : '';
+  var v = wzAxView(WZ.ax, WZ.axNative, WZ.axAsked);
+  st.className = 'st ' + v.st; st.innerHTML = v.mark;
+  pill.className = 'pill ' + v.pill; pill.textContent = v.label;
+  tx.innerHTML = v.text;
+  btn.style.display = v.btn ? '' : 'none';
+  btn.textContent = v.btn === 'grant' ? 'Grant access' : 'Open System Settings';
+  btn.className = 'btn sm' + (v.btn === 'grant' ? ' pri' : '');
+}
+function wzAxRow() {
+  return '<div class="lrow"><span class="st o" id="wz-axst">&hellip;</span><div class="t"><b>Accessibility access</b><span id="wz-axtx">Checking...</span></div><span class="pill off" id="wz-axpill">...</span><button class="btn sm" id="wz-axbtn" data-wz-grantax="1" style="display:none">Grant access</button></div>';
 }
 function wzAxPoll() {
   if (!(window.loomNative && window.loomNative.axStatus)) { WZ.axNative = false; wzAxDraw(); return; }
@@ -761,7 +783,7 @@ WZ_STEPS.shortcut = function (c) {
   c.innerHTML = '<div class="stack"><div class="flow"><div class="slackmini"><div class="tb"><span>&#128578;</span><span>&#128172;</span><span class="hl">' + wzEsc(wzFmtKey(WZ.S.hotkey)) + ' Loom</span></div><b>A teammate</b> <span class="def">10:42</span><br>Can someone check why the weekly export is short?</div>'
     + '<div class="ar">&rarr;</div><div class="box"><b>Loom decides:</b><br>Thread already has a chat &rarr; <span class="badge sl">jump to it</span><br>No chat yet &rarr; <span class="badge pr">start one in the project mapped to that channel</span></div></div>'
     + '<div class="g2"><div class="lrow" id="wz-slackapp"><span class="st o">&hellip;</span><div class="t"><b>Slack desktop app</b><span>Looking...</span></div></div>'
-    + '<div class="lrow"><span class="st w" id="wz-axst">!</span><div class="t"><b>Accessibility access</b><span id="wz-axtx">Checking...</span></div><span class="pill warn" id="wz-axpill">...</span><button class="btn sm" id="wz-axbtn" data-wz-openax="1">Open System Settings</button></div></div>'
+    + wzAxRow() + '</div>'
     + '<div class="fld"><label>Shortcut</label><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="rec-box" id="wz-hk"></span><button class="btn sm" data-wz-hkrec="1">Record new shortcut</button><button class="btn sm ghost" data-wz-hkreset="1">Reset to ' + wzEsc(wzFmtKey('Command+Shift+L')) + '</button></div><div id="wz-hkwarn" style="margin-top:8px"></div></div>'
     + '<div class="prac" id="wz-prac"></div>'
     + (mode === 'mcp' ? '<div class="def">With MCP only, the shortcut still reads the message and finds or starts the chat. It cannot post or read replies for you.</div>' : '')
@@ -905,6 +927,12 @@ function wzClick(e) {
   if (d.wzCidsave) { var ci = wzEl('wz-cid'), cv = ci ? ci.value.trim() : ''; return wzJson('PUT', '/api/settings', { slack_client_id: cv }).then(function (j) { if (j && j.ok === false) { WZ.cidErr = j.detail || 'That client id was not accepted.'; return wzSlackDraw(); } WZ.cidErr = ''; wzSlackLoad(); }); }
   if (d.wzSlackrecheck) return wzSlackLoad();
   if (d.wzOpenax) { if (window.loomNative && window.loomNative.openAccessibility) window.loomNative.openAccessibility(); return; }
+  if (d.wzGrantax) {
+    var N = window.loomNative || {};
+    if (!WZ.axAsked && N.axRequest) { WZ.axAsked = true; N.axRequest().then(function (a) { WZ.ax = a; wzAxDraw(); }).catch(function () {}); return wzAxDraw(); }
+    if (N.openAccessibility) N.openAccessibility();
+    return;
+  }
   if (d.wzHkrec) { if (WZ.rec) return; WZ.rec = true; WZ.recRes = null; wzHkDraw(); document.addEventListener('keydown', wzRecKey, true); return; }
   if (d.wzHkreset) return wzHkReset();
   if (d.wzHkuse) return wzHkUse();

@@ -561,6 +561,7 @@ export function makeWizardRoutes(over: Partial<WizardDeps> = {}): RouteDef[] {
         return f ?? { check };
       }
       case 'plugin':
+      case 'macos': // nothing to store: the grant lives in macOS, read live
         return { check: {} };
       case 'slack': {
         const choice = str(v.mode);

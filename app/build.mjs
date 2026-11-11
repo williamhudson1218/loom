@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { helperCacheKey, helperInfoPlist, shouldRebuild, CACHE_VERSION } from './nativecache.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,19 +80,56 @@ for (const [name, spec] of Object.entries(VENDOR)) {
 }
 console.log('copied dist/vendor (xterm)');
 
-// slack-ax, the Accessibility helper the Slack pick overlay hit-tests through
-// (see native/slack-ax.swift). electron-builder ships it as an extraResource,
-// outside the asar, so it can be executed. Needs the Xcode command line tools.
+// The native helpers, each the main executable of a tiny "Loom" app bundle so
+// that Privacy & Security and Keychain prompts name it "Loom" with Loom's icon:
+//
+//   build-native/ax/Loom.app        loom-ax: the Slack reader and the osascript
+//                                   runner (Accessibility + Automation, see
+//                                   native/loom-ax.swift)
+//   build-native/keychain/Loom.app  loom-keychain: the Slack token in the
+//                                   Keychain (native/loom-keychain.swift)
+//
+// electron-builder ships both under Contents/Helpers (package.json extraFiles).
+// They are ad-hoc signed, and macOS keys an ad-hoc grant to the code hash, so a
+// helper is only rebuilt when its inputs change (nativecache.mjs): a normal Loom
+// update keeps every grant. Two bundles, not one, so editing the Slack reader
+// does not also re-prompt for the Keychain. Needs the Xcode command line tools.
+const HELPERS = [
+  { dir: 'ax', exe: 'loom-ax', id: 'com.loom.app.ax', src: 'native/loom-ax.swift' },
+  { dir: 'keychain', exe: 'loom-keychain', id: 'com.loom.app.keychain', src: 'native/loom-keychain.swift' },
+];
 fs.mkdirSync('build-native', { recursive: true });
-execFileSync('swiftc', ['-O', 'native/slack-ax.swift', '-o', 'build-native/slack-ax'], { stdio: 'inherit' });
-console.log('built build-native/slack-ax');
-
-// loom-keychain, the Keychain helper that holds the Slack token (see
-// native/loom-keychain.swift and src/secrets.ts). The secret only crosses its
-// stdin/stdout. Shipped as an extraResource beside slack-ax; the standalone
-// server finds the same binary in build-native/.
-execFileSync('swiftc', ['-O', 'native/loom-keychain.swift', '-o', 'build-native/loom-keychain'], { stdio: 'inherit' });
-console.log('built build-native/loom-keychain');
+// The pre-bundle outputs; nothing reads them any more.
+for (const old of ['slack-ax', 'loom-keychain']) fs.rmSync(path.join('build-native', old), { force: true });
+const swiftVersion = execFileSync('swiftc', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const icon = fs.readFileSync('assets/icon.icns');
+for (const h of HELPERS) {
+  const bundle = path.join('build-native', h.dir, 'Loom.app');
+  const keyFile = path.join('build-native', h.dir, 'Loom.app.key');
+  const plist = helperInfoPlist({ id: h.id, exe: h.exe, version: String(CACHE_VERSION) });
+  const key = helperCacheKey([fs.readFileSync(h.src), plist, icon, swiftVersion, h.id, h.exe]);
+  let bundleValid = false;
+  try {
+    execFileSync('codesign', ['--verify', '--strict', bundle], { stdio: 'ignore' });
+    bundleValid = true;
+  } catch {
+    /* missing or broken: rebuild */
+  }
+  const storedKey = fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8') : '';
+  if (!shouldRebuild({ key, storedKey, bundleValid })) {
+    console.log(`kept ${bundle} (inputs unchanged, grants keep working)`);
+    continue;
+  }
+  fs.rmSync(path.join('build-native', h.dir), { recursive: true, force: true });
+  fs.mkdirSync(path.join(bundle, 'Contents', 'MacOS'), { recursive: true });
+  fs.mkdirSync(path.join(bundle, 'Contents', 'Resources'), { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'Contents', 'Info.plist'), plist);
+  fs.writeFileSync(path.join(bundle, 'Contents', 'Resources', 'icon.icns'), icon);
+  execFileSync('swiftc', ['-O', h.src, '-o', path.join(bundle, 'Contents', 'MacOS', h.exe)], { stdio: 'inherit' });
+  execFileSync('codesign', ['--force', '--sign', '-', '--identifier', h.id, bundle], { stdio: 'inherit' });
+  fs.writeFileSync(keyFile, key + '\n');
+  console.log(`built ${bundle} (new code hash: macOS will ask for its grants again)`);
+}
 
 // The Claude Code plugin (plugin/, see src/pluginmgr.ts). Staged into
 // build-plugin/ without its tests or bytecode, then shipped as an extraResource

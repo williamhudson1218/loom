@@ -186,8 +186,8 @@ describe('GET /api/wizard', () => {
     expect(r.status).toBe(200);
     expect(r.body.show).toBe(true);
     expect(r.body.current).toBe('welcome');
-    expect(r.body.rail).toHaveLength(12);
-    expect(r.body.progress).toMatchObject({ index: 1, total: 11 }); // Slack is off, so the shortcut step is hidden
+    expect(r.body.rail).toHaveLength(13);
+    expect(r.body.progress).toMatchObject({ index: 1, total: 12 }); // Slack is off, so the shortcut step is hidden
     expect(r.body.values.perm_chats).toBe('normal'); // safe by default
     expect(r.body.values.terminal).toBe('inside');
     expect(r.body.values.slack_mode).toBe('off');
@@ -458,7 +458,7 @@ describe('slack, and the shortcut guard', () => {
     expect(r.body.view.current).toBe('ship');
     expect(r.body.view.state.steps.shortcut.status).toBe('skipped');
     expect(r.body.view.rail.find((x: any) => x.id === 'shortcut').visible).toBe(false);
-    expect(r.body.view.progress.total).toBe(11);
+    expect(r.body.view.progress.total).toBe(12);
   });
 
   it('skipping the Slack step itself also passes over the shortcut step', async () => {
