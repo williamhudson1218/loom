@@ -64,6 +64,10 @@ jobs:
           yarn install --frozen-lockfile
           cd app && yarn install --frozen-lockfile
 
+      # Some tests drive a throwaway tmux server; the runner image has no tmux.
+      - name: tmux
+        run: brew install tmux
+
       - name: Tests
         run: yarn vitest run
 
@@ -89,6 +93,7 @@ jobs:
           got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
           [ "$got" = "${{ steps.v.outputs.version }}" ] || { echo "built $got, expected ${{ steps.v.outputs.version }}"; exit 1; }
           for h in "$APP"/Contents/Helpers/*/Loom.app; do echo "$h: $(codesign -dvvv "$h" 2>&1 | sed -n 's/^CDHash=//p')"; done
+          scripts/release/check-arch.sh "$APP" arm64
           scripts/release/check-personal-data.sh "$APP"
 
       - name: Package
