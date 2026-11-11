@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PENDING_VIEW_JS } from '../src/pendingview.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
@@ -31,22 +31,25 @@ function page(chats: { agent: string; session_id: string }[] = []) {
   };
   const log: string[] = [];
   const DATA = { chats, live: {} as Record<string, unknown> };
+  const win: Record<string, unknown> = {};
+  const timers: (() => void)[] = [];
+  let refreshes = 0;
   const lib = new Function(
     '$', 'document', 'fetch', 'DATA', 'esc', 'chatKey', 'refresh', 'renderMain', 'flash', 'launchVerb', 'openInBoard', 'setTimeout', 'window',
     `var mtab='transcript', TERM_TOKEN='tok', onlyGroup=null;${PENDING_VIEW_JS}
      return { doLaunch, setPending, pendingLiveFor, get mtab(){return mtab;}, get pending(){return PENDING;}, PENDING_LIVE };`,
   )(
     $, doc, fetchStub, DATA, (s: string) => String(s), (c: { agent: string; session_id: string }) => c.agent + ':' + c.session_id,
-    () => { log.push('refresh'); return Promise.resolve(); },
+    () => { log.push('refresh'); refreshes++; return Promise.resolve(); },
     () => log.push('renderMain'),
     (_el: unknown, msg: string) => log.push('flash:' + msg),
     () => 'Resume',
     (sid: string) => log.push('open:' + sid),
-    () => 0,
-    {} as Record<string, unknown>,
+    (fn: () => void) => { timers.push(fn); return 0; },
+    win,
   );
   const picker = { dataset: {} as Record<string, string>, innerHTML: '' };
-  return { lib, els, calls, beacons, log, DATA, picker };
+  return { lib, els, calls, beacons, log, DATA, picker, win, timers, get refreshes() { return refreshes; } };
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -102,6 +105,52 @@ describe('Resume on the board', () => {
   });
 });
 
+describe('a chat resumed by the Slack hotkey', () => {
+  type Open = (agent: string, sid: string, pane: string) => boolean;
+  const flush = async () => { for (let i = 0; i < 5; i++) await tick(); };
+  it('shows Opening and keeps looking when the chat is not on the board yet, then opens it', async () => {
+    const p = page();
+    const open = p.win.loomOpenResumed as Open;
+    expect(open('claude', 's1', '%5')).toBe(true);
+    expect(p.els['#mpending'].className).toBe('');
+    expect(p.els['#mpending'].innerHTML).toContain('Opening this chat');
+    await flush();
+    expect(p.refreshes).toBeGreaterThan(0);
+    p.DATA.chats.push({ agent: 'claude', session_id: 's1' });
+    p.timers.shift()?.();
+    await flush();
+    expect(p.log).toContain('open:s1');
+    expect(p.els['#mpending']).toBeUndefined();
+    expect(p.lib.PENDING_LIVE['claude:s1'].pane_id).toBe('%5');
+  });
+  it('gives up after a minute with an error that Dismiss clears', async () => {
+    const p = page();
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(1_000_000);
+    (p.win.loomOpenResumed as Open)('claude', 's1', '');
+    await flush();
+    now.mockReturnValue(1_000_000 + 61_000);
+    p.timers.shift()?.();
+    await flush();
+    now.mockRestore();
+    expect(p.els['#mpending'].className).toBe('err');
+    expect(p.els['#mpending'].innerHTML).toContain('did not show up');
+    p.lib.setPending(null);
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+  it('stops looking once the card is dismissed or replaced', async () => {
+    const p = page();
+    (p.win.loomOpenResumed as Open)('claude', 's1', '');
+    await flush();
+    p.lib.setPending(null);
+    const before = p.refreshes;
+    p.timers.shift()?.();
+    await flush();
+    expect(p.refreshes).toBe(before);
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+});
+
 describe('the page script', () => {
   it('inlines the pending view and refreshes when the window is shown again', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude', [], [], 'tok');
@@ -109,6 +158,8 @@ describe('the page script', () => {
     expect(html).toContain('window.loomFocusNow=function');
     expect(html).toContain("document.addEventListener('visibilitychange'");
     expect(html).toContain('#chatmain.empty > :not(#mempty):not(#mpending)');
+    expect(html).toContain('#mpending.err { pointer-events:none;');
+    expect(html).toContain("t.closest('#mpclose')");
   });
 });
 

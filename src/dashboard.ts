@@ -808,6 +808,8 @@ ${TEST_LINKS_CSS}
   .mpcard { display:flex; align-items:center; gap:12px; max-width:440px; padding:14px 18px; border-radius:10px; border:1px solid #2a2f40; background:#121620; color:#e4e7ee; font-size:13px; }
   .mpcard b { display:block; font-weight:600; }
   .mpcard span.mpd { display:block; color:#8a90a2; margin-top:2px; }
+  #mpending.err { pointer-events:none; background:transparent; }
+  #mpending.err .mpcard { pointer-events:auto; }
   #mpending.err .mpcard { border-color:#6b2a2e; background:#1d1215; }
   .mpspin { width:16px; height:16px; flex-shrink:0; border:2px solid #2f3a55; border-top-color:#8fb4ff; border-radius:50%; animation:mpspin .7s linear infinite; }
   @keyframes mpspin { to { transform:rotate(360deg); } }
