@@ -16,6 +16,8 @@
 // cancels the frame loop and removes every listener it added, and a hidden page
 // cancels the loop until it is visible again.
 
+import { threadMark } from './logo.ts';
+
 const SERIF_WOFF2 = 'd09GMgABAAAAAASYAA8AAAAACHgAAARAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGhYbeBwuBmA/U1RBVEQATBEICoUghF0LDAABNgIkAxQEIAWEZgcgGyQHyAQe6L2qV5WMkgydIbnbS+LI3wXwdSD7/99vVjx541DxSGjUyL8fv5g/xHxLpiWL1kWx6KGIl7KFnvcaLmEb6kcU73ksox8BGJioRESoHG8DGskUopZX1rfjN2bhrClKOn6WZbJ0ysicaT7U/83TRtdky6xp2F/pvbaKxB5BJC6y0XD8yKlIO+WRLd3ibkxSHk88CtsHPRKze5AlQfquIT1FPDaz5CbZDdSdjxeDpPIlm4mTSCviw8Voj36+obGpsYJzmExXjvz/kZpSa4S/idj/XUuskjPBWAWQeQIeR0b4HeaPnzBH6DBxzsgUYSDwQLoYfuGYlFPsGwgh4ivUAKj4gwuciUp2EUF2psSknqlML47lPsv6qfVt617rHhnTplcgrFacr2jzRjSo2sZfIEIcnOpXqORnkaAatqpma6iqnmiaYa5OPXaOtot0NHShCV1o7ec+rUPotH+hCDsYRrtXh+Ae6tZ5e/ua2XW7Ibni4Nu6vvlp2Mq9HHjECs3YtFJNvXtYKCsPvaMZ62VIX9U3r4DYWwec5w94UYiV2qZH8V4Xn+qb78OK5xnbO3ZLjNB6CP54JnzPPu+u/frml/W/pGPTkydi5dOHT/XNjx+z4tGj2M1PxconT7RNj1jx+PGA25cFXzqnrS2JLDWfMUsjS82zfPFMaGnFWLM8LCSsZLA0vDR0bGVpyDNrl6wLfWaMWfZ6qE9osqU5ZOYzM8eWBD4z8xmzKdmSvLa7siIx5JkQS3miGfoMrwfdCLhZE74iI6tigXJCibGpDnZ2viUNGdlzO/Bu4K3eSGlIn1Nm6ClvacjI3tskS0PGbIw7Pb8nojb1Rt57relx6ZsKL8RNjFUMxfW+n+99d8VQYhbGnZ7fHfJuay6MlYZ0O8//yO0p10L/99De9UquSZmW5qLYVUd9HSfwA76+H/GZkdeZkzicnR5R92GNd3h+R17CQHpxTt9gyvnsstqugpih2qzUnKLG2rxoS01+m2H+SJnzKf1ubofLkHP+b/aK0o9kH61b5nvqJ2cLPK2H/v/M5mXliELbtk23dxOeuMh66L8Wm5eV3kfZp9iI3xiUboTKP9HEe0TwdT8hNnzZolfT0s2bmMG+XuNVHYLEGRF/VwqS+VcpceJ7pUI5L6xUeaUNfuxQ2pLIaMGJTOQYIqERikodAy+mwdXQsb99RCvTmcoI06hhDiNMYSJj6MLCRMYzgTnUL2A/OYcZzCaXJJqczgwsTGMcJqYxxw/ezp+NhUSmM4vxlJ1xKkESkjlUwR3et09jLAnylU4szCKc+P23JukkkkwyKVfdPBppopGKJRRmthqAzGUKP4/f2qbWN8E1OoOFZH4jJqmZqWRg0g5My7yCtmbonc4kLIwhUsLcqgTeNhtr0Yxnou6dyyiJjGmQWhJljHxxjlRHYjaV1YyzmTkTwZixmbJ7WY+QygYA';
 
 export const WELCOME_VIEW_CSS = String.raw`
@@ -64,14 +66,8 @@ export const WELCOME_VIEW_CSS = String.raw`
   }
 `;
 
-// The logo from app/assets/icon.svg without its tile. Where the second strokes
-// cross the first, a mask cuts the first ones (the tile's colour did that before),
-// so the weave reads over the starfield.
-const MARK = '<svg class="lw-mark" viewBox="180 180 660 640" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
-  + '<defs><clipPath id="lw-x"><rect x="340" y="500" width="230" height="220"/></clipPath>'
-  + '<mask id="lw-m" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect x="0" y="0" width="1024" height="1024" fill="#fff"/>'
-  + '<g fill="none" stroke-linecap="round" clip-path="url(#lw-x)"><path d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(-30 0)" stroke="#000" stroke-width="62"/><path d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" stroke="#000" stroke-width="62"/><path d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(30 0)" stroke="#000" stroke-width="62"/></g></mask></defs>'
-  + '<g fill="none" stroke-linecap="round"><g mask="url(#lw-m)"><path d="M240 770 C380 730 560 570 600 410 C630 290 592 216 532 222" transform="translate(-30 0)" stroke="#ff5f8f" stroke-width="26" pathLength="1"/><path d="M240 770 C380 730 560 570 600 410 C630 290 592 216 532 222" stroke="#ffb238" stroke-width="26" pathLength="1"/><path d="M240 770 C380 730 560 570 600 410 C630 290 592 216 532 222" transform="translate(30 0)" stroke="#5ec8ff" stroke-width="26" pathLength="1"/></g><path class="lw-t2" d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(-30 0)" stroke="#ff5f8f" stroke-width="26" pathLength="1"/><path class="lw-t2" d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" stroke="#ffb238" stroke-width="26" pathLength="1"/><path class="lw-t2" d="M532 222 C462 230 440 330 448 460 C456 590 470 720 560 760 C640 796 720 766 790 700" transform="translate(30 0)" stroke="#5ec8ff" stroke-width="26" pathLength="1"/></g></svg>';
+// The logo without its tile, drawn in (src/logo.ts).
+const MARK = threadMark('lw-mark', 'lw');
 
 // In the page's first <style>, ahead of everything else. While <html> carries
 // lw-first (the server rendered the welcome screen open, see firstPaint in
@@ -82,6 +78,7 @@ export const WELCOME_BOOT_CSS = String.raw`
   html.lw-first, html.lw-first body { background:#05060b !important; }
   html.lw-first body > :not(#lw):not(#wz) { visibility:hidden !important; }
 `;
+
 
 const welcomeMarkup = (open: boolean): string => String.raw`
 <div id="lw"` + (open ? ' class="open run"' : '') + String.raw` role="dialog" aria-modal="true" aria-label="Welcome to Loom" aria-hidden="` + (open ? 'false' : 'true') + String.raw`">

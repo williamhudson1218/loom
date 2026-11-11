@@ -9,6 +9,8 @@
 // or a backtick, and no backslashes (the page script is also spliced into a non-raw template).
 // Everything is prefixed wz so it cannot collide with the dashboard's own classes.
 
+import { threadMark } from './logo.ts';
+
 export const WIZARD_VIEW_CSS = String.raw`
   #wz { --wz-bg:#0d0f15; --wz-panel:#141826; --wz-card:#161a24; --wz-line:#232634; --wz-ctl:#1b1f2a; --wz-ctl-line:#2b3040; --wz-text:#e6e6e6; --wz-text2:#c4ccdc; --wz-muted:#8b93a7; --wz-sel:#1a2033; --wz-sel-line:#34406a; --wz-hover:#151925; --wz-on:#26304a; --wz-accent:#6ea2ff; --wz-accent-bg:rgba(110,162,255,.12); --wz-amber:#e8b04a; --wz-amber-bg:rgba(232,176,74,.14); --wz-green:#56d364; --wz-green-bg:rgba(86,211,100,.12); --wz-err:#e5484d; --wz-err-bg:rgba(229,72,77,.13); --wz-code:#0a0c11; --wz-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
     position:fixed; inset:0; z-index:90; display:none; align-items:center; justify-content:center; padding:24px 16px; background:rgba(5,6,10,.72); color:var(--wz-text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
@@ -19,7 +21,7 @@ export const WIZARD_VIEW_CSS = String.raw`
   #wz .wz-x:hover { background:var(--wz-on); color:#fff; }
   #wz .wz-rail { width:210px; flex:none; background:var(--wz-panel); border-right:1px solid var(--wz-line); padding:16px 10px; overflow:auto; }
   #wz .wz-lg { font-weight:700; font-size:15px; padding:0 8px 12px; display:flex; align-items:center; gap:8px; }
-  #wz .wz-lg i { width:22px; height:22px; border-radius:6px; background:linear-gradient(135deg,#6ea2ff,#c9b4ff); display:inline-block; }
+  #wz .wz-lg svg { width:22px; height:22px; flex:none; display:block; }
   #wz .wz-ri { display:flex; align-items:center; gap:9px; width:100%; background:transparent; border:0; text-align:left; padding:5px 8px; border-radius:7px; color:var(--wz-muted); font-size:12.5px; cursor:default; }
   #wz .wz-ri.go { cursor:pointer; }
   #wz .wz-ri.go:hover { background:var(--wz-hover); }
@@ -183,6 +185,9 @@ export const WIZARD_VIEW_HTML = String.raw`
 
 export const WIZARD_VIEW_JS = String.raw`
 // ---- Setup wizard ---------------------------------------------------------------
+// The Loom mark (src/logo.ts) for the rail header: no tile, which at 22px
+// would leave the threads too thin to read against the rail.
+var WZ_LOGO = '` + threadMark('wz-mark', 'wz-mk', 22) + String.raw`';
 var WZ = { v: null, open: false, busy: false, S: null, loaded: {}, req: null, reqT: null, reqBusy: false, job: null, jobT: null,
   login: null, plugin: null, slack: null, slackSub: 0, manifest: null, slackBusy: false, slackMsg: null, tpl: null, ship: null,
   proj: null, ax: null, axT: null, axNative: false, axAsked: false, slackApp: null, rec: false, recRes: null, prac: null, pracT: null, summary: null, err: '' };
@@ -295,7 +300,7 @@ function wzRender() {
 }
 function wzRail() {
   var v = WZ.v;
-  wzEl('wz-rail').innerHTML = '<div class="wz-lg"><i></i>Loom setup</div>' + v.rail.map(function (r, i) {
+  wzEl('wz-rail').innerHTML = '<div class="wz-lg">' + WZ_LOGO + 'Loom setup</div>' + v.rail.map(function (r, i) {
     var cls = 'wz-ri' + (r.current ? ' cur' : '') + (r.status === 'done' && !r.current ? ' done' : '') + (r.status === 'skipped' && !r.current ? ' skipped' : '') + (!r.visible ? ' hid' : '') + (r.reachable && !r.current ? ' go' : '');
     var mark = r.current ? String(i + 1) : r.status === 'done' ? '✓' : r.status === 'skipped' ? '–' : String(i + 1);
     var tag = !r.visible ? '<em>needs Slack</em>' : r.optional ? '<em>optional</em>' : '';

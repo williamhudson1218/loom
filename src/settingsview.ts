@@ -12,6 +12,7 @@
 // Watchers is T20's: this page leaves a link to the Watchers tab.
 
 import { KEYMAP } from './keymap.ts';
+import { logoSvg } from './logo.ts';
 
 // What the Help list needs of the keymap; the page resolves `setting` rows itself.
 const KEYMAP_JSON = JSON.stringify(KEYMAP.map((k) => ({ keys: k.keys, label: k.label, scope: k.scope, setting: k.setting ?? '' }))).split('<').join('');
@@ -414,8 +415,9 @@ function sxHelp(){var hk=sxv('slack_goto_hotkey');
 /* ---- the page ---- */
 function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();if(id==='updates')return sxUpdates();if(id==='about')return sxAbout();return sxHelp();}
 // Settings > About. Copy diagnostics is Copy details with no error in it (src/errorview.ts).
+var SX_LOGO='__SX_LOGO__';
 function sxAbout(){var s=(typeof UPD!=='undefined'&&UPD&&UPD.state)||{};
-  return sxRow('Version','The version running now, and the commit it was built from.',sxPill('off','Loom '+(s.current||'?'))+(s.commit?'<span class="def"><code>'+sxEsc(String(s.commit).slice(0,12))+'</code></span>':''))+
+  return '<div style="display:flex;align-items:center;gap:12px;margin:2px 0 14px">'+SX_LOGO+'<div><div style="font-weight:600;font-size:15px">Loom</div><div class="def">Claude Code meets Slack, GitHub and Gmail.</div></div></div>'+sxRow('Version','The version running now, and the commit it was built from.',sxPill('off','Loom '+(s.current||'?'))+(s.commit?'<span class="def"><code>'+sxEsc(String(s.commit).slice(0,12))+'</code></span>':''))+
    sxRow('Diagnostics','Copies the Loom, macOS, architecture and Claude Code versions and the last 100 lines of the Loom log, with tokens, emails and your home folder removed. Safe to paste into a GitHub issue.',sxBtn('aboutdiag','Copy diagnostics',{pri:true,sm:false})+sxBtn('openlogs','Open logs',{sm:false}));}
 function renderSettings(){var el=$('#settings-body');
   if(!SET){el.innerHTML='<p class="meta">loading…</p>';sxLoadSettings();return;}
@@ -518,4 +520,4 @@ function sxAct(a,arg,btn){
    var txt2=JSON.stringify({settings:snap,chats:DATA.chats.length,projects:(ALLP||[]).length,slackMode:DATA.slackMode,codexVisible:!!DATA.codexVisible,archiveSearch:!!DATA.archiveSearch,helpers:SX.data.plugin?SX.data.plugin.status:null,page:location.origin},null,2);
    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt2).then(function(){toast('Support info copied');},function(){sxBad('Could not copy');});return;}
 }
-`.split('__SX_KEYMAP__').join(KEYMAP_JSON);
+`.split('__SX_KEYMAP__').join(KEYMAP_JSON).split('__SX_LOGO__').join(logoSvg(40, 'sx'));
