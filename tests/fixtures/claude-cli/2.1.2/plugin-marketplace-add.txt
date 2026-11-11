@@ -1,0 +1,6 @@
+Usage: claude plugin marketplace add [options] <source>
+
+Add a marketplace from a URL, path, or GitHub repo
+
+Options:
+  -h, --help  Display help for command

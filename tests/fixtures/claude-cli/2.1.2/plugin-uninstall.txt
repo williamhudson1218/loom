@@ -1,0 +1,8 @@
+Usage: claude plugin uninstall|remove [options] <plugin>
+
+Uninstall an installed plugin
+
+Options:
+  -h, --help           Display help for command
+  -s, --scope <scope>  Uninstall from scope: user, project, or local (default:
+                       "user")

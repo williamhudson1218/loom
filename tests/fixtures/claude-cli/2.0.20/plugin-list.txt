@@ -1,0 +1,16 @@
+Usage: claude plugin [options] [command]
+
+Manage Claude Code plugins
+
+Options:
+  -h, --help                 Display help for command
+
+Commands:
+  validate <path>            Validate a plugin or marketplace manifest
+  marketplace                Manage Claude Code marketplaces
+  install|i <plugin>         Install a plugin from available marketplaces (use
+                             plugin@marketplace for specific marketplace)
+  uninstall|remove <plugin>  Uninstall an installed plugin
+  enable <plugin>            Enable a disabled plugin
+  disable <plugin>           Disable an enabled plugin
+  help [command]             display help for command

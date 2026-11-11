@@ -8,6 +8,7 @@ import { TOOL_DIR } from './paths.ts';
 import { resolveLoomRepoDir } from './repodir.ts';
 import { moduleDirOf } from './moduledir.ts';
 import { resolveTool, toolEnv } from './toolpath.ts';
+import { detectCaps, parseMarketplaceListText, parsePluginListText, tooOldDetail, type ClaudeCaps } from './claudecaps.ts';
 
 // Plugin manager (design §4): installs, updates and removes the Loom Claude Code
 // plugin. Loom never edits ~/.claude/settings.json; it asks `claude plugin ...` to,
@@ -106,6 +107,7 @@ export function bundledPluginDir(): string | null {
 
 export const marketplaceDir = (loomHome: string = TOOL_DIR): string => path.join(loomHome, MARKETPLACE_DIRNAME);
 
+const readJsonFile = (p: string): any => readJson(p);
 function readJson(p: string): any {
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -347,16 +349,24 @@ export function startPluginStateSync(openDb: () => Database.Database, loomHome: 
 
 // ---------- the manager ----------
 
-const previewCommands = (dir: string, claude = 'claude') => ({
-  install: [
-    { argv: [claude, 'plugin', 'marketplace', 'add', dir, '--scope', 'user', '--json'] },
-    { argv: [claude, 'plugin', 'install', PLUGIN_ID, '--scope', 'user', '--json'] },
-  ],
-  remove: [
-    { argv: [claude, 'plugin', 'uninstall', PLUGIN_ID, '--json'] },
-    { argv: [claude, 'plugin', 'marketplace', 'remove', MARKETPLACE_NAME] },
-  ],
+// The flags each command gets depend on what this claude accepts
+// (src/claudecaps.ts). Without caps (not detected yet) the current form shows.
+const FULL_CAPS: Pick<ClaudeCaps, 'marketplaceAddScope' | 'marketplaceAddJson' | 'installScope' | 'installJson' | 'uninstallJson'> = {
+  marketplaceAddScope: true, marketplaceAddJson: true, installScope: true, installJson: true, uninstallJson: true,
+};
+export const pluginArgv = (dir: string, caps: Partial<ClaudeCaps> = FULL_CAPS) => ({
+  add: ['plugin', 'marketplace', 'add', dir, ...(caps.marketplaceAddScope ? ['--scope', 'user'] : []), ...(caps.marketplaceAddJson ? ['--json'] : [])],
+  install: ['plugin', 'install', PLUGIN_ID, ...(caps.installScope ? ['--scope', 'user'] : []), ...(caps.installJson ? ['--json'] : [])],
+  uninstall: ['plugin', 'uninstall', PLUGIN_ID, ...(caps.uninstallJson ? ['--json'] : [])],
+  removeMarketplace: ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME],
 });
+const previewCommands = (dir: string, claude = 'claude', caps?: ClaudeCaps | null) => {
+  const a = pluginArgv(dir, caps ?? FULL_CAPS);
+  return {
+    install: [{ argv: [claude, ...a.add] }, { argv: [claude, ...a.install] }],
+    remove: [{ argv: [claude, ...a.uninstall] }, { argv: [claude, ...a.removeMarketplace] }],
+  };
+};
 const shq = (s: string) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 const withDisplay = (cmds: { argv: string[] }[]): PluginCommand[] => cmds.map((c) => ({ argv: c.argv, display: c.argv.map(shq).join(' ') }));
 
@@ -414,16 +424,39 @@ export class PluginManager {
     return 'claude was not found. Install Claude Code or set its path in Settings > General > Claude Code binary.';
   }
 
+  private capsMemo: ClaudeCaps | null = null;
+  /** What this claude's plugin commands accept, from its own --help (cached per path and version). */
+  async caps(): Promise<ClaudeCaps> {
+    if (!this.capsMemo) this.capsMemo = await detectCaps(this.runner, this.claude, this.env);
+    return this.capsMemo;
+  }
+
   preview(): PluginStatus['preview'] {
-    const p = previewCommands(marketplaceDir(this.loomHome), this.claude);
+    const p = previewCommands(marketplaceDir(this.loomHome), this.claude, this.capsMemo);
     return { install: withDisplay(p.install), remove: withDisplay(p.remove), note: PREVIEW_NOTE };
   }
 
-  /** `claude plugin list --json`, parsed. null + error when claude cannot answer. */
+  /**
+   * The Loom plugin's entry as this claude reports it: `plugin list --json`,
+   * the text of `plugin list`, or (before 2.1.8, which has no list command)
+   * enabledPlugins in Claude's settings.json, read only. null + error when
+   * claude cannot answer.
+   */
   private async listed(): Promise<{ entry: any | null; error?: string }> {
-    const r = await this.run(['plugin', 'list', '--json'], 20_000);
+    const caps = await this.caps();
+    if (!caps.version && !caps.plugins) {
+      const v = await this.run(['--version'], 15_000);
+      if (v.missing) return { entry: null, error: 'claude was not found' };
+    }
+    if (!caps.plugins) return { entry: null, error: tooOldDetail(caps.version) };
+    if (!caps.pluginList) {
+      const enabled = readJsonFile(this.settingsPath)?.enabledPlugins?.[PLUGIN_ID];
+      return { entry: enabled === undefined ? null : { id: PLUGIN_ID, enabled: enabled !== false } };
+    }
+    const r = await this.run(['plugin', 'list', ...(caps.pluginListJson ? ['--json'] : [])], 20_000);
     if (r.missing) return { entry: null, error: 'claude was not found' };
     if (r.code !== 0) return { entry: null, error: r.output.slice(0, 300) || 'claude plugin list failed' };
+    if (!caps.pluginListJson) return { entry: parsePluginListText(r.stdout).find((e) => e.id === PLUGIN_ID) ?? null };
     try {
       const arr = JSON.parse(r.stdout);
       if (!Array.isArray(arr)) return { entry: null, error: 'unexpected output from claude plugin list' };
@@ -433,7 +466,21 @@ export class PluginManager {
     }
   }
 
+  /** Configured marketplaces, with --json when this claude has it, else from the text. */
+  private async marketplaces(caps: ClaudeCaps): Promise<{ list: { name?: string; installLocation?: string }[]; missing?: boolean; step: StepResult }> {
+    const r = await this.run(['plugin', 'marketplace', 'list', ...(caps.marketplaceListJson ? ['--json'] : [])], 20_000);
+    if (r.missing || r.code !== 0) return { list: [], missing: r.missing, step: r };
+    if (!caps.marketplaceListJson) return { list: parseMarketplaceListText(r.stdout), step: r };
+    try {
+      const arr = JSON.parse(r.stdout);
+      return { list: Array.isArray(arr) ? arr : [], step: r };
+    } catch {
+      return { list: [], step: r };
+    }
+  }
+
   async status(): Promise<PluginStatus> {
+    await this.caps(); // so the preview shows the flags this claude takes
     const st = this.state();
     const bundled = this.d.appVersion ?? bundledVersion(this.bundledDir);
     const base = {
@@ -477,25 +524,30 @@ export class PluginManager {
   async install(): Promise<ActionResult> {
     if (!this.bundledDir) return this.result(false, [], 'The plugin files are missing from this build.');
     const steps: StepResult[] = [];
+    const caps = await this.caps();
+    if (!caps.version && !caps.plugins) {
+      const v = await this.run(['--version'], 15_000);
+      if (v.missing) return this.result(false, [v], this.missingDetail());
+    }
+    if (!caps.plugins) return this.result(false, steps, tooOldDetail(caps.version));
+    const argv = pluginArgv(marketplaceDir(this.loomHome), caps);
     const dir = installFiles(this.bundledDir, this.loomHome, this.stamp());
     // add the marketplace unless Claude already has it pointing at this directory
-    const ml = await this.run(['plugin', 'marketplace', 'list', '--json'], 20_000);
-    if (ml.missing) return this.result(false, [ml], this.missingDetail());
-    let have = false;
-    try {
-      const arr = JSON.parse(ml.stdout);
-      have = Array.isArray(arr) && arr.some((m: any) => m?.name === MARKETPLACE_NAME && (!m.installLocation || path.resolve(m.installLocation) === path.resolve(dir)));
-    } catch {
-      /* treat as not added */
-    }
+    const ml = await this.marketplaces(caps);
+    if (ml.missing) return this.result(false, [ml.step], this.missingDetail());
+    const have = ml.list.some((m) => m?.name === MARKETPLACE_NAME && (!m.installLocation || path.resolve(m.installLocation) === path.resolve(dir)));
     if (!have) {
-      const add = await this.run(['plugin', 'marketplace', 'add', dir, '--scope', 'user', '--json']);
+      // Success is the exit code: an older claude prints text, not JSON.
+      const add = await this.run(argv.add);
       steps.push(add);
       if (add.code !== 0) return this.result(false, steps, add.output.slice(0, 300) || 'claude plugin marketplace add failed');
     }
-    const inst = await this.run(['plugin', 'install', PLUGIN_ID, '--scope', 'user', '--json']);
+    const inst = await this.run(argv.install);
     steps.push(inst);
     if (inst.code !== 0) return this.result(false, steps, inst.output.slice(0, 300) || 'claude plugin install failed');
+    // Confirm through Claude's own listing rather than trusting the exit code alone.
+    const { entry, error } = await this.listed();
+    if (!entry) return this.result(false, steps, error ? `The install ran, but Loom could not confirm it: ${error}` : 'claude reported success, but the plugin is not in its list.');
     this.remember(this.stamp());
     writePluginStateFile(this.d.db, this.loomHome);
     return this.result(true, steps);
@@ -513,11 +565,13 @@ export class PluginManager {
 
   async remove(): Promise<ActionResult> {
     const steps: StepResult[] = [];
-    const un = await this.run(['plugin', 'uninstall', PLUGIN_ID, '--json']);
+    const caps = await this.caps();
+    const argv = pluginArgv(marketplaceDir(this.loomHome), caps);
+    const un = await this.run(argv.uninstall);
     steps.push(un);
     if (un.missing) return this.result(false, steps, 'claude was not found.');
     // A plugin that is already gone is fine; carry on to the marketplace.
-    const mk = await this.run(['plugin', 'marketplace', 'remove', MARKETPLACE_NAME]);
+    const mk = await this.run(argv.removeMarketplace);
     steps.push(mk);
     if (un.code !== 0 && mk.code !== 0) return this.result(false, steps, (un.output || mk.output).slice(0, 300) || 'claude plugin uninstall failed');
     fs.rmSync(marketplaceDir(this.loomHome), { recursive: true, force: true });

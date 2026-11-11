@@ -1,0 +1,5 @@
+Configured marketplaces:
+
+  ❯ loom-local
+    Source: Directory (__DIR__)
+

@@ -17,6 +17,7 @@ import {
   writePluginStateFile,
 } from '../src/pluginmgr.ts';
 import { rememberTools } from '../src/toolpath.ts';
+import { clearCapsMemo } from '../src/claudecaps.ts';
 
 const SRC = bundledPluginDir()!;
 let tmp: string;
@@ -24,17 +25,46 @@ let home: string;
 let db: Database.Database;
 const cleanups: (() => void)[] = [];
 
-// A stand-in for `claude`: logs argv, answers list commands from files, and can be made to fail.
+// A stand-in for `claude` that behaves like a given release: it answers --help
+// and --version from help captured from that release (tests/fixtures/claude-cli/
+// <version>), rejects an option that release does not list ("error: unknown
+// option '--json'", as commander does) and a subcommand it lacks, logs every
+// other argv, and records an install in list.json, list.txt and the settings
+// file. FAKE_FAIL makes a matching command fail.
+const CLI_FIXTURES = path.resolve(__dirname, 'fixtures', 'claude-cli');
 function fakeClaude(dir: string): string {
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(
     bin,
     `#!/bin/sh
+H="$FAKE_HELP"
+case "$*" in
+  --version) echo "$FAKE_VERSION (Claude Code)"; exit 0 ;;
+  *" --help") f="$H/$(echo "$*" | sed 's/ --help$//' | tr ' ' '-').txt"; cat "$f"; exit 0 ;;
+esac
+case "$*" in
+  "plugin marketplace add"*) f=plugin-marketplace-add ;;
+  "plugin marketplace list"*) f=plugin-marketplace-list ;;
+  "plugin marketplace remove"*) f=plugin-marketplace-remove ;;
+  "plugin install"*) f=plugin-install ;;
+  "plugin uninstall"*) f=plugin-uninstall ;;
+  "plugin list"*) f=plugin-list ;;
+  *) f=plugin ;;
+esac
+if ! grep -q "^Usage: claude $(echo $f | tr '-' ' ')" "$H/$f.txt"; then echo "error: unknown command '$(echo $f | sed 's/.*-//')'" >&2; exit 1; fi
+for a in "$@"; do case "$a" in --*) grep -q -- "$a" "$H/$f.txt" || { echo "error: unknown option '$a'" >&2; exit 1; } ;; esac; done
 echo "$*" >> "$FAKE_DIR/argv.log"
 if [ -n "$FAKE_FAIL" ] && echo "$*" | grep -q "$FAKE_FAIL"; then echo "boom" >&2; exit 1; fi
 case "$*" in
   "plugin list --json") cat "$FAKE_DIR/list.json" ;;
+  "plugin list") cat "$FAKE_DIR/list.txt" 2>/dev/null || echo "No plugins installed." ;;
   "plugin marketplace list --json") cat "$FAKE_DIR/mlist.json" ;;
+  "plugin marketplace list") cat "$FAKE_DIR/mlist.txt" 2>/dev/null || echo "No marketplaces configured" ;;
+  "plugin install"*)
+    echo '[{"id":"loom@loom-local","version":"0.1.0","enabled":true}]' > "$FAKE_DIR/list.json"
+    printf 'Installed plugins:\n\n  > loom@loom-local\n    Version: 0.1.0\n    Status: enabled\n' > "$FAKE_DIR/list.txt"
+    echo '{"enabledPlugins":{"loom@loom-local":true}}' > "$FAKE_DIR/nosettings.json"
+    echo "Successfully installed plugin: loom@loom-local" ;;
   *) echo '{"ok":true}' ;;
 esac
 `,
@@ -44,6 +74,11 @@ esac
   fs.writeFileSync(path.join(dir, 'mlist.json'), '[]');
   return bin;
 }
+const asVersion = (v: string) => {
+  process.env.FAKE_VERSION = v;
+  process.env.FAKE_HELP = path.join(CLI_FIXTURES, v);
+  clearCapsMemo();
+};
 const argv = () => (fs.existsSync(path.join(tmp, 'argv.log')) ? fs.readFileSync(path.join(tmp, 'argv.log'), 'utf8').trim().split('\n') : []);
 const mgr = (extra: Record<string, unknown> = {}) =>
   new PluginManager({ db, loomHome: home, bundledDir: SRC, claudeBin: path.join(tmp, 'claude'), claudeSettingsPath: path.join(tmp, 'nosettings.json'), rotateToken: () => {}, ...extra });
@@ -55,6 +90,7 @@ beforeEach(() => {
   fakeClaude(tmp);
   process.env.FAKE_DIR = tmp;
   delete process.env.FAKE_FAIL;
+  asVersion('2.1.322');
   db = openDb(':memory:');
 });
 afterEach(() => {
@@ -106,7 +142,8 @@ describe('claude argv', () => {
       'plugin marketplace list --json',
       `plugin marketplace add ${dir} --scope user --json`,
       `plugin install ${PLUGIN_ID} --scope user --json`,
-      'plugin list --json',
+      'plugin list --json', // the install is confirmed in Claude's own list
+      'plugin list --json', // the status returned with the result
     ]);
     expect((getSetting(db, 'plugin_state') as any).installed_version).toBeTruthy();
     expect(JSON.parse(fs.readFileSync(path.join(home, 'plugin-state.json'), 'utf8')).plugin_version).toBe((getSetting(db, 'plugin_state') as any).installed_version);
@@ -148,7 +185,7 @@ describe('claude argv', () => {
     fs.writeFileSync(path.join(loginBin, 'claude'), script, { mode: 0o755 });
     // What the probe records after its login-shell lookup (src/probe.ts, rememberTools).
     rememberTools({}, [loginBin], home);
-    const r = await mgr({ claudeBin: undefined, home: tmp, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', FAKE_DIR: tmp }, knownDirs: [] }).install();
+    const r = await mgr({ claudeBin: undefined, home: tmp, env: { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }, knownDirs: [] }).install();
     expect(r.detail).toBeUndefined();
     expect(r.ok).toBe(true);
     expect(r.steps[0].display).toContain(path.join(loginBin, 'claude'));
@@ -161,9 +198,47 @@ describe('claude argv', () => {
     fs.copyFileSync(path.join(tmp, 'claude'), path.join(elsewhere, 'claude'));
     fs.chmodSync(path.join(elsewhere, 'claude'), 0o755);
     rememberTools({ claude: path.join(elsewhere, 'claude') }, null, home);
-    const r = await mgr({ claudeBin: undefined, home: tmp, env: { PATH: '/usr/bin:/bin', FAKE_DIR: tmp }, knownDirs: [] }).install();
+    const r = await mgr({ claudeBin: undefined, home: tmp, env: { ...process.env, PATH: '/usr/bin:/bin' }, knownDirs: [] }).install();
     expect(r.ok).toBe(true);
     expect(r.steps[0].display).toContain(path.join(elsewhere, 'claude'));
+  });
+
+  // 0.1.106 on a second Mac: an npm claude under nvm, older than --json on these commands.
+  it('an old claude (2.1.2) gets no --json and no marketplace --scope, and the install is confirmed from settings', async () => {
+    asVersion('2.1.2');
+    const r = await mgr().install();
+    expect(r.detail).toBeUndefined();
+    expect(r.ok).toBe(true);
+    const dir = marketplaceDir(home);
+    expect(argv()).toEqual(['plugin marketplace list', `plugin marketplace add ${dir}`, `plugin install ${PLUGIN_ID} --scope user`]);
+    expect(r.status.status).toBe('installed');
+    expect(r.status.preview.install.map((c) => c.argv.slice(1).join(' '))).toEqual([`plugin marketplace add ${dir}`, `plugin install ${PLUGIN_ID} --scope user`]);
+  });
+
+  it('2.0.20 (the first with plugin install) gets no flags at all', async () => {
+    asVersion('2.0.20');
+    const r = await mgr().install();
+    expect(r.ok).toBe(true);
+    expect(argv()).toEqual(['plugin marketplace list', `plugin marketplace add ${marketplaceDir(home)}`, `plugin install ${PLUGIN_ID}`]);
+  });
+
+  it('the fake really is strict: an old claude given --json fails the way the second Mac did', async () => {
+    asVersion('2.1.2');
+    const out = require('node:child_process').spawnSync(path.join(tmp, 'claude'), ['plugin', 'marketplace', 'add', '/x', '--scope', 'user', '--json'], { env: process.env, encoding: 'utf8' });
+    expect(out.status).toBe(1);
+    expect(out.stderr).toContain("error: unknown option '--scope'");
+  });
+
+  it('a claude too old for plugins says which version is needed and how to update', async () => {
+    fs.mkdirSync(path.join(tmp, 'v1'));
+    for (const f of ['plugin', 'plugin-marketplace']) fs.writeFileSync(path.join(tmp, 'v1', f + '.txt'), 'Usage: claude [options] [command] [prompt]\n');
+    process.env.FAKE_VERSION = '1.0.128';
+    process.env.FAKE_HELP = path.join(tmp, 'v1');
+    clearCapsMemo();
+    const r = await mgr().install();
+    expect(r.ok).toBe(false);
+    expect(r.detail).toBe("Claude Code 1.0.128 has no plugin commands. Loom's plugin needs Claude Code 2.0.20 or newer. Update with `claude update`, or reinstall Claude Code.");
+    expect(argv()).toEqual([]);
   });
 
   it('remove uninstalls, drops the marketplace, deletes the dir, rotates the token, clears state', async () => {

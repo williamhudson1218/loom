@@ -1,0 +1,6 @@
+Usage: claude plugin uninstall|remove [options] <plugin>
+
+Uninstall an installed plugin
+
+Options:
+  -h, --help  Display help for command

@@ -59,6 +59,7 @@ import {
   type WizardState,
 } from '../wizard.ts';
 import { classifyAccelerator, practice } from './shortcut.ts';
+import { CLAUDE_UPDATE_HINT, MIN_PLUGIN_CLAUDE, versionCmp } from '../claudecaps.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // The setup wizard: state, per-step writes, the environment check, Homebrew
@@ -75,7 +76,7 @@ import type { RouteCtx, RouteDef } from './index.ts';
 /* ------------------------------------------------------------ requirements rows */
 
 export interface RequirementRow {
-  id: 'tmux' | 'claude' | 'login' | 'python3' | 'gh' | 'codex';
+  id: 'tmux' | 'claude' | 'claudever' | 'login' | 'python3' | 'gh' | 'codex';
   required: boolean;
   ok: boolean;
   title: string;
@@ -109,6 +110,19 @@ export function requirementRows(r: ProbeReport, brew: BrewInfo): RequirementRow[
       : 'Not found. Install Claude Code, then check again. If it is installed somewhere unusual, set its path in Settings › General.',
     fix: 'none',
   });
+  if (r.claude.found) {
+    // The Loom plugin's commands (plugin install, plugin marketplace) first
+    // shipped in Claude Code 2.0.20 (src/claudecaps.ts).
+    const v = verText(r.claude.version);
+    const newEnough = !!v && versionCmp(v, MIN_PLUGIN_CLAUDE) >= 0;
+    rows.push({
+      id: 'claudever', required: false, ok: newEnough, title: `Claude Code ${MIN_PLUGIN_CLAUDE} or newer`,
+      detail: newEnough ? `Version ${v}.`
+        : v ? `Version ${v} is too old for the Loom plugin, which needs ${MIN_PLUGIN_CLAUDE} or newer. ${CLAUDE_UPDATE_HINT}`
+        : `Loom could not read the Claude Code version. The Loom plugin needs ${MIN_PLUGIN_CLAUDE} or newer. ${CLAUDE_UPDATE_HINT}`,
+      fix: 'none',
+    });
+  }
   const loggedIn = !!r.claude.auth?.loggedIn;
   rows.push({
     id: 'login', required: true, ok: r.claude.found && loggedIn, title: 'Claude Code logged in',

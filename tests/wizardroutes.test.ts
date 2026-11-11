@@ -285,11 +285,21 @@ describe('requirements', () => {
     bad.gh = { found: false, auth: null } as never;
     const rows = requirementRows(bad, { found: true, path: '/opt/homebrew/bin/brew' });
     expect(rows.map((r) => [r.id, r.ok, r.fix])).toEqual([
-      ['tmux', false, 'brew-tmux'], ['claude', true, 'none'], ['login', false, 'login'], ['python3', true, 'none'], ['gh', false, 'brew-gh'], ['codex', false, 'none'],
+      ['tmux', false, 'brew-tmux'], ['claude', true, 'none'], ['claudever', true, 'none'], ['login', false, 'login'], ['python3', true, 'none'], ['gh', false, 'brew-gh'], ['codex', false, 'none'],
     ]);
     expect(rows.filter((r) => r.required).map((r) => r.id)).toEqual(['tmux', 'claude', 'login', 'python3']);
     // login needs tmux (it opens in a Loom terminal tab)
     expect(rows.find((r) => r.id === 'login')!.fixBlocked).toMatch(/Install tmux first/);
+  });
+
+  it('a Claude Code older than the plugin commands is flagged with the version and claude update', () => {
+    const old = goodReport();
+    old.claude.version = ver('1.0.128');
+    const row = requirementRows(old, { found: true })!.find((r) => r.id === 'claudever')!;
+    expect(row).toMatchObject({ ok: false, required: false, title: 'Claude Code 2.0.20 or newer' });
+    expect(row.detail).toBe('Version 1.0.128 is too old for the Loom plugin, which needs 2.0.20 or newer. Update with `claude update`, or reinstall Claude Code.');
+    const cur = requirementRows(goodReport(), { found: true }).find((r) => r.id === 'claudever')!;
+    expect(cur).toMatchObject({ ok: true, detail: 'Version 2.1.0.' });
   });
 
   it('without Homebrew the install buttons are blocked and Loom does not offer to install it', () => {
@@ -332,7 +342,7 @@ describe('requirements', () => {
     const r = await hit(table(), 'GET /api/wizard/requirements', undefined, '?fresh=1');
     expect(r.body.ready).toBe(true);
     expect(r.body.brew).toEqual({ found: true, path: '/opt/homebrew/bin/brew' });
-    expect(r.body.rows).toHaveLength(6);
+    expect(r.body.rows).toHaveLength(7);
   });
 
   it('install runs brew install through the injected runner and never installs Homebrew', async () => {

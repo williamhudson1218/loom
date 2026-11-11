@@ -1,8 +1,9 @@
 {
   "name": "loom",
-  "displayName": "Loom",
   "version": "0.1.0",
   "description": "Hooks, CLI and skills that connect Claude Code chats to Loom",
-  "author": { "name": "Loom" },
+  "author": {
+    "name": "Loom"
+  },
   "license": "MIT"
 }
