@@ -6,6 +6,7 @@ import { defaultRunner, type Runner } from './probe.ts';
 import { getSetting, onSettingChanged, setSetting } from './settingsSchema.ts';
 import { TOOL_DIR } from './paths.ts';
 import { resolveLoomRepoDir } from './repodir.ts';
+import { moduleDirOf } from './moduledir.ts';
 
 // Plugin manager (design §4): installs, updates and removes the Loom Claude Code
 // plugin. Loom never edits ~/.claude/settings.json; it asks `claude plugin ...` to,
@@ -84,7 +85,10 @@ export function bundledPluginDir(): string | null {
   if (res) candidates.push(path.join(res, 'plugin'));
   const repo = resolveLoomRepoDir();
   if (repo) candidates.push(path.join(repo, 'plugin'));
-  candidates.push(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'plugin'));
+  // Running from source (tsx, vitest): the repo's plugin/ next to src/. In the
+  // app bundle import.meta.url is a sentinel, not a URL, and this is skipped.
+  const here = moduleDirOf(import.meta.url);
+  if (here) candidates.push(path.resolve(here, '..', 'plugin'));
   for (const c of candidates) {
     try {
       if (fs.existsSync(path.join(c, '.claude-plugin', 'marketplace.json'))) return c;
