@@ -74,9 +74,12 @@ export function bashWrittenFiles(cmd: string, cwd: string): string[] {
     return `<<__BODY${bodies.length - 1}__${rest}`;
   });
   let base = cwd;
+  // A quoted token is a literal path, so Next.js segments like (auth) or [id] are fine;
+  // only expansion ($, backtick) still disqualifies it.
   const add = (t: string) => {
+    const quoted = /^(['"]).*\1$/.test(t);
     const v = clean(t);
-    if (usable(v)) out.add(path.resolve(base, v));
+    if (quoted ? !!v && !/[$`]/.test(v) && !v.startsWith('-') && /[/.]/.test(v) : usable(v)) out.add(path.resolve(base, v));
   };
   const pyWrites = (code: string) => {
     const vars = new Map<string, string>();
@@ -92,7 +95,8 @@ export function bashWrittenFiles(cmd: string, cwd: string): string[] {
     }
   };
   // Walk the command step by step so each `cd` moves the base for what follows it.
-  for (const seg of shell.split(/&&|\|\||;|\n/)) {
+  // Join backslash-newline continuations first: `git add -- \⏎ "a" "b"` is one step.
+  for (const seg of shell.replace(/\\\n/g, ' ').split(/&&|\|\||;|\n/)) {
     const cd = seg.match(/^\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*$/);
     if (cd) {
       base = path.resolve(base, clean(cd[1]));
@@ -100,7 +104,7 @@ export function bashWrittenFiles(cmd: string, cwd: string): string[] {
     }
     // git add <paths>. -A / -u / . stage everything: no owner signal.
     const ga = seg.match(/\bgit\s+(?:-C\s+\S+\s+)?add\s+(.+)$/);
-    if (ga) for (const t of ga[1].trim().split(/\s+/)) if (t !== '--') add(t);
+    if (ga) for (const t of ga[1].match(/'[^']*'|"[^"]*"|\S+/g) ?? []) if (t !== '--') add(t);
     // sed -i / perl -pi: the file arguments after the script.
     const sd = seg.match(/\b(?:sed\s+-i(?:\s*''|\s*""|\.\w+)?|perl\s+-p?i\S*)\s+(.+)$/);
     if (sd) for (const t of (sd[1].match(/'[^']*'|"[^"]*"|\S+/g) ?? []).slice(1)) if (!t.startsWith('-')) add(t);

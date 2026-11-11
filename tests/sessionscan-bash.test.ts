@@ -11,6 +11,9 @@ describe('bashWrittenFiles: files a shell command writes or stages', () => {
     expect(bashWrittenFiles('git add apps/a.ts packages/b.ts && git status', R).sort()).toEqual(['/repo/apps/a.ts', '/repo/packages/b.ts']);
     expect(bashWrittenFiles('git add -- apps/a.ts', R)).toEqual(['/repo/apps/a.ts']);
     expect(bashWrittenFiles('git add -A', R)).toEqual([]);
+    // A multi-line git add with quoted Next.js paths (brackets, route groups, spaces).
+    expect(bashWrittenFiles('cd /repo && git add -- \\\n  "apps/x/[id]/route.ts" "apps/(auth)/page.tsx" \\\n  \'apps/a b/c.ts\'', R).sort()).toEqual(['/repo/apps/(auth)/page.tsx', '/repo/apps/a b/c.ts', '/repo/apps/x/[id]/route.ts']);
+    expect(bashWrittenFiles('git add "$F"', R)).toEqual([]);
     expect(bashWrittenFiles('git add .', R)).toEqual([]);
   });
   it('a leading cd moves the base', () => {
