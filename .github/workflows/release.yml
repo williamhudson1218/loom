@@ -51,6 +51,13 @@ jobs:
             yarn.lock
             app/yarn.lock
 
+      # electron-builder rebuilds better-sqlite3 and node-pty from source for
+      # Electron's ABI (as a local yarn dist does). The node-gyp it uses still
+      # imports distutils, which Python 3.12 removed; 3.11 still has it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Version
         id: v
         run: |
