@@ -77,8 +77,8 @@ function slackCountOf(c){var d=detailFor(c);if(d&&d.slackAll)return slackThreads
 function slackPost(t){fetch('/api/slack/open?key='+encodeURIComponent(t.key)+'&url='+encodeURIComponent(t.url||''),{method:'POST'}).then(function(r){return r.json();}).then(function(j){toast(j.ok?(j.detail||'opened'):(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');}).catch(function(){toast('server off','#8a2b2e');});}
 function slackSig(c){return slackThreadsOf(c).map(function(t){return t.key+(t.draft?'d':'')+(t.parked?'p':'');}).join(',');}
 function slackHeadHtml(c){if(!ownsSlack(c))return '';var list=slackThreadsOf(c),m=slackBtnMode(list.length);
-  if(m==='split')return '<span class="mbsplit">'+mbtn('slack','Slack thread <span class="chp sl">'+list.length+'</span>','',' title="open the most relevant thread"')+mbtn('slackmenu','▾','dd',' aria-haspopup="menu" aria-expanded="'+(!!slackDD)+'" aria-label="All Slack threads"')+'</span>';
-  return mbtn('slack','Slack thread','',list.length?'':' disabled title="loading the thread…"');}
+  if(m==='split')return '<span class="mbsplit">'+mbtn('slack',brandIcon('slack')+'Slack thread <span class="chp sl">'+list.length+'</span>','',' title="open the most relevant thread"')+mbtn('slackmenu','▾','dd',' aria-haspopup="menu" aria-expanded="'+(!!slackDD)+'" aria-label="All Slack threads"')+'</span>';
+  return mbtn('slack',brandIcon('slack')+'Slack thread','',list.length?'':' disabled title="loading the thread…"');}
 function slackRowHtml(t,i,compact){var now=Date.now();
   return '<button type="button" role="menuitem" class="skrow" data-i="'+i+'" tabindex="-1" title="'+esc(t.url)+'"><span class="skch">'+esc(t.channelLabel)+'</span><span class="sklb">'+esc(compact?t.channelLabel+' · '+t.label:t.label)+'</span><span class="skmeta"><span class="chp role '+esc(t.role)+'">'+esc(slackRoleChip(t))+'</span>'+(t.draft?'<span class="chp mk">Draft</span>':'')+(t.parked?'<span class="chp mk pk">Parked</span>':'')+'</span><span class="skage">'+esc(slackAgeOf(t.lastAt,now))+'</span></button>';}
 function slackPanelHtml(c){return slackThreadsOf(c).map(function(t,i){return slackRowHtml(t,i,true);}).join('');}

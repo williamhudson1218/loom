@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -324,7 +325,7 @@ describe('the card', () => {
       `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=${state.confirm ? "'r1'" : 'null'},draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
        var fetch=function(){return new Promise(function(){});};var renderOutbox=function(){};
        var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};var slkBubbles=function(ms){return ms.map(function(m){return '<p>'+esc(m)+'</p>';}).join('');};
-       ${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+       ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
        ${state.head ? `REVIEW_HEAD['r1']=${JSON.stringify({ at: Date.now(), ...state.head })};` : `REVIEW_HEAD['r1']={at:Date.now(),stale:false,head:''};`}
        ${state.all ? "REVIEW_ALL['r1']=1;" : ''}FRESH['r1']={at:Date.now(),items:[]};
        return draftCardHtml(DATA.drafts[0],{});`,

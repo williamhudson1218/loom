@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -158,7 +159,7 @@ describe('the card shows where files land', () => {
       `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
        var slkCtx=function(){return {users:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};
        var slkBubbles=function(ms,c,t,ex){return ms.map(function(m,i){return '<div class="b">'+slkRender(m)+(ex[i]||'')+'</div>';}).join('');};
-       ${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+       ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
        return draftCardHtml(DATA.drafts[0],{});`,
     )({ drafts: [draft] }, (x: string) => x, () => '', () => '10:00', '\n') as string;
 

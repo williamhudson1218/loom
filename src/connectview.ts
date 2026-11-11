@@ -32,7 +32,7 @@ var CN_K_SX={btn:'sxbtn sm',pri:'sxbtn sm pri',ghost:'sxbtn sm ghost',danger:'sx
 var CN_K_WZ={btn:'btn sm',pri:'btn pri',ghost:'btn sm ghost',danger:'btn sm danger',note:'note',input:''};
 var CN_DEVICE='https://github.com/login/device';
 function cnEsc(s){return String(s==null?'':s).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;');}
-function cnB(K,act,label,o){o=o||{};var c=o.pri?K.pri:o.danger?K.danger:o.ghost?K.ghost:K.btn;return '<button type="button" class="'+c+'" data-cn="'+act+'"'+(o.arg!=null?' data-arg="'+cnEsc(o.arg)+'"':'')+(o.dis?' disabled':'')+'>'+cnEsc(label)+'</button>';}
+function cnB(K,act,label,o){o=o||{};var c=o.pri?K.pri:o.danger?K.danger:o.ghost?K.ghost:K.btn;return '<button type="button" class="'+c+'" data-cn="'+act+'"'+(o.arg!=null?' data-arg="'+cnEsc(o.arg)+'"':'')+(o.dis?' disabled':'')+'>'+(o.icon?brandIcon(o.icon):'')+cnEsc(label)+'</button>';}
 // An error note carries Copy details (src/errorview.ts); what names the Connect flow.
 function cnNote(K,t,kind,what){var copy='';if(kind==='err'&&typeof lerrCopyBtn==='function'){var d=document.createElement('div');d.innerHTML=t;copy=' '+lerrCopyBtn({what:what||'Connect',message:d.textContent||''});}
   return '<div class="'+K.note+(kind?' '+kind:'')+'">'+t+copy+'</div>';}
@@ -77,7 +77,7 @@ function cnGhHtml(K){var st=CN.gh,v=cnGhView(st),h='';
    h+='<div class="cn-row">'+cnPill('off','gh is not installed')+'</div><div class="def">Loom uses the GitHub CLI (gh) for pull request status, checks, reviews and Ship.</div>';
    h+=st.brew?'<div class="cn-row">'+cnB(K,'ghinstall','Install with Homebrew',{pri:true})+'<span class="def">Runs brew install gh.</span></div>':'<div class="cn-row"><a href="https://cli.github.com" target="_blank" rel="noopener">Download gh from cli.github.com</a>'+cnB(K,'ghrefresh','Check again')+'</div>';
    return '<div class="cn-stack">'+msg+h+'</div>';}
-  if(v.kind==='unauth'){h+='<div class="cn-row">'+cnPill('warn','Not signed in')+cnB(K,'ghlogin','Connect GitHub',{pri:true})+'</div><div class="def">Loom runs gh auth login. GitHub shows a one-time code here and opens its sign-in page in your browser. gh keeps the token; Loom never sees it.</div>';return '<div class="cn-stack">'+msg+h+'</div>';}
+  if(v.kind==='unauth'){h+='<div class="cn-row">'+cnPill('warn','Not signed in')+cnB(K,'ghlogin','Connect GitHub',{pri:true,icon:'github'})+'</div><div class="def">Loom runs gh auth login. GitHub shows a one-time code here and opens its sign-in page in your browser. gh keeps the token; Loom never sees it.</div>';return '<div class="cn-stack">'+msg+h+'</div>';}
   h+='<div class="cn-row">'+cnPill('ok',v.pill[1])+(CN.ghConfirm?'':cnB(K,'ghagain','Sign in again',{ghost:true}))+cnB(K,'ghrefresh','Check again',{ghost:true})+'</div>';
   if(CN.ghConfirm)h+=cnNote(K,'Signing in again runs gh auth login for github.com. gh adds the account you approve and makes it the active one; your current login stays in gh.','warn')+'<div class="cn-row">'+cnB(K,'ghagainyes','Sign in again',{pri:true})+cnB(K,'ghagainno','Keep the current login',{ghost:true})+'</div>';
   return '<div class="cn-stack">'+msg+h+'</div>';}
@@ -125,7 +125,7 @@ function cnGmHtml(K,o){o=o||{};var st=CN.gm,v=cnGmView(st),h='';
     (a.reconnect?cnPill('warn','Needs reconnecting')+cnB(K,'gmreconnect','Reconnect',{arg:a.email,pri:true}):'')+
     cnB(K,'gmdisc','Disconnect',{arg:a.email,danger:true})+'</div>';}).join('');
   if(CN.gmO)h+='<div class="cn-row"><span class="def">Waiting for you to approve in Google.</span><a href="'+cnEsc(CN.gmO.url)+'" target="_blank" rel="noopener">Open the Google page</a>'+cnB(K,'gmcancel','Cancel',{ghost:true})+'</div>';
-  else h+='<div class="cn-row">'+cnB(K,'gmconnect',acc.length?'Add another account':'Connect Gmail',{pri:!acc.length,dis:!st.clientId})+'<span class="def">'+(acc.length?'The default account sends drafts that name no account. A draft names an account by its label or address.':'Sends email drafts as you and reads their threads (headers and snippets only) for the before-send check.')+'</span></div>';
+  else h+='<div class="cn-row">'+cnB(K,'gmconnect',acc.length?'Add another account':'Connect Gmail',{pri:!acc.length,dis:!st.clientId,icon:'gmail'})+'<span class="def">'+(acc.length?'The default account sends drafts that name no account. A draft names an account by its label or address.':'Sends email drafts as you and reads their threads (headers and snippets only) for the before-send check.')+'</span></div>';
   var rt=st.route==='gmail'?'Email drafts send through Gmail, built in.':st.route==='cli'?'Email drafts send through the Email CLI'+(st.cli?' ('+cnEsc(st.cli)+')':'')+'.':'Email drafts cannot send yet.';
   h+='<div class="def">'+rt+'</div>';
   return '<div class="cn-stack">'+h+'</div>';}

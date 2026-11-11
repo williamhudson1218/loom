@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -402,7 +403,7 @@ describe('the email card and the new-messages panel', () => {
       `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=${state.confirm ? "'e1'" : 'null'},draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
        var fetch=function(){return new Promise(function(){});};var renderOutbox=function(){};
        var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};var slkBubbles=function(ms){return ms.map(function(m){return '<p>'+esc(m)+'</p>';}).join('');};
-       ${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+       ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
        FRESH['e1']=${JSON.stringify({ at: Date.now(), items: [], ...(state.fresh ?? {}) })};
        ${state.block ? `BLOCK['e1']=${JSON.stringify(state.block)};` : ''}${state.quote ? "EMAIL_QUOTE['e1']=1;" : ''}${state.edit ? "DRAFT_EDIT_ON['e1']=1;" : ''}
        return draftCardHtml(DATA.drafts[0],{});`,
@@ -415,7 +416,7 @@ describe('the email card and the new-messages panel', () => {
 
   it('shows from, To/Cc, subject, Reply in thread with the thread subject, and the body with its quote collapsed', () => {
     const html = card(em);
-    expect(html).toContain('✉ Email');
+    expect(html).toContain('</svg>Email</span>');
     expect(html).toContain('Reply in thread: Q3 filing');
     expect(html).toContain(`href="https://mail.google.com/mail/#all/${THREAD}"`);
     expect(html).toContain('<b>From</b><span>work account</span>');

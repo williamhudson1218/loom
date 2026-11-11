@@ -102,86 +102,10 @@ export const WELCOME_VIEW_HTML = welcomeMarkup(false);
 
 export const WELCOME_VIEW_JS = String.raw`
 // ---- Welcome screen ---------------------------------------------------------------
-var LW = { open: false, raf: 0, t0: 0, W: 0, H: 0, layers: [], shots: [], nextShot: 1800, neb: null,
-  ptr: { x: 0, y: 0, tx: 0, ty: 0 }, ls: [], done: null, reduce: false };
-var LW_NEBULA = [
-  { x: .18, y: .22, r: .30, c: '255,95,143', a: .055, sx: 1.4 },
-  { x: .86, y: .62, r: .34, c: '94,200,255', a: .055, sx: 1.2 },
-  { x: .55, y: .95, r: .30, c: '255,178,56', a: .04, sx: 1.8 },
-  { x: .62, y: .12, r: .18, c: '94,200,255', a: .04, sx: 1 }
-];
-var LW_TINTS = ['255,255,255', '255,255,255', '255,255,255', '207,233,255', '255,230,194', '255,211,224'];
-function lwRand(a, b) { return a + Math.random() * (b - a); }
-function lwStars(n, r0, r1, a0, a1, w0, w1, glow) {
-  var out = [];
-  for (var i = 0; i < n; i++) out.push({ x: Math.random() * LW.W, y: Math.random() * LW.H, r: lwRand(r0, r1), a: lwRand(a0, a1), tw: lwRand(w0, w1), ph: lwRand(0, 6.3), c: LW_TINTS[Math.floor(Math.random() * LW_TINTS.length)], glow: glow });
-  return out;
-}
-function lwNebula() {
-  var n = document.createElement('canvas'), x = n.getContext('2d');
-  n.width = Math.ceil(LW.W / 2); n.height = Math.ceil(LW.H / 2);
-  x.globalCompositeOperation = 'lighter';
-  LW_NEBULA.forEach(function (c) {
-    for (var i = 0; i < 26; i++) {
-      var cx = (c.x + lwRand(-c.r, c.r) * .7 * c.sx) * n.width, cy = (c.y + lwRand(-c.r, c.r) * .45) * n.height;
-      var rr = lwRand(.25, .7) * c.r * n.width;
-      var g = x.createRadialGradient(cx, cy, 0, cx, cy, rr);
-      g.addColorStop(0, 'rgba(' + c.c + ',' + (c.a * lwRand(.4, 1)) + ')');
-      g.addColorStop(1, 'rgba(' + c.c + ',0)');
-      x.fillStyle = g; x.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
-    }
-  });
-  return n;
-}
-function lwSize() {
-  var cv = document.getElementById('lw-sky'), d = Math.min(window.devicePixelRatio || 1, 2);
-  LW.W = window.innerWidth; LW.H = window.innerHeight;
-  cv.width = LW.W * d; cv.height = LW.H * d;
-  cv.getContext('2d').setTransform(d, 0, 0, d, 0, 0);
-  var area = LW.W * LW.H;
-  LW.layers = [
-    { depth: .15, stars: lwStars(Math.floor(area / 2600), .25, .7, .25, .7, .5, 2, false) },
-    { depth: .45, stars: lwStars(Math.floor(area / 9000), .6, 1.1, .4, .85, .3, 1.2, false) },
-    { depth: 1, stars: lwStars(Math.floor(area / 45000), 1, 1.7, .6, 1, .2, .8, true) }
-  ];
-  LW.neb = lwNebula();
-}
-function lwFrame(now) {
-  LW.raf = 0;
-  if (!LW.open) return;
-  var x = document.getElementById('lw-sky').getContext('2d'), W = LW.W, H = LW.H, p = LW.ptr;
-  var t = LW.reduce ? 6000 : now - LW.t0;
-  x.fillStyle = '#05060b'; x.fillRect(0, 0, W, H);
-  p.x += (p.tx - p.x) * .02; p.y += (p.ty - p.y) * .02;
-  x.drawImage(LW.neb, (LW.reduce ? 0 : Math.sin(t / 40000) * 20) - p.x * 10, -p.y * 8, W, H);
-  LW.layers.forEach(function (L) {
-    var ox = t * -.005 * L.depth - p.x * 24 * L.depth, oy = t * .0012 * L.depth - p.y * 18 * L.depth;
-    L.stars.forEach(function (s) {
-      var px = ((s.x + ox) % W + W) % W, py = ((s.y + oy) % H + H) % H;
-      var a = s.a * (.65 + .35 * Math.sin(t / 1000 * s.tw + s.ph));
-      if (s.glow) {
-        var g = x.createRadialGradient(px, py, 0, px, py, s.r * 5);
-        g.addColorStop(0, 'rgba(' + s.c + ',' + a + ')'); g.addColorStop(.25, 'rgba(' + s.c + ',' + (a * .35) + ')'); g.addColorStop(1, 'rgba(' + s.c + ',0)');
-        x.fillStyle = g; x.fillRect(px - s.r * 5, py - s.r * 5, s.r * 10, s.r * 10);
-      } else { x.fillStyle = 'rgba(' + s.c + ',' + a + ')'; x.fillRect(px, py, s.r * 1.6, s.r * 1.6); }
-    });
-  });
-  if (!LW.reduce && t > LW.nextShot) {
-    LW.shots.push({ x: lwRand(.1, .9) * W, y: lwRand(.05, .45) * H, a: Math.random() < .5 ? .35 : Math.PI - .35, born: t, life: lwRand(700, 1100), len: lwRand(120, 220), v: lwRand(.6, .9) });
-    LW.nextShot = t + 7000 * lwRand(.6, 1.4);
-  }
-  LW.shots = LW.shots.filter(function (s) { return t - s.born < s.life; });
-  LW.shots.forEach(function (s) {
-    var k = (t - s.born) / s.life, d = (t - s.born) * s.v;
-    var hx = s.x + Math.cos(s.a) * d, hy = s.y + Math.sin(s.a) * d, tx = hx - Math.cos(s.a) * s.len, ty = hy - Math.sin(s.a) * s.len;
-    var g = x.createLinearGradient(tx, ty, hx, hy);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(255,255,255,' + (.75 * Math.sin(k * Math.PI)) + ')');
-    x.strokeStyle = g; x.lineWidth = 1.2; x.beginPath(); x.moveTo(tx, ty); x.lineTo(hx, hy); x.stroke();
-  });
-  if (!LW.reduce && !document.hidden) LW.raf = requestAnimationFrame(lwFrame);
-}
-function lwKick() { if (LW.open && !LW.raf && !document.hidden) LW.raf = requestAnimationFrame(lwFrame); }
-function lwHalt() { if (LW.raf) { cancelAnimationFrame(LW.raf); LW.raf = 0; } }
+// The sky is the shared renderer (src/skyview.ts, loomSky); this owns only the
+// screen's own listeners and its handover.
+var LW = { open: false, sky: null, ls: [], done: null, reduce: false };
+function lwHalt() { if (LW.sky) { LW.sky.stop(); LW.sky = null; } }
 function lwOn(target, type, fn) { target.addEventListener(type, fn); LW.ls.push([target, type, fn]); }
 function lwOffAll() { LW.ls.forEach(function (l) { l[0].removeEventListener(l[1], l[2]); }); LW.ls = []; }
 // opts.replay: Settings > Help asked for it. opts.done: called once Enter has faded the screen out.
@@ -191,7 +115,6 @@ function showWelcome(opts) {
   if (!el || LW.open) return;
   LW.open = true; LW.done = opts.done || null; LW.replay = !!opts.replay;
   LW.reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  LW.t0 = performance.now(); LW.shots = []; LW.nextShot = 1800; LW.ptr = { x: 0, y: 0, tx: 0, ty: 0 };
   // Server-rendered open (a first launch): the animations are already running
   // from the first paint, so restarting them would make the logo jump.
   if (!(el.classList.contains('open') && el.classList.contains('run'))) {
@@ -200,13 +123,9 @@ function showWelcome(opts) {
     el.classList.add('open', 'run');
   }
   el.setAttribute('aria-hidden', 'false');
-  lwSize();
-  lwOn(window, 'resize', function () { lwSize(); if (LW.reduce) { lwHalt(); lwKick(); } });
-  if (!LW.reduce) lwOn(window, 'pointermove', function (e) { LW.ptr.tx = e.clientX / LW.W - .5; LW.ptr.ty = e.clientY / LW.H - .5; });
-  lwOn(document, 'visibilitychange', function () { if (document.hidden) lwHalt(); else lwKick(); });
+  LW.sky = loomSky(document.getElementById('lw-sky'), { nebula: LSKY_NEBULA, parallax: true, shoot: 7000, dpr: 1.5, maxStars: 900, alive: function () { return LW.open; } });
   lwOn(document, 'keydown', function (e) { if (e.key === 'Enter' && document.activeElement && document.activeElement.id !== 'lw-enter') { e.preventDefault(); lwEnter(); } });
   lwOn(document.getElementById('lw-enter'), 'click', lwEnter);
-  lwKick();
   setTimeout(function () { var b = document.getElementById('lw-enter'); if (b && LW.open) b.focus({ preventScroll: true }); }, 50);
 }
 // Lets the board paint again once the welcome screen has handed over.
@@ -220,7 +139,6 @@ function lwEnter() {
   var finish = function () {
     el.classList.remove('open', 'run', 'leaving'); el.setAttribute('aria-hidden', 'true'); lwReveal();
     var c = document.getElementById('lw-sky'); c.width = 1; c.height = 1;
-    LW.layers = []; LW.neb = null; LW.shots = [];
   };
   // The wizard (or the board) opens underneath, so the fade reveals it.
   if (done) done();

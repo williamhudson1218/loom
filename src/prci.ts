@@ -51,7 +51,7 @@ function prciOwn(c){var u=chatPrUrl(c);return u?{url:u,key:(DATA.chatPr||{})[cha
 function prciOf(c){return prciGroups(prciOwn(c),DATA.ships||[],prciPipes(),chatKey(c));}
 function prciSig(c){return prciOf(c).map(function(g){return g.url+g.state+(g.pipe?g.pipe.dots.map(function(d){return d.state.charAt(0);}).join('')+(g.pipe.jobs||[]).length:'');}).join(',');}
 function prciHeadHtml(c){var gs=prciOf(c);if(!gs.length)return '';var g=gs[0];var ci=prciChecksText(g.pipe);var cls=ci.indexOf('failing')>=0||ci.indexOf('failed')>=0?' bad':ci.indexOf('running')>=0?' run':'';
-  return '<span class="mbsplit">'+mbtn('prci','⎇ PR #'+esc(g.num)+' <span class="pst s-'+esc(g.state==='open'?'review':g.state)+'">'+esc(g.state)+'</span>'+(g.pipe?dotsHtml(g.pipe):'')+(ci?' <span class="prci'+cls+'">'+esc(ci)+'</span>':''),'',' title="open the pull request"')
+  return '<span class="mbsplit">'+mbtn('prci',brandIcon('github')+'PR #'+esc(g.num)+' <span class="pst s-'+esc(g.state==='open'?'review':g.state)+'">'+esc(g.state)+'</span>'+(g.pipe?dotsHtml(g.pipe):'')+(ci?' <span class="prci'+cls+'">'+esc(ci)+'</span>':''),'',' title="open the pull request"')
     +mbtn('prcimenu','▾','dd',' aria-haspopup="menu" aria-expanded="'+(!!prDD)+'" aria-label="Pull request and CI details"')+'</span>';}
 function prciOpen(u){if(u)window.open(u,'_blank','noopener');}
 function prciRows(gs){var rows=[];gs.forEach(function(g){

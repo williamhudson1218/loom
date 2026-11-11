@@ -141,7 +141,7 @@ function orchRailHtml(o){const items=o.items||[];const open=items.filter(i=>!i.r
   const nd=open.filter(i=>i.kind==='needs_you'),bl=open.filter(i=>i.kind==='blocked'),mv=open.filter(i=>i.kind==='moving'),dn=items.filter(i=>i.kind==='done'&&i.resolved_at);
   const sec=(cls,label,n,body,empty)=>'<div class="orsec"><div class="orh'+cls+'">'+label+(n===null?'':' · '+n)+'</div>'+(body||'<div class="oempty">'+empty+'</div>')+'</div>';
   const needs=nd.map(i=>{const j=orchJumpLabel(i);return '<div class="ocard"><div class="oct"><b>'+esc(i.title)+'</b><span>'+esc(rel(i.opened_at))+'</span></div>'+(i.why?'<div class="ocw">'+esc(i.why)+'</div>':'')+
-    '<div class="ocbtns">'+(j?'<button type="button" class="ocbtn" data-jump="'+i.id+'">'+j+'</button>':'')+'<button type="button" class="ocbtn q" data-resolve="'+i.id+'" title="close this item">Resolve</button></div></div>';}).join('');
+    '<div class="ocbtns">'+(j?'<button type="button" class="ocbtn" data-jump="'+i.id+'">'+(i.ref_type==='pr'?brandIcon('github'):i.ref_type==='slack'?brandIcon('slack'):'')+j+'</button>':'')+'<button type="button" class="ocbtn q" data-resolve="'+i.id+'" title="close this item">Resolve</button></div></div>';}).join('');
   const blocked=bl.map(i=>'<div class="obl"><b>'+esc(i.who||i.title)+'</b>: '+esc(i.why||i.title)+'</div>').join('');
   const extra=(o.moving||[]).map(m=>({id:0,title:m.title,who:m.pane,why:m.stage||'Working',ref_type:'chat',ref_id:m.chat,updated_at:0}));
   const all=mv.concat(extra);

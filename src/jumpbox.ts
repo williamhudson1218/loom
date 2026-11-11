@@ -198,7 +198,7 @@ function renderConns(){
   var el=$('#conns');if(!el)return;var cs=DATA.connections||[];
   if(!cs.length){el.hidden=true;return;}el.hidden=false;
   var sig=JSON.stringify(cs);if(el.dataset.sig===sig)return;el.dataset.sig=sig;
-  el.innerHTML=cs.map(function(c){return '<button type="button" class="conn c-'+esc(c.state)+'" data-sec="'+esc(c.section)+'" title="'+esc(c.detail)+'" aria-label="'+esc(c.detail)+'"><span class="cd"></span><span class="cl">'+esc(c.label)+'</span></button>';}).join('');
+  el.innerHTML=cs.map(function(c){return '<button type="button" class="conn c-'+esc(c.state)+'" data-sec="'+esc(c.section)+'" title="'+esc(c.detail)+'" aria-label="'+esc(c.detail)+'"><span class="cd"></span>'+brandIcon(c.id)+'<span class="cl">'+esc(c.label)+'</span></button>';}).join('');
   el.querySelectorAll('.conn').forEach(function(b){b.onclick=function(){openSettingsAt(b.dataset.sec);};});
 }
 `;

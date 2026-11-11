@@ -109,6 +109,7 @@ var SX={sec:'general',data:{},loaded:{},restart:{},pre:false,rec:false,modal:nul
 try{var _sx=lsGet('loom.settingsSec');if(_sx)SX.sec=_sx;}catch(e){}
 var SX_KEYMAP=__SX_KEYMAP__;
 var SX_URL={probe:'/api/probe',prompt:'/api/orchestrator/prompt-override',dir:'/api/slack/directory',slack:'/api/slack/status',plugin:'/api/plugin/status',ship:'/api/ship/projects',slackapp:'/api/shortcut/slack-app'};
+var SX_ICON={slack:'slack',github:'github',shortcut:'slack'};
 var SX_SECS=[
  {id:'general',label:'General',what:'Sets the default agent, which models do background work, cost limits and where Loom finds its tools.',needs:'Claude Code installed and logged in. gh for PR features.'},
  {id:'projects',label:'Projects',what:'Lists the folders Loom groups chats by and starts new chats in.',needs:'At least one folder.'},
@@ -426,7 +427,7 @@ function renderSettings(){var el=$('#settings-body');
   var old=$('#sxpane'),top=old?old.scrollTop:0;
   var sec=SX_SECS.filter(function(s){return s.id===SX.sec;})[0]||SX_SECS[0];SX.sec=sec.id;
   var restartKeys=Object.keys(SX.restart);
-  var nav=SX_SECS.map(function(s){var st=sxStatus(s.id);return '<button type="button" data-sec="'+s.id+'" class="'+(s.id===sec.id?'on':'')+'">'+sxEsc(s.label)+'<i class="'+(st[0]==='ok'||st[0]==='warn'?st[0]:'')+'"></i></button>';}).join('');
+  var nav=SX_SECS.map(function(s){var st=sxStatus(s.id);return '<button type="button" data-sec="'+s.id+'" class="'+(s.id===sec.id?'on':'')+'">'+(SX_ICON[s.id]?brandIcon(SX_ICON[s.id]):'')+sxEsc(s.label)+'<i class="'+(st[0]==='ok'||st[0]==='warn'?st[0]:'')+'"></i></button>';}).join('');
   var st=sxStatus(sec.id);
   var head='<div class="sxhead"><div class="r1"><h2>'+sxEsc(sec.label)+'</h2>'+sxPill(st[0],st[1])+'</div><dl><dt>What it does</dt><dd>'+sxEsc(sec.what)+'</dd><dt>What it needs</dt><dd>'+sxEsc(sec.needs)+'</dd></dl></div>';
   var rn=restartKeys.length?sxNote('Restart Loom to apply: '+restartKeys.map(function(k){return '<code>'+sxEsc(k)+'</code>';}).join(' ')+'. Quit it from the menu bar and open it again.','warn'):'';

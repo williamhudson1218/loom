@@ -53,9 +53,11 @@ describe('welcome page script', () => {
     expect(WELCOME_VIEW_HTML.replace(/<[^>]*>/g, '')).not.toContain('!');
   });
   it('stops its loop and drops its listeners on Enter', () => {
-    expect(WELCOME_VIEW_JS).toContain('cancelAnimationFrame');
+    // The sky is the shared renderer (tests/skyview.test.ts covers its lifecycle).
+    expect(WELCOME_VIEW_JS).toContain("loomSky(document.getElementById('lw-sky')");
+    expect(WELCOME_VIEW_JS).toContain('function lwHalt() { if (LW.sky) { LW.sky.stop(); LW.sky = null; } }');
     expect(WELCOME_VIEW_JS).toMatch(/function lwEnter\(\)[\s\S]*lwHalt\(\); lwOffAll\(\);/);
-    expect(WELCOME_VIEW_JS).toContain("'visibilitychange'");
+    expect(WELCOME_VIEW_JS).not.toContain('requestAnimationFrame');
     expect(WELCOME_VIEW_JS).toContain('/api/wizard/welcome');
   });
 });

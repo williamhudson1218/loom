@@ -12,11 +12,13 @@ import { SIDESORT_JS } from './sidesort.ts';
 import { SIDESEARCH_JS } from './sidesearch.ts';
 import { JUMP_CSS, JUMP_PURE_JS, JUMP_VIEW_JS } from './jumpbox.ts';
 import { chatTagMap, listTags, type TagInfo } from './tags.ts';
+import { BRAND_ICONS_CSS, BRAND_ICONS_JS, BRAND_SVG } from './brandicons.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
 import { WIZARD_VIEW_CSS, WIZARD_VIEW_HTML, WIZARD_VIEW_JS } from './wizardview.ts';
 import { ERROR_VIEW_CSS, ERROR_VIEW_JS } from './errorview.ts';
-import { LOGO_SVG } from './logo.ts';
+import { LOGO_SVG, threadMark } from './logo.ts';
+import { SKY_JS } from './skyview.ts';
 import { WELCOME_BOOT_CSS, WELCOME_VIEW_CSS, WELCOME_VIEW_JS, welcomeHtml } from './welcomeview.ts';
 import { CONNECT_VIEW_CSS, CONNECT_VIEW_JS } from './connectview.ts';
 import { TOUR_VIEW_CSS, TOUR_VIEW_HTML, TOUR_VIEW_JS } from './tourview.ts';
@@ -810,7 +812,22 @@ ${TEST_LINKS_CSS}
   .sdot.d-wait { background:#6a7ba8; box-shadow:0 0 0 2px rgba(106,123,168,.25); }
   .parkbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
   #chatmain { display:flex; flex-direction:column; min-width:0; min-height:0; position:relative; }
-  #chatmain.empty > :not(#mempty):not(#mpending) { display:none !important; }
+  #chatmain.empty > :not(#mempty):not(#mpending):not(#mhero) { display:none !important; }
+  /* The empty board: a quiet sky (src/skyview.ts), the mark, one line and the next step. */
+  #mhero { display:none; position:absolute; inset:0; overflow:hidden; background:#05060b; }
+  #chatmain.empty.hero #mhero { display:flex; align-items:center; justify-content:center; }
+  #chatmain.empty.hero #mempty { display:none !important; }
+  #mhero canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #mhero .hx-in { position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; max-width:520px; padding:24px; }
+  #mhero .hx-mark { width:92px; height:auto; overflow:visible; filter:drop-shadow(0 0 5px rgba(255,178,56,.4)) drop-shadow(0 0 18px rgba(255,95,143,.3)) drop-shadow(0 0 32px rgba(94,200,255,.25)); }
+  #mhero h2 { margin:6px 0 0; font-size:22px; font-weight:600; color:#eef1fb; letter-spacing:.01em; }
+  #mhero p { margin:0; color:#a3a9be; font-size:14px; line-height:1.55; text-wrap:balance; }
+  #mhero .hx-acts { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:10px; }
+  #mhero .hx-acts button { height:36px; padding:0 16px; border-radius:9px; font:inherit; font-size:13.5px; cursor:pointer; border:1px solid #2b3040; background:rgba(20,24,38,.8); color:#dfe4f2; }
+  #mhero .hx-acts button:hover { border-color:#4a5578; color:#fff; }
+  #mhero .hx-acts button.pri { border:1px solid transparent; color:#fff; font-weight:600;
+    background:linear-gradient(rgba(14,16,28,.9), rgba(14,16,28,.9)) padding-box, linear-gradient(90deg,#ff5f8f,#ffb238,#5ec8ff) border-box; }
+  #mhero .hx-acts button:focus-visible { outline:2px solid #5ec8ff; outline-offset:3px; }
   /* Opening / resuming: shown the moment the view switches, until the pane is there. */
   #mpending { position:absolute; inset:0; z-index:30; display:flex; align-items:flex-start; justify-content:center; padding-top:96px; background:rgba(11,13,19,.72); }
   .mpcard { display:flex; align-items:center; gap:12px; max-width:440px; padding:14px 18px; border-radius:10px; border:1px solid #2a2f40; background:#121620; color:#e4e7ee; font-size:13px; }
@@ -949,6 +966,7 @@ ${TEST_LINKS_CSS}
   .qclear:hover { background:#454c66; color:#fff; }
   @media (prefers-reduced-motion:reduce) { .qclear { transition:none; } }
 ${JUMP_CSS}
+${BRAND_ICONS_CSS}
 ${ORCH_VIEW_CSS}
 ${WIZARD_VIEW_CSS}
 ${WELCOME_VIEW_CSS}
@@ -981,8 +999,8 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
         <button type="button" id="agentbtn" class="open splitcaret" aria-haspopup="menu" aria-expanded="false" aria-controls="agentmenu" title="Launch with" aria-label="Launch with"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg></button>
         <div class="hmenu" id="agentmenu" role="menu" aria-label="Launch with">
           <div class="hlbl">Launch with</div>
-          <button type="button" role="menuitemradio" data-agent="claude"><span class="ck"></span>Claude Code</button>
-          <button type="button" role="menuitemradio" data-agent="codex"><span class="ck"></span>Codex</button>
+          <button type="button" role="menuitemradio" data-agent="claude"><span class="ck"></span>${BRAND_SVG.claude}Claude Code</button>
+          <button type="button" role="menuitemradio" data-agent="codex"><span class="ck"></span>${BRAND_SVG.codex}Codex</button>
           <button type="button" role="menuitemradio" data-agent="ask"><span class="ck"></span>Ask every time</button>
         </div>
       </div>
@@ -1049,6 +1067,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
   <div class="pfoot" id="mfoot"></div>
   ${ORCH_VIEW_HTML}
   <div id="mempty"></div>
+  <div id="mhero" aria-live="polite"><canvas id="mhero-sky" aria-hidden="true"></canvas><div class="hx-in">${threadMark('hx-mark', 'hx')}<h2 id="mhero-h"></h2><p id="mhero-p"></p><div class="hx-acts" id="mhero-acts"></div></div></div>
 </section>
 <aside id="outrail" aria-label="Outbox" data-tour="outbox" hidden></aside>
 </div>
@@ -1113,6 +1132,7 @@ ${SHIPMODAL_HTML}
 <script>
 const DATA = ${data};
 const TERM_TOKEN = ${JSON.stringify(termToken).replace(/</g, '\\u003c')};
+${SKY_JS}
 ${ERROR_VIEW_JS}
 ${CHAT_MENU_JS}
 ${TERMDROP_JS}
@@ -1123,6 +1143,7 @@ ${SIDESEARCH_JS}
 ${JUMP_PURE_JS}
 ${JUMP_VIEW_JS}
 ${UPDATE_VIEW_JS}
+${BRAND_ICONS_JS}
 ${ORCH_VIEW_JS}
 ${CONNECT_VIEW_JS}
 ${WIZARD_VIEW_JS}
@@ -1608,7 +1629,7 @@ function renderHead(c,L,live){const h=$('#mhead');const prn=chatPrNum(c),prs=prS
   b+=testHeadHtml(c);
   if(!c.arch)b+=mbtn('save','★ '+(c.saved?'Saved':'Save for later'),c.saved?'on':'',' aria-pressed="'+(!!c.saved)+'" title="'+(c.saved?'remove from Saved for later':(live?'save for later and close this pane':'save for later'))+'"');
   b+=mbtn('more','⋯','sq',' aria-haspopup="menu" aria-label="More actions"');
-  h.innerHTML='<div class="mh-l"><div class="mh-t"><span class="sdot '+dotCls(c)+'"></span><h1 title="'+esc(disp(c))+'">'+esc(disp(c))+'</h1><span class="mpill '+dotCls(c)+'">'+esc(stateLabel(c))+'</span><span class="mpill src">'+agentLabel(c.agent)+'</span></div>'+
+  h.innerHTML='<div class="mh-l"><div class="mh-t"><span class="sdot '+dotCls(c)+'"></span><h1 title="'+esc(disp(c))+'">'+esc(disp(c))+'</h1><span class="mpill '+dotCls(c)+'">'+esc(stateLabel(c))+'</span><span class="mpill src">'+brandIcon(c.agent==='codex'?'codex':'claude')+agentLabel(c.agent)+'</span></div>'+
     '<div class="mh-sub">'+esc(shortPath(c.project_dir)||c.project)+' · pane '+(L&&L.name?'<span class="cname">'+esc(L.name)+'<button type="button" class="cpi" data-copyname="'+esc(L.name)+'" title="Copy name" aria-label="Copy name '+esc(L.name)+'">⧉</button></span>':esc(pn))+' · '+esc(where)+'</div>'+(c.arch?'':'<div class="mh-tags">'+chatTags(c).map(n=>tagChipHtml(n)).join('')+'<button type="button" class="tgadd" data-act="tagpop" title="tag this chat">+ Tag</button></div>')+'</div><div class="mh-r">'+b+'</div><div class="picker"></div>';}
 function renderBanner(c,live){const el=$('#mbanner');const pk=parkedOf(c);const sig=live+'|'+c.session_id+'|'+!!c.arch+'|'+(pk?pk.state+pk.reply_ts+pk.label:'');if(el.dataset.sig===sig)return;el.dataset.sig=sig;
   if(pk&&!live){const rp=pk.state==='replied';
@@ -2147,7 +2168,7 @@ function whereHtml(w,pr){if(!w)return '<div class="dempty">…</div>';
   const ab=(w.ahead?'<span class="tct a">↑'+w.ahead+'</span>':'')+(w.behind?'<span class="tct b">↓'+w.behind+'</span>':'')+'<span class="dsub">vs '+esc(w.base)+'</span>';
   return '<div class="drow"><span class="dmono">⑂ '+esc(w.branch)+'</span>'+ab+'</div>'+
     '<div class="dpath">'+(w.kind==='worktree'?'worktree ':'primary checkout ')+esc(shortPath(w.top))+'</div>'+
-    (pr&&pr.number?'<div class="drow"><a class="prbtn" href="'+esc(pr.url)+'" target="_blank" rel="noopener">⎇ PR #'+pr.number+'</a></div>':'');}
+    (pr&&pr.number?'<div class="drow"><a class="prbtn" href="'+esc(pr.url)+'" target="_blank" rel="noopener">'+brandIcon('github')+'PR #'+pr.number+'</a></div>':'');}
 const FILE_CAP=60;
 function filesHtml(d){const fs=d.files||[];if(!fs.length)return '<div class="dempty">'+(d.filesMode==='session'?'This session hasn’t edited any files.':'Nothing changed on this branch.')+'</div>';
   return '<div class="dfiles">'+fs.slice(0,FILE_CAP).map(f=>'<div class="dfile" title="'+esc(f.path)+'"><span class="fst '+f.state+'">'+esc(f.state)+'</span><span class="fp">&lrm;'+esc(f.path)+'</span></div>').join('')+
@@ -2190,7 +2211,7 @@ function renderAside(c,L){const box=$('#mdetail');if(!box)return;
 function renderDetail(){if(!sel){renderWaiting();return;}const c=selChat();if(c)renderAside(c,c.arch?null:DATA.live[chatKey(c)]);}
 const SLACK_STAGE={looking:['info','👀 looking'],blocked:['bad','⛔ blocked'],done:['good','✅ done']};
 function slackHtml(d){const t=d.slack||[];if(!t.length)return '';
-  return '<div class="dsec"><h3>Slack <span class="n">'+t.length+'</span></h3>'+t.map(x=>{const sg=SLACK_STAGE[x.stage];
+  return '<div class="dsec"><h3>'+brandIcon('slack')+'Slack <span class="n">'+t.length+'</span></h3>'+t.map(x=>{const sg=SLACK_STAGE[x.stage];
     return '<div class="sthread"><div class="drow"><span class="dmono">'+esc(x.label)+'</span>'+(sg?'<span class="badge '+sg[0]+'">'+sg[1]+'</span>':'')+
       '<span class="spacer"></span><button class="iconbtn ghost" data-tour="slack" data-slack="'+esc(x.key)+'" data-url="'+esc(x.url)+'" title="'+esc(x.deeplink)+'">Open in Slack</button></div>'+
       '<div class="sprev">'+(x.preview===null?'<span class="dsub">loading the thread…</span>':(x.author?'<b>'+esc(x.author)+':</b> ':'')+esc(x.preview))+'</div>'+
@@ -2202,7 +2223,23 @@ function wireDetail(box,c){
   }
 // Empty state: every live chat whose turn it is, longest-waiting first.
 function waitingChats(){return DATA.chats.filter(c=>isLive(c)&&isTurn(c)).sort((a,b)=>fresh(a)-fresh(b));}
-function renderWaiting(){const box=$('#mempty');const w=waitingChats();
+// No chats at all (a new install, often mid-setup): the hero empty state instead
+// of an empty Waiting list. Its sky stops for good once the hero is off screen.
+var HERO={sky:null};
+function heroOn(){const m=$('#chatmain');return !!m&&m.classList.contains('empty')&&m.classList.contains('hero')&&$('#mhero').offsetParent!==null;}
+function heroStop(){if(HERO.sky){HERO.sky.stop();HERO.sky=null;}}
+function heroConnect(){if(typeof SX!=='undefined')SX.sec='slack';if(tab==='settings')render();else openSettings();}
+function renderHero(){const setup=typeof WZ!=='undefined'&&WZ.v&&WZ.v.show;
+  $('#mhero-h').textContent='Nothing on the board yet';
+  $('#mhero-p').textContent=setup?'Finish setup to choose your projects and terminal, then start a chat. Chats you start in Claude Code appear here on their own.':'Start a chat here, or keep using Claude Code in your terminal. Every chat on this Mac appears here on its own.';
+  const acts=setup?[['setup','Finish setup',1],['chat','Start a chat',0]]:[['chat','Start a chat',1],['connect','Connect Slack, GitHub and Gmail',0]];
+  const sig=acts.map(a=>a[0]).join();const box=$('#mhero-acts');
+  if(box.dataset.sig!==sig){box.dataset.sig=sig;box.innerHTML=acts.map(a=>'<button type="button" data-hx="'+a[0]+'"'+(a[2]?' class="pri"':'')+'>'+esc(a[1])+'</button>').join('');
+    box.querySelectorAll('button').forEach(b=>b.onclick=()=>{const k=b.dataset.hx;if(k==='setup'){if(typeof openWizard==='function')openWizard();}else if(k==='chat')openComposer();else heroConnect();});}
+  if(!(HERO.sky&&HERO.sky.running())&&heroOn())HERO.sky=loomSky($('#mhero-sky'),{nebula:LSKY_NEBULA,dim:.55,density:.6,maxStars:420,fps:30,dpr:1,shoot:16000,alive:heroOn});}
+function renderWaiting(){const box=$('#mempty');
+  const hero=!DATA.chats.length;$('#chatmain').classList.toggle('hero',hero);if(hero){renderHero();return;}heroStop();
+  const w=waitingChats();
   const keys=w.map(chatKey);
   if(keys.length&&(Date.now()-tailsAt>15000||keys.some(k=>!(k in TAILS)))){tailsAt=Date.now();fetch('/api/tails?keys='+encodeURIComponent(keys.join(','))).then(r=>r.json()).then(j=>{if(j.ok){Object.assign(TAILS,j.tails);if(!sel)renderWaiting();}}).catch(()=>{});}
   box.innerHTML='<div class="dsec"><h3>Waiting on you <span class="n">'+w.length+'</span></h3>'+

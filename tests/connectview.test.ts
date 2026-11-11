@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import vm from 'node:vm';
 import { CONNECT_VIEW_CSS, CONNECT_VIEW_JS } from '../src/connectview.ts';
 import { WIZARD_VIEW_JS } from '../src/wizardview.ts';
@@ -22,7 +23,7 @@ function page() {
     opened,
   };
   vm.createContext(ctx);
-  vm.runInContext(CONNECT_VIEW_JS, ctx);
+  vm.runInContext(BRAND_ICONS_JS + CONNECT_VIEW_JS, ctx);
   vm.runInContext(WIZARD_VIEW_JS, ctx);
   return ctx;
 }
@@ -110,7 +111,7 @@ describe('the Gmail panel', () => {
   it('with a client offers Connect Gmail; with the CLI route says so', () => {
     const p = page();
     p.CN.gm = { ok: true, clientId: 'x.apps.googleusercontent.com', accounts: [], route: null };
-    expect(p.cnGmHtml(K(p))).toMatch(/data-cn="gmconnect">Connect Gmail/);
+    expect(p.cnGmHtml(K(p))).toMatch(/data-cn="gmconnect">(<svg[^>]*>.*?<\/svg>)?Connect Gmail/);
     expect(p.cnGmView(p.CN.gm).kind).toBe('ready');
     p.CN.gm = { ok: true, clientId: null, accounts: [], route: 'cli', cli: '/home/x/gmail.mjs' };
     expect(p.cnGmHtml(K(p))).toContain('send through the Email CLI (/home/x/gmail.mjs)');

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import { openDb } from '../src/db.ts';
 import { parseJsonlFile } from '../src/parser.ts';
 import { upsertChat } from '../src/indexer.ts';
@@ -195,7 +196,7 @@ describe('dashboard', () => {
     expect(html).toContain("mbtn('branch','⑃ Branch'");
     expect(html).toContain('b+=prciHeadHtml(c);');
     expect(html).toContain("mbtn('prci',");
-    expect(html).toContain("mbtn('slack','Slack thread'");
+    expect(html).toContain("mbtn('slack',brandIcon('slack')+'Slack thread'");
     expect(html).toContain("mbtn('save','★ '+(c.saved?'Saved':'Save for later')");
     expect(html).toContain("mbtn('more','⋯'");
     // PR state words come from the PR itself: draft / review / merged.
@@ -430,7 +431,7 @@ describe('dashboard script', () => {
 describe('orchestrator feed filters', () => {
   const load = async () => {
     const { ORCH_VIEW_JS } = await import('../src/orchview.ts');
-    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${ORCH_VIEW_JS}; return { orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
+    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${BRAND_ICONS_JS}${ORCH_VIEW_JS}; return { orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
       (s: string) => s, () => '', { chats: [], live: {} }, () => '',
     ) as Record<string, (...a: any[]) => any>;
   };
@@ -496,7 +497,7 @@ describe('orchestrator view', () => {
     const esc = (s: string) => (s || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]!);
     const rel = () => '6m ago';
     const DATA = { chats: [{ agent: 'claude', session_id: 's1' }], live: {} };
-    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${ORCH_VIEW_JS}; return { orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml, orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
+    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${BRAND_ICONS_JS}${ORCH_VIEW_JS}; return { orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml, orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
       esc, rel, DATA, (c: { agent: string; session_id: string }) => c.agent + ':' + c.session_id,
     ) as Record<string, (...a: unknown[]) => any>;
   };

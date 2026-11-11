@@ -16,7 +16,9 @@ export const WIZARD_VIEW_CSS = String.raw`
     position:fixed; inset:0; z-index:90; display:none; align-items:center; justify-content:center; padding:24px 16px; background:rgba(5,6,10,.72); color:var(--wz-text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
   #wz.open { display:flex; }
   #wz * { box-sizing:border-box; }
-  #wz .wz-modal { width:100%; max-width:960px; height:min(700px,calc(100vh - 48px)); background:var(--wz-card); border:1px solid var(--wz-ctl-line); border-radius:14px; box-shadow:0 24px 80px rgba(0,0,0,.6); display:flex; overflow:hidden; position:relative; }
+  /* The sky (src/skyview.ts) fills the backdrop; the modal stays an opaque card on top of it. */
+  #wz .wz-sky { position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none; }
+  #wz .wz-modal { z-index:1; width:100%; max-width:1000px; height:min(calc(100vh - 48px), max(700px, 85vh)); background:var(--wz-card); border:1px solid var(--wz-ctl-line); border-radius:14px; box-shadow:0 24px 80px rgba(0,0,0,.6); display:flex; overflow:hidden; position:relative; }
   #wz .wz-x { position:absolute; right:10px; top:10px; z-index:3; width:28px; height:28px; border-radius:8px; border:1px solid transparent; background:transparent; color:var(--wz-muted); font-size:16px; cursor:pointer; }
   #wz .wz-x:hover { background:var(--wz-on); color:#fff; }
   #wz .wz-rail { width:210px; flex:none; background:var(--wz-panel); border-right:1px solid var(--wz-line); padding:16px 10px; overflow:auto; }
@@ -157,6 +159,7 @@ export const WIZARD_VIEW_CSS = String.raw`
 
 export const WIZARD_VIEW_HTML = String.raw`
 <div id="wz" role="dialog" aria-modal="true" aria-labelledby="wz-title" aria-hidden="true">
+  <canvas class="wz-sky" id="wz-sky" aria-hidden="true"></canvas>
   <div class="wz-modal">
     <button class="wz-x" id="wz-x" aria-label="Close setup" title="Close. Setup resumes where you left off.">&#10005;</button>
     <nav class="wz-rail" id="wz-rail" aria-label="Setup steps"></nav>
@@ -190,7 +193,7 @@ export const WIZARD_VIEW_JS = String.raw`
 var WZ_LOGO = '` + threadMark('wz-mark', 'wz-mk', 22) + String.raw`';
 var WZ = { v: null, open: false, busy: false, S: null, loaded: {}, req: null, reqT: null, reqBusy: false, job: null, jobT: null,
   login: null, plugin: null, slack: null, slackSub: 0, manifest: null, slackBusy: false, slackMsg: null, tpl: null, ship: null,
-  proj: null, ax: null, axT: null, axNative: false, axAsked: false, slackApp: null, rec: false, recRes: null, prac: null, pracT: null, summary: null, err: '' };
+  sky: null, proj: null, ax: null, axT: null, axNative: false, axAsked: false, slackApp: null, rec: false, recRes: null, prac: null, pracT: null, summary: null, err: '' };
 
 function wzEsc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); }
 function wzEl(id) { return document.getElementById(id); }
@@ -244,13 +247,22 @@ function wzOpen() {
   WZ.err = '';
   if (!WZ.S) wzInitStaged();
   var w = wzEl('wz'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false');
+  wzSkyStart();
   wzResumePill();
   wzRender();
 }
+// The backdrop: the welcome screen's sky, dimmer, at 30 fps, with the three
+// thread colours drifting across behind the modal. Runs only while it is open.
+function wzSkyStart() {
+  if (WZ.sky && WZ.sky.running()) return;
+  WZ.sky = loomSky(wzEl('wz-sky'), { nebula: LSKY_NEBULA, threads: true, dim: .7, fps: 30, dpr: 1, maxStars: 500, shoot: 14000, alive: function () { return WZ.open; } });
+}
+function wzSkyStop() { if (WZ.sky) { WZ.sky.stop(); WZ.sky = null; } }
 function wzClose() {
   wzStopTimers();
   WZ.open = false;
   var w = wzEl('wz'); w.classList.remove('open'); w.setAttribute('aria-hidden', 'true');
+  wzSkyStop();
   wzJson('POST', '/api/wizard/close', {}).then(function (r) { if (r && r.ok) WZ.v = r.view; wzResumePill(); });
 }
 function wzStopTimers() {
@@ -368,6 +380,7 @@ function wzFinish(tour) {
     if (!wzApply(r)) { wzRender(); return; }
     WZ.open = false;
     var w = wzEl('wz'); w.classList.remove('open'); w.setAttribute('aria-hidden', 'true');
+    wzSkyStop();
     wzResumePill();
     if (tour) {
       if (typeof window.startTour === 'function') window.startTour(0);

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import vm from 'node:vm';
 import { renderDashboard } from '../src/dashboard.ts';
 import { PRCI_PURE_JS, PRCI_VIEW_JS } from '../src/prci.ts';
@@ -30,7 +31,7 @@ function harness(data: any, chat: any = { agent: 'claude', session_id: 's1' }) {
     document: { addEventListener() {}, querySelector: () => null },
   };
   vm.createContext(ctx);
-  vm.runInContext(PRCI_PURE_JS + PRCI_VIEW_JS, ctx);
+  vm.runInContext(BRAND_ICONS_JS + PRCI_PURE_JS + PRCI_VIEW_JS, ctx);
   return { ctx, head: () => vm.runInContext('prciHeadHtml(' + JSON.stringify(chat) + ')', ctx) as string, menu: () => vm.runInContext('prciMenuHtml(prciOf(' + JSON.stringify(chat) + '))', ctx) as string };
 }
 

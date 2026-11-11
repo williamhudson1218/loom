@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import { OUTBOX_PURE_JS, OUTBOX_VIEW_JS } from '../src/outboxview.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
@@ -162,7 +163,7 @@ describe('burst send progress rendering', () => {
         'DATA', 'esc', 'rel', 'hhmm', 'NL', 'canParkStub',
         `var TERM_TOKEN='t',SENDING=${JSON.stringify(SENDING)},SEND_LOCAL=${local ? '{"d1":1}' : '{}'},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
          var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};
-         ${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+         ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
          return draftCardHtml(DATA.drafts[0],{});`,
       );
       return f({ drafts: [{ id: 'd1', session_id: 's', created_at: '2026-11-09T10:00:00Z', messages: ['one', 'two', 'three'], channel: 'C1' }] }, (x: string) => x, () => '', () => '10:00', '\n', null) as string;
