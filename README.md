@@ -8,7 +8,13 @@ macOS only. tmux is required. It keeps chats alive when Loom quits and is how Lo
 
 ## Get started
 
-Download the latest `Loom-<version>-arm64.zip` from [Releases](https://github.com/williamhudson1218/loom/releases/latest), move Loom to Applications and open it; the first time, macOS needs System Settings › Privacy & Security › **Open Anyway** ([details](SETUP.md#2-install-a-release)). Loom updates itself from GitHub Releases after that.
+Install from Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/williamhudson1218/loom/main/scripts/get-loom.sh | bash
+```
+
+It downloads the latest release, checks its checksum and signature, puts Loom in Applications and opens it, with no Gatekeeper prompt. Or download the latest `Loom-<version>-arm64.zip` from [Releases](https://github.com/williamhudson1218/loom/releases/latest), move Loom to Applications and open it; the first time, macOS needs System Settings › Privacy & Security › **Open Anyway** ([details](SETUP.md#2-install-a-release)). Loom updates itself from GitHub Releases after that.
 
 Or build it from source:
 

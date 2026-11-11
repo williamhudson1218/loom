@@ -2,7 +2,7 @@
 
 How to build Loom on a Mac and what to expect on first launch. For what Loom is, see [README.md](./README.md).
 
-> **Short version.** Download the latest `Loom-<version>-arm64.zip` from the [Releases page](https://github.com/williamhudson1218/loom/releases/latest), move Loom to Applications, open it (see [Installing a release](#2-install-a-release)), and follow the setup wizard. It updates itself from then on.
+> **Short version.** Run `curl -fsSL https://raw.githubusercontent.com/williamhudson1218/loom/main/scripts/get-loom.sh | bash` in Terminal, or download the latest `Loom-<version>-arm64.zip` from the [Releases page](https://github.com/williamhudson1218/loom/releases/latest), move Loom to Applications, open it (see [Installing a release](#2-install-a-release)), and follow the setup wizard. It updates itself from then on.
 
 ## 1. Requirements
 
