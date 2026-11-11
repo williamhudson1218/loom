@@ -1,12 +1,13 @@
 // The native helper bundles' build cache (see build.mjs).
 //
 // macOS keys an ad-hoc signed app's Accessibility, Automation and Keychain grants
-// to its code hash. Rebuilding a helper whose source did not change can still
-// produce different bytes (a new toolchain, a different temp path), and any
-// difference silently revokes every grant the user gave it. So a helper is only
-// rebuilt when something that goes into it changed: its Swift source, its
-// Info.plist, its icon, the compiler, or CACHE_VERSION (bump it to force a
-// rebuild on every machine). Pure: no I/O, so the decision is unit-tested.
+// to its code hash. swiftc output is deterministic for a given toolchain, but a
+// new Swift toolchain produces different bytes, and any difference silently
+// revokes every grant the user gave the helper. So a helper is only rebuilt
+// when something that goes into it changed: its Swift source, its Info.plist,
+// its icon, or CACHE_VERSION (bump it to force a rebuild on every machine).
+// Not when the toolchain updates: the old binary still runs. Pure: no I/O, so
+// the decision is unit-tested.
 import crypto from 'node:crypto';
 
 export const CACHE_VERSION = 1;

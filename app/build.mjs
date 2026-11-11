@@ -101,13 +101,14 @@ const HELPERS = [
 fs.mkdirSync('build-native', { recursive: true });
 // The pre-bundle outputs; nothing reads them any more.
 for (const old of ['slack-ax', 'loom-keychain']) fs.rmSync(path.join('build-native', old), { force: true });
-const swiftVersion = execFileSync('swiftc', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const icon = fs.readFileSync('assets/icon.icns');
 for (const h of HELPERS) {
   const bundle = path.join('build-native', h.dir, 'Loom.app');
   const keyFile = path.join('build-native', h.dir, 'Loom.app.key');
   const plist = helperInfoPlist({ id: h.id, exe: h.exe, version: String(CACHE_VERSION) });
-  const key = helperCacheKey([fs.readFileSync(h.src), plist, icon, swiftVersion, h.id, h.exe]);
+  // Not the compiler version: a Command Line Tools update would otherwise rebuild
+  // every helper and revoke every grant, for no change a user could see.
+  const key = helperCacheKey([fs.readFileSync(h.src), plist, icon, h.id, h.exe]);
   let bundleValid = false;
   try {
     execFileSync('codesign', ['--verify', '--strict', bundle], { stdio: 'ignore' });
