@@ -173,7 +173,11 @@ export function renderDashboard(
   /* Header: brand + jump box + connections + actions / tabs. Nothing wraps to a third row.
      Every control in them is 32px tall with an 8px radius and the same border,
      except the chips, which are deliberately smaller so the tabs read as primary. */
-  .topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .hleft { display:flex; align-items:center; gap:12px; flex:1 1 auto; min-width:0; }
+  .hleft .tabs { min-width:0; overflow-x:auto; scrollbar-width:none; }
+  .hleft .tabs::-webkit-scrollbar { display:none; }
+  .tab { flex:none; white-space:nowrap; }
   .actions { display:flex; gap:8px; align-items:center; flex:none; }
   .actions button { height:32px; box-sizing:border-box; border-radius:8px; padding:0 12px; }
   .brand { display:flex; align-items:center; gap:10px; flex:none; }
@@ -195,7 +199,6 @@ export function renderDashboard(
   .tab .cnt { opacity:.6; margin-left:6px; }
   .tab.savedtab.on { background:#3a3826; color:#f0dfa0; }
   .tab.savedtab.on:hover { background:#46432e; }
-  .row2 { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
   .controls { flex:1; min-width:0; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   input,select { background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:6px; padding:6px 8px; }
   header input, header select { height:32px; box-sizing:border-box; border-radius:8px; padding:0 10px; }
@@ -677,7 +680,6 @@ ${PRUNE_VIEW_CSS}
   /* ---- Layout: session sidebar + the selected chat ---------------------------
      The header is brand + actions and the view tabs. Everything that filters
      the session list lives at the top of the sidebar; the chat fills the rest. */
-  .row2 { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
   .sidetoggle { height:32px; width:34px; padding:0; border-radius:8px; background:#141826; border:1px solid #2b3040; color:#8b93a7; font-size:14px; }
   .sidetoggle:hover { color:#e6e6e6; }
   #boardwrap { display:grid; grid-template-columns:var(--sidew,360px) minmax(0,1fr); height:calc(100vh - var(--hh,100px)); }
@@ -918,9 +920,7 @@ ${TEST_LINKS_CSS}
     #side { max-height:44vh; border-right:0; border-bottom:1px solid #232634; }
     .sidegrip { display:none; }
     #chatmain { min-height:78vh; }
-    .topbar { flex-wrap:wrap; gap:8px; }
-    .actions { flex:1 1 100%; flex-wrap:wrap; }
-    .tabs { overflow-x:auto; max-width:calc(100vw - 80px); }
+    header { padding:10px 12px; }
     #mtxwrap { overflow-y:auto; }
     .mtxrow { flex-direction:column; flex:none; }
     #mmsgs, #mdetail { overflow:visible; max-width:none; flex:none; }
@@ -946,7 +946,11 @@ ${OUTBOX_VIEW_CSS}
 <body>
 <header>
   <div class="topbar">
+    <div class="hleft">
+      <button id="sidetoggle" class="sidetoggle" aria-label="Show or hide the session list" title="show or hide the session list">\u2630</button>
     <div class="brand"><h1 class="wordmark" aria-label="${APP_NAME}">${WORDMARK_L_SVG}<span aria-hidden="true">${APP_NAME.slice(1)}</span></h1><span class="sub stalechip" id="stale" hidden></span></div>
+      <div class="tabs" id="tabs"></div>
+    </div>
     <div class="jumpwrap"><button type="button" id="jumpbtn" class="jumpbtn" aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="Jump to a chat, ticket or command (${'\u2318'}K)" aria-label="Jump to a chat, ticket or command"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><span class="jl">Jump to a chat, ticket or command</span><span class="kbd">\u2318K</span></button></div>
     <div class="conns" id="conns" role="group" aria-label="Connections" hidden></div>
     <div class="actions">
@@ -973,10 +977,6 @@ ${OUTBOX_VIEW_CSS}
       </div>
       <button id="setbtn" class="gearbtn" data-tour="gear" type="button" title="Settings (⌘,)" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg></button>
     </div>
-  </div>
-  <div class="row2">
-    <button id="sidetoggle" class="sidetoggle" aria-label="Show or hide the session list" title="show or hide the session list">☰</button>
-    <div class="tabs" id="tabs"></div>
   </div>
 </header>
 <div id="jump" role="dialog" aria-modal="true" aria-label="Jump" aria-hidden="true"><div class="jbox"><div class="jin"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input id="jin" type="text" placeholder="Jump to a chat, ticket or command" autocomplete="off" spellcheck="false" aria-label="Jump to a chat, ticket or command"/></div><div class="jlist" id="jlist" role="listbox"></div><div class="jfoot"><span>\u2191\u2193 move</span><span>\u21B5 open</span><span>esc close</span></div></div></div>

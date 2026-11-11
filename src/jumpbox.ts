@@ -40,13 +40,13 @@ function jumpFlat(sections){var f=[];sections.forEach(function(s){s.items.forEac
 
 export const JUMP_CSS = `
   .topbar { flex-wrap:nowrap; }
-  .jumpwrap { flex:1; min-width:0; display:flex; justify-content:center; }
-  .jumpbtn { width:100%; max-width:460px; height:32px; box-sizing:border-box; display:flex; align-items:center; gap:9px; padding:0 8px 0 11px; border-radius:8px; background:#10131c; border:1px solid #2b3040; color:#8b93a7; font-size:13px; font-weight:400; text-align:left; transition:border-color .15s, background .15s, color .15s; }
+  .jumpwrap { flex:0 0 auto; display:flex; }
+  .jumpbtn { width:300px; height:32px; box-sizing:border-box; display:flex; align-items:center; gap:9px; padding:0 8px 0 11px; border-radius:8px; background:#10131c; border:1px solid #2b3040; color:#8b93a7; font-size:13px; font-weight:400; text-align:left; transition:border-color .15s, background .15s, color .15s; }
   .jumpbtn:hover { background:#141826; border-color:#3a4258; color:#c4ccdc; }
   .jumpbtn svg { flex:none; }
   .jumpbtn .jl { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .kbd { flex:none; font:11px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#8b93a7; border:1px solid #2b3040; border-radius:5px; padding:3px 6px; background:#141826; }
-  @media (max-width:1100px) { .jumpwrap { flex:0 0 auto; margin-left:auto; } .jumpbtn { width:32px; padding:0; justify-content:center; } .jumpbtn .jl, .jumpbtn .kbd { display:none; } }
+  @media (max-width:1100px) { .jumpbtn { width:32px; padding:0; justify-content:center; } .jumpbtn .jl, .jumpbtn .kbd { display:none; } }
   .conns { display:flex; align-items:center; gap:2px; height:32px; box-sizing:border-box; padding:0 3px; border:1px solid #2b3040; border-radius:8px; flex:none; }
   .conns[hidden] { display:none; }
   .conn { display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 8px; background:transparent; border:0; border-radius:6px; color:#8b93a7; font-size:12px; font-weight:400; }
@@ -55,7 +55,7 @@ export const JUMP_CSS = `
   .conn.c-ok .cd { background:#2ea043; }
   .conn.c-warn .cd { background:#d4a72c; }
   .conn.c-warn { color:#d9bd72; }
-  @media (max-width:900px) { .conn .cl { display:none; } .conn { padding:0 6px; } }
+  @media (max-width:1400px) { .conn .cl { display:none; } .conn { padding:0 6px; } }
   .split { position:relative; display:flex; flex:none; }
   .split > button { height:32px; box-sizing:border-box; border-radius:0; }
   .split > #newbtn { border-radius:8px 0 0 8px; padding:0 12px; }

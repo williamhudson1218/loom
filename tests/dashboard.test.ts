@@ -115,14 +115,17 @@ describe('dashboard', () => {
     // Header: brand, jump box, connections, actions, then the view tabs. No heatmap.
     expect(header).not.toContain('heatmap');
     expect(html).not.toContain('function heat(');
-    expect(header.indexOf('class="brand"')).toBeLessThan(header.indexOf('id="jumpbtn"'));
     expect(header.indexOf('id="jumpbtn"')).toBeLessThan(header.indexOf('id="conns"'));
     expect(header.indexOf('id="conns"')).toBeLessThan(header.indexOf('class="actions"'));
     expect(header).toContain('id="agentbtn"'); // split New thread
     expect(header).toContain('id="moremenu"'); // Restore lives in the more menu
     expect(header.indexOf('id="moremenu"')).toBeLessThan(header.indexOf('id="setbtn"'));
     expect(html).toContain('id="jump"');
-    expect(header.indexOf('class="actions"')).toBeLessThan(header.indexOf('id="tabs"'));
+    // One row: sidetoggle, brand, tabs, then jump box, connections, actions.
+    expect(header.indexOf('id="sidetoggle"')).toBeLessThan(header.indexOf('class="brand"'));
+    expect(header.indexOf('class="brand"')).toBeLessThan(header.indexOf('id="tabs"'));
+    expect(header.indexOf('id="tabs"')).toBeLessThan(header.indexOf('id="jumpbtn"'));
+    expect(header).not.toContain('row2');
     expect(header).toContain('id="sidetoggle"');
     expect(header).not.toContain('id="q"');
     expect(header).not.toContain('id="chips"');
