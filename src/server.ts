@@ -63,6 +63,7 @@ import { refreshShipBoards, shipBoards, type ShipBoard } from './ships.ts';
 import { onShipBoards } from './prune.ts';
 import { gatherShipDetail, isShipRepo, safeRepoPath, shipFileDiff, startShipSession } from './shipdetail.ts';
 import { addProject, listProjects, removeProject, seedProjects, updateProject } from './projects.ts';
+import { trustedFolders } from './orchstart.ts';
 import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
 import { handleOrchRoute, orchSummary, orchTick } from './orchserver.ts';
@@ -842,11 +843,13 @@ function send(res: http.ServerResponse, code: number, type: string, body: string
   res.end(body);
 }
 
-function projectList(includeHidden = false): ReturnType<typeof listProjects> {
+// `trusted`: Claude Code has accepted this folder (~/.claude.json); the composer offers to trust one that is not.
+function projectList(includeHidden = false): (ReturnType<typeof listProjects>[number] & { trusted: boolean })[] {
   try {
     const db = openDb();
     try {
-      return listProjects(db, { includeHidden });
+      const trusted = trustedFolders();
+      return listProjects(db, { includeHidden }).map((p) => ({ ...p, trusted: trusted.has(p.path) }));
     } finally {
       db.close();
     }
@@ -1676,6 +1679,7 @@ export function createServer(): http.Server {
           prefer: typeof b.prefer === 'string' ? b.prefer : '',
           focus: b.focus === true,
           images,
+          trust: b.trust === true,
         }, undefined, { liveByPane: () => snapshot().live });
         if (r.ok) rememberProject(typeof b.project === 'string' ? b.project : '');
         return json(res, r.ok ? 200 : 409, r);

@@ -1108,6 +1108,7 @@ ${SHIPMODAL_HTML}
       <label>Target <select id="ctarget"></select></label>
       <label>Agent <select id="cagent"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
       <label class="cchk"><input type="checkbox" id="cfocus"/> focus it</label>
+      <label class="cchk" id="ctrustrow" hidden title="Claude Code has not been trusted in this folder yet, so the chat would wait on its trust question in the background. Ticked, Loom accepts it in ~/.claude.json before launching."><input type="checkbox" id="ctrust" checked/> trust this folder</label>
     </div>
     <div class="crow"><span id="cmsg" class="dsub"></span><a id="crestore" href="#" hidden>Restore last message</a><span class="spacer"></span><button id="ccancel">Cancel</button><button id="claunch" class="send">Launch ↵</button></div>
   </div>
@@ -2288,17 +2289,19 @@ function openComposer(prefill){if(composerOpen)return;composerOpen=true;const m=
   const last=seed&&seed.project?seed.project:lsGet('loom.lastProject');const def=projs.indexOf(last)>=0?last:(projs[0]||'');
   fillCproj(projs,def);
   if(seed)$('#cprompt').value=seed.prompt;else if(!$('#cprompt').value)$('#cprompt').value=lsGet('loom.draft');
-  $('#cagent').value=DATA.defaultAgent==='codex'?'codex':'claude';
+  $('#cagent').value=DATA.defaultAgent==='codex'?'codex':'claude';syncTrust();
   $('#ctarget').innerHTML='<option value="">Next open pane</option>';
   fetch('/api/lanes?all=1').then(r=>r.json()).then(ls=>{$('#ctarget').innerHTML='<option value="">Next open pane</option>'+ls.map(l=>'<option value="'+esc(l.lane)+'">loom-'+esc(l.lane)+(l.open?' → '+esc(l.open.where):' (full: splits a new pane)')+'</option>').join('');}).catch(()=>{});
   $('#cmsg').textContent='';renderThumbs();updateRestore();setTimeout(()=>$('#cprompt').focus(),0);}
+// Offer to trust a folder Claude Code has not been trusted in (the server reports it per project).
+function syncTrust(){const v=$('#cproj').value,x=(DATA.projects||[]).find(q=>q.path===v)||(DATA.allProjects||[]).find(q=>q.path===v);$('#ctrustrow').hidden=!(x&&x.trusted===false&&$('#cagent').value==='claude');}
 function projLabel(p){const x=(DATA.projects||[]).find(q=>q.path===p);return x?x.name+'  \u2014  '+shortPath(p):shortPath(p);}
-function fillCproj(projs,sel){$('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===sel?' selected':'')+'>'+esc(projLabel(p))+'</option>').join('')+'<option value="__add__">Add project\u2026</option>';$('#cpathrow').hidden=true;}
+function fillCproj(projs,sel){$('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===sel?' selected':'')+'>'+esc(projLabel(p))+'</option>').join('')+'<option value="__add__">Add project\u2026</option>';$('#cpathrow').hidden=true;syncTrust();}
 function addProjectPath(p){return fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':TERM_TOKEN},body:JSON.stringify({path:p})}).then(r=>r.json());}
 function reloadProjects(){return fetch('/api/projects?all=1').then(r=>r.json()).then(j=>{if(j.ok){DATA.projects=j.projects.filter(p=>!p.hidden);DATA.allProjects=j.projects;projects();}});}
 // Native folder picker inside Electron; elsewhere a typed path the server validates.
 function pickProject(inputEl){const nat=window.loomNative&&window.loomNative.pickFolder;if(nat)return nat().then(p=>p?addProjectPath(p):null);const v=(inputEl&&inputEl.value||'').trim();return addProjectPath(v);}
-function onCprojChange(){const sel=$('#cproj');if(sel.value!=='__add__'){$('#cpathrow').hidden=true;return;}
+function onCprojChange(){const sel=$('#cproj');syncTrust();if(sel.value!=='__add__'){$('#cpathrow').hidden=true;return;}
   if(window.loomNative&&window.loomNative.pickFolder){pickProject().then(j=>{if(!j){fillCproj(composerProjects(),lsGet('loom.lastProject'));return;}if(!j.ok){$('#cmsg').textContent='\u2715 '+j.detail;fillCproj(composerProjects(),lsGet('loom.lastProject'));return;}reloadProjects().then(()=>fillCproj(composerProjects(),j.project.path));});}
   else{$('#cpathrow').hidden=false;$('#cpath').focus();}}
 function addTypedProject(){addProjectPath($('#cpath').value.trim()).then(j=>{if(!j.ok){$('#cmsg').textContent='\u2715 '+j.detail;return;}$('#cmsg').textContent='';$('#cpath').value='';reloadProjects().then(()=>fillCproj(composerProjects(),j.project.path));});}
@@ -2314,7 +2317,7 @@ function renderThumbs(){const t=$('#cthumbs');t.innerHTML=CIMAGES.map((im,i)=>'<
   t.querySelectorAll('button').forEach(b=>b.onclick=()=>{CIMAGES.splice(+b.dataset.i,1);renderThumbs();});}
 function addImageFile(f){if(!f||f.type.indexOf('image/')!==0)return;const r=new FileReader();r.onload=()=>{const url=String(r.result);CIMAGES.push({name:f.name||'pasted',type:f.type,url,data:url.slice(url.indexOf(',')+1)});renderThumbs();};r.readAsDataURL(f);}
 function launchThread(){if(composerBusy)return;const prompt=$('#cprompt').value;if(!prompt.trim()&&!CIMAGES.length){$('#cmsg').textContent='Write a prompt first.';return;}
-  if($('#cproj').value==='__add__'){$('#cmsg').textContent='Choose a project first.';return;}const body={prompt,project:$('#cproj').value,lane:$('#ctarget').value,prefer:lsGet('loom.lastLane'),agent:$('#cagent').value,focus:$('#cfocus').checked,images:CIMAGES.map(i=>({name:i.name,type:i.type,data:i.data}))};
+  if($('#cproj').value==='__add__'){$('#cmsg').textContent='Choose a project first.';return;}const body={prompt,project:$('#cproj').value,lane:$('#ctarget').value,prefer:lsGet('loom.lastLane'),agent:$('#cagent').value,focus:$('#cfocus').checked,trust:!$('#ctrustrow').hidden&&$('#ctrust').checked,images:CIMAGES.map(i=>({name:i.name,type:i.type,data:i.data}))};
   composerBusy=true;$('#claunch').disabled=true;$('#cmsg').textContent='launching…';
   fetch('/api/new-thread',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(j=>{
     if(!j.ok){$('#cmsg').textContent='✕ '+(j.detail||'failed');return;}
@@ -2324,7 +2327,7 @@ function launchThread(){if(composerBusy)return;const prompt=$('#cprompt').value;
 $('#newbtn').onclick=()=>openComposer();
 $('#ccancel').onclick=closeComposer;
 $('#claunch').onclick=launchThread;
-$('#cproj').onchange=onCprojChange;$('#cpathgo').onclick=addTypedProject;
+$('#cproj').onchange=onCprojChange;$('#cagent').addEventListener('change',syncTrust);$('#cpathgo').onclick=addTypedProject;
 $('#composer').addEventListener('mousedown',e=>{if(e.target.id==='composer')closeComposer();});
 $('#cprompt').addEventListener('paste',e=>{const items=(e.clipboardData&&e.clipboardData.items)||[];let took=false;for(const it of items){if(it.kind==='file'&&it.type.indexOf('image/')===0){addImageFile(it.getAsFile());took=true;}}if(took)e.preventDefault();});
 $('.cbox').addEventListener('dragover',e=>{e.preventDefault();$('.cbox').classList.add('drop');});

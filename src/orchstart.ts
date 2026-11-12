@@ -78,3 +78,35 @@ export function pretrustFolder(dir: string, home: string = os.homedir()): 'writt
     return 'skipped';
   }
 }
+
+let trustCache: { file: string; mtimeMs: number; set: Set<string> } | null = null;
+
+/**
+ * The folders ~/.claude.json marks as trusted (hasTrustDialogAccepted). Cached on
+ * the file's mtime: the board asks on every poll and the file is a few hundred KB.
+ * Empty when the file is missing or does not parse.
+ */
+export function trustedFolders(home: string = os.homedir()): Set<string> {
+  const file = path.join(home, '.claude.json');
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(file).mtimeMs;
+  } catch {
+    return new Set();
+  }
+  if (trustCache && trustCache.file === file && trustCache.mtimeMs === mtimeMs) return trustCache.set;
+  const set = new Set<string>();
+  try {
+    const projects = (JSON.parse(fs.readFileSync(file, 'utf-8')) as { projects?: Record<string, { hasTrustDialogAccepted?: unknown }> }).projects ?? {};
+    for (const [k, v] of Object.entries(projects)) if (v && v.hasTrustDialogAccepted === true) set.add(k);
+  } catch {
+    /* unreadable: nothing trusted */
+  }
+  trustCache = { file, mtimeMs, set };
+  return set;
+}
+
+/** Has Claude Code's "do you trust this folder" dialog been accepted for `dir`? */
+export function isFolderTrusted(dir: string, home: string = os.homedir()): boolean {
+  return trustedFolders(home).has(path.resolve(dir));
+}

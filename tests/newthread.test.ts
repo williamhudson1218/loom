@@ -295,6 +295,36 @@ describe('launch confirmation', () => {
     expect(typed).toBe(false);
     expect(prepareForTyping('%1', w.run, () => true).ok).toBe(true);
   });
+
+  // A project Claude Code was never trusted in (the loom repo itself) opened on the
+  // "do you trust this folder" dialog: the agent process ran, so the launch read
+  // 'started', and the chat sat unseen in a background pane forever.
+  it('a pane sitting on the folder-trust dialog is not started, and fails with the question', async () => {
+    const { startThread, confirmLaunches, recentLaunches, LAUNCH_CONFIRM_MS, dismissLaunch } = await import('../src/newthread.ts');
+    const trustScreen = [' Accessing workspace:', ' /x/loom', ' Quick safety check: Is this a project you created or one you trust? (Like your own code)', ' ❯ No, exit', '   Yes, I trust this folder', ' Enter to confirm · Esc to cancel'].join('\n');
+    const w = world('zsh');
+    startThread(mk({ prompt: 'untrusted dir' }), w.run, { launch: () => ({ ok: true, detail: 'x' }), ready: () => true });
+    const l = recentLaunches().find((x) => x.fullPrompt === 'untrusted dir')!;
+    w.state.cmd = '2.1.322';
+    w.state.screen = trustScreen;
+    confirmLaunches({}, w.run, l.at + 1000, quiet);
+    expect(l.status).toBe('starting');
+    confirmLaunches({}, w.run, l.at + LAUNCH_CONFIRM_MS + 1, quiet);
+    expect(l.status).toBe('failed');
+    expect(l.lines!.join('\n')).toMatch(/trust this folder/);
+    dismissLaunch(l.id);
+  });
+
+  it('pre-trusts the folder only when the composer asked to, and only for Claude', async () => {
+    const { startThread, recentLaunches, dismissLaunch } = await import('../src/newthread.ts');
+    const trusted: string[] = [];
+    const deps = { launch: () => ({ ok: true as const, detail: 'x' }), ready: () => true, pretrust: (d: string) => trusted.push(d) };
+    startThread(mk({ prompt: 't1', trust: true }), world('zsh').run, deps);
+    startThread(mk({ prompt: 't2' }), world('zsh').run, deps);
+    startThread(mk({ prompt: 't3', trust: true, agent: 'codex' }), world('zsh').run, deps);
+    expect(trusted).toEqual(['/tmp']);
+    for (const l of recentLaunches().filter((x) => ['t1', 't2', 't3'].includes(x.fullPrompt ?? ''))) dismissLaunch(l.id);
+  });
 });
 
 describe('failed launch card', () => {
@@ -306,5 +336,11 @@ describe('failed launch card', () => {
     expect(html).toContain('class="lpane"');
     expect(html).toContain("fullPrompt||g.prompt");
     expect(html).toContain('/api/new-thread/');
+  });
+
+  it('offers to trust an untrusted project folder and sends the choice', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).toContain('id="ctrust"');
+    expect(html).toContain("trust:!$('#ctrustrow').hidden&&$('#ctrust').checked");
   });
 });

@@ -13,6 +13,7 @@ import { isValidProjectDir } from './findchat.ts';
 import { acquireManagedPane, pickStrategy } from './managed.ts';
 import { currentTerminal } from './terminal.ts';
 import { notifyUser } from './notify.ts';
+import { detectFirstRunPrompt, pretrustFolder } from './orchstart.ts';
 import type { Agent } from './types.ts';
 
 // The board's "New thread" composer: start a fresh agent session in a pane with
@@ -42,6 +43,7 @@ export interface NewThreadInput {
   focus?: boolean;
   images?: ImageIn[];
   exclude?: string[]; // pane ids not to pick (a retry avoids the pane that just failed)
+  trust?: boolean; // the composer's "trust this folder" box: pre-accept Claude's trust dialog for projectDir
 }
 
 /** Save images to ~/.loom/inbox/<id>/ and return their absolute paths. */
@@ -207,7 +209,9 @@ type LiveMap = Record<string, { agent: string; session_id: string; pane_id: stri
 /**
  * Settle each launch still `starting`. Started the moment the agent process is
  * running in its pane or the placement hook has tied a session to it (a slow
- * start, a trust dialog, no transcript yet: all fine). Failed only when neither
+ * start, no transcript yet: all fine), unless the pane is showing a first-run
+ * question such as the folder-trust dialog, which never resolves on its own.
+ * Failed only when neither
  * has happened LAUNCH_CONFIRM_MS after the launch; the pane's tail and the full
  * prompt stay on the record, and the user is notified once.
  */
@@ -220,7 +224,9 @@ export function confirmLaunches(
   for (const l of [...recent]) {
     if (l.status !== 'starting') continue;
     const tied = Object.values(live).some((x) => x.pane_id === l.pane_id && x.agent === l.agent);
-    if (tied || agentRunningIn(l.pane_id, run)) {
+    // An agent sitting on a first-run question (the folder-trust dialog) is running
+    // but has not started the chat: it waits there forever, so it is not 'started'.
+    if (tied || (agentRunningIn(l.pane_id, run) && !detectFirstRunPrompt(capturePaneLines(l.pane_id, run, 40).join('\n')))) {
       l.status = 'started';
       continue;
     }
@@ -477,6 +483,7 @@ export interface StartDeps {
   launch?: typeof launchInPane;
   ready?: (paneId: string) => boolean;
   liveByPane?: () => LiveMap;
+  pretrust?: (dir: string) => unknown;
 }
 
 export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun, deps: StartDeps = {}): GotoResult & { pane_id?: string; where?: string; images?: string[] } {
@@ -495,6 +502,10 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun,
   const prompt = promptWithImages(input.prompt, images);
   const prep = prepareForTyping(paneId, run, deps.ready ?? ((id) => waitForShellReady(id, run)));
   if (!prep.ok) return prep;
+  // A folder Claude Code has never been trusted in opens on its "do you trust this
+  // folder" dialog, which a chat in a background pane waits on forever. The user
+  // ticked the composer's box to trust it, so accept it up front.
+  if (input.trust && input.agent === 'claude') (deps.pretrust ?? pretrustFolder)(input.projectDir);
   const r = (deps.launch ?? launchInPane)({
     paneId,
     projectDir: input.projectDir,

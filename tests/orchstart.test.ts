@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { detectFirstRunPrompt, pretrustFolder } from '../src/orchstart.ts';
+import { detectFirstRunPrompt, isFolderTrusted, pretrustFolder, trustedFolders } from '../src/orchstart.ts';
 
 const TRUST = `
  ─────────────────────────────────────────────
@@ -116,5 +116,25 @@ describe('pretrustFolder', () => {
     const none = mk();
     expect(pretrustFolder(dir, none.home)).toBe('skipped');
     expect(fs.existsSync(none.f)).toBe(false);
+  });
+});
+
+describe('trustedFolders', () => {
+  it('lists accepted folders, and sees a pretrust written after it was cached', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-trusted-'));
+    const f = path.join(home, '.claude.json');
+    fs.writeFileSync(f, JSON.stringify({ projects: { '/a': { hasTrustDialogAccepted: true }, '/b': { hasTrustDialogAccepted: false }, '/c': {} } }));
+    expect([...trustedFolders(home)]).toEqual(['/a']);
+    expect(isFolderTrusted('/b', home)).toBe(false);
+    fs.utimesSync(f, new Date(), new Date(Date.now() - 60_000)); // a distinct mtime, so the rewrite below is seen
+    expect(pretrustFolder('/b', home)).toBe('written');
+    expect(isFolderTrusted('/b', home)).toBe(true);
+  });
+
+  it('is empty when the file is missing or broken', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-trusted-'));
+    expect(trustedFolders(home).size).toBe(0);
+    fs.writeFileSync(path.join(home, '.claude.json'), '{nope');
+    expect(isFolderTrusted('/a', home)).toBe(false);
   });
 });
