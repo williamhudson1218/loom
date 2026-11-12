@@ -184,6 +184,23 @@ function railStoreKey(k){return 'loom.outbox.closed.'+k;}
 // draft it was showing (closedAt); it stays collapsed until a draft newer than that arrives.
 function newestDraftAt(ds){return (ds||[]).reduce(function(m,d){return Math.max(m,draftDate(d));},0);}
 function railShut(closedAt,ds){return closedAt>0&&newestDraftAt(ds)<=closedAt;}
+// Swap the open rail's markup without losing the reader's place. Identical markup is not touched at all.
+// Otherwise the first card in view (and its offset from the list top) is remembered by id and put back after
+// the swap; if it is gone (sent, discarded) the next card still present takes its spot. Not raw scrollTop:
+// cards above may have been removed.
+function railPatch(rail,html){if(rail._sig===html&&rail.firstChild)return false;
+  const sc=rail.querySelector('#outcards');let anchor=null,saved=0;
+  if(sc){saved=sc.scrollTop;const top=sc.getBoundingClientRect().top;const cards=[].slice.call(sc.querySelectorAll('.draft'));
+    const ids=cards.map(function(c){return c.dataset.id;});
+    for(let i=0;i<cards.length;i++){const r=cards[i].getBoundingClientRect();if(r.bottom>top+1){anchor={i:i,ids:ids,off:r.top-top};break;}}}
+  rail.innerHTML=html;rail._sig=html;
+  const nc=rail.querySelector('#outcards');if(!nc||!sc)return true;
+  nc.scrollTop=saved;
+  if(anchor){const have={};[].slice.call(nc.querySelectorAll('.draft')).forEach(function(c){have[c.dataset.id]=c;});
+    for(let j=anchor.i;j<anchor.ids.length;j++){const el=have[anchor.ids[j]];if(!el)continue;
+      const off=j===anchor.i?anchor.off:Math.max(anchor.off,0);
+      nc.scrollTop+=el.getBoundingClientRect().top-nc.getBoundingClientRect().top-off;break;}}
+  return true;}
 // A chat that replies into a thread it does not own (another chat claimed it first) still
 // has the thread on its draft: {key,url} of the newest pending draft's thread, or null.
 function draftThreadOf(all,sid){var ds=draftsOfChat(all,sid).filter(function(d){return d.status==null||d.status==='pending';});
@@ -325,16 +342,16 @@ function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wr
   if(wrap.dataset.closing){return;}
   const mode=railMode(ds.length,outCollapsed);const was=wrap.dataset.rail;
   // Last draft gone: slide the rail shut (width transition), refit the terminal once at the end.
-  if(mode==='hidden'&&was&&was!=='hidden'&&!reduceMotion()){wrap.dataset.closing='1';rail.classList.add('closing');setTimeout(()=>{delete wrap.dataset.closing;rail.classList.remove('closing');wrap.dataset.rail='hidden';rail.hidden=true;rail.innerHTML='';refitTerm();},280);outPollSync();return;}
+  if(mode==='hidden'&&was&&was!=='hidden'&&!reduceMotion()){wrap.dataset.closing='1';rail.classList.add('closing');setTimeout(()=>{delete wrap.dataset.closing;rail.classList.remove('closing');wrap.dataset.rail='hidden';rail.hidden=true;rail.innerHTML='';rail._sig=null;refitTerm();},280);outPollSync();return;}
   wrap.dataset.rail=mode;rail.hidden=mode==='hidden';
   if(was!==mode)setTimeout(refitTerm,60);outPollSync();
-  if(mode==='hidden'){rail.innerHTML='';return;}
+  if(mode==='hidden'){rail.innerHTML='';rail._sig=null;return;}
   if(draftsBusy(rail))return;
   loadSlkData();
   if(mode==='collapsed'){const dest=draftDestLabel(ds[ds.length-1]);
-    rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the outbox ('+ds.length+' pending, '+esc(dest)+')" aria-label="Open the outbox, '+ds.length+' pending"><span class="oglyph" aria-hidden="true">\u2709</span><span class="obadge">'+ds.length+'</span><span class="odest">'+esc(destInitial(dest))+'</span></button>';return;}
+    rail._sig=null;rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the outbox ('+ds.length+' pending, '+esc(dest)+')" aria-label="Open the outbox, '+ds.length+' pending"><span class="oglyph" aria-hidden="true">\u2709</span><span class="obadge">'+ds.length+'</span><span class="odest">'+esc(destInitial(dest))+'</span></button>';return;}
   const now=Date.now();
-  rail.innerHTML='<div class="orh2"><span>Outbox</span><span class="obadge">'+ds.length+'</span><span class="sp"></span><button type="button" data-rail="close" title="collapse" aria-label="Collapse the outbox">\u203a</button></div><div id="outcards">'+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join('')+'</div>';focusConfirm();}
+  railPatch(rail,'<div class="orh2"><span>Outbox</span><span class="obadge">'+ds.length+'</span><span class="sp"></span><button type="button" data-rail="close" title="collapse" aria-label="Collapse the outbox">\u203a</button></div><div id="outcards">'+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join('')+'</div>');focusConfirm();}
 // Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
 function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
 function reduceMotion(){return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);}

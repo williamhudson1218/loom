@@ -186,3 +186,71 @@ describe('burst send progress rendering', () => {
     expect(() => new Function(OUTBOX_VIEW_JS)).not.toThrow();
   });
 });
+
+describe('rail keeps the reader\'s place across a re-render', () => {
+  const { railPatch } = new Function(`${OUTBOX_PURE_JS}; return { railPatch };`)() as { railPatch: (rail: any, html: string) => boolean };
+  const H = 100;
+  // Minimal DOM: a rail whose innerHTML setter builds an #outcards list of fixed-height cards, and,
+  // like a browser, starts the new list at scrollTop 0.
+  function fakeRail() {
+    let html = '';
+    const rail: any = {
+      sets: 0,
+      firstChild: null,
+      get innerHTML() { return html; },
+      set innerHTML(v: string) {
+        html = v; rail.sets++;
+        rail.firstChild = v ? {} : null;
+        const ids = [...v.matchAll(/data-id="([^"]+)"/g)].map((m) => m[1]);
+        const sc: any = { scrollTop: 0, getBoundingClientRect: () => ({ top: 0, bottom: 300 }) };
+        const cards = ids.map((id, i) => ({
+          dataset: { id },
+          getBoundingClientRect: () => ({ top: i * H - sc.scrollTop, bottom: i * H + H - sc.scrollTop }),
+        }));
+        sc.querySelectorAll = () => cards;
+        rail.sc = sc;
+      },
+      querySelector: (q: string) => (q === '#outcards' ? rail.sc || null : null),
+    };
+    return rail;
+  }
+  const page = (ids: string[]) => '<div id="outcards">' + ids.map((i) => `<div class="draft" data-id="${i}"></div>`).join('') + '</div>';
+
+  it('does not touch the DOM when the markup is unchanged', () => {
+    const rail = fakeRail();
+    railPatch(rail, page(['a', 'b', 'c']));
+    rail.sc.scrollTop = 150;
+    expect(railPatch(rail, page(['a', 'b', 'c']))).toBe(false);
+    expect(rail.sets).toBe(1);
+    expect(rail.sc.scrollTop).toBe(150);
+  });
+
+  it('holds the anchor card in place when markup changes', () => {
+    const rail = fakeRail();
+    railPatch(rail, page(['a', 'b', 'c', 'd', 'e']));
+    rail.sc.scrollTop = 230; // b is partly off the top, c in view
+    railPatch(rail, page(['a', 'b', 'c', 'd', 'e']).replace('"c"', '"c" x'));
+    expect(rail.sets).toBe(2);
+    expect(rail.sc.scrollTop).toBe(230);
+  });
+
+  it('after a card above the view is removed, the same card stays where it was', () => {
+    const rail = fakeRail();
+    railPatch(rail, page(['a', 'b', 'c', 'd', 'e']));
+    rail.sc.scrollTop = 230;
+    const before = 2 * H - rail.sc.scrollTop; // c's top
+    railPatch(rail, page(['b', 'c', 'd', 'e']));
+    const c = rail.sc.querySelectorAll().find((x: any) => x.dataset.id === 'c');
+    expect(c.getBoundingClientRect().top).toBe(before);
+  });
+
+  it('after the anchor card itself is sent, the next card moves into its spot', () => {
+    const rail = fakeRail();
+    railPatch(rail, page(['a', 'b', 'c', 'd', 'e']));
+    rail.sc.scrollTop = 200; // c is exactly at the top
+    railPatch(rail, page(['a', 'b', 'd', 'e']));
+    const d = rail.sc.querySelectorAll().find((x: any) => x.dataset.id === 'd');
+    expect(d.getBoundingClientRect().top).toBe(0);
+    expect(rail.sc.scrollTop).toBe(200);
+  });
+});
