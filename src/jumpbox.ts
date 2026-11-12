@@ -105,6 +105,7 @@ function jumpCommands(){
     {kind:'cmd',id:'new',label:'New thread',hay:'start launch chat',icon:'＋',run:function(){if(!composerOpen)openComposer();}},
     {kind:'cmd',id:'restore',label:'Restore sessions',hay:'rebuild tmux workspace snapshot',icon:'⟲',run:function(){restoreWorkspace();}},
     {kind:'cmd',id:'settings',label:'Settings',hay:'preferences config',icon:'⚙',run:function(){openSettings();}},
+    {kind:'cmd',id:'tour',label:'Take the tour',hay:'guided tour walkthrough help tutorial',icon:'?',run:function(){if(typeof startTour==='function')startTour(0);}},
     {kind:'cmd',id:'outbox',label:'Outbox',hay:'drafts slack email send',icon:'✉',run:function(){var b=document.querySelector('#outrail [data-rail="open"]');if(b)b.click();else if(typeof toast==='function')toast(document.querySelector('#outrail:not([hidden])')?'The Outbox is open':'The Outbox is empty');}}
   ];
   tabs.forEach(function(t){c.push({kind:'cmd',id:'tab-'+t[0],label:'Go to '+t[1],hay:t[1]+' tab view',icon:'▸',run:function(){jumpTab(t[0]);}});});

@@ -41,8 +41,12 @@ export const TOUR_VIEW_CSS = String.raw`
   #tourtip .tourbtn.pri { background:#6ea2ff; border-color:#6ea2ff; color:#08101f; font-weight:600; }
   #tourtip .tourbtn.pri:hover { filter:brightness(1.1); background:#6ea2ff; color:#08101f; }
   #tourtip .tourbtn:focus-visible { outline:2px solid #6ea2ff; outline-offset:2px; }
-  #tourribbon { position:fixed; left:50%; top:10px; transform:translateX(-50%); max-width:calc(100vw - 24px); box-sizing:border-box; padding:5px 12px; border-radius:999px; background:#2a2412; border:1px solid #6b5a1e; color:#e8c872; font-size:12px; text-align:center; pointer-events:none; }
+  #tourribbon { position:fixed; left:50%; top:10px; transform:translateX(-50%); max-width:calc(100vw - 24px); box-sizing:border-box; display:flex; align-items:center; gap:10px; padding:5px 6px 5px 14px; border-radius:999px; background:#2a2412; border:1px solid #6b5a1e; color:#e8c872; font-size:12.5px; z-index:2; }
   #tourribbon[hidden] { display:none; }
+  #tourribbon b { font-weight:600; }
+  #tourribbon button { height:24px; border-radius:999px; border:1px solid #6b5a1e; background:#3a3216; color:#f3dc92; padding:0 11px; font:inherit; font-size:12px; cursor:pointer; }
+  #tourribbon button:hover { background:#4a401c; color:#fff; }
+  #tourribbon button:focus-visible { outline:2px solid #6ea2ff; outline-offset:2px; }
   @media (prefers-reduced-motion: reduce) { #tourspot, #tourtip { transition:none; } }
 `;
 
@@ -50,7 +54,7 @@ export const TOUR_VIEW_HTML = String.raw`
 <div id="tour" hidden>
   <div id="tourshield"></div>
   <div id="tourspot"></div>
-  <div id="tourribbon" hidden>Sample chats. Nothing here is real, and it is all removed when the tour ends.</div>
+  <div id="tourribbon" role="status" hidden><span><b>Showing sample data for the tour.</b> Nothing here is real, and nothing you do changes anything.</span><button type="button" id="tourexit">Exit tour</button></div>
   <div id="tourtip" role="dialog" aria-modal="true" aria-labelledby="tourtt" aria-describedby="tourtb">
     <h4 id="tourtt"></h4>
     <p id="tourtb"></p>
@@ -69,7 +73,7 @@ export const TOUR_VIEW_JS =
   TOUR_FIXTURE_JS +
   String.raw`
 // ---- Guided tour ---------------------------------------------------------------
-var TOUR={on:false,pos:0,order:[],stops:[],timer:null,sample:false,fx:null,saved:null,prevFetch:null,stepAt:0,
+var TOUR={on:false,pos:0,order:[],stops:[],timer:null,sample:false,fx:null,saved:null,prevFetch:null,origFetch:null,stepAt:0,
   shipOk:false,shipRepo:'',hotkey:'Command+Shift+L',slackOn:false,keyH:null,resizeH:null,focusEl:null,ending:false};
 function tourQ(s){return document.querySelector(s);}
 function tourUsable(el){if(!el||el.hidden)return false;var r=el.getBoundingClientRect();return r.width>0&&r.height>0;}
@@ -96,7 +100,7 @@ function tourFetch(input,init){
   if(p==='/api/data'){
     return TOUR.prevFetch(input,init).then(function(r){return r.json();}).then(function(d){
       d=Object.assign({},d);d.chats=fx.chats;d.live=fx.live;d.drafts=fx.drafts;d.slackOwners=fx.slackOwners;d.slackCounts=fx.slackCounts;
-      d.ships=fx.ships;d.parked=[];d.pipes={};d.chatPr={};d.slackStarts=[];d.launches=[];return tourJson(d);});
+      d.ships=fx.ships;d.parked=fx.parked;d.pipes=fx.pipes;d.chatPr=fx.chatPr;d.slackStarts=[];d.launches=[];d.slackMode=TOUR.sampleSlackMode;return tourJson(d);});
   }
   if(p==='/api/detail'&&sid.indexOf('sample-')===0)return tourJson(fx.detail(sid));
   if(p==='/api/transcript'&&sid.indexOf('sample-')===0)return tourJson(fx.transcript(sid));
@@ -109,7 +113,9 @@ function tourFetch(input,init){
 function tourApplySample(){
   var fx=TOUR.fx;
   DATA.chats=fx.chats;DATA.live=fx.live;DATA.drafts=fx.drafts;DATA.slackOwners=fx.slackOwners;DATA.slackCounts=fx.slackCounts;
-  DATA.ships=fx.ships;DATA.parked=[];DATA.pipes={};DATA.chatPr={};DATA.slackStarts=[];
+  DATA.ships=fx.ships;DATA.parked=fx.parked;DATA.pipes=fx.pipes;DATA.chatPr=fx.chatPr;DATA.slackStarts=[];
+  // The sample shows every stop, Slack's included, whatever this Mac has set up.
+  DATA.slackMode=TOUR.sampleSlackMode;
 }
 
 // ---- selecting a chat for the stops ---------------------------------------------
@@ -123,8 +129,16 @@ function tourSelectChat(pred){
 }
 function tourForceTranscript(){mtab='transcript';var t=tourQ('#mtabs');if(t)t.dataset.sig='';renderMain();}
 function tourWithAsk(c){return hasDrafts(c)||ownsSlack(c);}
+// The menu stop opens on the chat the earlier stops selected, so it is the one in focus.
+function tourMenuRow(){return tourQ('.srow.sel[data-tour="row"]')||tourQ('[data-tour="row"]');}
 
 // ---- the stops ------------------------------------------------------------------
+// Real data: a stop runs only when its subject exists in this person's data
+// (has), so no stop talks about something that is not on screen. Sample data has
+// every subject by construction (tests/tour.test.ts checks each anchor).
+function tourLiveChats(){return DATA.chats.filter(function(c){return !c.arch;});}
+function tourHasDraftChat(){return tourLiveChats().some(function(c){return hasDrafts(c);});}
+function tourHasSlackChat(){return tourLiveChats().some(function(c){return ownsSlack(c);});}
 function tourStops(){
   var slackKey=TOUR.hotkey&&TOUR.hotkey!=='off'?tourFmtAcc(TOUR.hotkey):'';
   var slackBody='A chat that works in a Slack thread owns it, and Open in Slack jumps straight to that thread. '+
@@ -133,37 +147,34 @@ function tourStops(){
   var stops=[
     {id:'filters',anchor:'[data-tour="filters"]',place:'right',title:'Find a chat fast',
      body:'The sidebar lists every chat Loom knows about, so one list answers which chat needs you. Search it, filter by project, group by status or tag, and sort it. Filters stay set between launches, and archive search finds chats older than seven days.'},
-    {id:'groups',anchor:function(){return tourQ('[data-tour="group"]')?tourQ('#list'):null;},place:'right',title:'Groups tell you what needs you',
-     body:'Chats are grouped by state so the ones waiting on you sit together, ahead of chats that are working or finished. This is the list to check when you come back to the screen. Click a group header to collapse it.'},
-    {id:'tabs',anchor:'#mtabs',place:'below',title:'Open a chat',
-     body:'Click a row to open it. Terminal is the live session, where you type to the chat. Transcript is a readable record you can search and copy from, with the git, pull request and Slack details beside it. Both show the same chat.',
+    {id:'groups',has:function(){return tourLiveChats().length>0;},anchor:'#list',place:'right',title:'Each row says what the chat needs',
+     body:'The dot and label on each row give the chat state: Your turn, Working, Waiting on others or Done. Sorted by Recent activity, the chat that changed last is on top. Pick another sort in the filter menu above and the list groups by state, so the chats waiting on you sit together.'},
+    {id:'tabs',has:function(){return tourLiveChats().length>0;},anchor:'#mtabs',place:'below',title:'Open a chat',
+     body:'Clicking a row opens the chat here. Terminal is the live session, where you type to the chat. Transcript is a readable record you can search and copy from, with the git, pull request and Slack details beside it. Both show the same chat.',
      open:function(){tourSelectChat(tourWithAsk);}},
-    {id:'outbox',requires:TOUR.slackOn,anchor:'[data-tour="outbox"]',place:'left',title:'The Outbox',
+    {id:'outbox',requires:TOUR.slackOn,has:tourHasDraftChat,anchor:'[data-tour="outbox"]',place:'left',title:'The Outbox',
      body:'When a chat drafts a Slack reply, it waits here instead of posting. Nothing reaches Slack until you press Send, so you read every message first. Send posts now. Send and park posts, then reopens the chat when someone replies. Send and close posts and ends the chat.',
-     open:function(){var c=tourSelectChat(tourWithAsk);var ds=c?draftsFor(c):[];
+     open:function(){var c=tourSelectChat(hasDrafts);var ds=c?draftsFor(c):[];
        if(ds.length){outCollapsed=false;draftConfirm=ds[0].id;draftArmDiscard=null;}renderOutbox();},
      close:function(){draftConfirm=null;outCollapsed=outRailKey?railCollapsed(outRailKey,railDrafts()):true;renderOutbox();}}
   ];
-  if(TOUR.shipOk){
-    stops.push({id:'ship',anchor:'#shipmodal:not([hidden]) .smbox',place:'left',title:'Ship staged work',
-      body:'Ship turns the changes that several chats have staged into one pull request. The ship line in the sidebar counts the staged files. This dialog shows which chat changed what, flags files no chat has claimed, and starts your ship command. Loom never force-pushes.',
-      open:function(){if(TOUR.shipRepo)openShipModal(TOUR.shipRepo,false);},
-      close:function(){closeShipModal();}});
-  }else{
-    stops.push({id:'ship',anchor:'[data-tour="gear"]',place:'below',title:'Ship staged work',
-      body:'Ship turns the changes that several chats have staged into one pull request, and a line in the sidebar counts the staged files. No repository is set up for it yet. Add one in Settings › Ship.'});
-  }
+  // Ship runs only where it has something to show: the sample, or a Ship repository
+  // set up on this Mac. Without one the gear stop below already says where to add it.
+  stops.push({id:'ship',has:function(){return TOUR.shipOk;},anchor:'#shipmodal:not([hidden]) .smbox',place:'left',title:'Ship staged work',
+    body:'Ship turns the changes that several chats have staged into one pull request. The ship line in the sidebar counts the staged files. This dialog shows which chat changed what, flags files no chat has claimed, and starts your ship command. Loom never force-pushes.',
+    open:function(){if(TOUR.shipRepo)openShipModal(TOUR.shipRepo,false);},
+    close:function(){closeShipModal();}});
   stops.push(
-    {id:'menu',anchor:function(){return [tourQ('[data-tour="row"]'),tourQ('#ctx:not([hidden])')];},place:'right',title:'Right-click for more',
-     body:'Every chat has the same actions on right-click: rename it, tag it, park it until someone replies, save it for later, archive it, branch from it, or copy its session id. They keep the board tidy, so only work in progress stays on it.',
-     open:function(){var r=tourQ('[data-tour="row"]');if(!r)return;var c=null,i;
+    {id:'menu',has:function(){return tourLiveChats().length>0;},anchor:function(){return [tourMenuRow(),tourQ('#ctx:not([hidden])')];},place:'right',title:'Right-click for more',
+     body:'Every chat has the same actions on right-click: open its terminal, branch it into a new window, tag it, save it for later, rename it, copy its session ID, or close it. They keep the board tidy, so only work in progress stays on it.',
+     open:function(){var r=tourMenuRow();if(!r)return;var c=null,i;
        for(i=0;i<DATA.chats.length;i++){if(DATA.chats[i].session_id===r.dataset.sid&&DATA.chats[i].agent===r.dataset.agent){c=DATA.chats[i];break;}}
        if(!c)return;var b=r.getBoundingClientRect();openCtx(c,b.left+60,b.bottom-4);},
      close:function(){closeCtx();}},
-    {id:'slack',requires:TOUR.slackOn,anchor:'[data-tour="slack"]',place:'left',title:'Slack threads and the shortcut',body:slackBody,
+    {id:'slack',requires:TOUR.slackOn,has:tourHasSlackChat,anchor:'[data-tour="slack"]',place:'left',title:'Slack threads and the shortcut',body:slackBody,
      open:function(){tourSelectChat(ownsSlack);tourForceTranscript();}},
     {id:'gear',anchor:'[data-tour="gear"]',place:'below',title:'Settings live here',
-     body:'The gear opens every choice from setup: terminal, permissions, Slack, Ship, watchers and the helper plugin. Help in Settings has this tour again.'}
+     body:'The gear opens every choice from setup: terminal, permissions, Slack, Ship repositories, watchers and the helper plugin. Settings › Help, or Take the tour in the ⌘K jump box, runs this tour again.'}
   );
   return stops;
 }
@@ -222,7 +233,7 @@ function tourTick(){
   if(TOUR.sample&&DATA.chats!==TOUR.fx.chats&&DATA.chats.length===0){tourApplySample();render();}
   tourLayout();
   var ae=document.activeElement;
-  if(!ae||!ae.closest||!ae.closest('#tourtip')){var nx=tourQ('#tournext');if(nx)nx.focus();}
+  if(!ae||!ae.closest||!ae.closest('#tourtip,#tourribbon')){var nx=tourQ('#tournext');if(nx)nx.focus();}
 }
 
 // ---- stepping -------------------------------------------------------------------
@@ -247,12 +258,12 @@ function tourNext(){if(!TOUR.on)return;if(TOUR.pos>=TOUR.order.length-1){tourEnd
 function tourBack(){if(!TOUR.on||TOUR.pos<=0)return;tourShow(TOUR.pos-1);}
 function tourKey(e){
   if(!TOUR.on)return;
-  var inTour=!!(e.target&&e.target.closest&&e.target.closest('#tourtip'));
+  var inTour=!!(e.target&&e.target.closest&&e.target.closest('#tourtip,#tourribbon'));
   if(e.key==='Escape'){e.preventDefault();e.stopPropagation();tourEnd('skipped');return;}
   if(e.key==='ArrowRight'){e.preventDefault();e.stopPropagation();tourNext();return;}
   if(e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();tourBack();return;}
   if(e.key==='Tab'){
-    var f=[tourQ('#tourskip'),tourQ('#tourback'),tourQ('#tournext')].filter(function(b){return b&&!b.disabled;});
+    var f=[tourQ('#tourskip'),tourQ('#tourback'),tourQ('#tournext'),TOUR.sample?tourQ('#tourexit'):null].filter(function(b){return b&&!b.disabled;});
     var at=f.indexOf(document.activeElement);
     e.preventDefault();e.stopPropagation();
     if(!f.length)return;
@@ -263,7 +274,7 @@ function tourKey(e){
 }
 function tourKeyUp(e){
   if(!TOUR.on)return;
-  var inTour=!!(e.target&&e.target.closest&&e.target.closest('#tourtip'));
+  var inTour=!!(e.target&&e.target.closest&&e.target.closest('#tourtip,#tourribbon'));
   if(!inTour&&(e.key===' '||e.key==='Enter')){e.preventDefault();e.stopPropagation();}
 }
 
@@ -283,28 +294,42 @@ function startTour(i){
     tourBegin(i||0);
   });
 }
+// Which stops run: those whose setting allows them and, on real data, whose subject exists.
+function tourOrder(stops,sample){
+  var out=[];
+  stops.forEach(function(s,i){
+    if(s.requires!==undefined&&!s.requires)return;
+    if(!sample&&s.has&&!s.has())return;
+    out.push(i);
+  });
+  return out;
+}
 function tourBegin(first){
   TOUR.slackOn=tourSlackIsOn();
   TOUR.saved={panes:tourPaneHtml(),tab:tab,sel:sel?{sid:sel.sid,agent:sel.agent,arch:sel.arch||null}:null,mtab:mtab,chats:DATA.chats,live:DATA.live,drafts:DATA.drafts,
     slackOwners:DATA.slackOwners,slackCounts:DATA.slackCounts,ships:DATA.ships,parked:DATA.parked,pipes:DATA.pipes,chatPr:DATA.chatPr,
     slackStarts:DATA.slackStarts,shipOpen:shipOpen,outCollapsed:outCollapsed,focus:document.activeElement};
   TOUR.sample=DATA.chats.filter(function(c){return !c.arch;}).length===0;
-  TOUR.prevFetch=window.fetch;window.fetch=tourFetch;
+  TOUR.saved.slackMode=DATA.slackMode;
+  if(TOUR.sample){TOUR.slackOn=true;TOUR.sampleSlackMode='direct';}
+  // Bound: the native fetch throws Illegal invocation when called as TOUR.prevFetch(...).
+  TOUR.origFetch=window.fetch;TOUR.prevFetch=window.fetch.bind(window);window.fetch=tourFetch;
   if(typeof closeCtx==='function')closeCtx();
   if(typeof closeShipModal==='function')closeShipModal();
   if(TOUR.sample){
-    TOUR.fx=tourFixture(Date.now(),{slack:TOUR.slackOn,ship:TOUR.shipOk});
-    if(TOUR.shipOk)TOUR.shipRepo=TOUR.fx.repo;
+    TOUR.fx=tourFixture(Date.now(),{slack:true,ship:true});
+    TOUR.shipOk=true;TOUR.shipRepo=TOUR.fx.repo;
     tourApplySample();
   }
   tab='board';stateFilter='all';onlyGroup=null;shipFilter=null;
   if(TOUR.sample)shipOpen=false;
   syncControls();liveToggle();chips();render();
   TOUR.stops=tourStops();
-  TOUR.order=[];TOUR.stops.forEach(function(s,i){if(s.requires===undefined||s.requires)TOUR.order.push(i);});
+  TOUR.order=tourOrder(TOUR.stops,TOUR.sample);
   TOUR.pos=-1;TOUR.stepAt=0;
   var root=tourQ('#tour');root.hidden=false;tourQ('#tourribbon').hidden=!TOUR.sample;
   tourQ('#tourskip').onclick=function(){tourEnd('skipped');};
+  tourQ('#tourexit').onclick=function(){tourEnd('skipped');};
   tourQ('#tourback').onclick=tourBack;tourQ('#tournext').onclick=tourNext;
   TOUR.keyH=tourKey;window.addEventListener('keydown',TOUR.keyH,true);window.addEventListener('keyup',tourKeyUp,true);
   TOUR.resizeH=function(){tourLayout();};window.addEventListener('resize',TOUR.resizeH);
@@ -321,11 +346,12 @@ function tourEnd(result){
   if(typeof closeShipModal==='function')closeShipModal();
   draftConfirm=null;
   var S=TOUR.saved;
-  tourQ('#tour').hidden=true;tourQ('#tour').classList.remove('dim');
-  window.fetch=TOUR.prevFetch;
+  tourQ('#tour').hidden=true;tourQ('#tour').classList.remove('dim');tourQ('#tourribbon').hidden=true;
+  window.fetch=TOUR.origFetch;
   if(TOUR.sample){
     DATA.chats=S.chats;DATA.live=S.live;DATA.drafts=S.drafts;DATA.slackOwners=S.slackOwners;DATA.slackCounts=S.slackCounts;
     DATA.ships=S.ships;DATA.parked=S.parked;DATA.pipes=S.pipes;DATA.chatPr=S.chatPr;DATA.slackStarts=S.slackStarts;
+    DATA.slackMode=S.slackMode;
   }
   shipOpen=S.shipOpen;
   if(S.sel){
@@ -338,7 +364,7 @@ function tourEnd(result){
   try{if(S.focus&&S.focus.focus&&document.contains(S.focus))S.focus.focus();}catch(e){}
   fetch('/api/wizard/tour',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({result:result})}).catch(function(){});
   var wasSample=TOUR.sample;
-  TOUR.on=false;TOUR.sample=false;TOUR.fx=null;TOUR.saved=null;TOUR.prevFetch=null;TOUR.ending=false;
+  TOUR.on=false;TOUR.sample=false;TOUR.fx=null;TOUR.saved=null;TOUR.prevFetch=null;TOUR.origFetch=null;TOUR.ending=false;
   refresh();if(wasSample)setTimeout(refresh,1500);
 }
 window.startTour=startTour;
