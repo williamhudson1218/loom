@@ -73,8 +73,9 @@ describe('pinOrder (stable reorder)', () => {
     expect(api.pinOrder(['a', 'b', 'c'], ['c', 'a', 'b'], { b: true })).toEqual(['c', 'b', 'a']);
     expect(api.pinOrder(['a', 'b', 'c', 'd'], ['d', 'c', 'b', 'a'], { a: true })).toEqual(['a', 'd', 'c', 'b']);
   });
-  it('freezes the list when every row is pinned, placing a new row in the gap', () => {
+  it('freezes existing rows when every row is pinned, but a new row lands at its wanted index, not the bottom', () => {
     const all = { a: true, b: true, c: true };
+    expect(api.pinOrder(['a', 'b', 'c'], ['n', 'c', 'b', 'a'], all)).toEqual(['n', 'a', 'b', 'c']);
     expect(api.pinOrder(['a', 'b', 'c'], ['c', 'b', 'a', 'n'], all)).toEqual(['a', 'b', 'c', 'n']);
   });
   it('drops rows that left and keeps the result a permutation of want', () => {

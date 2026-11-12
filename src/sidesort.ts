@@ -42,7 +42,17 @@ function isFlatList(mode,groupBy,tab){return mode==='recent'&&groupBy==='status'
 // A row that left the list (closed, hidden, filtered out) is dropped from prev first,
 // so the rows below it close the gap by one: otherwise the last row's slot no longer
 // exists and it was placed in the gap, lifting the oldest chat into the middle.
+// A row not in prev has no slot to hold, so it is placed at its wanted index
+// afterwards. Otherwise, with every row pinned (pointer over the list), it filled
+// the one leftover slot at the bottom and only rose when the pointer left.
 function pinOrder(prev,want,pinned){
+  var inPrev={},j0;for(j0=0;j0<prev.length;j0++)inPrev[prev[j0]]=1;
+  var fresh=want.filter(function(k){return !inPrev[k];});
+  if(fresh.length&&fresh.length<want.length){
+    var rest=pinOrder(prev,want.filter(function(k){return inPrev[k];}),pinned);
+    for(var f=0;f<fresh.length;f++)rest.splice(Math.min(want.indexOf(fresh[f]),rest.length),0,fresh[f]);
+    return rest;
+  }
   var n=want.length,out=new Array(n),inWant={},i;
   for(i=0;i<n;i++)inWant[want[i]]=1;
   prev=prev.filter(function(k){return inWant[k];});
