@@ -4,11 +4,12 @@ import { pageBindings } from '../src/keymap.ts';
 
 type It = { label: string; hay?: string; id?: string };
 type Sec = { id: string; title: string; items: It[]; loading?: boolean };
-const api = new Function(`${JUMP_PURE_JS}; return {jumpScore,jumpFilter,jumpSections,jumpFlat};`)() as {
+const api = new Function(`${JUMP_PURE_JS}; return {jumpScore,jumpFilter,jumpSections,jumpFlat,jumpAge};`)() as {
   jumpScore: (l: string, h: string, q: string) => number;
   jumpFilter: (i: It[], q: string, n?: number) => It[];
   jumpSections: (c: It[], m: It[], a: It[], q: string, o?: { archWanted?: boolean; archLoading?: boolean }) => Sec[];
   jumpFlat: (s: Sec[]) => It[];
+  jumpAge: (ts: number, now?: number) => string;
 };
 
 describe('jump box ranking', () => {
@@ -47,6 +48,21 @@ describe('jump box ranking', () => {
     const s = api.jumpSections([], [], [], 'xyz', { archWanted: true, archLoading: true });
     expect(s).toEqual([{ id: 'arch', title: 'Archived', items: [], loading: true }]);
     expect(api.jumpSections([], [], [], 'x', { archWanted: false, archLoading: false })).toEqual([]);
+  });
+});
+
+describe('jump box archived age', () => {
+  const now = 1_800_000_000_000;
+  it('renders compact relative age from the last update', () => {
+    expect(api.jumpAge(now - 30_000, now)).toBe('now');
+    expect(api.jumpAge(now - 5 * 60_000, now)).toBe('5m');
+    expect(api.jumpAge(now - 3 * 3600_000, now)).toBe('3h');
+    expect(api.jumpAge(now - 2 * 86400_000, now)).toBe('2d');
+    expect(api.jumpAge(now - 21 * 86400_000, now)).toBe('3w');
+  });
+  it('accepts epoch seconds and blanks unknown times', () => {
+    expect(api.jumpAge((now - 3 * 3600_000) / 1000, now)).toBe('3h');
+    expect(api.jumpAge(0, now)).toBe('');
   });
 });
 

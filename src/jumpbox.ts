@@ -34,6 +34,14 @@ function jumpSections(chats,cmds,arch,q,opts){
     if(a.length||opts.archLoading)out.push({id:'arch',title:'Archived',items:a,loading:!!opts.archLoading});}
   return out;
 }
+// Compact age since a last-update time: 5m, 3h, 2d, 3w. Epoch seconds are accepted too (find-chat's
+// ended_at). Empty when the time is unknown.
+function jumpAge(ts,now){
+  var t=+ts;if(!t||t<0)return '';if(t<1e11)t*=1000;
+  var s=Math.max(0,((now||Date.now())-t)/1000);
+  if(s<60)return 'now';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';
+  if(s<604800)return Math.floor(s/86400)+'d';return Math.floor(s/604800)+'w';
+}
 // Flat list of the selectable items, for arrow keys.
 function jumpFlat(sections){var f=[];sections.forEach(function(s){s.items.forEach(function(it){f.push(it);});});return f;}
 `;
@@ -87,6 +95,7 @@ export const JUMP_CSS = `
   #jump .jrow .ji { flex:none; width:16px; text-align:center; color:#8b93a7; }
   #jump .jrow .jt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px; }
   #jump .jrow .js { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7f879b; font-size:12px; }
+  #jump .jrow .jage { flex:none; min-width:26px; text-align:right; color:#6b7280; font-size:12px; font-variant-numeric:tabular-nums; }
   #jump .jempty, #jump .jload { color:#7f879b; font-size:13px; padding:10px; }
   #jump .jfoot { display:flex; gap:14px; padding:7px 14px; border-top:1px solid #232634; color:#6b7280; font-size:11.5px; flex:none; }
   @media (prefers-reduced-motion:reduce) { #jump, #jump .jbox, .hmenu, .splitcaret svg { transition:none !important; } }
@@ -119,7 +128,7 @@ function jumpChatItems(){
 }
 function jumpArchItems(){
   var known={};DATA.chats.forEach(function(c){known[c.session_id]=1;});
-  return JUMP.hits.filter(function(h){return !known[h.session_id];}).map(function(h){var ac=archChat(h);return {kind:'arch',hit:h,label:disp(ac),sub:ac.project||'',hay:''};});
+  return JUMP.hits.filter(function(h){return !known[h.session_id];}).map(function(h){var ac=archChat(h);return {kind:'arch',hit:h,label:disp(ac),sub:ac.project||'',hay:'',ts:h.ended_at||0};});
 }
 function jumpBuild(){
   var q=JUMP.q.trim();var want=archiveWanted(q)&&DATA.archiveSearch!==false;
@@ -132,7 +141,7 @@ function jumpRender(){
   jumpBuild();var box=$('#jlist');if(!box)return;var h='',idx=0;
   JUMP.sections.forEach(function(s){h+='<div class="jh">'+esc(s.title)+'</div>';
     s.items.forEach(function(it){var lead=it.kind==='chat'?'<span class="sdot '+esc(it.dot||'')+'" style="margin-top:0"></span>':'<span class="ji">'+(it.kind==='arch'?'❖':esc(it.icon||''))+'</span>';
-      h+='<div class="jrow'+(idx===JUMP.sel?' sel':'')+'" role="option" data-i="'+idx+'">'+lead+'<span class="jt">'+esc(it.label)+'</span>'+(it.sub?'<span class="js">'+esc(it.sub)+'</span>':'')+'</div>';idx++;});
+      h+='<div class="jrow'+(idx===JUMP.sel?' sel':'')+'" role="option" data-i="'+idx+'">'+lead+'<span class="jt">'+esc(it.label)+'</span>'+(it.sub?'<span class="js">'+esc(it.sub)+'</span>':'')+(it.kind==='arch'&&jumpAge(it.ts)?'<span class="jage" title="last updated '+esc(new Date(it.ts<1e11?it.ts*1000:it.ts).toLocaleString())+'">'+esc(jumpAge(it.ts))+'</span>':'')+'</div>';idx++;});
     if(s.loading)h+='<div class="jload">Searching archived chats…</div>';});
   if(!JUMP.flat.length&&!JUMP.sections.some(function(s){return s.loading;}))h+='<div class="jempty">Nothing matches “'+esc(JUMP.q.trim())+'”.</div>';
   box.innerHTML=h;var sel=box.querySelector('.jrow.sel');if(sel&&sel.scrollIntoView)sel.scrollIntoView({block:'nearest'});
