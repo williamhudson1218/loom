@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import { tmux } from './tmux.ts';
 import { runOsascript } from './nativehelpers.ts';
+import { bounded } from './synctimeout.ts';
 import { isViewSession, paneHome } from './tmux.ts';
 import { parseLane } from './compact.ts';
 import { openDb } from './db.ts';
@@ -370,7 +371,7 @@ export const realJumpDeps = (): JumpDeps => ({
   tmux: (a) => tmux(a),
   osascript: (script, args) => runOsascript(script, args),
   open: (app) => {
-    execFileSync('open', ['-a', app]);
+    execFileSync('open', ['-a', app], bounded({}, 10_000));
   },
   insideFocus: requestInsideFocus,
 });

@@ -87,7 +87,7 @@ function foregroundCommands(panes: TmuxPane[]): Map<string, string> {
   const m = new Map<string, string>();
   let out: string;
   try {
-    out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
+    out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 5_000, killSignal: 'SIGKILL' });
   } catch {
     return m;
   }

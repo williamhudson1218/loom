@@ -19,7 +19,7 @@
     "productName": "Loom",
     "directories": { "output": "release" },
     "files": ["dist/**", "node_modules/**", "package.json"],
-    "asarUnpack": ["**/node_modules/better-sqlite3/**", "**/node_modules/node-pty/**", "dist/orchmcp.js"],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**", "**/node_modules/node-pty/**", "dist/orchmcp.js", "dist/watchdog.js"],
     "extraResources": [
       { "from": "build-plugin", "to": "plugin" }
     ],

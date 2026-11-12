@@ -172,6 +172,16 @@ Skip this unless you already keep your own tmux workspace. Loom also understands
 - **Pane topics and tints.** Pane borders can show a short topic, and idle panes can warm in color the longer they wait.
 - **Lane targets.** Watcher chats and new threads can start in an idle lane pane instead of a Loom-managed window.
 
+## When Loom freezes
+
+Loom's server, tray, shortcuts and background ticks share one main thread, so a stuck call there freezes all of it. Three things guard against that:
+
+- **Timeouts.** Every tmux and AppleScript call Loom makes is bounded (5 s for tmux, 8 s for AppleScript). After a tmux call times out, tmux calls fail at once for 10 s rather than each waiting out its own timeout.
+- **A watchdog.** The app starts a small separate process that pings `GET /api/health` every 3 s. If Loom has not answered for about 25 s, the watchdog saves a 3-second sample of the main thread's stack to `~/.loom/hangs/<time>.txt` (that stack names the call that froze it), kills Loom and opens it again, and the new Loom posts a notification with the report path. It never brings back a Loom you quit, it ignores the gap a sleep leaves, and it stops after 3 restarts in 15 minutes. Its log lines are in `~/.loom/loom.log`, tagged `[loom-watchdog]`. `LOOM_WATCHDOG=0` turns it off.
+- **Page recovery.** If the window's page stops responding for 10 s, or its renderer crashes, the page is reloaded.
+
+If Loom is stuck anyway, `./bin/chat-manager restart` samples it into `~/.loom/hangs/<time>-manual.txt`, kills it and opens it again. Your chats keep running in tmux throughout.
+
 ## Architecture
 
 ```

@@ -1067,6 +1067,12 @@ export function createServer(): http.Server {
       return send(res, 200, 'application/json', JSON.stringify(localIdentity(TOOL_DIR)));
     }
 
+    // The watchdog's ping (src/watchdog.ts). Answered straight from the event
+    // loop with no tmux, DB or disk: if this is slow, the main thread is blocked.
+    if (url.pathname === '/api/health') {
+      return send(res, 200, 'application/json', JSON.stringify({ ok: true, pid: process.pid, at: Date.now() }));
+    }
+
     if (url.pathname === '/api/live') {
       const { live } = snapshot();
       return send(res, 200, 'application/json', JSON.stringify(live));

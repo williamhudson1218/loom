@@ -738,7 +738,7 @@ export function startMirror(paneId: string, tmux: Tmux, hooks: MirrorHooks, opts
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const fifo = path.join(dir, `${process.pid}-${randomBytes(6).toString('hex')}`);
   if (!SAFE_PATH.test(fifo)) throw new Error(`unsafe mirror path ${fifo}`);
-  execFileSync('mkfifo', ['-m', '600', fifo]);
+  execFileSync('mkfifo', ['-m', '600', fifo], { timeout: 5_000 });
   let sock: net.Socket | null = null;
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;

@@ -53,6 +53,8 @@ import { notifyUser, setAppNotifier, type NotifyTarget } from '../src/notify.ts'
 import { Updater, bundleOf, defaultCacheDir } from '../src/updater.ts';
 import { setUpdateHost } from '../src/routes/update.ts';
 import { installAppLog, setBuildInfo } from '../src/diagnostics.ts';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { clearPidFile, noticeText, takeNotice } from '../src/watchdog.ts';
 
 // Loom's own log ($LOOM_HOME/loom.log): the packaged app has no terminal, so the
 // console is teed there for Copy details and Copy diagnostics (src/diagnostics.ts).
@@ -153,11 +155,54 @@ function createWindow(): void {
   });
   win.loadURL(`http://localhost:${serverPort()}/`);
   win.once('ready-to-show', () => win?.show());
+  watchRenderer(win);
   win.on('close', (e) => {
     if (!quitting) {
       e.preventDefault();
       win?.hide();
     }
+  });
+}
+
+// A hung or crashed page must not leave the window dead until Loom is quit.
+// 'unresponsive' fires when the renderer stops answering the main process; if it
+// is still stuck after the grace period, its process is crashed, and
+// 'render-process-gone' (that crash, or any other) reloads the page. Reloads are
+// capped so a page that dies on load does not spin.
+const RENDERER_GRACE_MS = 10_000;
+const RELOAD_CAP = 3;
+const RELOAD_WINDOW_MS = 60_000;
+function watchRenderer(w: BrowserWindow): void {
+  let stuck: NodeJS.Timeout | null = null;
+  const reloads: number[] = [];
+  const clear = () => {
+    if (stuck) clearTimeout(stuck);
+    stuck = null;
+  };
+  w.on('unresponsive', () => {
+    if (stuck) return;
+    console.error(`[loom] window: page unresponsive; reloading it in ${RENDERER_GRACE_MS / 1000}s unless it recovers`);
+    stuck = setTimeout(() => {
+      stuck = null;
+      if (w.isDestroyed() || quitting) return;
+      console.error('[loom] window: page still unresponsive; crashing its renderer to reload it');
+      w.webContents.forcefullyCrashRenderer();
+    }, RENDERER_GRACE_MS);
+  });
+  w.on('responsive', () => {
+    if (stuck) console.error('[loom] window: page responsive again');
+    clear();
+  });
+  w.on('closed', clear);
+  w.webContents.on('render-process-gone', (_e, d) => {
+    clear();
+    console.error(`[loom] window: renderer gone (${d.reason}, exit ${d.exitCode})`);
+    if (w.isDestroyed() || quitting) return;
+    const now = Date.now();
+    while (reloads.length && now - reloads[0] > RELOAD_WINDOW_MS) reloads.shift();
+    if (reloads.length >= RELOAD_CAP) return console.error(`[loom] window: ${RELOAD_CAP} reloads in a minute; leaving it until Loom restarts`);
+    reloads.push(now);
+    w.loadURL(`http://localhost:${serverPort()}/`);
   });
 }
 
@@ -333,7 +378,10 @@ function doRestore(): void {
       `\nTabs: ${g.detail}`;
     dialog.showMessageBox({ type: 'info', title: 'Loom', message: 'Workspace restore', detail });
   } catch (e) {
-    dialog.showErrorBox('Loom — restore failed', String((e as Error).message));
+    // Not showErrorBox: it is modal and synchronous, so the main thread (server,
+    // tray, shortcuts) would stop until it was dismissed, and the watchdog would
+    // take that for a freeze.
+    void dialog.showMessageBox({ type: 'error', title: 'Loom', message: 'Workspace restore failed', detail: String((e as Error).message) });
   }
 }
 
@@ -503,6 +551,56 @@ function confirmNewOn(): boolean {
   } catch {
     return true;
   }
+}
+
+// The hang watchdog (src/watchdog.ts): a detached process that pings
+// /api/health and, when the main thread has been stuck ~25 s, samples its stack
+// into $LOOM_HOME/hangs/, kills Loom and opens it again. Packaged app only
+// (LOOM_WATCHDOG=1 forces it on in a dev run, LOOM_WATCHDOG=0 off). Stopped in
+// before-quit, so a Loom that quits on purpose is never brought back.
+let watchdog: ChildProcess | null = null;
+function startWatchdog(port: number): void {
+  const flag = process.env.LOOM_WATCHDOG;
+  if (flag === '0' || (!app.isPackaged && flag !== '1')) return;
+  // One at a time: the new watchdog takes the pid file, and any older one exits on
+  // its next tick when it sees the file name someone else (it is never killed by a
+  // pid read from a file, which may have been recycled).
+  const script = path.join(__dirname, 'watchdog.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+  const bundle = bundleOf(process.execPath);
+  try {
+    const child = spawn(process.execPath, [script, '--pid', String(process.pid), '--port', String(port), '--home', TOOL_DIR, ...(bundle ? ['--app', bundle] : [])], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+    child.on('error', (e) => console.error('[loom] watchdog failed to start:', e.message));
+    child.on('exit', () => {
+      if (watchdog === child) watchdog = null;
+    });
+    child.unref();
+    watchdog = child;
+  } catch (e) {
+    console.error('[loom] watchdog failed to start:', (e as Error).message);
+  }
+}
+function stopWatchdog(): void {
+  const w = watchdog;
+  watchdog = null;
+  if (!w?.pid) return;
+  try {
+    process.kill(w.pid, 'SIGTERM');
+  } catch {
+    /* gone */
+  }
+  clearPidFile(TOOL_DIR, w.pid);
+}
+/** The restart notice a watchdog (or `chat-manager restart`) left for this launch. */
+function announceRestart(): void {
+  const n = takeNotice(TOOL_DIR);
+  if (!n) return;
+  const text = noticeText(n, (p) => p.replace(os.homedir(), '~'));
+  console.error('[loom] ' + text);
+  notify(text);
 }
 
 // The orchestrator's MCP server, as a command Claude Code can spawn. In the
@@ -749,6 +847,8 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => {
   quitting = true;
+  // First: from here the server may stop answering, and that is not a freeze.
+  stopWatchdog();
   // A verified update waiting when Loom quits for any other reason is installed
   // then, without relaunching. Not when install-app.sh is the one quitting it.
   if (!updateHandedOff && updater.state().status === 'ready' && autoUpdateOnSafe()) {
@@ -825,6 +925,8 @@ app.whenReady().then(() => {
       return;
     }
     const stopTerminals = attachTerminalBridge(server, { port: choice.port });
+    startWatchdog(choice.port);
+    announceRestart();
     app.on('will-quit', () => {
       stopTerminals();
       removeServerJson(TOOL_DIR);

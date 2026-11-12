@@ -9,6 +9,7 @@ import { frontBundleId } from '../src/frontapp.ts';
 import { newPressId, pickLog, type LogFields } from '../src/picklog.ts';
 import { helperExe } from '../src/nativehelpers.ts';
 import { AX_GRANT_HINT } from '../src/axcopy.ts';
+import { lineAsker, type LineAsker } from '../src/lineasker.ts';
 
 // Pick mode for "open the chat for this Slack thread", shaped like the macOS
 // screenshot crosshairs: the hotkey covers every display with a transparent,
@@ -40,19 +41,44 @@ function helperPath(): string {
 let helper: ChildProcessWithoutNullStreams | null = null;
 // Pending replies, per process: a restarted helper's late `exit` must only
 // fail its own requests, not the ones already queued for its replacement.
-const queues = new WeakMap<ChildProcessWithoutNullStreams, ((line: string) => void)[]>();
+const askers = new WeakMap<ChildProcessWithoutNullStreams, LineAsker>();
+const HELPER_DOWN = '{"ok":false,"reason":"helper_down"}';
+// A hit-test or trust check answers in milliseconds. One that has not answered
+// in this long never will: the request resolves helper_down and the helper is
+// replaced, so a pick is never left waiting on it (src/lineasker.ts keeps the
+// reply queue aligned across the timeout).
+export const ASK_TIMEOUT_MS = 2_500;
+
+/** Kill a helper that stopped answering; the next ask starts a fresh one. */
+function restartHelper(p: ChildProcessWithoutNullStreams): void {
+  console.error('[loom] loom-ax did not answer within ' + ASK_TIMEOUT_MS + 'ms; restarting it');
+  if (helper === p) helper = null;
+  askers.get(p)?.failAll();
+  try {
+    p.kill('SIGKILL');
+  } catch {
+    /* already gone */
+  }
+}
 
 function ensureHelper(): ChildProcessWithoutNullStreams {
   if (helper && helper.exitCode === null && !helper.killed) return helper;
   const p = spawn(helperPath(), [], { stdio: ['pipe', 'pipe', 'pipe'] });
-  const waiting: ((line: string) => void)[] = [];
-  queues.set(p, waiting);
+  const asker = lineAsker({
+    write: (line) => void p.stdin.write(line),
+    timeoutMs: ASK_TIMEOUT_MS,
+    down: HELPER_DOWN,
+    onTimeout: () => restartHelper(p),
+  });
+  askers.set(p, asker);
   // Replies come back in request order, one line each.
-  readline.createInterface({ input: p.stdout }).on('line', (line) => waiting.shift()?.(line));
+  readline.createInterface({ input: p.stdout }).on('line', (line) => asker.onLine(line));
   p.stderr.on('data', (d: Buffer) => console.error('[loom] loom-ax:', d.toString().trim()));
+  // A write to a helper that just died: the exit handler fails the queue.
+  p.stdin.on('error', () => {});
   const fail = () => {
     if (helper === p) helper = null;
-    for (const w of waiting.splice(0)) w('{"ok":false,"reason":"helper_down"}');
+    asker.failAll();
   };
   p.on('exit', fail);
   p.on('error', (e) => {
@@ -63,23 +89,19 @@ function ensureHelper(): ChildProcessWithoutNullStreams {
   return p;
 }
 
-function ask<T>(req: object): Promise<T> {
-  return new Promise((resolve) => {
-    let p: ChildProcessWithoutNullStreams;
-    try {
-      p = ensureHelper();
-    } catch {
-      return resolve({ ok: false, reason: 'helper_down' } as T);
-    }
-    queues.get(p)!.push((line) => {
-      try {
-        resolve(JSON.parse(line) as T);
-      } catch {
-        resolve({ ok: false, reason: 'helper_down' } as T);
-      }
-    });
-    p.stdin.write(JSON.stringify(req) + '\n');
-  });
+async function ask<T>(req: object): Promise<T> {
+  let p: ChildProcessWithoutNullStreams;
+  try {
+    p = ensureHelper();
+  } catch {
+    return { ok: false, reason: 'helper_down' } as T;
+  }
+  const line = await askers.get(p)!.ask(JSON.stringify(req) + '\n');
+  try {
+    return JSON.parse(line) as T;
+  } catch {
+    return { ok: false, reason: 'helper_down' } as T;
+  }
 }
 
 export function stopHelper(): void {

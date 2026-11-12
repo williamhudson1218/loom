@@ -139,7 +139,7 @@ let psCache: { at: number; out: string } | null = null;
 function psTable(): string {
   const now = Date.now();
   if (psCache && !process.env.VITEST && now - psCache.at < PS_TTL_MS) return psCache.out;
-  const out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
+  const out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 5_000, killSignal: 'SIGKILL' });
   psCache = { at: now, out };
   return out;
 }

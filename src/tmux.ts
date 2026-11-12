@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toolBin } from './toolpath.ts';
 import { TOOL_DIR } from './paths.ts';
+import { bounded, Breaker, breakerError, isTimeout, SYNC_TIMEOUT_MS } from './synctimeout.ts';
 
 // The one door every tmux call goes through.
 //
@@ -102,16 +103,42 @@ export function tmuxArgs(args: string[], opts: TmuxArgOpts = {}): string[] {
 
 const startsServer = (args: string[]): boolean => args[0] === 'new-session' || args[0] === 'new' || args[0] === 'start-server';
 
-/** execFileSync('tmux', …) with the socket applied. Returns stdout as a string. */
-export function tmux(args: string[], opts: Omit<ExecFileSyncOptions, 'encoding'> = {}): string {
-  const out = execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), { ...opts, encoding: 'utf-8' });
-  return typeof out === 'string' ? out : '';
+// Every call is bounded (src/synctimeout.ts): these run on Electron's main
+// thread, and a wedged tmux server would otherwise freeze all of Loom. A call
+// that may start a server gets longer, since a cold start loads the config.
+export const TMUX_TIMEOUT_MS = SYNC_TIMEOUT_MS;
+export const TMUX_START_TIMEOUT_MS = 15_000;
+// After a timeout, tmux calls fail at once for this long instead of each waiting out its own.
+export const TMUX_COOLDOWN_MS = 10_000;
+export const tmuxBreaker = new Breaker(TMUX_COOLDOWN_MS);
+
+export const tmuxTimeoutFor = (args: string[]): number => (startsServer(args) ? TMUX_START_TIMEOUT_MS : TMUX_TIMEOUT_MS);
+
+function runTmux<T>(args: string[], call: () => T): T {
+  const now = Date.now();
+  if (tmuxBreaker.isOpen(now)) throw breakerError('tmux');
+  try {
+    return call();
+  } catch (e) {
+    if (isTimeout(e) && tmuxBreaker.trip(Date.now())) {
+      console.error(`[loom] tmux ${args[0] ?? ''} timed out after ${tmuxTimeoutFor(args)}ms; tmux calls fail fast for ${TMUX_COOLDOWN_MS / 1000}s`);
+    }
+    throw e;
+  }
 }
 
-/** Same, swallowing failure (a pane or window vanished between listing it and writing to it). */
+/** execFileSync('tmux', …) with the socket applied and a timeout. Returns stdout as a string. */
+export function tmux(args: string[], opts: Omit<ExecFileSyncOptions, 'encoding'> = {}): string {
+  return runTmux(args, () => {
+    const out = execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), { ...bounded(opts, tmuxTimeoutFor(args)), encoding: 'utf-8' });
+    return typeof out === 'string' ? out : '';
+  });
+}
+
+/** Same, swallowing failure (a pane or window vanished between listing it and writing to it, or tmux is not answering). */
 export function tmuxQuiet(args: string[]): void {
   try {
-    execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), { stdio: 'ignore' });
+    runTmux(args, () => execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), bounded({ stdio: 'ignore' as const }, tmuxTimeoutFor(args))));
   } catch {
     /* gone */
   }

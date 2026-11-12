@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveLoomRepoDir } from './repodir.ts';
+import { bounded } from './synctimeout.ts';
 
 // Where Loom's native helpers live, and the one way Loom runs AppleScript.
 //
@@ -61,8 +62,12 @@ export function osascriptCommand(script: string, args: string[] = [], helper: st
   return helper ? { cmd: helper, args: ['osascript', ...osa] } : { cmd: 'osascript', args: osa };
 }
 
-/** Run AppleScript synchronously (see osascriptCommand); returns stdout, throws on a non-zero exit. */
-export function runOsascript(script: string, args: string[] = []): string {
+// AppleScript sent to a busy app can block for minutes, and this runs on Electron's
+// main thread (src/synctimeout.ts). A focus or a tab read is well under a second.
+export const OSASCRIPT_TIMEOUT_MS = 8_000;
+
+/** Run AppleScript synchronously (see osascriptCommand); returns stdout, throws on a non-zero exit or after `timeoutMs`. */
+export function runOsascript(script: string, args: string[] = [], timeoutMs: number = OSASCRIPT_TIMEOUT_MS): string {
   const c = osascriptCommand(script, args);
-  return execFileSync(c.cmd, c.args, { encoding: 'utf-8' });
+  return execFileSync(c.cmd, c.args, bounded({ encoding: 'utf-8' as const }, timeoutMs));
 }

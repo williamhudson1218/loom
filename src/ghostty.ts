@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { DEFAULT_SOCKET, tmuxSocket } from './tmux.ts';
 import { runOsascript } from './nativehelpers.ts';
+import { bounded } from './synctimeout.ts';
 
 export interface OpenTabsResult {
   ok: boolean;
@@ -415,12 +416,14 @@ export function buildAttachScript(plan: TabPlan, attachCmd?: string): string {
 function ghosttyRunning(): boolean {
   try {
     return (
-      execFileSync('osascript', ['-e', 'application "Ghostty" is running'], { encoding: 'utf-8' }).trim() === 'true'
+      execFileSync('osascript', ['-e', 'application "Ghostty" is running'], bounded({ encoding: 'utf-8' as const })).trim() === 'true'
     );
   } catch {
     return false;
   }
 }
+
+export const ATTACH_TIMEOUT_MS = 20_000;
 
 export interface AttachOpts {
   dryRun?: boolean;
@@ -443,8 +446,8 @@ export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): Op
   const running = opts.dryRun ? true : ghosttyRunning();
   if (!running) {
     try {
-      execFileSync('open', ['-a', 'Ghostty']);
-      execFileSync('sleep', ['0.9']); // let Ghostty create its first window/tab
+      execFileSync('open', ['-a', 'Ghostty'], bounded({}, 10_000));
+      execFileSync('sleep', ['0.9'], bounded({})); // let Ghostty create its first window/tab
     } catch (e) {
       return { ...none, ok: false, detail: 'failed to launch Ghostty: ' + (e as Error).message };
     }
@@ -466,7 +469,10 @@ export function attachGhosttyTabs(sessions: string[], opts: AttachOpts = {}): Op
   if (opts.dryRun) return { ok: true, ...counts, detail: 'dry-run', script };
 
   try {
-    runOsascript(script);
+    // Typing a dozen attaches with their delays takes seconds, not minutes; bounded
+    // below the watchdog's freeze threshold (src/watchdog.ts) so a restore is never
+    // mistaken for a hang.
+    runOsascript(script, [], ATTACH_TIMEOUT_MS);
     return { ok: true, ...counts, detail, script };
   } catch (e) {
     return {

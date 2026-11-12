@@ -58,6 +58,20 @@ await build({
 });
 console.log('built dist/orchmcp.js');
 
+// The hang watchdog (src/watchdog-main.ts): a detached process Loom starts after
+// its server is up, run by the app binary with ELECTRON_RUN_AS_NODE=1. It pings
+// /api/health and samples + restarts a frozen Loom. Node built-ins only.
+await build({
+  entryPoints: ['../src/watchdog-main.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  target: 'node20',
+  outfile: 'dist/watchdog.js',
+  logLevel: 'info',
+});
+console.log('built dist/watchdog.js');
+
 // The window's preload: exposes webUtils.getPathForFile (File.path is gone in
 // Electron 32+) so a file dropped on the terminal can be typed as its path.
 await build({

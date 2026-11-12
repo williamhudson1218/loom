@@ -9,7 +9,11 @@ import { writeLayout } from './snapshot.ts';
 import { attachGhosttyTabs, readGhosttyWindows } from './ghostty.ts';
 import { attachedSessions } from './placements.ts';
 import { movePane, ungroupPane, defaultGroupDeps } from './compact.ts';
-import { DASHBOARD_PATH, SESSION_PREFIX } from './paths.ts';
+import { DASHBOARD_PATH, SESSION_PREFIX, TOOL_DIR } from './paths.ts';
+import { execFileSync } from 'node:child_process';
+import { readServerJson } from './serverjson.ts';
+import { bundleOf } from './updater.ts';
+import { killAndRelaunch, readPidFile, realActDeps, reportPath, sampleInto, writeNotice } from './watchdog.ts';
 
 export async function runPass(
   db: Database.Database,
@@ -113,8 +117,12 @@ async function main() {
     return;
   }
 
+  if (cmd === 'restart') {
+    process.exit(await restartLoom());
+  }
+
   if (cmd !== 'run') {
-    console.error(`unknown command: ${cmd}. Usage: chat-manager run | snapshot | restore [--dry-run] | move <pane> --to <pane> | ungroup <pane>`);
+    console.error(`unknown command: ${cmd}. Usage: chat-manager run | snapshot | restore [--dry-run] | move <pane> --to <pane> | ungroup <pane> | restart`);
     process.exit(1);
   }
   const db = openDb();
@@ -125,6 +133,51 @@ async function main() {
       `summarized ${res.analyze.succeeded} (${res.analyze.heuristic} heuristic, ${res.analyze.failed} failed); ` +
       `dashboard ${res.dashboard.count} chats -> ${res.dashboard.path}`,
   );
+}
+
+/** The command line of a pid, or '' when it is gone. */
+function commandOf(pid: number): string {
+  try {
+    return execFileSync('/bin/ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf-8', timeout: 5_000 }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * `chat-manager restart`: the manual escape hatch for a frozen Loom. Samples the
+ * main thread into $LOOM_HOME/hangs/<time>-manual.txt, kills Loom (SIGKILL: a
+ * frozen main thread cannot quit gracefully) and opens it again; the new Loom
+ * posts a notification naming the report. Works whether or not Loom is frozen.
+ */
+async function restartLoom(): Promise<number> {
+  const info = readServerJson(TOOL_DIR);
+  const pid = info?.pid ?? 0;
+  const cmdline = pid ? commandOf(pid) : '';
+  // The Loom binary itself, not a watchdog or MCP process run by it as node.
+  const exe = /^(.*\/Contents\/MacOS\/Loom)(?:\s|$)/.exec(cmdline)?.[1] ?? '';
+  if (!pid || !exe || /watchdog\.js|orchmcp\.js/.test(cmdline)) {
+    console.error(`[loom] no running Loom app found (server.json ${pid ? `names pid ${pid}, which is not Loom.app` : 'is missing'}); open Loom with: open -b com.loom.app`);
+    return 1;
+  }
+  // Stop its watchdog first so the two do not both act.
+  const wd = readPidFile(TOOL_DIR);
+  if (wd && wd.loomPid === pid && commandOf(wd.pid).includes('watchdog.js')) {
+    try {
+      process.kill(wd.pid, 'SIGTERM');
+    } catch {
+      /* gone */
+    }
+  }
+  const deps = realActDeps();
+  const report = reportPath(TOOL_DIR, Date.now(), 'manual');
+  console.log(`[loom] sampling pid ${pid} into ${report}`);
+  await sampleInto(pid, report, deps);
+  writeNotice(TOOL_DIR, { at: Date.now(), frozenMs: 0, report, by: 'manual' });
+  console.log(`[loom] killing pid ${pid} and opening Loom again`);
+  const r = await killAndRelaunch(pid, bundleOf(exe), deps);
+  console.log(`[loom] ${r.ok ? 'restarted' : 'restart failed: ' + r.detail}`);
+  return r.ok ? 0 : 1;
 }
 
 // Run main only when invoked directly (not when imported by tests).
