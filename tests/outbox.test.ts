@@ -136,6 +136,18 @@ describe('legacy outbox import (read-only)', () => {
     mergeLegacy(own, { z: { ...base, id: 'z', status: 'pending', created_at: '2026-10-16T10:00:00', messages: ['newest'] } as Draft });
     expect([own.a.status, own.z.status]).toEqual(['superseded', 'pending']);
   });
+
+  it('a legacy revision that adds images carries them over (outbox update --file)', () => {
+    const own: Record<string, Draft> = { a: { ...base, id: 'a', status: 'pending', messages: ['one'], revised_at: '2026-10-16T09:01:00' } as Draft };
+    mergeLegacy(own, { a: { ...base, id: 'a', status: 'pending', messages: ['one', '', 'three'], files: [[], ['/tmp/3.png', '/tmp/4.png'], []], revised_at: '2026-10-16T09:02:00' } as Draft });
+    expect(own.a.files).toEqual([[], ['/tmp/3.png', '/tmp/4.png'], []]);
+    // Same text, images added: still a revision.
+    mergeLegacy(own, { a: { ...base, id: 'a', status: 'pending', messages: ['one', '', 'three'], files: [['/tmp/1.png'], ['/tmp/3.png', '/tmp/4.png'], []], revised_at: '2026-10-16T09:03:00' } as Draft });
+    expect(own.a.files?.[0]).toEqual(['/tmp/1.png']);
+    // --clear-files: the revision drops them.
+    mergeLegacy(own, { a: { ...base, id: 'a', status: 'pending', messages: ['one', 'two', 'three'], revised_at: '2026-10-16T09:04:00' } as Draft });
+    expect(own.a.files).toBeUndefined();
+  });
 });
 
 describe('send progress and Send now', () => {

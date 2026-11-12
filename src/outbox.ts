@@ -185,9 +185,11 @@ export function mergeLegacy(own: Record<string, Draft>, legacy: Record<string, D
       continue;
     }
     if (mine.status === 'pending' && d.status === 'pending' && (d.revised_at ?? '') > (mine.revised_at ?? '') && !inSend(mine, now)) {
-      if (JSON.stringify(d.messages) !== JSON.stringify(mine.messages)) {
+      // The CLI writes attachments into the legacy file too (`outbox update --file`), so a revision carries its files with it.
+      if (JSON.stringify(d.messages) !== JSON.stringify(mine.messages) || JSON.stringify(d.files ?? []) !== JSON.stringify(mine.files ?? [])) {
         mine.messages = d.messages;
-        delete mine.files; // the legacy file knows nothing of attachments, and its messages no longer line up with them
+        if (hasFiles(d.files)) mine.files = d.files;
+        else delete mine.files;
         mine.revised_at = d.revised_at;
         changed = true;
       }
