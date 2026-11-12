@@ -836,6 +836,8 @@ ${TEST_LINKS_CSS}
   #mpending.err { pointer-events:none; background:transparent; }
   #mpending.err .mpcard { pointer-events:auto; }
   #mpending.err .mpcard { border-color:#6b2a2e; background:#1d1215; }
+  #mpending .mpcard.mperr { max-width:560px; flex-direction:column; align-items:stretch; padding:12px; }
+  .mpacts { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
   .mpspin { width:16px; height:16px; flex-shrink:0; border:2px solid #2f3a55; border-top-color:#8fb4ff; border-radius:50%; animation:mpspin .7s linear infinite; }
   @keyframes mpspin { to { transform:rotate(360deg); } }
   #mempty { display:none; padding:20px; overflow-y:auto; }

@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { tmux } from './tmux.ts';
+import { paneHome, tmux } from './tmux.ts';
 import { actionAllowed, attachTerminalBridge, checkSnapAuth, isPaneId, snapshotScreen, isLoomHost, isTermAction, termCommand, termToken, viewKind } from './ptybridge.ts';
 import { createTerminalSession, listTerminals } from './terminals.ts';
 import http from 'node:http';
@@ -1697,6 +1697,18 @@ export function createServer(): http.Server {
         return json(res, r.ok ? 200 : 409, r);
       });
       return;
+    }
+
+    // Bring one pane up by %id: the open-a-chat card's "Show the pane", for a resumed
+    // chat that never reached the board. The pane must exist outside a view session.
+    if (url.pathname === '/api/panes/goto' && req.method === 'POST') {
+      const auth = checkSnapAuth(req.headers, String(req.headers['x-loom-term-token'] ?? ''), { port: serverPort(), token: termToken() });
+      if (!auth.ok) return json(res, auth.status, { ok: false, detail: auth.reason });
+      const pane = url.searchParams.get('pane');
+      if (!isPaneId(pane)) return json(res, 400, { ok: false, detail: 'bad pane' });
+      const home = paneHome(pane, (a) => tmux(a));
+      if (!home) return json(res, 404, { ok: false, detail: 'the pane is gone' });
+      return json(res, 200, gotoPane(pane, home.session));
     }
 
     // ---- Pane groups: the HTTP face of `chat-manager move` / `ungroup` -----

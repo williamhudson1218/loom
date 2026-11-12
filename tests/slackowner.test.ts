@@ -253,6 +253,22 @@ describe('autoStartThread', () => {
     check.close();
   });
 
+  it('replace: a start over a row naming a chat that never began takes the thread', async () => {
+    const { deps, peek } = setup();
+    const seed = peek();
+    setChannelProject(seed, 'C0TESTADV01', '/ok/acme-app');
+    claimThread(seed, ref, { agent: 'claude', sessionId: 'never-started', projectDir: '/ok/acme-app', paneId: '%1308', source: 'start', now: 1 });
+    seed.close();
+    await autoStartThread(ref, {}, deps);
+    let check = peek();
+    expect(getOwner(check, ref.key)?.session_id).toBe('never-started'); // without replace the first claim wins
+    check.close();
+    await autoStartThread(ref, {}, deps, { replace: true });
+    check = peek();
+    expect(getOwner(check, ref.key)).toMatchObject({ session_id: 'new-session-id', pane_id: '%42' });
+    check.close();
+  });
+
   it('puts the user context into the launched prompt, and startProjectFor previews the same project', async () => {
     const { deps, launches, peek } = setup();
     const seed = peek();

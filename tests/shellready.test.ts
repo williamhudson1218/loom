@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { waitForShellReady, waitForShellReadyAsync } from '../src/newthread.ts';
+import { pendingYesNo, waitForShellReady, waitForShellReadyAsync } from '../src/newthread.ts';
 
 // A runner whose capture-pane returns the next screen in the list each call,
 // then keeps returning the last one.
@@ -55,5 +55,46 @@ describe('waitForShellReadyAsync', () => {
   });
   it('gives up when capture-pane fails', async () => {
     expect(await waitForShellReadyAsync('%1', () => { throw new Error('no pane'); }, { sleep: async () => {} })).toBe(false);
+  });
+});
+
+// 0.1.113: a new shell stopped on oh-my-zsh's update question, the screen held still,
+// so it read as ready; the question then ate the "c" of "cd" and the chat started elsewhere.
+describe('a one-key question on a new shell', () => {
+  const OMZ = '[oh-my-zsh] Would you like to update? [Y/n]';
+  it('is recognised, and a shell prompt is not', () => {
+    expect(pendingYesNo('Found .nvmrc\n' + OMZ + ' ')).toBe(true);
+    expect(pendingYesNo('Overwrite? [y/N]')).toBe(true);
+    expect(pendingYesNo('❯ ')).toBe(false);
+    expect(pendingYesNo(OMZ + ' n\n[oh-my-zsh] You can update manually by running `omz update`\n❯ ')).toBe(false);
+  });
+  function omzShell() {
+    let answered = false;
+    const sent: string[][] = [];
+    const run = (args: string[]) => {
+      if (args[0] === 'send-keys') {
+        sent.push(args);
+        answered = true;
+        return '';
+      }
+      return answered ? '[oh-my-zsh] You can update manually\n❯ ' : OMZ + ' ';
+    };
+    return { run, sent };
+  }
+  it('is answered with a space before the shell counts as ready (blocking)', () => {
+    const { run, sent } = omzShell();
+    expect(waitForShellReady('%1', run, { sleep: noSleep, maxMs: 5000 })).toBe(true);
+    expect(sent).toEqual([['send-keys', '-t', '%1', '-l', ' ']]);
+  });
+  it('is answered with a space before the shell counts as ready (async)', async () => {
+    const { run, sent } = omzShell();
+    expect(await waitForShellReadyAsync('%1', run, { sleep: async () => {}, maxMs: 5000 })).toBe(true);
+    expect(sent).toEqual([['send-keys', '-t', '%1', '-l', ' ']]);
+  });
+  it('a question that keeps coming back is answered at most twice', () => {
+    const sent: string[][] = [];
+    const run = (args: string[]) => (args[0] === 'send-keys' ? (sent.push(args), '') : OMZ);
+    expect(waitForShellReady('%1', run, { sleep: noSleep, maxMs: 8000 })).toBe(true);
+    expect(sent).toHaveLength(2);
   });
 });

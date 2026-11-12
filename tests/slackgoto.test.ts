@@ -268,6 +268,39 @@ describe('threadGoto, asking before a new chat', () => {
     expect(d.calls).toEqual([]);
   });
 
+  // The 0.1.113 hang: Loom's table named a chat it started that never wrote a transcript.
+  // Every open resumed it into a pane that printed "No conversation found", and the card
+  // waited for a chat that could not appear.
+  const deadRow = { session_id: 'never-started', cwd: dir, pane_id: '%1308', at: Date.now() - 3 * 3_600_000 };
+  it('a table owner with no transcript is not resumed: the lookup asks to start a new chat', async () => {
+    const d = deps({ owned: () => deadRow, transcriptExists: () => false });
+    const r = await threadGoto(link, d, { mode: 'ask' });
+    expect(r).toMatchObject({ ok: true, action: 'ask', stale: 'never-started' });
+    expect(d.calls).toEqual([]);
+  });
+  it('starting from that ask replaces the dead row', async () => {
+    const replaces: (boolean | undefined)[] = [];
+    const d = deps({
+      owned: () => deadRow,
+      transcriptExists: () => false,
+      start: (ref, _picked, o) => (replaces.push(o.replace), { ok: true, started: { session_id: 's1', pane_id: '%9', where: '%9' } as never }),
+    });
+    const r = await threadGoto(link, d, { mode: 'start' });
+    expect(r).toMatchObject({ ok: true, action: 'started' });
+    expect(replaces).toEqual([true]);
+    expect(d.calls.some((c) => c.startsWith('resume'))).toBe(false);
+  });
+  it('a chat started moments ago is still resumed while it writes its first line', async () => {
+    const d = deps({ owned: () => ({ ...deadRow, at: Date.now() - 10_000 }), transcriptExists: () => false });
+    const r = await threadGoto(link, d, { mode: 'ask' });
+    expect(r).toMatchObject({ action: 'resumed', session_id: 'never-started' });
+  });
+  it('an owner whose transcript exists resumes as before', async () => {
+    const d = deps({ owned: () => deadRow, transcriptExists: () => true });
+    const r = await threadGoto(link, d, { mode: 'ask' });
+    expect(r).toMatchObject({ action: 'resumed', session_id: 'never-started' });
+  });
+
   it('the lookup still jumps straight to an existing owner', async () => {
     const d = deps({
       threads: () => ({ 'C0TESTADV01/1792688542.707769': { url: link, session_id: 'owner-1', cwd: dir } }),

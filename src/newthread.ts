@@ -293,10 +293,25 @@ function sleepMs(ms: number): void {
  * never ran. Ready = the screen has output and has not changed for 500ms;
  * gives up after 8s and types anyway, as before.
  */
+/**
+ * A stable screen that ends on a one-key question ("[oh-my-zsh] Would you like to
+ * update? [Y/n]") is not a shell prompt: the question reads one key, so the first
+ * character of a typed command answers it and the rest runs without it ("cd" became
+ * "d"). It is answered with a space, which oh-my-zsh and read -q both take as "not
+ * now" without recording a choice, and the wait goes on for the real prompt.
+ */
+export function pendingYesNo(screen: string): boolean {
+  const lines = screen.split('\n').map((l) => l.trimEnd()).filter(Boolean);
+  const last = lines[lines.length - 1] ?? '';
+  return /\[(?:Y\/n|y\/N|y\/n|Y\/N)\]\??$/.test(last);
+}
+const YES_NO_ANSWERS_MAX = 2;
+
 export function waitForShellReady(paneId: string, run: TmuxRunner = defaultRun, opts: { maxMs?: number; quietMs?: number; stepMs?: number; sleep?: (ms: number) => void } = {}): boolean {
   const maxMs = opts.maxMs ?? 8000, quietMs = opts.quietMs ?? 500, stepMs = opts.stepMs ?? 100, sleep = opts.sleep ?? sleepMs;
   let last = '';
   let stableFor = 0;
+  let answered = 0;
   for (let waited = 0; waited < maxMs; waited += stepMs) {
     sleep(stepMs);
     let screen = '';
@@ -307,7 +322,17 @@ export function waitForShellReady(paneId: string, run: TmuxRunner = defaultRun, 
     }
     if (screen && screen === last) {
       stableFor += stepMs;
-      if (stableFor >= quietMs) return true;
+      if (stableFor >= quietMs) {
+        if (!pendingYesNo(screen) || answered >= YES_NO_ANSWERS_MAX) return true;
+        answered++;
+        try {
+          run(['send-keys', '-t', paneId, '-l', ' ']);
+        } catch {
+          return false;
+        }
+        stableFor = 0;
+        last = '';
+      }
     } else {
       stableFor = 0;
       last = screen;
@@ -368,6 +393,7 @@ export async function waitForShellReadyAsync(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let last = '';
   let stableFor = 0;
+  let answered = 0;
   for (let waited = 0; waited < maxMs; waited += stepMs) {
     await sleep(stepMs);
     let screen = '';
@@ -378,7 +404,17 @@ export async function waitForShellReadyAsync(
     }
     if (screen && screen === last) {
       stableFor += stepMs;
-      if (stableFor >= quietMs) return true;
+      if (stableFor >= quietMs) {
+        if (!pendingYesNo(screen) || answered >= YES_NO_ANSWERS_MAX) return true;
+        answered++;
+        try {
+          run(['send-keys', '-t', paneId, '-l', ' ']);
+        } catch {
+          return false;
+        }
+        stableFor = 0;
+        last = '';
+      }
     } else {
       stableFor = 0;
       last = screen;

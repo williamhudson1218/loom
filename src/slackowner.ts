@@ -386,7 +386,7 @@ export type AutoStartResult = StartedThread | { ok: false; reason: 'no_project' 
  * once; an agent that cannot is recorded 'pending' and completed when the
  * indexer sees its first prompt.
  */
-export async function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoStartDeps, opts: { pane?: string; projectDir?: string; context?: string } = {}): Promise<AutoStartResult> {
+export async function autoStartThread(ref: ThreadRef, picked: PickedText, deps: AutoStartDeps, opts: { pane?: string; projectDir?: string; context?: string; replace?: boolean } = {}): Promise<AutoStartResult> {
   const db = deps.db();
   try {
     let project: { dir: string; source: ProjectSource } | null;
@@ -406,7 +406,8 @@ export async function autoStartThread(ref: ThreadRef, picked: PickedText, deps: 
     if (!r.ok) return { ok: false, reason: 'failed', key: ref.key, detail: r.detail };
     const now = (deps.now ?? Date.now)();
     const claim: ClaimInput = { agent, sessionId, projectDir: project.dir, paneId: r.paneId, source: sessionId ? 'start' : 'pending', now };
-    if (opts.projectDir) reassignThread(db, ref, claim);
+    // replace: the row names a chat that never started (see threadGoto).
+    if (opts.projectDir || opts.replace) reassignThread(db, ref, claim);
     else claimThread(db, ref, claim);
     setLastProject(db, project.dir);
     return {

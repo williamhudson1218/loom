@@ -5,7 +5,7 @@ import { renderDashboard } from '../src/dashboard.ts';
 // Runs the page's Resume + pending code against stub page globals, with a fetch
 // whose replies the test releases by hand, so "before the request resolves" can
 // be asserted.
-function page(chats: { agent: string; session_id: string }[] = []) {
+function page(chats: { agent: string; session_id: string }[] = [], extraDoc: Record<string, unknown> = {}) {
   const els: Record<string, { id: string; className: string; innerHTML: string; onclick?: () => void; remove: () => void }> = {};
   const chatmain = {
     appendChild: (e: { id: string }) => {
@@ -13,6 +13,7 @@ function page(chats: { agent: string; session_id: string }[] = []) {
     },
   };
   const doc = {
+    ...extraDoc,
     createElement: () => {
       const e = { id: '', className: '', innerHTML: '', remove: () => delete els['#' + e.id] };
       return e;
@@ -123,19 +124,64 @@ describe('a chat resumed by the Slack hotkey', () => {
     expect(p.els['#mpending']).toBeUndefined();
     expect(p.lib.PENDING_LIVE['claude:s1'].pane_id).toBe('%5');
   });
-  it('gives up after a minute with an error that Dismiss clears', async () => {
+  it('gives up after 25 seconds, not a minute, with an error naming the pane that Dismiss clears', async () => {
     const p = page();
     const now = vi.spyOn(Date, 'now');
     now.mockReturnValue(1_000_000);
-    (p.win.loomOpenResumed as Open)('claude', 's1', '');
+    (p.win.loomOpenResumed as Open)('claude', 's1', '%5');
     await flush();
-    now.mockReturnValue(1_000_000 + 61_000);
+    now.mockReturnValue(1_000_000 + 20_000);
+    p.timers.shift()?.();
+    await flush();
+    expect(p.els['#mpending'].className).toBe('');
+    now.mockReturnValue(1_000_000 + 26_000);
     p.timers.shift()?.();
     await flush();
     now.mockRestore();
     expect(p.els['#mpending'].className).toBe('err');
-    expect(p.els['#mpending'].innerHTML).toContain('did not show up');
+    expect(p.els['#mpending'].innerHTML).toContain('did not appear on the board within 25 seconds');
+    expect(p.els['#mpending'].innerHTML).toContain('pane %5');
+    expect(p.els['#mpending'].innerHTML).toContain('id="mppane"');
+    expect(p.els['#mpending'].innerHTML).toContain('id="mpclose"');
+    expect(p.els['#mpending'].innerHTML).not.toContain('!');
+    expect(p.timers).toHaveLength(0); // it stops polling
     p.lib.setPending(null);
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+  it('fails at once, with the pane output, when the resumed chat exited (No conversation found)', async () => {
+    const g = globalThis as Record<string, unknown>;
+    g.snapFetch = () => Promise.resolve({ screen: '\x1b[1m❯\x1b[0m claude --resume d43a5f94\nNo conversation found with session ID: d43a5f94\n❯ ' });
+    try {
+      const p = page();
+      (p.win.loomOpenResumed as Open)('claude', 'd43a5f94-0000', '%1327');
+      await flush();
+      expect(p.els['#mpending'].className).toBe('err');
+      expect(p.els['#mpending'].innerHTML).toContain('exited as soon as it started');
+      expect(p.lib.pending.output).toContain('No conversation found with session ID: d43a5f94');
+      expect(p.lib.pending.output).not.toContain('\x1b');
+      expect(p.lib.pending.pane).toBe('%1327');
+      expect(p.timers).toHaveLength(0);
+    } finally {
+      delete g.snapFetch;
+    }
+  });
+  it('Escape and a click outside the card clear a waiting card, and the poll stops', async () => {
+    const handlers: Record<string, (e: unknown) => void> = {};
+    const p = page([], { addEventListener: (type: string, fn: (e: unknown) => void) => { handlers[type] = fn; } });
+    (p.win.loomOpenResumed as Open)('claude', 's1', '');
+    expect(p.els['#mpending']).toBeDefined();
+    handlers.keydown({ key: 'Escape' });
+    expect(p.els['#mpending']).toBeUndefined();
+    const before = p.refreshes;
+    p.timers.shift()?.();
+    await flush();
+    expect(p.refreshes).toBe(before);
+    (p.win.loomOpenResumed as Open)('claude', 's2', '');
+    const inCard = { closest: (q: string) => (q === '.mpcard' ? {} : null) };
+    handlers.click({ target: inCard });
+    expect(p.els['#mpending']).toBeDefined();
+    const outside = { closest: () => null };
+    handlers.click({ target: outside });
     expect(p.els['#mpending']).toBeUndefined();
   });
   it('stops looking once the card is dismissed or replaced', async () => {

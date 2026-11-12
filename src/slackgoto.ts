@@ -11,6 +11,7 @@ import { searchArchive, isValidProjectDir, type ArchiveResult } from './findchat
 import { gotoPane, launchInPane, type GotoResult } from './goto.ts';
 import { acquirePaneAutoAsync, noteLaunch } from './newthread.ts';
 import { currentTerminal } from './terminal.ts';
+import { locateTranscript } from './liveindex.ts';
 import { parseLane } from './compact.ts';
 import type { LiveLoc } from './dashboard.ts';
 
@@ -61,11 +62,12 @@ export interface Owner {
   cwd: string; // where the chat was started; '' when unknown
   source: 'table' | 'state' | 'search';
   pane_id?: string; // the pane a still-starting chat was opened in
+  at?: number; // when Loom's table recorded it (ms)
 }
 
 export interface LookupDeps {
   // Loom's own slack_threads table: checked first.
-  owned?: (key: string) => { session_id: string; cwd: string; pane_id: string } | null;
+  owned?: (key: string) => { session_id: string; cwd: string; pane_id: string; at?: number } | null;
   threads: () => Record<string, ThreadRec>;
   search: (q: string) => Promise<ArchiveResult>;
   // Does this transcript really mention the link? Guards the full-text match.
@@ -79,7 +81,7 @@ export interface LookupDeps {
  */
 export async function findOwner(ref: ThreadRef, deps: LookupDeps): Promise<Owner | null> {
   const mine = deps.owned?.(ref.key);
-  if (mine && (mine.session_id || mine.pane_id)) return { session_id: mine.session_id, cwd: mine.cwd, source: 'table', pane_id: mine.pane_id || undefined };
+  if (mine && (mine.session_id || mine.pane_id)) return { session_id: mine.session_id, cwd: mine.cwd, source: 'table', pane_id: mine.pane_id || undefined, ...(mine.at ? { at: mine.at } : {}) };
   const rec = deps.threads()[ref.key];
   if (rec?.session_id) return { session_id: rec.session_id, cwd: rec.cwd ?? '', source: 'state' };
   // Parent only: a reply's own ts is not the thread, and a chat that only ever
@@ -142,6 +144,8 @@ export interface ThreadGotoResult extends GotoResult {
   started?: StartedThread;
   key?: string;
   session_id?: string;
+  /** The never-started session a lookup found and set aside. */
+  stale?: string;
   source?: Owner['source'];
   pane_id?: string;
   timings?: GotoTimings;
@@ -162,12 +166,20 @@ export interface GotoDeps extends LookupDeps {
   live: () => Record<string, LiveLoc>;
   projectDirOf: (sessionId: string) => string | null; // the board's record, when it has one
   elsewhere: (sessionId: string) => boolean;
+  /**
+   * Whether the owner's transcript exists. A chat Loom started is recorded as the
+   * thread's owner at launch, before it has written a line; if it never came up,
+   * the row names a session `claude --resume` cannot find, and every later open
+   * resumed it into a pane that printed "No conversation found" and went back to the
+   * shell. Absent, every owner is taken as resumable (as before).
+   */
+  transcriptExists?: (sessionId: string, cwd: string) => boolean;
   goto: (paneId: string, tmuxSession: string) => GotoResult;
   acquire: (projectDir: string, lane: string) => Acquired | Promise<Acquired>;
   resume: (paneId: string, projectDir: string, sessionId: string, focus: boolean) => GotoResult;
   // Nothing owns the thread: start a chat for it (see slackowner.autoStartThread).
   // Absent, an unowned thread is just reported, as before.
-  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string; context?: string }) => StartedOrFailed | Promise<StartedOrFailed>;
+  start?: (ref: ThreadRef, picked: PickedText, opts: { pane?: string; projectDir?: string; context?: string; replace?: boolean }) => StartedOrFailed | Promise<StartedOrFailed>;
   /** Whether a resume into a fresh managed window should switch the terminal to it (see resumeFocus). */
   focusManaged?: () => boolean;
   // Where a start would go, and the channel's name, for the confirm prompt. Never starts anything.
@@ -197,6 +209,9 @@ export function preferredLane(projectDir: string, live: Record<string, LiveLoc>)
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
 }
 
+/** How long a chat Loom started may go without a transcript before it counts as never started. */
+export const STARTING_GRACE_MS = 2 * 60_000;
+
 export async function threadGoto(
   text: string,
   deps: GotoDeps,
@@ -207,17 +222,27 @@ export async function threadGoto(
   const done = (r: ThreadGotoResult): ThreadGotoResult => ({ ...r, timings: { ...t, total_ms: Date.now() - t0 } });
   const ref = parseSlackThread(text);
   if (!ref) return done({ ok: false, reason: 'not_slack', detail: 'Not a Slack message link' });
-  const owner = await findOwner(ref, deps);
+  let owner = await findOwner(ref, deps);
   t.lookup_ms = Date.now() - t0;
+  const live = deps.live();
+  // An owner that is not running and has no transcript never started: the thread is
+  // unowned, and a new chat for it replaces the dead row.
+  let stale = '';
+  // A start younger than STARTING_GRACE_MS may simply not have written its first line yet.
+  const starting = owner?.at !== undefined && Date.now() - owner.at < STARTING_GRACE_MS;
+  if (owner?.session_id && !starting && !live[`claude:${owner.session_id}`]?.running && deps.transcriptExists && !deps.transcriptExists(owner.session_id, owner.cwd)) {
+    stale = owner.session_id;
+    owner = null;
+  }
   if (!owner) {
     if (!deps.start) return done({ ok: false, reason: 'no_owner', key: ref.key, detail: 'No chat owns this thread' });
     if (opts.mode === 'ask') {
       const st = deps.startTarget?.(ref) ?? { channel_name: '', project_dir: '' };
       const ask = { channel: ref.channel, channel_name: st.channel_name, project: st.project_dir ? path.basename(st.project_dir) : '', project_dir: st.project_dir };
-      return done({ ok: true, detail: 'No chat owns this thread', action: 'ask', key: ref.key, ask });
+      return done({ ok: true, detail: stale ? 'The chat started for this thread never began' : 'No chat owns this thread', action: 'ask', key: ref.key, ask, ...(stale ? { stale } : {}) });
     }
     const ta = Date.now();
-    const s = await deps.start(ref, opts.picked ?? {}, { pane: opts.pane, context: opts.context });
+    const s = await deps.start(ref, opts.picked ?? {}, { pane: opts.pane, context: opts.context, ...(stale ? { replace: true } : {}) });
     t.act_ms = Date.now() - ta;
     if (!s.ok) return done({ ok: false, reason: s.reason, key: ref.key, detail: s.detail });
     const st = s.started;
@@ -225,7 +250,6 @@ export async function threadGoto(
   }
   const base = { key: ref.key, session_id: owner.session_id, source: owner.source };
 
-  const live = deps.live();
   if (!owner.session_id) {
     // Started by Loom a moment ago and not yet tied to a session: its pane is the chat.
     const there = Object.values(live).find((l) => l.pane_id === owner.pane_id);
@@ -277,12 +301,12 @@ export function resumeFocus(managed: boolean, externalTerminal: boolean): boolea
 }
 
 /** Loom's own ownership table, as findOwner's first source. A missing or locked DB reads as "no row". */
-function ownedFromDb(key: string): { session_id: string; cwd: string; pane_id: string } | null {
+function ownedFromDb(key: string): { session_id: string; cwd: string; pane_id: string; at: number } | null {
   try {
     const db = openDb();
     try {
       const r = getOwner(db, key);
-      return r ? { session_id: r.session_id, cwd: r.project_dir, pane_id: r.pane_id } : null;
+      return r ? { session_id: r.session_id, cwd: r.project_dir, pane_id: r.pane_id, at: r.created_at } : null;
     } finally {
       db.close();
     }
@@ -305,6 +329,7 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
     live,
     projectDirOf,
     elsewhere: (sid) => supersetLive(sid),
+    transcriptExists: (sid, cwd) => !!locateTranscript(sid, cwd),
     goto: gotoPane,
     acquire: (dir, lane) => acquirePaneAutoAsync(dir, lane, lane),
     focusManaged: () => currentTerminal() !== 'inside',
@@ -339,7 +364,7 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
             return { ok: true, paneId, where: managed ? 'a new window in ' + MANAGED_SESSION : l.detail.replace(/^started; ?/, '') || paneId };
           },
         },
-        { pane: o.pane, projectDir: o.projectDir, context: o.context },
+        { pane: o.pane, projectDir: o.projectDir, context: o.context, replace: o.replace },
       );
       if (!r.ok) return r;
       noteStart(r);

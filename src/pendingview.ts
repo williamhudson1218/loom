@@ -4,7 +4,7 @@
 // the request resolves, and a failure must show where the user is looking.
 //
 // Page globals it uses: $, esc, fetch, DATA, chatKey, mtab, TERM_TOKEN, refresh,
-// renderMain, flash, launchVerb, openInBoard, onlyGroup.
+// renderMain, flash, launchVerb, openInBoard, onlyGroup; snapFetch and loomErrorHtml when present.
 
 export const PENDING_VIEW_JS = String.raw`
 function doLaunch(sid,sourceAgent,lane,el,p,action,proj,selectedAgent){const busy=action==='branch'?'branching…':(sourceAgent===selectedAgent?'resuming…':'starting new…');const okmsg=action==='branch'?'branched ✓':(sourceAgent===selectedAgent?'resumed ✓':'started fresh ✓');
@@ -24,20 +24,32 @@ function doLaunch(sid,sourceAgent,lane,el,p,action,proj,selectedAgent){const bus
 // ---- Opening / resuming states -------------------------------------------------
 // The main area says what is happening the moment a chat is asked for (Resume here, or
 // the Slack hotkey from app/main.ts), so a click is never followed by nothing.
-var PENDING=null;   // {label, detail, state: 'error' for a failure}
+var PENDING=null;   // {label, detail, state: 'error' for a failure, pane: a pane to offer, output: text for Copy details}
 var PENDING_LIVE={}; // chatKey -> {pane_id, at}: a resumed chat's pane, before the board sees it running
 var PENDING_GEN=0;  // bumped by every setPending, so a poll for a chat stops once the card changed or was dismissed
 function setPending(p){PENDING=p||null;PENDING_GEN++;renderPending();}
-function dismissPending(){if(PENDING&&PENDING.state==='error')setPending(null);}
+function dismissPending(){if(PENDING)setPending(null);}
 function renderPending(){let el=$('#mpending');if(!PENDING){if(el)el.remove();return;}
   if(!el){el=document.createElement('div');el.id='mpending';$('#chatmain').appendChild(el);}
   const err=PENDING.state==='error';el.className=err?'err':'';
-  el.innerHTML='<div class="mpcard" role="status" aria-live="polite">'+(err?'':'<span class="mpspin"></span>')+'<div style="flex:1;min-width:0"><b>'+esc(PENDING.label||'')+'</b>'+(PENDING.detail?'<span class="mpd">'+esc(PENDING.detail)+'</span>':'')+'</div>'+(err&&typeof lerrCopyBtn==='function'?lerrCopyBtn({what:PENDING.label||'Resume a chat',message:PENDING.detail||''}):'')+(err?'<button type="button" class="mbtn" id="mpclose">Dismiss</button>':'')+'</div>';
-  const b=$('#mpclose');if(b)b.onclick=()=>setPending(null);}
+  const acts=err?'<div class="mpacts">'+(PENDING.pane?'<button type="button" class="mbtn" id="mppane" data-pane="'+esc(PENDING.pane)+'">Show the pane</button>':'')+'<button type="button" class="mbtn" id="mpclose">Dismiss</button></div>':'';
+  if(err&&typeof loomErrorHtml==='function'){
+    el.innerHTML='<div class="mpcard mperr" role="alert"><div style="flex:1;min-width:0">'+loomErrorHtml({title:PENDING.label||'',message:PENDING.detail||'',output:PENDING.output||'',what:PENDING.label||'Open a chat'})+acts+'</div></div>';
+  }else{
+    el.innerHTML='<div class="mpcard" role="status" aria-live="polite">'+(err?'':'<span class="mpspin"></span>')+'<div style="flex:1;min-width:0"><b>'+esc(PENDING.label||'')+'</b>'+(PENDING.detail?'<span class="mpd">'+esc(PENDING.detail)+'</span>':'')+acts+'</div>'+(err?'':'<button type="button" class="mbtn" id="mpclose" title="Stop waiting (Esc)">Cancel</button>')+'</div>';
+  }
+  const b=$('#mpclose');if(b)b.onclick=()=>setPending(null);
+  const g=$('#mppane');if(g)g.onclick=()=>pendingShowPane(PENDING&&PENDING.pane);}
+// Bring a pane up (the resumed chat's own pane, to see why it did not start), then clear the card.
+function pendingShowPane(pane){if(!pane)return;fetch('/api/panes/goto?pane='+encodeURIComponent(pane),{method:'POST',headers:{'x-loom-term-token':TERM_TOKEN}}).then(r=>r.json()).then(j=>{if(j&&j.ok)setPending(null);else if(PENDING)setPending(Object.assign({},PENDING,{detail:(PENDING.detail||'')+' The pane could not be shown: '+((j&&j.detail)||'no such pane')+'.'}));}).catch(()=>{});}
 // Dismiss is also caught at the document, in the capture phase: it clears the card however the
-// card was rebuilt or whatever sits over it, and Escape clears an error card as well.
+// card was rebuilt or whatever sits over it. Escape and a click outside the card clear any card,
+// waiting or failed, so it can never hold the view.
 if(typeof document!=='undefined'&&document.addEventListener&&!window.__loomPendingWired){window.__loomPendingWired=1;
-  document.addEventListener('click',function(e){const t=e.target;if(t&&t.closest&&t.closest('#mpclose'))setPending(null);},true);
+  document.addEventListener('click',function(e){const t=e.target;if(!PENDING||!t||!t.closest)return;
+    if(t.closest('#mpclose')){setPending(null);return;}
+    if(t.closest('#mppane'))return;
+    if(!t.closest('.mpcard'))setPending(null);},true);
   document.addEventListener('keydown',function(e){if(e.key==='Escape')dismissPending();},true);}
 function pendingLiveFor(c){const k=chatKey(c);const p=PENDING_LIVE[k];if(!p)return null;
   if(DATA.live[k]||Date.now()-p.at>60000){delete PENDING_LIVE[k];return null;}
@@ -48,6 +60,13 @@ window.loomPending=function(p){setPending(p&&p.label?p:null);return true;};
 // app/main.ts: a jump was requested; pick it up now rather than on the next 5 s poll.
 window.loomFocusNow=function(){return refresh().then(function(){setPending(null);return true;});};
 // app/main.ts: the hotkey resumed a chat into a pane; open that pane now.
+// How long a resumed chat may take to reach the board before the card says it did not.
+var PENDING_WAIT_MS=25000;
+// What a pane says when the chat it was resumed into exited at once.
+var PENDING_DEAD=/No conversation found|command not found|no such file or directory/i;
+function pendingScreenTail(snap){if(!snap||typeof snap.screen!=='string')return '';
+  const lines=snap.screen.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g,'').replace(/\x1b\][^\x07]*\x07/g,'').split(/\r?\n/).map(l=>l.replace(/\s+$/,'')).filter(Boolean);
+  return lines.slice(-12).join('\n');}
 window.loomOpenResumed=function(agent,sid,pane,retried){
   const find=function(){return DATA.chats.find(x=>x.session_id===sid&&x.agent===agent);};
   const open=function(){
@@ -57,14 +76,21 @@ window.loomOpenResumed=function(agent,sid,pane,retried){
     setTimeout(refresh,1500);return true;};
   if(find())return open();
   // The chat is not on the board yet: a resumed chat is only seen once its process shows up, a few
-  // seconds on. Say "Opening…" and keep looking (up to 60 s) instead of failing after one refresh;
-  // the call returns now so the hotkey's pick is not held open for the wait.
+  // seconds on. Say "Opening…" and keep looking, up to PENDING_WAIT_MS; the call returns now so the
+  // hotkey's pick is not held open for the wait. The pane is read each round too, so a chat that
+  // exited at once (claude --resume on a session it cannot find) fails at once, with its output.
   setPending({label:'Opening this chat…',detail:'Waiting for it to appear on the board.'});
-  const gen=PENDING_GEN;const t0=Date.now();
+  const gen=PENDING_GEN;const t0=Date.now();const short=String(sid||'').slice(0,8);
+  const fail=function(why,tail){setPending({label:'This chat did not open',state:'error',pane:pane||'',output:tail||'',
+    detail:why+(pane?' Loom resumed session '+short+' in pane '+pane+'; the pane shows what happened.':' Loom resumed session '+short+'.')});};
+  const peek=function(){return pane&&typeof snapFetch==='function'?Promise.resolve(snapFetch(pane)).catch(function(){return null;}).then(pendingScreenTail):Promise.resolve('');};
   const look=function(){if(gen!==PENDING_GEN)return;
     Promise.resolve(refresh()).catch(function(){}).then(function(){if(gen!==PENDING_GEN)return;
       if(find()){open();return;}
-      if(Date.now()-t0>60000){setPending({label:'Resumed, but that chat did not show up on the board',detail:'It opens from the list once it is indexed.',state:'error'});return;}
-      setTimeout(look,1500);});};
+      return peek().then(function(tail){if(gen!==PENDING_GEN)return;
+        if(find()){open();return;}
+        if(tail&&PENDING_DEAD.test(tail)){fail('The chat exited as soon as it started.',tail);return;}
+        if(Date.now()-t0>PENDING_WAIT_MS){fail('It did not appear on the board within '+Math.round(PENDING_WAIT_MS/1000)+' seconds.',tail);return;}
+        setTimeout(look,1500);});});};
   look();return true;};
 `;
