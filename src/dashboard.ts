@@ -1433,7 +1433,12 @@ function shipBody(b){const n=b.next;
     (n.shared.length?'<span class="wip" title="'+esc(n.shared.join(NL))+'">· ⚠ '+n.shared.length+' edited by two chats</span>':'')+'</div>'+
     (b.lock?'<div class="sh">'+lockHtml(b)+'</div>':'')+
     '<div class="shc">'+n.chats.map(c=>'<span class="shipmate" data-key="'+esc(c.key)+'" title="'+esc(c.files.map(f=>f.state+' '+f.path+(f.shared?' (shared)':'')).join(NL))+'">'+esc(chatName(c.key))+' '+(c.staged?'<span class="ok">'+c.staged+'✓</span> ':'')+(c.unstaged?'<span class="wip">'+c.unstaged+'…</span>':'')+'</span>').join('')+'</div>'+
-    '<div class="sh"><button class="shipchip next'+(shipFilter==='next'?' on':'')+'" data-shipf="next">'+(shipFilter==='next'?'showing these ✕':'show these chats')+'</button><button class="shipchip" data-shipview="'+esc(b.repo)+'">View staged work</button><button class="shipchip" data-shipgo="'+esc(b.repo)+'"'+(shipGate(b)?' disabled':'')+' title="'+esc(shipGate(b)||'Review and start /ship')+'">Ship…</button>'+(shipGate(b)&&b.next.staged>0?'<span class="dsub">'+esc(shipGate(b))+'</span>':'')+'</div></div>';}
+    '<div class="shipacts2"><button type="button" class="shipbtn'+(shipFilter==='next'?' on':'')+'" data-shipf="next" title="Filter the board to the chats riding this ship">'+(shipFilter==='next'?'Showing these chats ✕':'Show these chats')+'</button><button type="button" class="shipbtn" data-shipview="'+esc(b.repo)+'" title="Review the staged files and their labels">View staged work</button></div>'+
+    '<div class="shiphint">'+(shipGate(b)?esc(shipGate(b)):'Ship reviews the staged work, then starts a new chat that runs <code>/ship</code>.')+'</div></div>';}
+// The card's primary action: always on the bar, collapsed or open. Opens the review
+// modal at its confirm step; nothing commits until "Start ship session" there.
+function shipGoBtn(b){const g=shipGate(b);
+  return '<button type="button" class="shipgo" data-shipgo="'+esc(b.repo)+'"'+(g?' disabled aria-disabled="true"':'')+' title="'+esc(g||'Review and start /ship ('+b.next.staged+' staged)')+'">Ship</button>';}
 // One line per repo. Idle is muted; staged work gets an accent border; a live ship
 // lock goes amber with a pulsing dot, so work in progress is visible even collapsed.
 // Git projects with staged work that are not on Ship yet: the strip offers to add them.
@@ -1454,7 +1459,7 @@ function shipStrip(){if(tab!=='board')return '';const bs=DATA.ships||[];
       const head=n.staged>0?'Next ship':(f.length&&!n.unstaged?'⚓ Shipped':'Next ship');
       t=(f.length&&!n.staged?'<span class="pdot"></span>':'<span>⛵</span>')+'<span class="sl">'+head+' · '+(parts.length?parts.join(' · '):'no changes')+'</span>';
     }
-    return '<div class="shipln '+cls+(shipOpen?' open':'')+'" data-tour="ship"><button type="button" class="shipbar" data-shiptog="1" aria-expanded="'+shipOpen+'">'+t+'<span class="chev">›</span></button><button type="button" class="shipicon" data-shipview="'+esc(b.repo)+'" title="View staged work" aria-label="View staged work">\u2630</button>'+(shipOpen?shipBody(b):'')+'</div>';}).join('');
+    return '<div class="shipln '+cls+(shipOpen?' open':'')+'" data-tour="ship"><button type="button" class="shipbar" data-shiptog="1" aria-expanded="'+shipOpen+'">'+t+'<span class="chev">›</span></button><span class="shipacts">'+shipGoBtn(b)+'<button type="button" class="shipicon" data-shipview="'+esc(b.repo)+'" title="View staged work" aria-label="View staged work">\u2630</button></span>'+(shipOpen?shipBody(b):'')+'</div>';}).join('');
   h+=shipCands.map(c=>'<div class="shipln idle"><button type="button" class="shipbar" data-shipadd="'+esc(c.repo)+'" title="'+esc(c.slug+' · '+c.staged+' staged · ships to '+c.base)+'"><span>⛵</span><span class="sl">Add '+esc(c.name)+' to Ship · '+c.staged+' staged</span></button></div>').join('');
   if(typeof shipFilter==='number')h='<div class="shipstrip"><div class="sh"><b>Showing ship #'+shipFilter+'</b><span class="dsub">its chats, live or not</span><span class="spacer"></span><button class="shipchip on" data-shipf="'+shipFilter+'">clear ✕</button></div></div>'+h;
   return h;}

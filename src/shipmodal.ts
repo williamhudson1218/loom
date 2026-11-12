@@ -5,8 +5,20 @@
 
 export const SHIPMODAL_CSS = `
   .shipln { position:relative; }
-  .shipln .shipbar { padding-right:38px; }
-  .shipicon { position:absolute; right:6px; top:3px; width:24px; height:24px; border:0; border-radius:6px; background:transparent; color:#8b93a7; cursor:pointer; font-size:14px; line-height:24px; padding:0; }
+  .shipln .shipbar { padding-right:96px; }
+  .shipacts { position:absolute; right:6px; top:3px; height:24px; display:flex; align-items:center; gap:4px; }
+  .shipgo { height:24px; padding:0 14px; border:1px solid transparent; border-radius:6px; background:#1f6f3f; color:#fff; font:inherit; font-size:12px; font-weight:650; cursor:pointer; box-shadow:0 1px 0 rgba(0,0,0,.25); }
+  .shipgo:hover:not(:disabled) { background:#26844a; }
+  .shipgo:focus-visible, .shipbtn:focus-visible { outline:2px solid var(--waiting_on_user); outline-offset:1px; }
+  .shipgo:disabled { background:#1b1f2a; border-color:#2b3040; color:#6b7388; box-shadow:none; cursor:not-allowed; }
+  .shipln.shipping .shipgo:disabled { color:#e8b04a; border-color:rgba(232,176,74,.45); background:rgba(232,176,74,.1); }
+  .shipacts2 { display:flex; gap:6px; flex-wrap:wrap; }
+  .shipbtn { height:26px; padding:0 11px; border:1px solid #2b3040; border-radius:6px; background:#1b1f2a; color:#c4ccdc; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+  .shipbtn:hover { background:#232836; border-color:#3a4155; color:#e6e9ef; }
+  .shipbtn.on { border-color:#e8b84b; color:#e8b84b; background:rgba(212,167,44,.12); }
+  .shiphint { font-size:11.5px; color:#8b93a7; }
+  .shiphint code { background:#1b1f2a; padding:0 5px; border-radius:4px; font:11px ui-monospace,SFMono-Regular,Menlo,monospace; color:#c4ccdc; }
+  .shipicon { width:24px; height:24px; border:0; border-radius:6px; background:transparent; color:#8b93a7; cursor:pointer; font-size:14px; line-height:24px; padding:0; }
   .shipicon:hover { background:rgba(255,255,255,.08); color:#e6e9ef; }
   .shipchip:disabled { opacity:.45; cursor:not-allowed; }
   #shipmodal { --sm-panel:#11141d; --sm-card:#161a24; --sm-inset:#0d1017; --sm-line:#232634; --sm-line2:#2b3040; --sm-ctl:#1b1f2a; --sm-text:#e6e9ef; --sm-text2:#c4ccdc; --sm-muted:#8b93a7; --sm-faint:#6b7388; --sm-accent:var(--waiting_on_user); --sm-amber:var(--warning); --sm-go:#1f6f3f; --sm-go-h:#26844a;
