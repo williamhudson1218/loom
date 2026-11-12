@@ -67,7 +67,9 @@ var PENDING_DEAD=/No conversation found|command not found|no such file or direct
 function pendingScreenTail(snap){if(!snap||typeof snap.screen!=='string')return '';
   const lines=snap.screen.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g,'').replace(/\x1b\][^\x07]*\x07/g,'').split(/\r?\n/).map(l=>l.replace(/\s+$/,'')).filter(Boolean);
   return lines.slice(-12).join('\n');}
-window.loomOpenResumed=function(agent,sid,pane,retried){
+// how: 'started' for a chat the Slack hotkey just started (its session id is known up front), which
+// waits the same way, and polls faster than the board's 5 s refresh so it opens as soon as it is live.
+window.loomOpenResumed=function(agent,sid,pane,retried,how){const verb=how==='started'?'started':'resumed';
   const find=function(){return DATA.chats.find(x=>x.session_id===sid&&x.agent===agent);};
   const open=function(){
     if(pane)PENDING_LIVE[agent+':'+sid]={pane_id:pane,at:Date.now()};
@@ -82,7 +84,7 @@ window.loomOpenResumed=function(agent,sid,pane,retried){
   setPending({label:'Opening this chat…',detail:'Waiting for it to appear on the board.'});
   const gen=PENDING_GEN;const t0=Date.now();const short=String(sid||'').slice(0,8);
   const fail=function(why,tail){setPending({label:'This chat did not open',state:'error',pane:pane||'',output:tail||'',
-    detail:why+(pane?' Loom resumed session '+short+' in pane '+pane+'; the pane shows what happened.':' Loom resumed session '+short+'.')});};
+    detail:why+(pane?' Loom '+verb+' session '+short+' in pane '+pane+'; the pane shows what happened.':' Loom '+verb+' session '+short+'.')});};
   const peek=function(){return pane&&typeof snapFetch==='function'?Promise.resolve(snapFetch(pane)).catch(function(){return null;}).then(pendingScreenTail):Promise.resolve('');};
   const look=function(){if(gen!==PENDING_GEN)return;
     Promise.resolve(refresh()).catch(function(){}).then(function(){if(gen!==PENDING_GEN)return;

@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readThreads } from '../src/slack.ts';
-import { findOwner, parseSlackThread, pickedThread, preferredLane, resumeFocus, threadGoto, transcriptMentions, type GotoDeps } from '../src/slackgoto.ts';
-import type { ArchiveHit } from '../src/findchat.ts';
+import { SEARCH_MEMO_MS, findOwner, memoSearch, parseSlackThread, pickedThread, preferredLane, resumeFocus, threadGoto, transcriptMentions, type GotoDeps } from '../src/slackgoto.ts';
+import type { ArchiveHit, ArchiveResult } from '../src/findchat.ts';
 import type { LiveLoc } from '../src/dashboard.ts';
 
 const WS = 'https://acme-workspace.slack.com';
@@ -333,5 +333,27 @@ describe('preferredLane', () => {
     expect(preferredLane('/p', {})).toBe('');
     expect(preferredLane('/p', { 'claude:a': loc('a', 'loom-tp-code', '/p') })).toBe(''); // not a lane
     expect(preferredLane('/p', { 'claude:a': loc('a', 'loom-tp-2', '/pother') })).toBe('');
+  });
+});
+
+// The hotkey's 'ask' post and its 'start' post a few seconds later searched the
+// archive twice for the same thread; the second reuses the first.
+describe('memoSearch', () => {
+  it('reuses a recent answer for the same token, and searches again after the window', async () => {
+    let calls = 0;
+    const search = async () => { calls++; return { ok: true, results: [] } as ArchiveResult; };
+    await memoSearch('p1700000000000001', search, 1_000);
+    await memoSearch('p1700000000000001', search, 1_000 + 5_000);
+    expect(calls).toBe(1);
+    await memoSearch('p1700000000000001', search, 1_000 + SEARCH_MEMO_MS + 1);
+    expect(calls).toBe(2);
+  });
+  it('does not keep a failed search', async () => {
+    let calls = 0;
+    const search = async () => { calls++; return { ok: false, detail: 'no index' } as ArchiveResult; };
+    await memoSearch('p1700000000000002', search, 1_000);
+    await new Promise((r) => setTimeout(r, 0));
+    await memoSearch('p1700000000000002', search, 1_500);
+    expect(calls).toBe(2);
   });
 });

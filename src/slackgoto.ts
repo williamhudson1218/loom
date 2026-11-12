@@ -316,6 +316,25 @@ function ownedFromDb(key: string): { session_id: string; cwd: string; pane_id: s
 }
 
 /**
+ * The archive search behind findOwner, remembered briefly. The hotkey's 'ask' post
+ * searches for an unowned thread (0.2-0.9 s), then the 'start' post a few seconds
+ * later searched again for the same token before launching. Loom's own table and
+ * the hook's state are still read fresh on every post; only the full-text fallback
+ * is reused, and only a successful answer.
+ */
+export const SEARCH_MEMO_MS = 60_000;
+const searchMemo = new Map<string, { at: number; r: Promise<ArchiveResult> }>();
+export function memoSearch(q: string, search: (q: string) => Promise<ArchiveResult> = searchArchive, now: number = Date.now()): Promise<ArchiveResult> {
+  for (const [k, v] of searchMemo) if (now - v.at > SEARCH_MEMO_MS) searchMemo.delete(k);
+  const hit = searchMemo.get(q);
+  if (hit) return hit.r;
+  const r = search(q);
+  searchMemo.set(q, { at: now, r });
+  r.then((x) => { if (!x.ok) searchMemo.delete(q); }, () => searchMemo.delete(q));
+  return r;
+}
+
+/**
  * The real wiring, minus the two things only the server knows: the live map and
  * the board. An unowned thread starts a chat, where acquire would put a resume
  * (the same lane choice on the owner's workspace, a managed window otherwise).
@@ -324,7 +343,7 @@ export function defaultGotoDeps(live: () => Record<string, LiveLoc>, projectDirO
   return {
     owned: ownedFromDb,
     threads: () => readThreads(),
-    search: (q) => searchArchive(q),
+    search: (q) => memoSearch(q),
     mentions: transcriptMentions,
     live,
     projectDirOf,

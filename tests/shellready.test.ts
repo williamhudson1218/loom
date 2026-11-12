@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pendingYesNo, waitForShellReady, waitForShellReadyAsync } from '../src/newthread.ts';
+import { COLUMN_ZERO_QUIET_MS, pendingYesNo, waitForShellReady, waitForShellReadyAsync } from '../src/newthread.ts';
 
 // A runner whose capture-pane returns the next screen in the list each call,
 // then keeps returning the last one.
@@ -19,7 +19,7 @@ describe('waitForShellReady', () => {
     const { run, calls } = screens('', '', 'Found .nvmrc', 'Now using node v22', '❯ ', '❯ ', '❯ ', '❯ ', '❯ ', '❯ ');
     expect(waitForShellReady('%1', run, { sleep: noSleep, stepMs: 100, quietMs: 500 })).toBe(true);
     // 4 frames of startup, then the prompt has to hold for 500ms (5 more polls).
-    expect(calls.length).toBe(10);
+    expect(calls.filter((c) => c[0] === 'capture-pane').length).toBe(10);
   });
 
   it('does not treat a blank screen as ready', () => {
@@ -39,7 +39,7 @@ describe('waitForShellReadyAsync', () => {
   it('settles like the blocking version, but yields between polls', async () => {
     let i = 0;
     const frames = ['', 'Now using node v22', '❯ ', '❯ ', '❯ ', '❯ ', '❯ ', '❯ '];
-    const run = () => frames[Math.min(i++, frames.length - 1)];
+    const run = (args: string[]) => (args[0] === 'capture-pane' ? frames[Math.min(i++, frames.length - 1)] : '');
     const waits: number[] = [];
     const ok = await waitForShellReadyAsync('%1', run, { stepMs: 100, quietMs: 500, sleep: async (ms) => void waits.push(ms) });
     expect(ok).toBe(true);
@@ -96,5 +96,42 @@ describe('a one-key question on a new shell', () => {
     const run = (args: string[]) => (args[0] === 'send-keys' ? (sent.push(args), '') : OMZ);
     expect(waitForShellReady('%1', run, { sleep: noSleep, maxMs: 8000 })).toBe(true);
     expect(sent).toHaveLength(2);
+  });
+});
+
+// 2026-11-12: after the update question, oh-my-zsh printed one line and nvm then
+// loaded silently for ~1 s with the cursor at column 0. The still screen read as
+// ready, the launch was typed into a shell that had not drawn its prompt, and it
+// was lost: 4 of 9 Slack-started chats never ran.
+describe('a still screen with no prompt drawn yet', () => {
+  // capture-pane shows the same screen throughout; the cursor sits at column 0
+  // until poll `promptAt`, then moves past the drawn prompt.
+  function shell(promptAt: number) {
+    let polls = 0;
+    const run = (args: string[]) => {
+      if (args[0] === 'capture-pane') {
+        polls++;
+        return polls < promptAt ? '[oh-my-zsh] You can update manually' : '[oh-my-zsh] You can update manually\n❯ ';
+      }
+      if (args[0] === 'display-message') return polls < promptAt ? '0' : '2';
+      return '';
+    };
+    return { run, polls: () => polls };
+  }
+  it('is not ready until the cursor leaves column 0 (blocking)', () => {
+    const s = shell(15);
+    expect(waitForShellReady('%1', s.run, { sleep: noSleep, stepMs: 100, quietMs: 500 })).toBe(true);
+    // The first screen held still for 1.3 s; the prompt then has to hold for 500 ms.
+    expect(s.polls()).toBe(20);
+  });
+  it('is not ready until the cursor leaves column 0 (async)', async () => {
+    const s = shell(15);
+    expect(await waitForShellReadyAsync('%1', s.run, { sleep: async () => {}, stepMs: 100, quietMs: 500 })).toBe(true);
+    expect(s.polls()).toBe(20);
+  });
+  it('types anyway once column 0 has held for COLUMN_ZERO_QUIET_MS (a prompt ending in a newline)', () => {
+    const s = shell(Infinity);
+    expect(waitForShellReady('%1', s.run, { sleep: noSleep, stepMs: 100, quietMs: 500, maxMs: 8000 })).toBe(true);
+    expect(s.polls()).toBe(1 + COLUMN_ZERO_QUIET_MS / 100);
   });
 });

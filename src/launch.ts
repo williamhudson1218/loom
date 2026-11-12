@@ -41,11 +41,16 @@ export function ansiQuote(s: string): string {
 }
 
 /**
- * tmux rejects a send-keys command over ~16 KB ("command too long"), and
- * ansiQuote only inflates the text. A prompt whose quoted form passes this many
- * characters rides in a file instead, read back with "$(cat file)".
+ * A prompt whose quoted form passes this many UTF-8 bytes rides in a file
+ * instead, read back with "$(cat file)". tmux rejects a send-keys command over
+ * ~16 KB, but the real limit is the tty: keys typed before a new shell has put
+ * its terminal in raw mode sit in the kernel's line buffer, which holds 1024
+ * bytes on macOS (MAX_CANON) and drops the rest, Enter included. A Slack start's
+ * 1.5-4 KB command typed during that window never ran (0 of 5 in a real zsh with
+ * oh-my-zsh + nvm, against 5 of 5 for a short one). Kept well under 1024 so the
+ * whole typed line (cd, binary, flags, session id, prompt) fits.
  */
-export const MAX_INLINE_PROMPT = 4000;
+export const MAX_INLINE_PROMPT = 700;
 const PROMPT_TTL_MS = 7 * 24 * 3600 * 1000;
 
 export function promptsDir(): string {
@@ -75,7 +80,7 @@ function prunePromptFiles(dir: string, now = Date.now()): void {
  */
 export function promptArg(text: string, quote: (s: string) => string = ansiQuote): string {
   const inline = quote(text);
-  if (inline.length <= MAX_INLINE_PROMPT) return inline;
+  if (Buffer.byteLength(inline, 'utf-8') <= MAX_INLINE_PROMPT) return inline;
   const dir = promptsDir();
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });

@@ -313,36 +313,71 @@ export function pendingYesNo(screen: string): boolean {
 }
 const YES_NO_ANSWERS_MAX = 2;
 
-export function waitForShellReady(paneId: string, run: TmuxRunner = defaultRun, opts: { maxMs?: number; quietMs?: number; stepMs?: number; sleep?: (ms: number) => void } = {}): boolean {
-  const maxMs = opts.maxMs ?? 8000, quietMs = opts.quietMs ?? 500, stepMs = opts.stepMs ?? 100, sleep = opts.sleep ?? sleepMs;
+/**
+ * Where a shell's startup leaves the cursor. A shell still initialising after its
+ * last line of output (oh-my-zsh's "You can update manually", then a silent nvm
+ * load of about a second) sits at column 0 of an empty line; a drawn prompt puts
+ * the cursor after it. Measured on a zsh with oh-my-zsh + nvm auto-use: the
+ * screen held still for 0.8-1.2 s in that gap, so a 500 ms quiet window called it
+ * ready and the typed launch was lost to the shell's own terminal setup. null when
+ * tmux does not say (a test runner, an old tmux).
+ */
+function cursorColumn(run: TmuxRunner, paneId: string): number | null {
+  try {
+    const n = Number.parseInt(run(['display-message', '-p', '-t', paneId, '#{cursor_x}']).trim(), 10);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A still screen with the cursor at column 0 is waited on this long before typing anyway (a prompt ending in a newline). */
+export const COLUMN_ZERO_QUIET_MS = 3000;
+
+type ReadyStep = { done: true; ok: boolean } | { done: false };
+
+/** One poll of the shell-ready wait, shared by the blocking and async versions. */
+function shellReadyWatcher(paneId: string, run: TmuxRunner, quietMs: number, stepMs: number): () => ReadyStep {
   let last = '';
   let stableFor = 0;
   let answered = 0;
-  for (let waited = 0; waited < maxMs; waited += stepMs) {
-    sleep(stepMs);
+  return () => {
     let screen = '';
     try {
       screen = run(['capture-pane', '-p', '-t', paneId]).trim();
     } catch {
-      return false;
+      return { done: true, ok: false };
     }
-    if (screen && screen === last) {
-      stableFor += stepMs;
-      if (stableFor >= quietMs) {
-        if (!pendingYesNo(screen) || answered >= YES_NO_ANSWERS_MAX) return true;
-        answered++;
-        try {
-          run(['send-keys', '-t', paneId, '-l', ' ']);
-        } catch {
-          return false;
-        }
-        stableFor = 0;
-        last = '';
-      }
-    } else {
+    if (!screen || screen !== last) {
       stableFor = 0;
       last = screen;
+      return { done: false };
     }
+    stableFor += stepMs;
+    if (stableFor < quietMs) return { done: false };
+    if (pendingYesNo(screen) && answered < YES_NO_ANSWERS_MAX) {
+      answered++;
+      try {
+        run(['send-keys', '-t', paneId, '-l', ' ']);
+      } catch {
+        return { done: true, ok: false };
+      }
+      stableFor = 0;
+      last = '';
+      return { done: false };
+    }
+    if (stableFor < COLUMN_ZERO_QUIET_MS && cursorColumn(run, paneId) === 0) return { done: false };
+    return { done: true, ok: true };
+  };
+}
+
+export function waitForShellReady(paneId: string, run: TmuxRunner = defaultRun, opts: { maxMs?: number; quietMs?: number; stepMs?: number; sleep?: (ms: number) => void } = {}): boolean {
+  const maxMs = opts.maxMs ?? 8000, quietMs = opts.quietMs ?? 500, stepMs = opts.stepMs ?? 100, sleep = opts.sleep ?? sleepMs;
+  const step = shellReadyWatcher(paneId, run, quietMs, stepMs);
+  for (let waited = 0; waited < maxMs; waited += stepMs) {
+    sleep(stepMs);
+    const r = step();
+    if (r.done) return r.ok;
   }
   return false;
 }
@@ -397,34 +432,11 @@ export async function waitForShellReadyAsync(
 ): Promise<boolean> {
   const maxMs = opts.maxMs ?? 8000, quietMs = opts.quietMs ?? 500, stepMs = opts.stepMs ?? 100;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  let last = '';
-  let stableFor = 0;
-  let answered = 0;
+  const step = shellReadyWatcher(paneId, run, quietMs, stepMs);
   for (let waited = 0; waited < maxMs; waited += stepMs) {
     await sleep(stepMs);
-    let screen = '';
-    try {
-      screen = run(['capture-pane', '-p', '-t', paneId]).trim();
-    } catch {
-      return false;
-    }
-    if (screen && screen === last) {
-      stableFor += stepMs;
-      if (stableFor >= quietMs) {
-        if (!pendingYesNo(screen) || answered >= YES_NO_ANSWERS_MAX) return true;
-        answered++;
-        try {
-          run(['send-keys', '-t', paneId, '-l', ' ']);
-        } catch {
-          return false;
-        }
-        stableFor = 0;
-        last = '';
-      }
-    } else {
-      stableFor = 0;
-      last = screen;
-    }
+    const r = step();
+    if (r.done) return r.ok;
   }
   return false;
 }

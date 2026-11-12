@@ -184,6 +184,22 @@ describe('a chat resumed by the Slack hotkey', () => {
     handlers.click({ target: outside });
     expect(p.els['#mpending']).toBeUndefined();
   });
+  it('a chat the hotkey started waits the same way, and a failure says started, not resumed', async () => {
+    type OpenHow = (agent: string, sid: string, pane: string, retried: boolean, how: string) => boolean;
+    const p = page();
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(2_000_000);
+    expect((p.win.loomOpenResumed as OpenHow)('claude', 'abcd1234-0000', '%1397', false, 'started')).toBe(true);
+    expect(p.els['#mpending'].innerHTML).toContain('Opening this chat');
+    await flush();
+    now.mockReturnValue(2_000_000 + 26_000);
+    p.timers.shift()?.();
+    await flush();
+    now.mockRestore();
+    expect(p.els['#mpending'].className).toBe('err');
+    expect(p.els['#mpending'].innerHTML).toContain('Loom started session abcd1234 in pane %1397');
+    expect(p.els['#mpending'].innerHTML).not.toContain('resumed');
+  });
   it('stops looking once the card is dismissed or replaced', async () => {
     const p = page();
     (p.win.loomOpenResumed as Open)('claude', 's1', '');

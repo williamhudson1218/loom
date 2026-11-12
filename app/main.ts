@@ -506,7 +506,15 @@ async function threadGoto(url: string, picked: { text?: string; author?: string 
     }
     if (!out.ok) return fail(out.detail || 'Could not open the chat for this thread');
     let shown = true;
-    if (out.action === 'started') {
+    if (out.action === 'started' && inside && out.session_id) {
+      // No chat owned the thread, so one was started. Its session id is known, so the
+      // card stays up ("Opening this chat…") and the page polls for it every 1.5 s,
+      // opening it the moment it is live. Before, the card was cleared at once and the
+      // chat only opened on a later 5 s board poll after Claude came up: 2-7 s of an
+      // empty main area, and a start that never ran showed nothing at all.
+      showWindow();
+      shown = await pageCall('typeof loomOpenResumed==="function"&&loomOpenResumed("claude",' + JSON.stringify(out.session_id) + ',' + JSON.stringify(out.pane_id ?? '') + ',false,"started")');
+    } else if (out.action === 'started') {
       // No chat owned the thread, so one was started: show it in Loom's main area
       // (the board picks the new start up on its refresh; nudge it now).
       showWindow();

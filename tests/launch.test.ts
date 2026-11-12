@@ -19,8 +19,10 @@ import { setSetting } from '../src/settingsSchema.ts';
 import {
   LEGACY_LAUNCH_SETTINGS,
   SAFE_LAUNCH_SETTINGS,
+  MAX_INLINE_PROMPT,
   claudeCommand,
   currentLaunchSettings,
+  promptArg,
   readLaunchSettings,
   setLaunchSettingsSource,
 } from '../src/launch.ts';
@@ -273,5 +275,29 @@ describe('long prompts ride in a file, not the command line', () => {
     fs.utimesSync(old, t, t);
     claudeCommand({ kind: 'chat', dir: '/tmp/x', prompt: big }, settings);
     expect(fs.existsSync(old)).toBe(false);
+  });
+});
+
+// 2026-11-12: a Slack start typed its 1.5-4 KB command into a new shell before the
+// shell had put its terminal in raw mode; the kernel's 1024-byte line buffer
+// (MAX_CANON on macOS) dropped the rest, Enter included, and the chat never ran.
+describe('promptArg keeps a typed launch under the tty line buffer', () => {
+  it('a short prompt stays inline', () => {
+    expect(promptArg('hello\nworld')).toBe("$'hello\\nworld'");
+  });
+  it('a Slack-sized prompt rides in a file, read back with $(cat …)', () => {
+    const text = 'This chat was started from a Slack thread.\n> ' + 'x'.repeat(1500);
+    const arg = promptArg(text);
+    const m = /^"\$\(cat '([^']+)'\)"$/.exec(arg);
+    expect(m).not.toBeNull();
+    expect(fs.readFileSync(m![1], 'utf-8')).toBe(text);
+  });
+  it('measures bytes, not characters: multi-byte text past the cap goes to a file', () => {
+    const text = 'é'.repeat(Math.ceil(MAX_INLINE_PROMPT / 2) + 10); // under the cap in chars, over it in bytes
+    expect(promptArg(text).startsWith('"$(cat ')).toBe(true);
+  });
+  it('a whole fresh-chat command with a long prompt is under 1024 bytes', () => {
+    const cmd = claudeCommand({ kind: 'chat', dir: '/home/someone/dev/some-project', sid: '00000000-1111-4222-8333-444444444444', prompt: 'y'.repeat(MAX_INLINE_PROMPT - 3) }, SAFE_LAUNCH_SETTINGS);
+    expect(Buffer.byteLength(cmd, 'utf-8')).toBeLessThan(1024);
   });
 });
