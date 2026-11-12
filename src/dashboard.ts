@@ -9,6 +9,7 @@ import { TERMDROP_JS } from './termdrop.ts';
 import { TERMWARM_JS } from './termwarm.ts';
 import { GROUPING_JS } from './grouping.ts';
 import { SIDESORT_JS } from './sidesort.ts';
+import { CLOSENAV_JS } from './closenav.ts';
 import { SIDESEARCH_JS } from './sidesearch.ts';
 import { JUMP_CSS, JUMP_PURE_JS, JUMP_VIEW_JS } from './jumpbox.ts';
 import { chatTagMap, listTags, type TagInfo } from './tags.ts';
@@ -1141,6 +1142,7 @@ ${TERMDROP_JS}
 ${TERMWARM_JS}
 ${GROUPING_JS}
 ${SIDESORT_JS}
+${CLOSENAV_JS}
 ${SIDESEARCH_JS}
 ${JUMP_PURE_JS}
 ${JUMP_VIEW_JS}
@@ -1376,14 +1378,14 @@ function wireSidebar(){const sl=$('#sidelist');
   sl.addEventListener('click',e=>{const la=e.target.closest('[data-lact]');if(la){e.stopPropagation();const row=la.closest('[data-lid]');if(row)launchAct(la.dataset.lact,row.dataset.lid,la);return;}const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);return;}const r=e.target.closest('.srow[data-sid]');if(!r||e.target.closest('button,a'))return;const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const r=e.target.closest&&e.target.closest('.srow[data-sid]');if(!r||e.target!==r)return;e.preventDefault();const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('contextmenu',e=>{const r=e.target.closest('.srow[data-sid]');if(!r)return;const c=rowChat(r);if(!c)return;e.preventDefault();openCtx(c,e.clientX,e.clientY,null);});}
-function doSave(sid,agent,el){flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved, pane freed':'saved'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');if(j.ok)markSaved(sid,agent,true);setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
+function doSave(sid,agent,el){const nav=tab==='saved'?null:closeNavPlan(DATA.chats.find(x=>x.agent===agent&&x.session_id===sid));flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved, pane freed':'saved'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');if(j.ok){markSaved(sid,agent,true);closeNavGo(nav);}setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function doUnsave(sid,agent,el){flash(el,'removing…','#7a6a1a');fetch('/unsave?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?'unsaved':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok)markSaved(sid,agent,false);setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function markSaved(sid,agent,v){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);if(c){c.saved=v;c.saved_at=v?Date.now():0;render();}}
 function parkPost(path,c){return fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session:c.session_id,agent:c.agent})}).then(r=>r.json());}
 function doRestore(c){parkPost('/api/restore',c).then(j=>{toast(j.ok?'restored to the board':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok){c.done=false;render();}setTimeout(refresh,300);}).catch(()=>toast('server off','#8a2b2e'));}
 function doUnpark(c){parkPost('/api/parked/unpark',c).then(j=>{toast(j.ok?'unparked':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,200);}).catch(()=>toast('server off','#8a2b2e'));}
 function doParkResume(c){toast('resuming with the reply…');parkPost('/api/parked/resume',c).then(j=>{toast(j.ok?'resumed with the reply':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>toast('server off','#8a2b2e'));}
-function doClose(sid,agent,el){flash(el,'closing…','#7a4a1a');fetch('/close?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent),{method:'POST'}).then(r=>r.json()).then(j=>{flash(el,j.ok?'closed, pane freed':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>flash(el,'server off','#8a2b2e'));}
+function doClose(sid,agent,el){const nav=closeNavPlan(DATA.chats.find(x=>x.agent===agent&&x.session_id===sid));flash(el,'closing…','#7a4a1a');fetch('/close?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent),{method:'POST'}).then(r=>r.json()).then(j=>{flash(el,j.ok?'closed, pane freed':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok)closeNavGo(nav);setTimeout(refresh,1500);setTimeout(refresh,3500);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function jump(sid,agent,el){flash(el,'opening…','#3b5bdb');fetch('/goto?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>flash(el,j.ok?'opened':'no live pane',j.ok?'#1f6f3f':'#8a2b2e')).catch(()=>flash(el,'server off','#8a2b2e'));}
 // One picker per card, so it keys on action+agent: clicking the same button again
 // closes it, clicking the sibling swaps to that button's launch.
@@ -1679,7 +1681,7 @@ function runAction(key,c){const L=c.arch?null:DATA.live[chatKey(c)];const k=chat
       return;
   }
   if(key!=='more')closeCtx();}
-function removeFromBoard(c){fetch('/api/hide',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session:c.session_id,agent:c.agent})}).then(r=>r.json()).then(j=>{toast(j.ok?'removed from the board':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok){DATA.chats=DATA.chats.filter(x=>!(x.agent===c.agent&&x.session_id===c.session_id));if(sel&&sel.sid===c.session_id&&sel.agent===c.agent)deselect();render();}setTimeout(refresh,800);}).catch(()=>toast('server off','#8a2b2e'));}
+function removeFromBoard(c){const nav=closeNavPlan(c);fetch('/api/hide',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session:c.session_id,agent:c.agent})}).then(r=>r.json()).then(j=>{toast(j.ok?'removed from the board':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok){DATA.chats=DATA.chats.filter(x=>!(x.agent===c.agent&&x.session_id===c.session_id));if(sel&&sel.sid===c.session_id&&sel.agent===c.agent)deselect();closeNavGo(nav);render();}setTimeout(refresh,800);}).catch(()=>toast('server off','#8a2b2e'));}
 // ---- Context menu ---------------------------------------------------------------
 var ctxState=null;
 function ctxInput(c){const L=c.arch?null:DATA.live[chatKey(c)];return {live:!!L,done:!!c.done,parked:!!parkedOf(c),saved:!!c.saved,archive:!!c.arch,prNum:chatPrNum(c),prState:prStateOf(c),hasSlack:ownsSlack(c),slackCount:slackCountOf(c),armedClose:closeArm===chatKey(c),tagCount:chatTags(c).length,orchLive:!!(DATA.orch&&DATA.orch.live),extLabel:(DATA.terminal&&DATA.terminal.label)||''};}
