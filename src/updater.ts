@@ -62,6 +62,8 @@ export interface Latest {
   sha256: string;
   notes: string[];
   published_at?: string;
+  /** The zip's byte size, when the feed gives it. */
+  size?: number;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; detail: string };
@@ -98,6 +100,7 @@ export function parseLatest(raw: unknown, feedUrl: string = FEED_URL): Parsed<La
       sha256: o.sha256.toLowerCase(),
       notes: notes.slice(0, 50).map((n) => n.slice(0, 300)),
       published_at: typeof o.published_at === 'string' ? o.published_at : undefined,
+      size: typeof o.size === 'number' && Number.isInteger(o.size) && o.size > 0 ? o.size : undefined,
     },
   };
 }
@@ -449,7 +452,18 @@ export class Updater {
           });
           this.set({ status: 'verifying', progress: null });
           const sum = await this.d.sha256File(zip);
-          if (sum.toLowerCase() !== latest.sha256) throw new Error(`the download's sha256 is ${sum}, the release says ${latest.sha256}`);
+          if (sum.toLowerCase() !== latest.sha256) {
+            // The byte count says which failure this is: a short file is a cut
+            // transfer, a full-size one with the wrong hash is corrupted bytes.
+            let got = -1;
+            try {
+              got = fs.statSync(zip).size;
+            } catch {
+              /* reported as unknown */
+            }
+            const bytes = `${got < 0 ? 'unknown' : got} bytes${latest.size ? ` of ${latest.size}` : ''}`;
+            throw new Error(`the download's sha256 is ${sum} (${bytes}), the release says ${latest.sha256}`);
+          }
           break;
         } catch (e) {
           if (attempt >= DOWNLOAD_TRIES) throw new Error(`${(e as Error).message} (after ${DOWNLOAD_TRIES} tries)`);

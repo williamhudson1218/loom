@@ -185,7 +185,7 @@ describe('Updater', () => {
     const { u } = make({ feed: { ...r.feed, sha256: 'b'.repeat(64) }, zip: r.zip });
     const s = await u.check();
     expect(s.status).toBe('error');
-    expect(s.detail).toMatch(/sha256.*after 2 tries/);
+    expect(s.detail).toMatch(/sha256 is [0-9a-f]{64} \(\d+ bytes\).*after 2 tries/);
     expect(s.ready).toBeNull();
     expect(fs.readdirSync(path.join(tmp, 'cache'))).toEqual(['state.json']);
   });
@@ -208,6 +208,17 @@ describe('Updater', () => {
     expect(tries).toBe(2);
     expect(s.status).toBe('ready');
     expect(s.ready?.version).toBe('0.1.9');
+  });
+
+  it('reports the byte count against the feed size on a hash mismatch', async () => {
+    const r = release('0.1.9');
+    const { u } = make({
+      feed: { ...r.feed, size: 999 },
+      zip: r.zip,
+      deps: { download: async (_url, dest) => fs.writeFileSync(dest, 'short') },
+    });
+    const s = await u.check();
+    expect(s.detail).toMatch(/\(5 bytes of 999\)/);
   });
 
   it('retries a download that ends early, then reports both tries', async () => {

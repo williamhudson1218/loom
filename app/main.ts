@@ -776,6 +776,7 @@ function autoUpdateOn(): boolean {
     db.close();
   }
 }
+let lastUpdateError: string | null = null;
 const updater = new Updater({
   current: app.getVersion(),
   commit: BUILD.commit,
@@ -789,6 +790,9 @@ const updater = new Updater({
     // Pushed to the page (src/updateview.ts) so Checking, Downloading and Update
     // ready show as they happen, not on the next poll or the next click.
     if (win && !win.isDestroyed()) win.webContents.send('loom:update-state', st);
+    // Errors go to loom.log too, so a failed update leaves a record after the page moves on.
+    if (st.status === 'error' && st.detail && st.detail !== lastUpdateError) console.log(`[loom] update: ${st.detail}`);
+    lastUpdateError = st.status === 'error' ? st.detail : null;
   },
 });
 // install-app.sh drops this file before it quits Loom, so the quit it causes does
