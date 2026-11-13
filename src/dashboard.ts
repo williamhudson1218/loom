@@ -811,7 +811,11 @@ ${PRUNE_VIEW_CSS}
   .ssub { font-size:12px; color:#8a90a2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sright { flex:0 1 auto; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:4px; max-width:46%; }
   .sage { font-size:11px; color:#8a90a2; }
-  .schips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; align-items:center; }
+  .shead { display:flex; align-items:baseline; gap:8px; min-width:0; }
+  .shead .stitle { flex:1 1 auto; min-width:0; }
+  .shead .sage { flex:none; }
+  /* All chips, CI dots and pills share one full-width wrapping line under the sub line. */
+  .schips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-start; align-items:center; }
   .chp { font-size:10px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
   .chp.pr { background:#15301d; color:#9fe0aa; }
   .chp.sl { background:#2a2140; color:#c9b4ff; }
@@ -1372,12 +1376,11 @@ function copyName(n){copyText(n,'Copied');}
 function subLine(c){const st=(flatList()&&!c.arch?'<span class="sstate '+dotCls(c)+'">'+esc(DOT_LABEL[dotCls(c)]||'')+'</span> ':'');const nm=c.arch?null:namedSub(c);
   if(!nm)return '<span class="ssub">'+st+rowSub(c)+'</span>';
   return '<span class="ssub named"">'+(st?'<span class="ssl">'+st.trim()+'&nbsp;</span>':'')+nm.html+'</span>';}
-function bodyW(c){const n=c.arch||parkedOf(c)?'':chatNameOf(c);return n?' style="min-width:'+(n.length*7+40+(flatList()&&!c.arch?80:0))+'px"':'';}
 function srow(c){const prn=chatPrNum(c);const a=c.arch?' data-jsonl="'+esc(c.arch.jsonl)+'"':'';
+const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
 return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+'>'+
 '<span class="sdot '+dotCls(c)+'" title="'+esc(DOT_LABEL[dotCls(c)])+'"></span>'+
-'<span class="sbody"'+bodyW(c)+'><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span>'+subLine(c)+'</span>'+
-'<span class="sright"><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span><span class="schips">'+(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c))+'</span></span></div>';}
+'<span class="sbody"><span class="shead"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span></span>'+subLine(c)+(chips?'<span class="schips">'+chips+'</span>':'')+'</span></div>';}
 // Tags: names live on each chat, colours in DATA.tags. Filter and group-by persist.
 function lsList(k){try{const v=JSON.parse(lsGet(k)||'[]');return Array.isArray(v)?v.map(String):[];}catch(e){return [];}}
 var tagSel=lsList('loom.tagFilter'), groupBy=lsGet('loom.groupBy')==='tag'?'tag':'status';
