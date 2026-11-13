@@ -1285,7 +1285,7 @@ function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
 // and falls back.
 function fresh(c){return c.last_turn_at||c.last_active_at;}
 var fDraft=false, fIssue=false, onlyGroup=null;
-var sortMode=sortModeOf(lsGet('loom.sort')), stampOf=makeStamper(), lastOrder={}, CMP=null, pointerIn=false, pendingReorder=false;
+var sortMode=sortModeOf(lsGet('loom.sort')), stampOf=makeStamper(), lastOrder={}, staleSeen={}, CMP=null, pointerIn=false, pendingReorder=false;
 var collapsed=lsList('loom.grpCollapsed');
 const SORT_LABEL={new:'Started, newest first',old:'Started, oldest first',recent:'Recent activity'};
 const SF={started:c=>c.started_at||0,stamp:c=>stampOf(chatKey(c),(isWorking(c)?'w':'-')+st(c),fresh(c)),key:chatKey};
@@ -1330,7 +1330,7 @@ const tmatch=searching?termMatches(q):[];
 if(searching){SPLIT=splitMatches(rows,isOpenChat,archHits,DATA.chats.map(c=>c.session_id));rows=SPLIT.open;}else SPLIT=null;
 // Order inside each group is the chosen sort; the groups (Working, Your turn, ...) only
 // decide which heading a row sits under.
-CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));wireShips(list);flipPlay(flipBefore);renderArchive();renderMain();}
+CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows,true)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));wireShips(list);flipPlay(flipBefore);renderArchive();renderMain();}
 // ---- Sidebar rows ------------------------------------------------------------
 // One row per chat: state dot, title, project and pane name, age, PR / Slack /
 // draft chips. Click selects it into the main area; right-click opens the action
@@ -1347,7 +1347,7 @@ function flatList(){return isFlatList(sortMode,groupBy,tab);}
 // Age tint on the sidebar row (moved here from the tmux panes). Same ramp as src/panetint.ts:
 // active within the hour is untinted; earlier today, yesterday, older warm up in that order.
 // Wall-clock day boundaries, not rolling 24h windows.
-function ageClass(c){if(c.arch)return '';const t=fresh(c);if(!t)return '';const now=Date.now();if(now-t<3600000)return '';const d=new Date(now);d.setHours(0,0,0,0);const today=d.getTime();if(t>=today)return ' age-today';d.setDate(d.getDate()-1);if(t>=d.getTime())return ' age-yday';return ' age-old';}
+function ageClass(c){if(c.arch)return '';const t=fresh(c);if(!t)return '';const now=Date.now();if(now-t<3600000)return '';const d=new Date(now);d.setHours(0,0,0,0);const today=d.getTime();if(t>=today)return ' age-today';return isStaleAge(t,now)?' age-old':' age-yday';}
 // The row age is always recency (last activity), whatever the sort; the tooltip also gives the start.
 function rowAgeMs(c){if(c.arch)return c.last_active_at;return fresh(c);}
 function ageTip(c){if(c.arch)return 'active '+rel(c.last_active_at);return sortAgeTip(c.started_at,fresh(c),rel);}
@@ -1383,16 +1383,21 @@ function shipMark(c){const k=chatKey(c);for(const b of DATA.ships||[]){if(b.lock
   for(const b of DATA.ships||[]){const g=(b.shipped||[]).find(g=>g.runner===k&&g.state==='OPEN');if(g)return '<span class="smk own" title="owns ship #'+g.number+', in review">⚓</span>';}
   const x=shipRole(c);if(!x)return '';
   if(!x.r.next)return '';return x.r.next==='unstaged'?'<span class="smk wipm" title="in the next ship, not staged yet">⛵…</span>':'<span class="smk" title="rides the next ship">⛵</span>';}
-function sidebarRows(rows){let h=ghostRows();const selKey=sel?sel.agent+':'+sel.sid:'';
+function orderRows(gk,gr,selKey){if(sortMode==='recent'&&tab!=='saved'){const want=gr.map(chatKey);const pinned={};if(selKey)pinned[selKey]=1;if(pointerIn)want.forEach(k=>{pinned[k]=1;});
+      const out=pinOrder(lastOrder[gk]||[],want,pinned);if(out.join('|')!==want.join('|'))pendingReorder=pointerIn||pendingReorder;
+      const by={};gr.forEach(c=>{by[chatKey(c)]=c;});gr=out.map(k=>by[k]);lastOrder[gk]=out;}return gr;}
+// Stale chats leave the main list for their own last section (every sort mode, every grouping).
+function staleSection(stale,selKey){if(!stale.length||(onlyGroup&&onlyGroup!=='Stale'))return '';const gk='section:stale',closed=collapsed.indexOf(gk)>=0;
+  return '<div class="sgrp stalegrp'+(closed?' closed':'')+'" data-tour="group" role="button" tabindex="0" aria-expanded="'+!closed+'" data-gk="'+gk+'" data-gn="Stale" title="Chats idle since before yesterday. Click to collapse or expand."><span><span class="car">▾</span>Stale</span><span class="cnt">'+stale.length+'</span></div>'+(closed?'':orderRows(gk,stale,selKey).map(srow).join(''));}
+function sidebarRows(rows,noStale){let h=ghostRows();const selKey=sel?sel.agent+':'+sel.sid:'';let stale=[];
+  if(!noStale&&tab==='board'){const sp=splitStale(rows,chatKey,fresh,staleSeen,pointerIn,Date.now());if(sp.moved)pendingReorder=true;staleSeen=sp.next;rows=sp.main;stale=sp.stale;}
   (flatList()?[{name:'All chats',tag:'',rows:rows,flat:true}]:groupChats(rows,groupBy,GF)).forEach(g=>{const gk=groupBy+':'+g.name;if(onlyGroup&&onlyGroup!==g.name)return;
     let gr=g.rows;
-    if(sortMode==='recent'&&tab!=='saved'){const want=gr.map(chatKey);const pinned={};if(selKey)pinned[selKey]=1;if(pointerIn)want.forEach(k=>{pinned[k]=1;});
-      const out=pinOrder(lastOrder[gk]||[],want,pinned);if(out.join('|')!==want.join('|'))pendingReorder=pointerIn||pendingReorder;
-      const by={};gr.forEach(c=>{by[chatKey(c)]=c;});gr=out.map(k=>by[k]);lastOrder[gk]=out;}
+    gr=orderRows(gk,gr,selKey);
     const closed=collapsed.indexOf(gk)>=0;
     if(g.flat){h+=gr.map(srow).join('');return;}
     h+='<div class="sgrp'+(closed?' closed':'')+'" data-tour="group" role="button" tabindex="0" aria-expanded="'+!closed+'" data-gk="'+esc(gk)+'" data-gn="'+esc(g.name)+'" title="Click to collapse or expand. Alt-click to show only this group."><span><span class="car">▾</span>'+(g.tag?'<span class="tgdot" style="background:'+tagColor(g.tag)+'"></span>':'')+esc(g.name)+'</span><span class="cnt">'+g.rows.length+'</span></div>'+(closed?'':gr.map(srow).join(''));});
-  return h;}
+  return h+staleSection(stale,selKey);}
 // Placeholder rows for launches whose chat is not on the board yet.
 function ghostRows(){if(tab!=='board')return '';const L=DATA.launches||[];return L.filter(g=>g.status==='failed'||!DATA.chats.some(c=>{const x=DATA.live[chatKey(c)];return x&&x.pane_id===g.pane_id&&c.last_active_at>=g.at-5000;})).map(g=>{const t=esc((g.prompt||'').split(NL)[0].slice(0,90)||'New thread');
   if(g.status==='failed')return '<div class="srow ghost failed" data-lid="'+esc(g.id)+'"><span class="sdot d-failed"></span><span class="sbody"><span class="stitle">Chat didn\u2019t start in '+esc(g.where)+'</span><span class="ssub">'+esc(g.project)+' \u00b7 '+t+'</span><pre class="lpane">'+esc((g.lines||[]).join(NL)||'(the pane was empty)')+'</pre><span class="lacts"><button data-lact="retry">Retry</button><button data-lact="edit">Edit in composer</button><button data-lact="dismiss">Dismiss</button></span></span></div>';

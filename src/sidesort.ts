@@ -37,6 +37,21 @@ function sortAgeMs(mode,startedAt,freshMs){return mode==='recent'?freshMs:(start
 function sortAgeTip(startedAt,freshMs,relf){return (startedAt?'Started '+relf(startedAt)+' \u00b7 ':'')+'active '+relf(freshMs);}
 // Recent activity is one flat list (no status groups, so rows do not jump between groups as state changes); tag groups stay.
 function isFlatList(mode,groupBy,tab){return mode==='recent'&&groupBy==='status'&&tab!=='saved';}
+// THE stale rule (one definition): a chat is stale when its last activity is older than the
+// start of yesterday (wall-clock day boundary, not a rolling 24 h), i.e. it renders the red
+// age-old tint and sits in the Stale section. Missing time is never stale.
+function isStaleAge(t,now){if(!t)return false;var d=new Date(now);d.setHours(0,0,0,0);d.setDate(d.getDate()-1);return t<d.getTime()&&now-t>=3600000;}
+// Partition rows (already sorted) into the main list and the Stale section. prev maps key->was
+// stale at the last render; while hold is true (pointer over the sidebar) a row seen before keeps
+// its section, so nothing jumps under the cursor. moved says some row is held off its natural
+// section, so the caller applies the move when the pointer leaves.
+function splitStale(rows,keyf,timef,prev,hold,now){
+  var main=[],stale=[],next={},moved=false;
+  for(var i=0;i<rows.length;i++){var k=keyf(rows[i]),s=isStaleAge(timef(rows[i]),now);
+    if(hold&&prev&&Object.prototype.hasOwnProperty.call(prev,k)&&prev[k]!==s){s=prev[k];moved=true;}
+    next[k]=s;(s?stale:main).push(rows[i]);}
+  return {main:main,stale:stale,next:next,moved:moved};
+}
 // Re-order want (keys, the order we would like) but keep every pinned key at the
 // slot it held in prev. Unpinned keys fill the remaining slots in want order.
 // A row that left the list (closed, hidden, filtered out) is dropped from prev first,
