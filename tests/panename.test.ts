@@ -8,8 +8,9 @@ describe('pane name never truncates in a sidebar row', () => {
     expect(src).toContain('.ssub.named .ssr { flex:0 100 auto; }');
   });
   it('chips sit on one full-width wrapping line under the sub line, not in a right column', () => {
-    expect(src).toContain('.schips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-start;');
-    expect(src).toContain("subLine(c)+(chips?'<span class=\"schips\">'+chips+'</span>':'')");
+    expect(src).toContain('.sline > .ssub { flex:1 1 auto; min-width:0; }');
+    expect(src).toContain('.schips > * { margin-left:0 !important; }');
+    expect(src).toContain("'<span class=\"sline\">'+subLine(c)+(chips?'<span class=\"schips\">'+chips+'</span>':'')");
     expect(src).toContain('<span class="shead">');
   });
   it('rows without a pane name keep the plain ellipsis line', () => {

@@ -815,7 +815,12 @@ ${PRUNE_VIEW_CSS}
   .shead .stitle { flex:1 1 auto; min-width:0; }
   .shead .sage { flex:none; }
   /* All chips, CI dots and pills share one full-width wrapping line under the sub line. */
-  .schips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-start; align-items:center; }
+  /* Meta line and chips are one wrapping line: chips sit beside the meta when they fit, right-aligned
+     (the meta grows to fill); otherwise the whole chip group drops to its own line, flush left. */
+  .sline { display:flex; flex-wrap:wrap; align-items:center; gap:3px 8px; min-width:0; }
+  .sline > .ssub { flex:1 1 auto; min-width:0; }
+  .schips { flex:0 1 auto; max-width:100%; display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-start; align-items:center; }
+  .schips > * { margin-left:0 !important; }
   .chp { font-size:10px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
   .chp.pr { background:#15301d; color:#9fe0aa; }
   .chp.sl { background:#2a2140; color:#c9b4ff; }
@@ -1380,7 +1385,7 @@ function srow(c){const prn=chatPrNum(c);const a=c.arch?' data-jsonl="'+esc(c.arc
 const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
 return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+'>'+
 '<span class="sdot '+dotCls(c)+'" title="'+esc(DOT_LABEL[dotCls(c)])+'"></span>'+
-'<span class="sbody"><span class="shead"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span></span>'+subLine(c)+(chips?'<span class="schips">'+chips+'</span>':'')+'</span></div>';}
+'<span class="sbody"><span class="shead"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span></span>'+'<span class="sline">'+subLine(c)+(chips?'<span class="schips">'+chips+'</span>':'')+'</span></span></div>';}
 // Tags: names live on each chat, colours in DATA.tags. Filter and group-by persist.
 function lsList(k){try{const v=JSON.parse(lsGet(k)||'[]');return Array.isArray(v)?v.map(String):[];}catch(e){return [];}}
 var tagSel=lsList('loom.tagFilter'), groupBy=lsGet('loom.groupBy')==='tag'?'tag':'status';
