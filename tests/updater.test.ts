@@ -185,9 +185,48 @@ describe('Updater', () => {
     const { u } = make({ feed: { ...r.feed, sha256: 'b'.repeat(64) }, zip: r.zip });
     const s = await u.check();
     expect(s.status).toBe('error');
-    expect(s.detail).toMatch(/sha256/);
+    expect(s.detail).toMatch(/sha256.*after 2 tries/);
     expect(s.ready).toBeNull();
     expect(fs.readdirSync(path.join(tmp, 'cache'))).toEqual(['state.json']);
+  });
+
+  it('retries a damaged download once and readies the good second copy', async () => {
+    const r = release('0.1.9');
+    let tries = 0;
+    const { u } = make({
+      feed: r.feed,
+      zip: r.zip,
+      deps: {
+        download: async (_url, dest) => {
+          tries++;
+          if (tries === 1) fs.writeFileSync(dest, 'truncated');
+          else fs.copyFileSync(r.zip, dest);
+        },
+      },
+    });
+    const s = await u.check();
+    expect(tries).toBe(2);
+    expect(s.status).toBe('ready');
+    expect(s.ready?.version).toBe('0.1.9');
+  });
+
+  it('retries a download that ends early, then reports both tries', async () => {
+    const r = release('0.1.9');
+    let tries = 0;
+    const { u } = make({
+      feed: r.feed,
+      zip: r.zip,
+      deps: {
+        download: async () => {
+          tries++;
+          throw new Error('download ended early (10 of 20 bytes)');
+        },
+      },
+    });
+    const s = await u.check();
+    expect(tries).toBe(2);
+    expect(s.status).toBe('error');
+    expect(s.detail).toMatch(/ended early.*after 2 tries/);
   });
 
   it('rejects an app that fails codesign --verify', async () => {

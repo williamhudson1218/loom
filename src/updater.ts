@@ -194,6 +194,9 @@ export interface UpdaterOpts {
   onChange?: (s: UpdateState) => void;
 }
 
+/** Downloads per check: one retry covers a transfer cut short by sleep or a network change. */
+export const DOWNLOAD_TRIES = 2;
+
 export const defaultCacheDir = (): string => path.join(os.homedir(), 'Library', 'Caches', 'Loom', 'updates');
 
 const run = (cmd: string, args: string[]): Promise<string> =>
@@ -222,6 +225,9 @@ export const defaultDeps: UpdaterDeps = {
       else onProgress?.(seen, len);
     });
     await pipeline(body, fs.createWriteStream(dest));
+    // A connection dropped mid-body (sleep, wifi change) can end the stream
+    // cleanly; a short file is a failed download, not a bad release.
+    if (len > 0 && seen !== len) throw new Error(`download ended early (${seen} of ${len} bytes)`);
   },
   async sha256File(p) {
     const h = crypto.createHash('sha256');
@@ -430,15 +436,25 @@ export class Updater {
     const dir = path.join(this.cacheDir, latest.version);
     const tmp = path.join(this.cacheDir, `${latest.version}.unpacking`);
     try {
-      fs.rmSync(zip, { force: true });
-      // One push per whole percent, not one per chunk.
-      await this.d.download(latest.zip, zip, (got, total) => {
-        const pct = total > 0 ? Math.min(100, Math.floor((got / total) * 100)) : null;
-        if (pct !== this.s.progress) this.set({ progress: pct });
-      });
-      this.set({ status: 'verifying', progress: null });
-      const sum = await this.d.sha256File(zip);
-      if (sum.toLowerCase() !== latest.sha256) throw new Error(`the download's sha256 is ${sum}, the release says ${latest.sha256}`);
+      // A damaged download (cut short by sleep or a network change) is retried
+      // once before it is reported; a release whose hash is wrong fails both.
+      for (let attempt = 1; ; attempt++) {
+        fs.rmSync(zip, { force: true });
+        this.set({ status: 'downloading', progress: null });
+        try {
+          // One push per whole percent, not one per chunk.
+          await this.d.download(latest.zip, zip, (got, total) => {
+            const pct = total > 0 ? Math.min(100, Math.floor((got / total) * 100)) : null;
+            if (pct !== this.s.progress) this.set({ progress: pct });
+          });
+          this.set({ status: 'verifying', progress: null });
+          const sum = await this.d.sha256File(zip);
+          if (sum.toLowerCase() !== latest.sha256) throw new Error(`the download's sha256 is ${sum}, the release says ${latest.sha256}`);
+          break;
+        } catch (e) {
+          if (attempt >= DOWNLOAD_TRIES) throw new Error(`${(e as Error).message} (after ${DOWNLOAD_TRIES} tries)`);
+        }
+      }
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.mkdirSync(tmp, { recursive: true });
       await this.d.extract(zip, tmp);
