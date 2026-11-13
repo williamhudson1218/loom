@@ -793,13 +793,18 @@ ${PRUNE_VIEW_CSS}
   .stitle { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .cname { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; color:#8a90a2; margin-left:6px; }
   .ssub .cname { margin-left:0; }
+  /* The pane name never truncates: repo (then state) gives way, then the chip column wraps. */
+  .ssub.named { display:flex; overflow:visible; text-overflow:clip; }
+  .ssub.named .ssl, .ssub.named .ssr { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ssub.named .ssl { flex:none; } .ssub.named .ssr { flex:0 100 auto; }
+  .ssub.named .ssp, .ssub.named .cname { flex:none; white-space:pre; }
   .cname .cpi { font:inherit; font-size:12px; line-height:1; color:#8a90a2; background:transparent; border:1px solid transparent; border-radius:4px; padding:1px 4px; margin-left:4px; cursor:pointer; visibility:hidden; vertical-align:baseline; }
   .srow:hover .cname .cpi, .mh-sub:hover .cname .cpi, .cname .cpi:focus-visible { visibility:visible; }
   .cname .cpi:hover { color:#e4e7ee; background:#222a3d; border-color:#34406a; }
   .sstate { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#8a90a2; }
   .sstate.d-working { color:#e0c04a; } .sstate.d-turn { color:#6ea0ff; }
   .ssub { font-size:12px; color:#8a90a2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sright { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:4px; max-width:46%; }
+  .sright { flex:0 1 auto; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:4px; max-width:46%; }
   .sage { font-size:11px; color:#8a90a2; }
   .schips { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; align-items:center; }
   .chp { font-size:10px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
@@ -1355,12 +1360,17 @@ function chatNameOf(c){const L=c.arch?null:DATA.live[chatKey(c)];return (L&&L.na
 // The name is plain text (a click on it selects the row like anywhere else); only the small
 // icon, shown on row hover, copies it.
 function nameChip(c){const n=chatNameOf(c);return n?' <span class="cname">'+esc(n)+'<button type="button" class="cpi" data-copyname="'+esc(n)+'" title="Copy name" aria-label="Copy name '+esc(n)+'">⧉</button></span>':'';}
+function namedSub(c){const n=chatNameOf(c);if(!n||parkedOf(c))return null;return {n:n,html:'<span class="ssr" title="'+esc(c.project)+'">'+esc(c.project)+'</span><span class="ssp"> \u00b7 </span>'+nameChip(c).trim()};}
 function rowSub(c){const n=chatNameOf(c);if(n&&!parkedOf(c))return esc(c.project)+' · '+nameChip(c).trim();return esc(parkSub(c));}
 function copyName(n){copyText(n,'Copied');}
+function subLine(c){const st=(flatList()&&!c.arch?'<span class="sstate '+dotCls(c)+'">'+esc(DOT_LABEL[dotCls(c)]||'')+'</span> ':'');const nm=c.arch?null:namedSub(c);
+  if(!nm)return '<span class="ssub">'+st+rowSub(c)+'</span>';
+  return '<span class="ssub named"">'+(st?'<span class="ssl">'+st.trim()+'&nbsp;</span>':'')+nm.html+'</span>';}
+function bodyW(c){const n=c.arch||parkedOf(c)?'':chatNameOf(c);return n?' style="min-width:'+(n.length*7+40+(flatList()&&!c.arch?80:0))+'px"':'';}
 function srow(c){const prn=chatPrNum(c);const a=c.arch?' data-jsonl="'+esc(c.arch.jsonl)+'"':'';
 return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+'>'+
 '<span class="sdot '+dotCls(c)+'" title="'+esc(DOT_LABEL[dotCls(c)])+'"></span>'+
-'<span class="sbody"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="ssub">'+(flatList()&&!c.arch?'<span class="sstate '+dotCls(c)+'">'+esc(DOT_LABEL[dotCls(c)]||'')+'</span> ':'')+rowSub(c)+'</span></span>'+
+'<span class="sbody"'+bodyW(c)+'><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span>'+subLine(c)+'</span>'+
 '<span class="sright"><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span><span class="schips">'+(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c))+'</span></span></div>';}
 // Tags: names live on each chat, colours in DATA.tags. Filter and group-by persist.
 function lsList(k){try{const v=JSON.parse(lsGet(k)||'[]');return Array.isArray(v)?v.map(String):[];}catch(e){return [];}}
