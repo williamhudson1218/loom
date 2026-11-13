@@ -137,14 +137,12 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .fr-warn { margin:0; padding:8px 10px; border-radius:6px; background:rgba(212,167,44,.14); border:1px solid rgba(212,167,44,.35); color:#e8b84b; font-size:12.5px; }
   .fr-warn.err { background:rgba(248,81,73,.12); border-color:rgba(248,81,73,.35); color:#ff9b94; }
   .fr-warn .fr-t { font-weight:600; }
-  .fr-h { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .fr-h .fr-sp { flex:1; }
-  .fr-h button.redraft { background:#d4a72c; color:#1a1405; border-color:#d4a72c; font-weight:600; }
-  .fr-h button.redraft:hover { background:#e8b84b; }
-  .fr-h .fr-red { display:inline-flex; align-items:center; gap:6px; font-weight:600; }
-  .fr-h .fr-red .spin { width:11px; height:11px; border-radius:50%; border:2px solid rgba(232,184,75,.3); border-top-color:#e8b84b; animation:dspin .8s linear infinite; }
-  .fr-h .fr-note { color:#8a90a2; font-size:12px; }
-  .fr-h button.lnk { background:transparent; border:0; color:#9cc0ff; padding:0 2px; font-size:12px; text-decoration:underline; }
+  .dacts button.redraft { background:#d4a72c; color:#1a1405; border-color:#d4a72c; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
+  .dacts button.redraft:hover:not(:disabled) { background:#e8b84b; }
+  .dacts button.redraft:disabled { opacity:.8; cursor:default; }
+  .dacts button.redraft .spin { width:11px; height:11px; border-radius:50%; border:2px solid rgba(26,20,5,.3); border-top-color:#1a1405; animation:dspin .8s linear infinite; }
+  .dacts button.lnk { background:transparent; border:0; color:#9cc0ff; padding:0 2px; font-size:12px; text-decoration:underline; }
+  .dacts button.send.demoted { background:#1b2233; color:#c4ccdc; border-color:#2b3040; }
   .dacts button.send:disabled { opacity:.45; cursor:not-allowed; }
   .fr-items { margin:6px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px; }
   .fr-items li { color:#d1d5de; font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
@@ -156,7 +154,7 @@ export const OUTBOX_VIEW_CSS = String.raw`
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
     .draft.sdraft.leaving, #outrail.closing { transition:none; }
-    .dsend .spin, .fr-red .spin { animation:none; }
+    .dsend .spin, .redraft .spin { animation:none; }
   }
   @media (max-width:900px) {
     #chatwrap { flex-direction:column; }
@@ -288,13 +286,12 @@ function hasWarnings(w){return !!(w.head||w.items.length||w.error);}
 function freshItemsHtml(items){return '<ul class="fr-items">'+items.slice(0,8).map(function(i){const link=/^https:[/][/]/.test(i.url||'')?' <a href="'+esc(i.url)+'" target="_blank" rel="noopener noreferrer">open</a>':'';
     return '<li><span class="fr-who">'+esc(i.author||'someone')+'</span> <span class="fr-at">'+esc(i.at?rel(i.at):'')+'</span><br>'+esc(i.snippet||'')+link+'</li>';}).join('')+(items.length>8?'<li>and '+(items.length-8)+' more</li>':'')+'</ul>';}
 function redraftCtl(d,items){const st=redraftState(d,items,REDRAFT_LOCAL[d.id]);
-  if(st==='active')return '<span class="fr-red" role="status"><span class="spin" aria-hidden="true"></span>Redrafting\u2026</span><button type="button" class="lnk" data-dact="redraft-cancel" title="Stop waiting for the chat. Send works again.">Cancel redraft</button>';
+  if(st==='active')return '<button type="button" class="redraft" disabled data-dact="redraft-busy"><span class="spin" aria-hidden="true"></span>Redrafting\u2026</button><button type="button" class="lnk" data-dact="redraft-cancel" title="Stop waiting for the chat. Send works again.">Cancel redraft</button>';
   if(st==='offer')return '<button type="button" class="redraft" data-dact="redraft" title="Ask the chat to re-read the thread and update this draft">Redraft</button>';
-  if(st==='kept')return '<span class="fr-note">The chat kept this draft as written</span>';
-  if(st==='asked')return '<span class="fr-note">Redraft requested</span>';
+  if(st==='kept')return '<span class="dsub">The chat kept this draft as written</span>';
+  if(st==='asked')return '<span class="dsub">Redraft requested</span>';
   return '';}
-function freshWarnHtml(w,d){let h='';if(w.items.length)h+='<div class="fr-warn" role="alert"><div class="fr-h"><span class="fr-t">'+esc(freshTitle(w.items.length))+'</span>'+(d?'<span class="fr-sp"></span>'+redraftCtl(d,w.items):'')+'</div>'+freshItemsHtml(w.items)+'</div>';
-  else if(d&&redraftState(d,[],REDRAFT_LOCAL[d.id])==='active')h+='<div class="fr-warn" role="status"><div class="fr-h"><span class="fr-t">Redraft requested</span><span class="fr-sp"></span>'+redraftCtl(d,[])+'</div></div>';
+function freshWarnHtml(w){let h='';if(w.items.length)h+='<div class="fr-warn" role="alert"><span class="fr-t">'+esc(freshTitle(w.items.length))+'</span>'+freshItemsHtml(w.items)+'</div>';
   if(w.error)h+='<div class="fr-warn err" role="alert"><span class="fr-t">Could not check the thread for new messages.</span><br>'+esc(w.error)+'</div>';return h;}
 function emailHtml(d,texts,editing){const e=d.email;const rows=[['From',e.from||(e.account?e.account+' account':'default account')],['To',(e.to||[]).join(', ')]].concat(e.cc&&e.cc.length?[['Cc',e.cc.join(', ')]]:[]).concat(e.bcc&&e.bcc.length?[['Bcc',e.bcc.join(', ')]]:[]);
   const hdr='<div class="em-hdr">'+rows.map(function(r){return '<b>'+r[0]+'</b><span>'+esc(r[1])+'</span>';}).join('')+'</div><div class="em-subj">'+esc(e.subject)+'</div>';
@@ -348,12 +345,12 @@ function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const
   const slackBody=d.email?emailHtml(d,texts,editing):!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
   const body=reviewHtml(d)+slackBody+reactionsHtml(d);const warn=sendWarnings(d);const warned=hasWarnings(warn);const anyway=warned?'Send anyway':'Send';
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
-  const rdOn=redraftState(d,warn.items,REDRAFT_LOCAL[d.id])==='active';
-  const passive=!conf&&!prog&&!sending&&(warn.items.length||rdOn)?'<div class="fr-pass">'+freshWarnHtml({items:warn.items,error:''},d)+'</div>':'';
+  const rdSt=redraftState(d,warn.items,REDRAFT_LOCAL[d.id]);const rdOn=rdSt==='active';
+  const passive=!conf&&!prog&&!sending&&warn.items.length?'<div class="fr-pass">'+freshWarnHtml({items:warn.items,error:''})+'</div>':'';
   const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':prog.phase==='email'?'Sending the email\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
     :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
     :conf?'<div class="dconf">'+(warn.head?staleWarnHtml(d):'')+freshWarnHtml(warn)+'<div class="dsub">'+esc(confirmWhat(d,texts))+'</div><div class="arow"><button class="send" data-dact="post-none" title="'+(warned?'Send it past the warning above. ':'')+'Post it. The chat stays as it is.">'+anyway+(!warned&&d.review&&!d.review_posted&&texts.length?' all':'')+'</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>'+anyway+' &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">'+anyway+' &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
-    :'<div class="dacts"><button class="send" data-dact="send"'+(rdOn?' disabled title="Redrafting: the chat is rewriting this. Cancel the redraft to send as is."':'')+'>Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
+    :'<div class="dacts"><button class="send'+(rdSt==='offer'||rdOn?' demoted':'')+'" data-dact="send"'+(rdOn?' disabled title="Redrafting: the chat is rewriting this. Cancel the redraft to send as is."':'')+'>Send</button>'+redraftCtl(d,warn.items)+'<button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
   return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+passive+acts+'</div>';}
 function canPark(d){return !!(d.thread_ts||d.channel||d.email);}
 function parkWhyNot(d){return canPark(d)?'':(d.review?'a review with no Slack message has no thread to watch for a reply':'no thread or channel to watch for a reply');}

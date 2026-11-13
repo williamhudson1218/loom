@@ -95,6 +95,10 @@ describe('the card', () => {
     expect(OUTBOX_VIEW_JS).toContain('data-dact="redraft"');
     expect(OUTBOX_VIEW_JS).toContain('/api/outbox/redraft-cancel');
     expect(OUTBOX_VIEW_JS).toContain('rdOn?');
+    // The button sits in the action row right after Send, not in the yellow box; Send is demoted while it is offered.
+    expect(OUTBOX_VIEW_JS).toContain(">Send</button>'+redraftCtl(d,warn.items)+'<button data-dact=\"edit\">");
+    expect(OUTBOX_VIEW_JS).toContain("' demoted'");
+    expect(OUTBOX_VIEW_JS).toContain('data-dact="redraft-busy"');
     for (const r of ['/api/outbox/redraft', '/api/outbox/redraft-cancel']) expect(CORE_ROUTES.some((x) => x.path === r && x.method === 'POST')).toBe(true);
   });
 });
