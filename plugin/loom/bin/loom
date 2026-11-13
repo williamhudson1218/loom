@@ -18,6 +18,7 @@
                                                      (--clear-files drops attachments; omit --file to keep them;
                                                      --review-file / --reactions-file / --email-file replace those parts)
   loom outbox supersede <id>                         retire a pending draft a newer one replaces
+  loom outbox keep <id>                              after a Redraft request: the draft still stands as written
   loom outbox list [--json] [--all] | show <id>
   loom thread claim <url> | started <url|key> | release <url> | list [filter]
   loom thread open <url> [--ack] [--eyes]            mark a ticket looking (eyes only on a channel's top-level post)
@@ -443,6 +444,14 @@ def outbox_supersede(args):
     print(rest[0])
 
 
+def outbox_keep(args):
+    _, rest = opts(args)
+    if not rest:
+        die("usage: loom outbox keep <id>", 2)
+    c.write_event("outbox.keep", session=c.session_id(), id=rest[0])
+    print(rest[0])
+
+
 def outbox_list(args):
     o, _ = opts(args, flags=("json", "all"))
     r = get("/api/cli/outbox" + ("?all=1" if o.get("all") else ""))
@@ -475,10 +484,10 @@ def outbox_show(args):
 
 
 def cmd_outbox(args):
-    subs = {"add": outbox_add, "update": outbox_update, "supersede": outbox_supersede,
+    subs = {"add": outbox_add, "update": outbox_update, "supersede": outbox_supersede, "keep": outbox_keep,
             "list": outbox_list, "show": outbox_show}
     if not args or args[0] not in subs:
-        die("usage: loom outbox add|update|supersede|list|show", 2)
+        die("usage: loom outbox add|update|supersede|keep|list|show", 2)
     subs[args[0]](args[1:])
 
 

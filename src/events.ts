@@ -3,6 +3,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { TOOL_DIR } from './paths.ts';
 import { addDraft, closeDraft, updateDraft, type StoreOpts } from './outbox.ts';
+import { keepMark } from './redraft.ts';
 import { claimForChat, recordAck, releaseThread, setThreadStage, syncLegacyThreads, type ClaimMode, type LegacyThreadRec } from './slackowner.ts';
 import { addTestLink, clearTestLinks } from './testlinks.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
@@ -31,6 +32,8 @@ export interface LoomEvent {
 export interface IngestOpts {
   dir?: string;
   outbox?: StoreOpts;
+  /** The redraft marks file (src/redraft.ts); the default is the real one. */
+  redraft?: string;
   now?: () => number;
   /** The old hook's thread state, mirrored in before the events (src/slack.ts readThreads). */
   legacyThreads?: () => Record<string, LegacyThreadRec>;
@@ -90,6 +93,11 @@ export function applyEvent(db: Database.Database, e: LoomEvent, opts: IngestOpts
     case 'outbox.supersede': {
       const r = closeDraft(str(e.id), 'superseded', { at }, opts.outbox);
       return r.ok || r.detail.startsWith('already') ? { ok: true, detail: r.detail } : r;
+    }
+    case 'outbox.keep': {
+      // The chat re-read the thread and the draft stands: the card leaves its Redrafting state.
+      keepMark(str(e.id), opts.redraft);
+      return { ok: true, detail: 'kept' };
     }
     case 'thread.claim': {
       const ref = refOf(e);

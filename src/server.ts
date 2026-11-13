@@ -44,6 +44,7 @@ import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
 import { emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
 import { OutboxWatch } from './outboxwatch.ts';
+import { buildRedraftPrompt, clearMark, newMark, readMarks, redraftView, setMark } from './redraft.ts';
 import { cachedHead, ghRun, githubPoster, headMoved } from './outboxreview.ts';
 import { cliAdapter, cliRunner, EMAIL_OFF_DETAIL, resolveEmailCli, type EmailAdapter } from './outboxemail.ts';
 import { chooseEmailRoute, gmailAdapter } from './gmailapi.ts';
@@ -396,9 +397,13 @@ function pendingDrafts(): ReturnType<typeof pendingDraftsRaw> {
     let off: boolean | null = null;
     return () => (off ??= !emailAdapter());
   })();
+  const redrafts = readMarks();
+  const now = Date.now();
   return pendingDraftsRaw(undefined, undefined, { liveSessions, marks: readStaleMarks() }).map((d) => {
     const s = outboxWatch.stateOf(d.id);
-    const x = d.email && mailOff() ? { ...d, email_off: EMAIL_OFF_DETAIL } : d;
+    const x0 = d.email && mailOff() ? { ...d, email_off: EMAIL_OFF_DETAIL } : d;
+    const rv = redraftView(redrafts[d.id], d, now);
+    const x = rv ? { ...x0, redraft: rv } : x0;
     return s ? { ...x, send_state: s.state, send_note: s.note ?? '' } : x;
   });
 }
@@ -457,6 +462,53 @@ function parkedForBoard(): (ParkedRow & { label: string; reply_first_line: strin
 function firstLineOf(text: string, names: Record<string, string>): string {
   const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
   return line.replace(/<@([A-Z0-9]+)(?:\|[^>]*)?>/g, (_m, id) => '@' + (names[id] || 'someone')).replace(/<([^<>|]+)\|([^<>]*)>/g, '$2').replace(/<([^<>]+)>/g, '$1').slice(0, 160);
+}
+
+/**
+ * Put a prompt in front of the chat that owns a draft: typed into its pane when it is live
+ * (Claude Code queues typed input while it works), else the chat is resumed with the prompt
+ * as its first turn (the parked-chat path: a long prompt rides in a file, see launch.ts promptArg).
+ */
+async function deliverToChat(sid: string, prompt: string): Promise<{ ok: boolean; detail: string; how?: 'sent' | 'resumed' }> {
+  const { views, live } = snapshot();
+  for (const agent of ['claude', 'codex'] as Agent[]) {
+    const info = live[agentSessionKey(agent, sid)];
+    if (info) {
+      const r = sendToPane(info.pane_id, prompt, agent);
+      return { ok: r.ok, detail: r.ok ? 'sent to the chat' : r.detail, how: 'sent' };
+    }
+  }
+  if (resumesInFlight.has(sid)) return { ok: false, detail: 'the chat is being resumed already' };
+  const target = resolveLaunchTarget(views, sid, null);
+  if (!target.ok) return { ok: false, detail: 'the chat has ended and cannot be resumed: ' + target.detail };
+  resumesInFlight.add(sid);
+  try {
+    let pane = '';
+    const world = readWorld();
+    if (pickStrategy(world) === 'lanes') {
+      const t = laneTargets(world)[0];
+      pane = t ? nextOpenPane(t.lane, world)?.pane_id ?? '' : '';
+      if (!pane) return { ok: false, detail: 'the chat has ended and no pane is open to resume it in' };
+    } else {
+      const a = acquireManagedPane(target.dir);
+      if (!a.ok) return { ok: false, detail: a.detail };
+      pane = a.paneId;
+      await waitForShellReadyAsync(pane);
+    }
+    const out = launchInPane({
+      paneId: pane,
+      projectDir: target.dir,
+      sessionId: sid,
+      sourceAgent: target.sourceAgent,
+      selectedAgent: target.sourceAgent,
+      fork: false,
+      prompt,
+      focus: false,
+    });
+    return { ok: out.ok, detail: out.ok ? 'resumed the chat with the request' : out.detail, how: 'resumed' };
+  } finally {
+    resumesInFlight.delete(sid);
+  }
 }
 
 /** Reopen a parked chat in a managed pane (or the next open lane pane) with the reply as its first prompt. */
@@ -1387,6 +1439,38 @@ export function createServer(): http.Server {
         sendDraft(id, messages, sendOpts(dry, ackStale, ackFresh)).then(done).then((r) => json(res, r.ok ? 200 : 409, r));
       });
       return;
+    }
+
+    // Redraft: tell the chat that owns a draft the thread moved on, and hold Send until it answers.
+    if (url.pathname === '/api/outbox/redraft' && req.method === 'POST') {
+      return readBody(req, res, (b) => {
+        const id = typeof b.id === 'string' ? b.id : '';
+        const d = readOutbox()[id];
+        if (!d || d.status !== 'pending') return json(res, 404, { ok: false, detail: 'no such pending draft' });
+        if (chatIsSending(id)) return json(res, 409, { ok: false, detail: 'the chat is posting this draft now' });
+        const deps = freshDeps();
+        if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined });
+        cachedFresh(id, d, deps)
+          .then(async (r) => {
+            if (!r.items.length) return json(res, 409, { ok: false, detail: r.ok ? 'no new messages since this was drafted' : 'could not read the thread: ' + r.error });
+            const url0 = d.thread_url || r.items.find((i) => /^https:[/][/]/.test(i.url ?? ''))?.url || '';
+            const prompt = buildRedraftPrompt({ id, url: url0, items: r.items });
+            const out = await deliverToChat(d.session_id, prompt);
+            if (!out.ok) return json(res, 409, { ok: false, detail: out.detail });
+            setMark(id, newMark(d, r.items, Date.now()), undefined, new Set(Object.values(readOutbox()).filter((x) => x.status === 'pending').map((x) => x.id)));
+            return json(res, 200, { ok: true, detail: out.detail, how: out.how });
+          })
+          .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
+      });
+    }
+
+    // Cancel a redraft that was asked: Send works again and the card offers Redraft again.
+    if (url.pathname === '/api/outbox/redraft-cancel' && req.method === 'POST') {
+      return readBody(req, res, (b) => {
+        const id = typeof b.id === 'string' ? b.id : '';
+        if (!id) return json(res, 400, { ok: false, detail: 'id is required' });
+        return json(res, 200, { ok: true, detail: clearMark(id) ? 'cancelled' : 'nothing to cancel' });
+      });
     }
 
     // Cut a burst's current typing gap short. Body {id}. Posts nothing itself: the running send does.

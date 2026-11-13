@@ -127,13 +127,14 @@ describe('outbox UI wiring', () => {
     expect(html).toContain('data-dact="copy">Copy</button>');
     // One Send button on the card; park and close live in the confirm step, Send first and default-focused.
     expect(html).not.toContain('data-dact="sendpark"');
-    expect(html).toContain('data-dact="send">Send</button>');
+    expect(html).toContain('data-dact="send"');
+    expect(html).toContain('>Send</button>');
     expect(html).toContain('Enter send · \u2325Enter send &amp; park · \u21e7Enter send &amp; close · Esc cancel');
     expect(html).toContain("body:JSON.stringify({id,messages:texts,after,ack_stale,ack_fresh})");
     // No second write path: send, discard, send-now (cuts a gap short, posts nothing itself) and the state poll,
     // plus the read-only thumbnail route (/api/outbox/file, GET), PR head check (/api/outbox/review-head, GET)
-    // and freshness check (/api/outbox/fresh, GET).
-    expect(html.match(/\/api\/outbox\//g)!.length).toBeLessThanOrEqual(7);
+    // and freshness check (/api/outbox/fresh, GET), plus redraft and its cancel (ask the chat, post nothing).
+    expect(html.match(/\/api\/outbox\//g)!.length).toBeLessThanOrEqual(9);
   });
   it('no longer renders drafts inside the transcript detail column', () => {
     expect(html).not.toContain('function draftsHtml(');

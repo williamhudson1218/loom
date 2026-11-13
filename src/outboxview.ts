@@ -137,6 +137,15 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .fr-warn { margin:0; padding:8px 10px; border-radius:6px; background:rgba(212,167,44,.14); border:1px solid rgba(212,167,44,.35); color:#e8b84b; font-size:12.5px; }
   .fr-warn.err { background:rgba(248,81,73,.12); border-color:rgba(248,81,73,.35); color:#ff9b94; }
   .fr-warn .fr-t { font-weight:600; }
+  .fr-h { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .fr-h .fr-sp { flex:1; }
+  .fr-h button.redraft { background:#d4a72c; color:#1a1405; border-color:#d4a72c; font-weight:600; }
+  .fr-h button.redraft:hover { background:#e8b84b; }
+  .fr-h .fr-red { display:inline-flex; align-items:center; gap:6px; font-weight:600; }
+  .fr-h .fr-red .spin { width:11px; height:11px; border-radius:50%; border:2px solid rgba(232,184,75,.3); border-top-color:#e8b84b; animation:dspin .8s linear infinite; }
+  .fr-h .fr-note { color:#8a90a2; font-size:12px; }
+  .fr-h button.lnk { background:transparent; border:0; color:#9cc0ff; padding:0 2px; font-size:12px; text-decoration:underline; }
+  .dacts button.send:disabled { opacity:.45; cursor:not-allowed; }
   .fr-items { margin:6px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px; }
   .fr-items li { color:#d1d5de; font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
   .fr-items .fr-who { color:#e8b84b; font-weight:600; }
@@ -147,7 +156,7 @@ export const OUTBOX_VIEW_CSS = String.raw`
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
     .draft.sdraft.leaving, #outrail.closing { transition:none; }
-    .dsend .spin { animation:none; }
+    .dsend .spin, .fr-red .spin { animation:none; }
   }
   @media (max-width:900px) {
     #chatwrap { flex-direction:column; }
@@ -235,6 +244,16 @@ function emailDest(e){var to=(e&&e.to)||[];return to.length?(to[0]+(to.length>1?
 // The items the card knows of: what the last refused send returned plus the passive check, one per id, oldest first.
 function freshMerge(a,b){var seen={},out=[];(a||[]).concat(b||[]).forEach(function(i){if(i&&i.id&&!seen[i.id]){seen[i.id]=1;out.push(i);}});return out.sort(function(x,y){return (x.at||0)-(y.at||0);});}
 function freshTitle(n){return n+' new message'+(n===1?'':'s')+' since this was drafted';}
+var REDRAFT_LOCAL={}; // draft id -> 1 while a Redraft click is in flight
+// ---- redraft: a card whose thread moved on asks its chat for a new draft (src/redraft.ts holds the state)
+// 'active' (asked, Send held), 'offer' (new messages the chat has not been asked about), 'kept' (chat said it stands), 'asked' (already redrafted for all of these), 'none'.
+function redraftState(d,items,local){
+  if(local||(d&&d.redraft&&d.redraft.active))return 'active';
+  if(!items||!items.length)return 'none';
+  var done=(d&&d.redraft&&d.redraft.ids)||[];
+  if(items.filter(function(i){return done.indexOf(i.id)<0;}).length)return 'offer';
+  return d&&d.redraft&&d.redraft.kept?'kept':'asked';
+}
 `;
 
 export const OUTBOX_VIEW_JS = String.raw`
@@ -268,7 +287,14 @@ function sendWarnings(d){const b=BLOCK[d.id]||{};const f=FRESH[d.id]||{};return 
 function hasWarnings(w){return !!(w.head||w.items.length||w.error);}
 function freshItemsHtml(items){return '<ul class="fr-items">'+items.slice(0,8).map(function(i){const link=/^https:[/][/]/.test(i.url||'')?' <a href="'+esc(i.url)+'" target="_blank" rel="noopener noreferrer">open</a>':'';
     return '<li><span class="fr-who">'+esc(i.author||'someone')+'</span> <span class="fr-at">'+esc(i.at?rel(i.at):'')+'</span><br>'+esc(i.snippet||'')+link+'</li>';}).join('')+(items.length>8?'<li>and '+(items.length-8)+' more</li>':'')+'</ul>';}
-function freshWarnHtml(w){let h='';if(w.items.length)h+='<div class="fr-warn" role="alert"><span class="fr-t">'+esc(freshTitle(w.items.length))+'</span>'+freshItemsHtml(w.items)+'</div>';
+function redraftCtl(d,items){const st=redraftState(d,items,REDRAFT_LOCAL[d.id]);
+  if(st==='active')return '<span class="fr-red" role="status"><span class="spin" aria-hidden="true"></span>Redrafting\u2026</span><button type="button" class="lnk" data-dact="redraft-cancel" title="Stop waiting for the chat. Send works again.">Cancel redraft</button>';
+  if(st==='offer')return '<button type="button" class="redraft" data-dact="redraft" title="Ask the chat to re-read the thread and update this draft">Redraft</button>';
+  if(st==='kept')return '<span class="fr-note">The chat kept this draft as written</span>';
+  if(st==='asked')return '<span class="fr-note">Redraft requested</span>';
+  return '';}
+function freshWarnHtml(w,d){let h='';if(w.items.length)h+='<div class="fr-warn" role="alert"><div class="fr-h"><span class="fr-t">'+esc(freshTitle(w.items.length))+'</span>'+(d?'<span class="fr-sp"></span>'+redraftCtl(d,w.items):'')+'</div>'+freshItemsHtml(w.items)+'</div>';
+  else if(d&&redraftState(d,[],REDRAFT_LOCAL[d.id])==='active')h+='<div class="fr-warn" role="status"><div class="fr-h"><span class="fr-t">Redraft requested</span><span class="fr-sp"></span>'+redraftCtl(d,[])+'</div></div>';
   if(w.error)h+='<div class="fr-warn err" role="alert"><span class="fr-t">Could not check the thread for new messages.</span><br>'+esc(w.error)+'</div>';return h;}
 function emailHtml(d,texts,editing){const e=d.email;const rows=[['From',e.from||(e.account?e.account+' account':'default account')],['To',(e.to||[]).join(', ')]].concat(e.cc&&e.cc.length?[['Cc',e.cc.join(', ')]]:[]).concat(e.bcc&&e.bcc.length?[['Bcc',e.bcc.join(', ')]]:[]);
   const hdr='<div class="em-hdr">'+rows.map(function(r){return '<b>'+r[0]+'</b><span>'+esc(r[1])+'</span>';}).join('')+'</div><div class="em-subj">'+esc(e.subject)+'</div>';
@@ -322,11 +348,12 @@ function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const
   const slackBody=d.email?emailHtml(d,texts,editing):!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
   const body=reviewHtml(d)+slackBody+reactionsHtml(d);const warn=sendWarnings(d);const warned=hasWarnings(warn);const anyway=warned?'Send anyway':'Send';
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
-  const passive=!conf&&!prog&&!sending&&warn.items.length?'<div class="fr-pass">'+freshWarnHtml({items:warn.items,error:''})+'</div>':'';
+  const rdOn=redraftState(d,warn.items,REDRAFT_LOCAL[d.id])==='active';
+  const passive=!conf&&!prog&&!sending&&(warn.items.length||rdOn)?'<div class="fr-pass">'+freshWarnHtml({items:warn.items,error:''},d)+'</div>':'';
   const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':prog.phase==='email'?'Sending the email\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
     :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
     :conf?'<div class="dconf">'+(warn.head?staleWarnHtml(d):'')+freshWarnHtml(warn)+'<div class="dsub">'+esc(confirmWhat(d,texts))+'</div><div class="arow"><button class="send" data-dact="post-none" title="'+(warned?'Send it past the warning above. ':'')+'Post it. The chat stays as it is.">'+anyway+(!warned&&d.review&&!d.review_posted&&texts.length?' all':'')+'</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>'+anyway+' &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">'+anyway+' &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
-    :'<div class="dacts"><button class="send" data-dact="send">Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
+    :'<div class="dacts"><button class="send" data-dact="send"'+(rdOn?' disabled title="Redrafting: the chat is rewriting this. Cancel the redraft to send as is."':'')+'>Send</button><button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
   return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+passive+acts+'</div>';}
 function canPark(d){return !!(d.thread_ts||d.channel||d.email);}
 function parkWhyNot(d){return canPark(d)?'':(d.review?'a review with no Slack message has no thread to watch for a reply':'no thread or channel to watch for a reply');}
@@ -366,7 +393,7 @@ function setDrafts(nl){const old=DATA.drafts||[];const keep=new Set(nl.map(d=>d.
 // While the open chat has pending drafts, ask for their state every 1.5 s so a chat posting one itself shows as Sending\u2026 within a second or two.
 function outPollSync(){const want=!document.hidden&&railDrafts().length>0;if(want&&!outPoll)outPoll=setInterval(pollOutbox,1500);else if(!want&&outPoll){clearInterval(outPoll);outPoll=null;}
   if(want&&!outTick)outTick=setInterval(function(){document.querySelectorAll('#outrail [data-eta]').forEach(function(el){el.textContent=sendEtaText(+el.dataset.eta);});},1000);else if(!want&&outTick){clearInterval(outTick);outTick=null;}}
-function pollOutbox(){if(document.hidden)return;fetch('/api/outbox/state').then(r=>r.json()).then(j=>{if(!j||!j.ok)return;const sig=x=>JSON.stringify((x||[]).map(d=>[d.id,d.send_state||'',d.send_note||'']));const psig=x=>JSON.stringify(x||{});const before=sig((DATA.drafts||[]).filter(d=>!LEAVING[d.id]))+psig(SENDING);SENDING=j.sending||{};setDrafts(j.drafts||[]);if(sig(j.drafts)+psig(SENDING)!==before)renderOutbox();}).catch(()=>{});}
+function pollOutbox(){if(document.hidden)return;fetch('/api/outbox/state').then(r=>r.json()).then(j=>{if(!j||!j.ok)return;const sig=x=>JSON.stringify((x||[]).map(d=>[d.id,d.send_state||'',d.send_note||'',d.redraft?(d.redraft.active?'a':'k')+d.redraft.ids.length:'']));const psig=x=>JSON.stringify(x||{});const before=sig((DATA.drafts||[]).filter(d=>!LEAVING[d.id]))+psig(SENDING);SENDING=j.sending||{};setDrafts(j.drafts||[]);if(sig(j.drafts)+psig(SENDING)!==before)renderOutbox();}).catch(()=>{});}
 function refitTerm(){try{if(termFit)termFit.fit();}catch(e){}}
 function renderOutbox(){railRender();}
 // ---- actions (rail and view share them)
@@ -376,7 +403,11 @@ function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if
   if(act==='email-quote'){EMAIL_QUOTE[id]=!EMAIL_QUOTE[id];renderOutbox();return;}
   if(act==='copy'){const r=d.review;const gh=r?[r.body].concat((r.comments||[]).map(function(c){return reviewLoc(c)+NL+c.body;})).filter(Boolean):[];copyText(gh.concat(draftTexts(d)).join(NL+NL),'draft copied');return;}
   if(act==='review-all'){REVIEW_ALL[id]=!REVIEW_ALL[id];renderOutbox();return;}
-  if(act==='send'){if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
+  if(act==='redraft'){if(REDRAFT_LOCAL[id])return;REDRAFT_LOCAL[id]=1;draftMsg[id]='';renderOutbox();
+    fetch('/api/outbox/redraft',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{delete REDRAFT_LOCAL[id];draftMsg[id]=j.ok?'':('Redraft failed: '+(j.detail||'unknown error'));renderOutbox();pollOutbox();}).catch(()=>{delete REDRAFT_LOCAL[id];draftMsg[id]='Redraft failed: server off';renderOutbox();});return;}
+  if(act==='redraft-cancel'){delete REDRAFT_LOCAL[id];if(d.redraft)d.redraft.active=false;renderOutbox();
+    fetch('/api/outbox/redraft-cancel',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(()=>pollOutbox()).catch(()=>{});return;}
+  if(act==='send'){if(redraftState(d,[],REDRAFT_LOCAL[id])==='active')return;if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
   if(act==='cancel'){draftConfirm=null;delete BLOCK[id];renderOutbox();return;}
   if(act==='sendnow'){fetch('/api/outbox/send-now',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(()=>pollOutbox()).catch(()=>{});return;}
   if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);

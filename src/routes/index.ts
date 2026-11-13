@@ -114,6 +114,8 @@ export const CORE_ROUTES: RouteDef[] = [
   b('POST', '/api/outbox/send'),
   b('POST', '/api/outbox/discard'),
   b('POST', '/api/outbox/send-now'),
+  b('POST', '/api/outbox/redraft'),
+  b('POST', '/api/outbox/redraft-cancel'),
   b('POST', '/api/watchers/toggle'),
   b('POST', '/api/watchers/goto'),
   // Trees

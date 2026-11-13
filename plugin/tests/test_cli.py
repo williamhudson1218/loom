@@ -86,6 +86,10 @@ class Cli(HomeCase):
         self.assertEqual(self.run_cli("outbox", "add", "--channel", "#ops", "--text-file", self.text_file("  \n")).returncode, 2)
         self.assertEqual(self.events(), [])
 
+    def test_outbox_keep_writes_an_event(self):
+        self.run_cli("outbox", "keep", "d1")
+        self.assertEqual([(e["kind"], e["id"]) for e in self.events()], [("outbox.keep", "d1")])
+
     def test_outbox_update_and_supersede(self):
         self.run_cli("outbox", "update", "d1", "--text-file", self.text_file("new"))
         self.run_cli("outbox", "supersede", "d1")

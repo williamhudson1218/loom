@@ -36,6 +36,8 @@ A Slack message is written in the user's name, so it is **drafted, shown, record
    or `loom outbox add` again for the same destination (the older pending draft is superseded). Re-record after **every** redraft;
    the outbox must hold the text the user is looking at.
 6. **Retire a draft** that a different approach replaces: `loom outbox supersede <id>`.
+   **A "redraft <id>" message from Loom** means the thread got new messages after you drafted: re-read the thread, then
+   `loom outbox update <id> ...` if the draft must change, or `loom outbox keep <id>` (and one line on why) if it stands.
 7. **Sending is the user's.** They send from Loom, or tell you to send. Do not post, react, or reply in Slack yourself from this skill.
    After a send is confirmed, say what was sent; do not show it again as a draft.
    A Slack post from a chat is denied by Loom's `outbox-guard.py` hook unless this chat's outbox holds a pending
