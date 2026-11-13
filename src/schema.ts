@@ -213,7 +213,8 @@ CREATE TABLE IF NOT EXISTS chat_hidden (
 // URL) or a Slack thread (its permalink); one OPEN item per ref (resolved_at = 0).
 // orchestrator_log is what Loom did on its behalf (relays, queued relays, event
 // batches), echoed in its conversation. orchestrator_outbox holds relays to a chat
-// Will was looking at, delivered once he leaves it.
+// Will was looking at, delivered once he leaves it. orchestrator_verdicts caches
+// the model's read of an ended chat against an item (src/orchjudge.ts).
 /** resolved_why came after the table: an existing install gets it here. */
 function ensureOrchestratorColumns(db: Database.Database): void {
   const have = new Set((db.prepare(`PRAGMA table_info(orchestrator_items)`).all() as { name: string }[]).map((c) => c.name));
@@ -235,6 +236,14 @@ CREATE TABLE IF NOT EXISTS orchestrator_items (
   resolved_why TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS orchestrator_items_open_idx ON orchestrator_items(resolved_at, kind);
+CREATE TABLE IF NOT EXISTS orchestrator_verdicts (
+  key             TEXT PRIMARY KEY,
+  activity_at     INTEGER NOT NULL,
+  item_updated_at INTEGER NOT NULL,
+  state           TEXT NOT NULL,
+  reason          TEXT NOT NULL DEFAULT '',
+  at              INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS orchestrator_log (
   id     INTEGER PRIMARY KEY AUTOINCREMENT,
   at     INTEGER NOT NULL,

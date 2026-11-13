@@ -15,6 +15,8 @@ import { cachedPipeline, parsePrRef, wantPipeline } from './pipeline.ts';
 import { readOutbox } from './outbox.ts';
 import { threadState } from './slackowner.ts';
 import { sweepItems, type ChatFact, type PrFact, type SweepFacts } from './orchsweep.ts';
+import { ChatJudge, askModel, dbVerdictStore } from './orchjudge.ts';
+import { paneLabelConfig } from './panetopics.ts';
 import { detectFirstRunPrompt, type OrchStartState } from './orchstart.ts';
 import { acquireManagedPane } from './managed.ts';
 import { waitForShellReady } from './newthread.ts';
@@ -188,8 +190,21 @@ export function toolDeps(getSnap: () => Snap): OrchToolDeps {
  * Each lookup answers null when Loom has no data, which never clears anything:
  * a board that has not indexed yet must not read as "every chat archived".
  */
-export function sweepFacts(snap: Snap, db: Database.Database, readDrafts: () => Record<string, { status: string }> = readOutbox, now: number = Date.now()): SweepFacts {
+export function sweepFacts(
+  snap: Snap,
+  db: Database.Database,
+  readDrafts: () => Record<string, { status: string }> = readOutbox,
+  now: number = Date.now(),
+  judge: ChatJudge | null = null,
+): SweepFacts {
   const views = new Map(snap.views.map((v) => [agentSessionKey(v.agent, v.session_id), v]));
+  // Pane name -> chat: the live name wins, else the last name the chat was seen under (newest chat first).
+  const names = new Map<string, string>();
+  for (const [ref, L] of Object.entries(snap.live)) if (L.name) names.set(L.name.toLowerCase(), ref);
+  for (const v of [...snap.views].sort((a, b) => b.last_active_at - a.last_active_at)) {
+    const n = v.pane_name?.toLowerCase();
+    if (n && !names.has(n)) names.set(n, agentSessionKey(v.agent, v.session_id));
+  }
   let drafts: Record<string, { status: string }> | null = null;
   return {
     chat: (ref): ChatFact | null => {
@@ -217,6 +232,8 @@ export function sweepFacts(snap: Snap, db: Database.Database, readDrafts: () => 
       }
       return drafts[id]?.status ?? null;
     },
+    chatByName: (name) => names.get(name) ?? null,
+    ...(judge ? { verdict: judge.verdict } : {}),
     slack: (url) => {
       const ref = parseSlackThread(url);
       if (!ref) return null;
@@ -227,6 +244,27 @@ export function sweepFacts(snap: Snap, db: Database.Database, readDrafts: () => 
       }
     },
   };
+}
+
+/** A chat's recent messages by ref. An archived chat is off the board, so its path comes from the chats table. */
+function chatMessages(ref: string): Msg[] {
+  const i = ref.indexOf(':');
+  const [agent, sid] = [ref.slice(0, i) as Agent, ref.slice(i + 1)];
+  const row = withDb((db) => db.prepare(`SELECT jsonl_path FROM chats WHERE agent = ? AND session_id = ?`).get(agent, sid) as { jsonl_path: string } | undefined);
+  return row?.jsonl_path ? readTranscript(agent, row.jsonl_path, { limit: 60 }) : [];
+}
+
+let judge: ChatJudge | null = null;
+/** The one judge this process uses: the pane-topic model and its on/off setting. */
+function chatJudge(): ChatJudge {
+  judge ??= new ChatJudge({
+    ask: (prompt) => askModel(withDb((db) => paneLabelConfig(db).model) || 'haiku')(prompt),
+    messages: chatMessages,
+    enabled: () => withDb((db) => paneLabelConfig(db).enabled),
+    store: dbVerdictStore(withDb),
+    now: () => Date.now(),
+  });
+  return judge;
 }
 
 /** Clear every open item whose condition no longer holds, and say so in the log. Returns what it cleared. */
@@ -307,7 +345,9 @@ export function orchTick(snap: Snap, now: number = Date.now(), io: TickIo = real
       if (now - sweptAt >= SWEEP_EVERY_MS) {
         sweptAt = now;
         try {
-          sweepRail(db, sweepFacts(snap, db, readOutbox, now), now);
+          const j = chatJudge();
+          j.beginSweep();
+          sweepRail(db, sweepFacts(snap, db, readOutbox, now, j), now);
         } catch (e) {
           console.error('[loom] orchestrator sweep failed:', (e as Error).message);
         }

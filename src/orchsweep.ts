@@ -19,6 +19,13 @@ export interface ChatFact {
   lastActiveAt: number; // last write of any kind
 }
 
+/**
+ * The cheap model's read of an ended chat against one item. 'pending' while the
+ * ask is queued or running; 'unavailable' when no model can be asked (labels
+ * off, the call failed), which falls back to the mechanical rule.
+ */
+export type Verdict = { state: 'resolved'; reason: string } | { state: 'open'; reason: string } | { state: 'pending' } | { state: 'unavailable' };
+
 export interface PrFact {
   state: 'open' | 'merged' | 'closed';
   deploy: string; // the pipeline's deploy step state ('' when unknown)
@@ -32,6 +39,10 @@ export interface SweepFacts {
   draft: (id: string) => string | null;
   /** A Slack thread's recorded stage ('done' once handled), null when unknown. */
   slack: (url: string) => string | null;
+  /** The chat a pane name ("spry-nougat") belongs to, as its ref, or null. */
+  chatByName?: (name: string) => string | null;
+  /** Read the chat before clearing on its state alone. Absent = unavailable. */
+  verdict?: (item: OrchItem, chatRef: string, chat: ChatFact) => Verdict;
 }
 
 export const SWEEP = {
@@ -58,6 +69,19 @@ export function draftIdsIn(text: string): string[] {
   return [...new Set(text.match(/\bd[0-9a-f]{11,13}\b/g) ?? [])];
 }
 
+/** Pane names quoted in an item ("spry-nougat looks stalled"). Only names a chat really has count. */
+export function paneNamesIn(text: string): string[] {
+  return [...new Set(text.toLowerCase().match(/\b[a-z]{2,}-[a-z]{2,}\b/g) ?? [])];
+}
+
+/** Why a chat counts as over, or '' while it is not. */
+export function chatOver(c: ChatFact, now: number, opts: SweepOpts = SWEEP): '' | 'chat archived' | 'chat closed' | 'chat ended' {
+  if (!c.onBoard) return 'chat archived';
+  if (c.closed) return 'chat closed';
+  if (!c.live && now - c.lastActiveAt >= opts.endedMs) return 'chat ended';
+  return '';
+}
+
 const H = 3_600_000;
 const ago = (ms: number) => (ms >= 48 * H ? `${Math.round(ms / (24 * H))} days` : `${Math.max(1, Math.round(ms / H))} h`);
 
@@ -77,14 +101,33 @@ export function staleWhy(item: OrchItem, facts: SweepFacts, now: number, opts: S
 
   if (item.ref_type === 'chat' && item.ref_id) {
     const c = facts.chat(item.ref_id);
-    if (c) {
-      if (!c.onBoard) return 'chat archived';
-      if (c.closed) return 'chat closed';
-      const gone = !c.live && now - c.lastActiveAt >= opts.endedMs;
-      if (gone && item.kind !== 'blocked' && !draftPending) return 'chat ended';
+    const over = c ? chatOver(c, now, opts) : '';
+    if (c && over) {
+      // The chat is over: what it SAYS decides, not that it ended. Will may have
+      // closed it with the question still unanswered.
+      const v = facts.verdict ? facts.verdict(item, item.ref_id, c) : ({ state: 'unavailable' } as const);
+      if (v.state === 'resolved') return `chat read: ${v.reason}`;
+      if (v.state === 'unavailable') {
+        // No model: the mechanical rule. A blocked item waits on someone else, not the pane.
+        if (over !== 'chat ended') return over;
+        if (item.kind !== 'blocked' && !draftPending) return over;
+      }
+      // 'open' or 'pending': keep it; the age cap is still the backstop.
+    } else if (c) {
       if (item.kind === 'needs_you' && c.live && c.working && c.lastTurnAt > item.updated_at + opts.resumeGraceMs) return 'chat picked back up';
       // Still sitting at its prompt (needs you) or still mid-turn (moving).
       if ((item.kind === 'needs_you' && c.live && !c.working) || (item.kind === 'moving' && c.live && c.working)) vouched = true;
+    }
+  }
+
+  // An item that names a chat by its pane without pointing at it: read that chat once it is over.
+  if (item.ref_type !== 'chat' && facts.chatByName && facts.verdict) {
+    for (const name of paneNamesIn(`${item.title} ${item.why}`)) {
+      const ref = facts.chatByName(name);
+      const c = ref ? facts.chat(ref) : null;
+      if (!ref || !c || !chatOver(c, now, opts)) continue;
+      const v = facts.verdict(item, ref, c);
+      if (v.state === 'resolved') return `chat read (${name}): ${v.reason}`;
     }
   }
 
@@ -103,7 +146,6 @@ export function staleWhy(item: OrchItem, facts: SweepFacts, now: number, opts: S
   if (drafts.length && !draftPending && item.kind === 'needs_you') {
     return drafts.every((s) => s === 'discarded' || s === 'superseded') ? 'draft discarded' : 'draft sent';
   }
-
 
   const max = item.kind === 'needs_you' ? opts.needsYouMaxMs : item.kind === 'blocked' ? opts.blockedMaxMs : opts.movingMaxMs;
   const idle = now - item.updated_at;

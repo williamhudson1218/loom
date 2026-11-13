@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.ts';
 import { listItems, needsYouCount, recentLog, upsertItem, type OrchItem } from '../src/orchestrator.ts';
-import { SWEEP, draftIdsIn, duplicates, staleWhy, sweepItems, type ChatFact, type SweepFacts } from '../src/orchsweep.ts';
+import { SWEEP, draftIdsIn, duplicates, paneNamesIn, staleWhy, sweepItems, type ChatFact, type SweepFacts } from '../src/orchsweep.ts';
 import { sweepFacts, sweepRail } from '../src/orchserver.ts';
+import { ChatJudge } from '../src/orchjudge.ts';
 import type { ChatView, LiveLoc } from '../src/dashboard.ts';
 
 const H = 3_600_000;
@@ -76,6 +77,59 @@ describe('staleWhy: chats', () => {
     expect(staleWhy(it0, facts({ chat: () => chat({ working: true, lastTurnAt: NOW - H + 1000 }) }), NOW)).toBe('');
     // Idle with a newer turn is the chat asking again: keep it.
     expect(staleWhy(it0, facts({ chat: () => chat({ working: false, lastTurnAt: NOW }) }), NOW)).toBe('');
+  });
+});
+
+describe('staleWhy: reading the chat', () => {
+  const ended = (over: Partial<ChatFact> = {}) => chat({ live: false, lastActiveAt: NOW - 5 * H, ...over });
+
+  it('the verdict wins over the chat state', () => {
+    const resolved = facts({ chat: () => ended({ closed: true }), verdict: () => ({ state: 'resolved', reason: 'Will approved it' }) });
+    expect(staleWhy(item(), resolved, NOW)).toBe('chat read: Will approved it');
+    const open = facts({ chat: () => ended({ onBoard: false }), verdict: () => ({ state: 'open', reason: 'question unanswered' }) });
+    expect(staleWhy(item(), open, NOW)).toBe('');
+    expect(staleWhy(item(), facts({ chat: () => ended(), verdict: () => ({ state: 'pending' }) }), NOW)).toBe('');
+  });
+
+  it('reads the chat for a blocked item too', () => {
+    const f = facts({ chat: () => ended(), verdict: () => ({ state: 'resolved', reason: 'reply arrived' }) });
+    expect(staleWhy(item({ kind: 'blocked' }), f, NOW)).toBe('chat read: reply arrived');
+  });
+
+  it('falls back to the mechanical rule when no model can be asked', () => {
+    const f = (c: ChatFact) => facts({ chat: () => c, verdict: () => ({ state: 'unavailable' }) });
+    expect(staleWhy(item(), f(ended({ closed: true })), NOW)).toBe('chat closed');
+    expect(staleWhy(item(), f(ended()), NOW)).toBe('chat ended');
+    expect(staleWhy(item({ kind: 'blocked' }), f(ended()), NOW)).toBe('');
+  });
+
+  it('only asks about a chat that is over', () => {
+    let asked = 0;
+    const f = facts({ chat: () => chat(), verdict: () => (asked++, { state: 'resolved', reason: 'x' }) });
+    expect(staleWhy(item(), f, NOW)).toBe('');
+    expect(asked).toBe(0);
+  });
+
+  it('reads a chat the item names by pane without pointing at it', () => {
+    const asked: string[] = [];
+    const named = item({ ref_type: 'pr', ref_id: 'https://github.com/o/r/pull/7', title: 'spry-nougat looks stalled on the re-review' });
+    const f = (c: ChatFact, state: 'resolved' | 'open') =>
+      facts({
+        chat: (r) => (r === 'claude:sn' ? c : null),
+        chatByName: (n) => (n === 'spry-nougat' ? 'claude:sn' : null),
+        verdict: (_i, ref) => (asked.push(ref), state === 'resolved' ? { state, reason: 'it pushed the fix' } : { state, reason: 'still stuck' }),
+      });
+    expect(staleWhy(named, f(ended(), 'resolved'), NOW)).toBe('chat read (spry-nougat): it pushed the fix');
+    expect(asked).toEqual(['claude:sn']);
+    expect(staleWhy(named, f(ended(), 'open'), NOW)).toBe('');
+    // A named chat still running is not read.
+    asked.length = 0;
+    expect(staleWhy(named, f(chat(), 'resolved'), NOW)).toBe('');
+    expect(asked).toEqual([]);
+  });
+
+  it('finds pane names in the text', () => {
+    expect(paneNamesIn('Spry-Nougat and cozy-donut; re-review')).toEqual(['spry-nougat', 'cozy-donut', 're-review']);
   });
 });
 
@@ -190,6 +244,26 @@ describe('sweepRail + sweepFacts (db)', () => {
     expect(log[0].target).toBe('3 items');
     // A second pass finds nothing new.
     expect(sweepRail(db, f, NOW + 60_000)).toEqual([]);
+  });
+
+  it('with a judge, a closed chat is read first and kept when the model says it is still open', async () => {
+    const db = openDb(':memory:');
+    upsertItem(db, { kind: 'needs_you', ref_type: 'chat', ref_id: 'claude:closed', title: 'Closed one' }, NOW - H);
+    const rows = new Map();
+    const judge = new ChatJudge({
+      ask: async () => '{"resolved": false, "reason": "question never answered"}',
+      messages: () => [{ role: 'assistant', text: 'Which bank?' }],
+      enabled: () => true,
+      store: { get: (k) => rows.get(k) ?? null, put: (k, r) => void rows.set(k, r) },
+      now: () => NOW,
+    });
+    const snap = { views: [view('closed', { done: true })], live: {} };
+    judge.beginSweep();
+    expect(sweepRail(db, sweepFacts(snap, db, () => ({}), NOW, judge), NOW)).toEqual([]);
+    await judge.idle();
+    judge.beginSweep();
+    expect(sweepRail(db, sweepFacts(snap, db, () => ({}), NOW, judge), NOW + 60_000)).toEqual([]);
+    expect(needsYouCount(db)).toBe(1);
   });
 
   it('clears nothing on chats before the board has indexed', () => {
