@@ -40,8 +40,10 @@ describe('dashboard', () => {
     expect(html).not.toMatch(/\/api\/em(\/|'|\?|$)/m);
     expect(html).not.toContain('refreshEm');
     expect(html).not.toContain("['em',");
-    // the tab strip is exactly Board, Saved, Tickets, Watchers, Trees
-    for (const t of ['board', 'saved', 'tickets', 'watch', 'trees']) expect(html).toContain(`['${t}','`);
+    // the tab strip is Home, Board, Saved, Watchers, Trees; Tickets is the Board's Columns view
+    for (const t of ['home', 'board', 'saved', 'watch', 'trees']) expect(html).toContain(`['${t}','`);
+    expect(html).not.toContain("['tickets','⊞ Tickets'");
+    expect(html).toContain('data-bv="columns"');
   });
 
   it('shows tab badges only where actionable, and drops the chat count and timestamp', () => {

@@ -103,7 +103,7 @@ function orchPinText(o){if(o.enabled===false)return 'Off';return o.live?'Running
 function orchPinHtml(o,selected){const n=o.needsYou||0;
   return '<button type="button" class="opin'+(selected?' sel':'')+'" data-orch="1" aria-label="Orchestrator, '+esc(orchPinText(o))+(n?', '+n+' need you':'')+'"><span class="oic">'+ORCH_SVG+'</span><span class="ot">Orchestrator</span><span class="os'+(o.live?' on':'')+'"><span class="odot'+(o.live?' on':'')+'"></span>'+esc(orchPinText(o))+'</span>'+(n?'<span class="obadge">'+n+' need you</span>':'')+'</button>';}
 function renderOrchPin(){const el=$('#orchpin');if(!el)return;const h=orchPinHtml(orchInfo(),orchSel);if(el.dataset.h!==h){el.dataset.h=h;el.innerHTML=h;}}
-function selectOrch(){leaveHome();leaveTerminal();if(tab!=='board'&&tab!=='saved'){tab='board';stateFilter='all';syncControls();liveToggle();chips();render();}
+function selectOrch(){leaveHome();leaveColumns();leaveTerminal();if(tab!=='board'&&tab!=='saved'){tab='board';stateFilter='all';syncControls();liveToggle();chips();render();}
   if(sel)deselect();orchSel=true;OMSG_SIG='';$('#ohead').dataset.sig='';$('#orail').dataset.sig='';renderOrchPin();renderMain();loadOrch(true);
   clearInterval(orchTimer);orchTimer=setInterval(()=>{if(!document.hidden)loadOrch(false);},4000);setTimeout(()=>{const i=$('#oinput');if(i&&!orchTermOn)i.focus();},0);}
 function leaveOrch(){if(!orchSel)return;orchSel=false;clearInterval(orchTimer);orchTimer=null;if(termKey.indexOf('orch|')===0)closeTerm();orchTermOn=false;renderOrchPin();}

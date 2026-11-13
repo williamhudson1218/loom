@@ -711,6 +711,14 @@ ${PRUNE_VIEW_CSS}
   #boardwrap.hm { grid-template-columns:minmax(0,1fr); }
   #boardwrap.hm #side { display:none; }
   #boardwrap.tk #side, #boardwrap.tk #chatmain { display:none; }
+  .bvrow:empty { display:none; }
+  .bvrow { display:flex; padding:8px 0 0; }
+  #kbbar { display:none; }
+  #boardwrap.tk #kbbar { display:flex; padding:14px 20px 0; }
+  .bvseg { display:inline-flex; gap:2px; padding:2px; border-radius:9px; border:1px solid #2b3040; background:#141826; }
+  .bvseg button { height:26px; padding:0 12px; border-radius:7px; border:0; background:transparent; color:#8b93a7; font:inherit; font-size:12px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .bvseg button[aria-pressed=true] { background:#222a3d; color:#dbe6ff; }
+  .bvseg .cnt { font-size:11px; padding:0 6px; border-radius:9px; background:#3b6fe0; color:#fff; }
   #boardwrap.tk #kanban { padding:16px 20px; }
   #side { border-right:1px solid #232634; background:#0f1218; display:flex; flex-direction:column; min-height:0; min-width:0; overflow:hidden; }
   .sidetop { padding:10px 10px 8px; border-bottom:1px solid #1d2130; display:flex; flex-direction:column; gap:8px; }
@@ -1085,6 +1093,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
         <span class="qwrap"><input id="q" placeholder="Search open and archived chats"/><button type="button" id="qclear" class="qclear" tabindex="-1" title="Clear search" aria-label="Clear search"><svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></span>
         <button type="button" id="fbtn" class="fbtn" aria-haspopup="true" aria-expanded="false" aria-controls="fpop" title="Filters"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4h12M4 8h8M6.5 12h3"/></svg><span class="pip" hidden></span></button>
       </div>
+      <div class="bvrow" id="bvside"></div>
     </div>
     <div class="fchips" id="fchips"></div>
     <div class="fpop" id="fpop" role="dialog" aria-label="Filters" hidden>
@@ -1111,6 +1120,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
   <div id="termlist"></div>
   <div class="sidegrip" id="sidegrip" role="separator" aria-orientation="vertical" aria-label="Resize the session list" aria-valuemin="240" aria-valuemax="720" tabindex="0" title="Drag to resize. Double-click to reset."></div>
 </aside>
+<div id="kbbar" class="bvrow"></div>
 <section class="tkx tkboard" id="kanban" aria-label="Chats by stage"></section>
 <div id="chatwrap" data-rail="hidden">
 <section id="chatmain" aria-label="Selected chat" class="empty">
@@ -1234,6 +1244,13 @@ function projects(){const cur=$('#proj').value;const set=DATA.projects?[...new S
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 var stateFilter='all';
 var liveOnly=true;
+// Board shows its chats as a List (sidebar + chat) or as Columns (the kanban, formerly the Tickets tab).
+var boardView=lsGet('loom.boardView')==='columns'?'columns':'list';
+function boardColumns(){return tab==='board'&&boardView==='columns';}
+function leaveColumns(){if(!boardColumns())return;boardView='list';syncControls();render();}
+function setBoardView(v){boardView=v==='columns'?'columns':'list';lsSet('loom.boardView',boardView);if(tab!=='board')tab='board';stateFilter='all';syncControls();liveToggle();chips();render();}
+function bvHtml(){const n=kbCount();return '<div class="bvseg" role="group" aria-label="Board view"><button type="button" data-bv="list" aria-pressed="'+(boardView==='list')+'">List</button><button type="button" data-bv="columns" aria-pressed="'+(boardView==='columns')+'">Columns'+(n>0?'<span class="cnt">'+n+'</span>':'')+'</button></div>';}
+function renderBoardView(){const h=bvHtml();['bvside','kbbar'].forEach(id=>{const el=$('#'+id);if(el&&el.dataset.h!==h){el.dataset.h=h;el.innerHTML=h;}});}
 var tab='home'; // 'home' | 'board' | 'saved' | ... Loom opens on Home (the Overview).
 const SLABEL={done:'Done',waiting_on_user:'Your turn',warning:'Caveats',error:'Error',pending:'Summarizing…'};
 function st(c){return c.summary_pending?'pending':(c.state||'done');}
@@ -1276,7 +1293,7 @@ function watchBadge(){var n=Number(WATCH.unreviewed)||0;(WATCH.watchers||[]).for
 // (old lastCommitAt) are not counted: with dozens of worktrees that made the badge noise.
 function treeIsStale(w){if(w.primary||(w.livePanes&&w.livePanes.length))return false;return w.verdict==='safe';}
 function staleTreeCount(){var n=0;TREES.repos.forEach(function(r){r.worktrees.forEach(function(w){if(treeIsStale(w))n++;});});return n;}
-function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['tickets','⊞ Tickets',kbCount(),' tktab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
+function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
 // Header status: "Updated Ns ago" only when the data is over 30 s old or the last poll failed.
 var pollFailed=false;
 function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(DATA.generatedAt||0);
@@ -1289,7 +1306,7 @@ function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(
 // The Trees, Watchers and Settings tabs show something other than chats, so every
 // chat-scoped control goes away with them — leaving the project/sort pickers
 // visible would imply they filter it.
-function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa=tab==='watch';const se=tab==='settings';const other=tr||wa||se;const hm=tab==='home';
+function syncControls(){const tr=tab==='trees';const tk=boardColumns();const wa=tab==='watch';const se=tab==='settings';const other=tr||wa||se;const hm=tab==='home';
   $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
   $('.controls').style.display=other?'none':'';
   $('#row3').style.display=other?'none':'';
@@ -1300,6 +1317,7 @@ function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa
   $('#archive').style.display=other||tk?'none':'';
   $('#termlist').style.display=other||tk?'none':'';
   $('#kanban').style.display=tk?'grid':'none';
+  $('#bvside').style.display=tab==='board'?'':'none';renderBoardView();
   $('#boardwrap').classList.toggle('tk',tk);
   $('#boardwrap').classList.toggle('hm',hm);
   $('#boardwrap').style.display=other?'none':'';
@@ -1363,7 +1381,7 @@ const tmatch=searching?termMatches(q):[];
 if(searching){SPLIT=splitMatches(rows,isOpenChat,archHits,DATA.chats.map(c=>c.session_id));rows=SPLIT.open;}else SPLIT=null;
 // Order inside each group is the chosen sort; the groups (Working, Your turn, ...) only
 // decide which heading a row sits under.
-CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();const sp=$('#shippin');sp.innerHTML=shipStrip();wireShips(sp);list.innerHTML=(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows,true)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));flipPlay(flipBefore);renderArchive();renderMain();}
+CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(boardColumns()){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();const sp=$('#shippin');sp.innerHTML=shipStrip();wireShips(sp);list.innerHTML=(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows,true)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));flipPlay(flipBefore);renderArchive();renderMain();}
 // ---- Sidebar rows ------------------------------------------------------------
 // One row per chat: state dot, title, project and pane name, age, PR / Slack /
 // draft chips. Click selects it into the main area; right-click opens the action
@@ -1601,7 +1619,7 @@ function slackKeyOf(c){const p=slackPrimary(slackThreadsOf(c));return p?p.key:''
 function slackDraftUrl(c){const f=draftThreadOf(DATA.drafts,c.session_id);return f?f.url:'';}
 function stateLabel(c){return DOT_LABEL[dotCls(c)];}
 function resumeCmd(c){const dir=c.project_dir?('cd '+shortPath(c.project_dir)+' && '):'';return dir+(c.agent==='codex'?'codex resume ':'claude --resume ')+c.session_id;}
-function selectChat(sid,agent,arch){leaveHome();leaveOrch();leaveTerminal();if(sel&&sel.sid===sid&&sel.agent===agent&&!!sel.arch===!!arch)return;sel={sid,agent,arch:arch||null,chat:arch?archChatOf(sid):null};closeCtx();
+function selectChat(sid,agent,arch){leaveHome();leaveColumns();leaveOrch();leaveTerminal();if(sel&&sel.sid===sid&&sel.agent===agent&&!!sel.arch===!!arch)return;sel={sid,agent,arch:arch||null,chat:arch?archChatOf(sid):null};closeCtx();
   const sc=selChat();if(sc&&!sel.arch&&pipeEvent(sc)){ackPipe(sc);setTimeout(render,0);}
   DETAIL=null;lastOpen=false;MSGS_SIG='';closeArm='';$('#mhead').dataset.sig='';$('#mtabs').dataset.sig='';$('#mbanner').dataset.sig='';
   mtab=(!sel.arch&&livePaneFor(sid,agent)&&TERM_TOKEN)?'terminal':'transcript';
@@ -1612,7 +1630,7 @@ function selectChat(sid,agent,arch){leaveHome();leaveOrch();leaveTerminal();if(s
 function archChatOf(sid){const h=archHits.find(x=>x.session_id===sid)||JUMP.hits.find(x=>x.session_id===sid);return h?archChat(h):null;}
 function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);closeCtx();document.querySelectorAll('#sidelist .srow.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));renderMain();}
 // A Tickets card opens its chat in the Sessions view, where the terminal lives.
-function openInBoard(sid,agent){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);tab=c&&c.saved?'saved':'board';stateFilter='all';selectChat(sid,agent,null);syncControls();liveToggle();chips();render();}
+function openInBoard(sid,agent){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);tab=c&&c.saved?'saved':'board';boardView='list';stateFilter='all';selectChat(sid,agent,null);syncControls();liveToggle();chips();render();}
 // ---- Jump with the terminal set to inside Loom ---------------------------------
 // The server publishes the newest jump request; when its seq moves, open the chat
 // in that pane. The first poll only records the seq, so a stale request never fires.
@@ -1808,6 +1826,7 @@ function wireMain(){
     runAction(b.dataset.act,c);};
   $('#mhead').addEventListener('click',onAct);$('#mbanner').addEventListener('click',onAct);wireSlackStart();wireSlackDD();wirePrDD();wireTestPop();$('#mhead').addEventListener('click',e=>{const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);}});
   $('#mtabs').addEventListener('click',e=>{const b=e.target.closest('button[data-t]');if(!b||b.disabled)return;mtab=b.dataset.t;if(mtab==='transcript')loadTranscript(true);renderMain();});
+  document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-bv]');if(b)setBoardView(b.dataset.bv);});
   $('#sidetoggle').onclick=()=>{const hide=!document.body.classList.contains('sidehide');document.body.classList.toggle('sidehide',hide);lsSet('loom.sidehide',hide?'1':'');};
   if(lsGet('loom.sidehide')==='1')document.body.classList.add('sidehide');
   wireSidebar();wireSideGrip();wireHoverPrefetch();wireSideTop();wireRename();wireOrch();wireHome();wireOutbox();
@@ -1906,7 +1925,7 @@ function renderTermList(){const el=$('#termlist');if(termSearchState){el.innerHT
   const th=$('#termhead');th.onclick=e=>{if(e.target.closest('#tnew'))return;termOpen=!termOpen;lsSet('loom.termOpen',termOpen?'1':'0');renderTermList();};
   th.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===th){e.preventDefault();th.click();}};
   if($('#tnew'))$('#tnew').onclick=e=>{e.stopPropagation();openTermBox();};}
-function selectTerminal(session,win){if(!TERM_TOKEN)return;leaveHome();leaveOrch();if(sel)deselect();tsel={session,window:String(win)};$('#mhead').dataset.sig='';renderTermList();renderMain();}
+function selectTerminal(session,win){if(!TERM_TOKEN)return;leaveHome();leaveColumns();leaveOrch();if(sel)deselect();tsel={session,window:String(win)};$('#mhead').dataset.sig='';renderTermList();renderMain();}
 function leaveTerminal(){if(!tsel)return;tsel=null;if(termKey.indexOf('tw|')===0)closeTerm();['#mtabs','#mslack'].forEach(q=>{$(q).style.display='';});$('#mhead').dataset.sig='';renderTermList();}
 function renderTermMain(){const box=$('#chatmain');const t=TERMS.find(x=>x.session===tsel.session);
   if(!t){box.classList.add('empty');closeTerm();$('#mempty').innerHTML='<div class="dempty">That terminal session is gone.</div>';return;}
@@ -2220,7 +2239,7 @@ function kbCard(c){var k=chatKey(c),L=DATA.live[k],col=kbCol(c),W=isWorking(c);v
     '<div class="who"><span class="g '+g[0]+'">'+g[1]+'</span><span class="pn">'+esc(g[2])+(L?' · '+esc(L.tmux_session)+':'+esc(L.pane_index):'')+'</span></div>'+asked+pr+'</button>';}
 function kbTails(rows){var keys=rows.filter(function(c){var k=kbCol(c);return k==='needsYou'||k==='blocked';}).map(chatKey);
   if(!keys.length)return;if(Date.now()-tailsAt<15000&&!keys.some(function(k){return !(k in TAILS);}))return;tailsAt=Date.now();
-  fetch('/api/tails?keys='+encodeURIComponent(keys.slice(0,40).join(','))).then(function(r){return r.json();}).then(function(j){if(j.ok){Object.assign(TAILS,j.tails);if(tab==='tickets')renderKanban(KB_ROWS);}}).catch(function(){});}
+  fetch('/api/tails?keys='+encodeURIComponent(keys.slice(0,40).join(','))).then(function(r){return r.json();}).then(function(j){if(j.ok){Object.assign(TAILS,j.tails);if(boardColumns())renderKanban(KB_ROWS);}}).catch(function(){});}
 var KB_ROWS=[];
 function agoShort(ms){if(!ms)return '';var r=rel(ms);return r==='just now'?'now':r.replace(' ago','');}
 function renderKanban(rows){KB_ROWS=rows;var box=$('#kanban');var by={};KB_COLS.forEach(function(k){by[k]=[];});

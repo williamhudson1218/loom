@@ -113,11 +113,11 @@ export const JUMP_VIEW_JS = `
 // ---- Jump box (⌘K) and header menus ---------------------------------------------
 var JUMP={open:false,q:'',sel:0,sections:[],flat:[],hits:[],archQ:'',archState:'idle',archT:null,prevFocus:null};
 function jumpReduce(){return window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;}
-function jumpTab(t){if(tab===t)return;tab=t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();}
-function jumpToBoard(){if(tab==='board'||tab==='saved')return;jumpTab('board');}
+function jumpTab(t){if(t==='columns'||t==='list'){if(tab==='board'&&boardView===t)return;setBoardView(t);return;}if(tab===t)return;tab=t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();}
+function jumpToBoard(){if(boardColumns()){leaveColumns();return;}if(tab==='board'||tab==='saved')return;jumpTab('board');}
 function openSettingsAt(sec){try{SX.sec=sec;SX.ghLoaded=0;SX.gmLoaded=0;lsSet('loom.settingsSec',sec);}catch(e){}if(tab==='settings'){if(typeof renderSettings==='function')renderSettings();}else openSettings();}
 function jumpCommands(){
-  var tabs=[['board','Board'],['saved','Saved'],['tickets','Tickets'],['watch','Watchers'],['trees','Trees']];
+  var tabs=[['home','Home'],['board','Board'],['columns','Board columns'],['saved','Saved'],['watch','Watchers'],['trees','Trees']];
   var c=[
     {kind:'cmd',id:'new',label:'New thread',hay:'start launch chat',icon:'＋',run:function(){if(!composerOpen)openComposer();}},
     {kind:'cmd',id:'restore',label:'Restore sessions',hay:'rebuild tmux workspace snapshot',icon:'⟲',run:function(){restoreWorkspace();}},
