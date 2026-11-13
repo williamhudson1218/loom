@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../src/dashboard.ts', import.meta.url), 'utf8');
 describe('pinned Orchestrator row and ship card', () => {
   it('sit in a block outside the scrolling list, capped at 45%, opaque', () => {
-    expect(src).toContain('<div id="sidepin"><div id="orchpin"></div><div id="shippin"></div></div>\n  <div id="sidelist">');
+    expect(src).toContain('<div id="sidepin"><div id="homepin"></div><div id="orchpin"></div><div id="shippin"></div></div>\n  <div id="sidelist">');
     expect(src).toMatch(/#sidepin \{ flex:none; max-height:45%;[^}]*background:#0f1218;/);
     expect(src).toMatch(/#sidepin > #shippin \{[^}]*overflow-y:auto;/);
   });

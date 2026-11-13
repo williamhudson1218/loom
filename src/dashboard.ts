@@ -15,6 +15,7 @@ import { JUMP_CSS, JUMP_PURE_JS, JUMP_VIEW_JS } from './jumpbox.ts';
 import { chatTagMap, listTags, type TagInfo } from './tags.ts';
 import { BRAND_ICONS_CSS, BRAND_ICONS_JS, BRAND_SVG } from './brandicons.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
+import { HOME_VIEW_CSS, HOME_VIEW_HTML, HOME_VIEW_JS } from './homeview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
 import { WIZARD_VIEW_CSS, WIZARD_VIEW_HTML, WIZARD_VIEW_JS } from './wizardview.ts';
 import { ERROR_VIEW_CSS, ERROR_VIEW_JS } from './errorview.ts';
@@ -1024,6 +1025,7 @@ ${TEST_LINKS_CSS}
 ${JUMP_CSS}
 ${BRAND_ICONS_CSS}
 ${ORCH_VIEW_CSS}
+${HOME_VIEW_CSS}
 ${WIZARD_VIEW_CSS}
 ${WELCOME_VIEW_CSS}
 ${TOUR_VIEW_CSS}
@@ -1097,7 +1099,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
       <div class="fchecks"><label class="fck"><input type="checkbox" id="fdraft"/> Has a draft</label><label class="fck"><input type="checkbox" id="fissue"/> Has issues</label></div>
     </div>
   </div>
-  <div id="sidepin"><div id="orchpin"></div><div id="shippin"></div></div>
+  <div id="sidepin"><div id="homepin"></div><div id="orchpin"></div><div id="shippin"></div></div>
   <div id="sidelist">
     <div id="list"></div>
     <section id="archive"></section>
@@ -1122,6 +1124,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
   </div>
   <div class="pfoot" id="mfoot"></div>
   ${ORCH_VIEW_HTML}
+  ${HOME_VIEW_HTML}
   <div id="mempty"></div>
   <div id="mhero" aria-live="polite"><canvas id="mhero-sky" aria-hidden="true"></canvas><div class="hx-in">${threadMark('hx-mark', 'hx')}<h2 id="mhero-h"></h2><p id="mhero-p"></p><div class="hx-acts" id="mhero-acts"></div></div></div>
 </section>
@@ -1203,6 +1206,7 @@ ${JUMP_VIEW_JS}
 ${UPDATE_VIEW_JS}
 ${BRAND_ICONS_JS}
 ${ORCH_VIEW_JS}
+${HOME_VIEW_JS}
 ${CONNECT_VIEW_JS}
 ${WIZARD_VIEW_JS}
 ${WELCOME_VIEW_JS}
@@ -1593,7 +1597,7 @@ function slackKeyOf(c){const p=slackPrimary(slackThreadsOf(c));return p?p.key:''
 function slackDraftUrl(c){const f=draftThreadOf(DATA.drafts,c.session_id);return f?f.url:'';}
 function stateLabel(c){return DOT_LABEL[dotCls(c)];}
 function resumeCmd(c){const dir=c.project_dir?('cd '+shortPath(c.project_dir)+' && '):'';return dir+(c.agent==='codex'?'codex resume ':'claude --resume ')+c.session_id;}
-function selectChat(sid,agent,arch){leaveOrch();leaveTerminal();if(sel&&sel.sid===sid&&sel.agent===agent&&!!sel.arch===!!arch)return;sel={sid,agent,arch:arch||null,chat:arch?archChatOf(sid):null};closeCtx();
+function selectChat(sid,agent,arch){leaveHome();leaveOrch();leaveTerminal();if(sel&&sel.sid===sid&&sel.agent===agent&&!!sel.arch===!!arch)return;sel={sid,agent,arch:arch||null,chat:arch?archChatOf(sid):null};closeCtx();
   const sc=selChat();if(sc&&!sel.arch&&pipeEvent(sc)){ackPipe(sc);setTimeout(render,0);}
   DETAIL=null;lastOpen=false;MSGS_SIG='';closeArm='';$('#mhead').dataset.sig='';$('#mtabs').dataset.sig='';$('#mbanner').dataset.sig='';
   mtab=(!sel.arch&&livePaneFor(sid,agent)&&TERM_TOKEN)?'terminal':'transcript';
@@ -1666,6 +1670,8 @@ function wireSlackStart(){$('#mslack').addEventListener('click',e=>{const b=e.ta
       if(j.ok){SLK_OPEN='';SLK_PENDING=j.started;toast('restarted in '+shortPath(dir));setTimeout(refresh,800);setTimeout(refresh,3000);}
       else toast(j.detail||'could not restart','#8a2b2e');}).catch(()=>{b.disabled=false;toast('server off','#8a2b2e');});}});}
 function renderMain(){const box=$('#chatmain');renderOutbox();
+  box.classList.toggle('home',homeSel);
+  if(homeSel){box.classList.remove('empty','orch');if(termKey)closeTerm();renderHome();return;}
   if(orchSel){box.classList.remove('empty');box.classList.add('orch');if(termKey&&termKey.indexOf('orch|')!==0)closeTerm();renderOrch(false);return;}
   box.classList.remove('orch');
   if(tsel){renderTermMain();return;}
@@ -1800,7 +1806,7 @@ function wireMain(){
   $('#mtabs').addEventListener('click',e=>{const b=e.target.closest('button[data-t]');if(!b||b.disabled)return;mtab=b.dataset.t;if(mtab==='transcript')loadTranscript(true);renderMain();});
   $('#sidetoggle').onclick=()=>{const hide=!document.body.classList.contains('sidehide');document.body.classList.toggle('sidehide',hide);lsSet('loom.sidehide',hide?'1':'');};
   if(lsGet('loom.sidehide')==='1')document.body.classList.add('sidehide');
-  wireSidebar();wireSideGrip();wireHoverPrefetch();wireSideTop();wireRename();wireOrch();wireOutbox();
+  wireSidebar();wireSideGrip();wireHoverPrefetch();wireSideTop();wireRename();wireOrch();wireHome();wireOutbox();
   setInterval(()=>{if(!document.hidden&&sel&&mtab==='transcript'&&!sel.arch&&selChat()&&DATA.live[selKey()])loadTranscript(false);},1500);}
 // ---- Rename ---------------------------------------------------------------------
 var renameFor=null;
@@ -1884,7 +1890,7 @@ var hoverT=0;function wireHoverPrefetch(){const sl=$('#sidelist');if(!sl)return;
 // opens whole and unzoomed in the main area; a session with several windows gets
 // a window picker in the header. Server: src/terminals.ts.
 var TERMS=[],tsel=null;
-function loadTerminals(){fetch('/api/terminals').then(r=>r.json()).then(j=>{if(!j.ok)return;const sig=JSON.stringify(j.sessions);if(sig===JSON.stringify(TERMS))return;TERMS=j.sessions;renderTermList();if(tsel)renderMain();}).catch(()=>{});}
+function loadTerminals(){fetch('/api/terminals').then(r=>r.json()).then(j=>{if(!j.ok)return;const sig=JSON.stringify(j.sessions);if(sig===JSON.stringify(TERMS))return;TERMS=j.sessions;renderTermList();if(tsel)renderMain();if(homeSel)renderHome();}).catch(()=>{});}
 function termRow(t){const w=t.windows.find(x=>x.active)||t.windows[0];const on=tsel&&tsel.session===t.session;return '<div class="srow tsrow'+(on?' sel':'')+'" tabindex="0" data-term="'+esc(t.session)+'" data-win="'+esc(w.index)+'"><span class="sdot d-stale"></span><div class="sbody"><div class="stitle">'+esc(t.session)+'</div><div class="ssub">'+(t.windows.length>1?t.windows.length+' windows':esc(w.name))+' · '+w.panes+(w.panes===1?' pane':' panes')+'</div></div></div>';}
 // While searching, terminals that match the query join the Open section and the group itself is hidden.
 var termSearchState=false;
@@ -1896,7 +1902,7 @@ function renderTermList(){const el=$('#termlist');if(termSearchState){el.innerHT
   const th=$('#termhead');th.onclick=e=>{if(e.target.closest('#tnew'))return;termOpen=!termOpen;lsSet('loom.termOpen',termOpen?'1':'0');renderTermList();};
   th.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===th){e.preventDefault();th.click();}};
   if($('#tnew'))$('#tnew').onclick=e=>{e.stopPropagation();openTermBox();};}
-function selectTerminal(session,win){if(!TERM_TOKEN)return;leaveOrch();if(sel)deselect();tsel={session,window:String(win)};$('#mhead').dataset.sig='';renderTermList();renderMain();}
+function selectTerminal(session,win){if(!TERM_TOKEN)return;leaveHome();leaveOrch();if(sel)deselect();tsel={session,window:String(win)};$('#mhead').dataset.sig='';renderTermList();renderMain();}
 function leaveTerminal(){if(!tsel)return;tsel=null;if(termKey.indexOf('tw|')===0)closeTerm();['#mtabs','#mslack'].forEach(q=>{$(q).style.display='';});$('#mhead').dataset.sig='';renderTermList();}
 function renderTermMain(){const box=$('#chatmain');const t=TERMS.find(x=>x.session===tsel.session);
   if(!t){box.classList.add('empty');closeTerm();$('#mempty').innerHTML='<div class="dempty">That terminal session is gone.</div>';return;}
@@ -1919,7 +1925,7 @@ function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMen
 function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
-if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}}).catch(()=>{pollFailed=true;renderStale();});}
+if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();}).catch(()=>{pollFailed=true;renderStale();if(homeSel)homeClock();});}
 function updateDefaultAgent(){const select=$('#default-agent');const agent=select.value;select.disabled=true;fetch('/api/settings/default-agent',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agent})}).then(r=>r.json()).then(j=>{if(j.ok){DATA.defaultAgent=j.defaultAgent;render();}else{syncDefaultAgent();}}).catch(syncDefaultAgent).finally(()=>{select.disabled=false;});}
 function restoreWorkspace(){const btn=$('#restorebtn');const b=btn.querySelector('.mi')||btn;const orig=b.innerHTML;btn.disabled=true;b.textContent='restoring…';fetch('/restore').then(r=>r.json()).then(j=>{const n=(j.restored||[]).length;b.textContent=j.ok?(n?'✓ restored '+n+' tab(s)':'✓ nothing to restore'):'✕ '+(j.detail||'failed');setTimeout(refresh,1500);}).catch(()=>{b.textContent='✕ server off';}).finally(()=>{setTimeout(()=>{btn.disabled=false;b.innerHTML=orig;},2600);});}
 $('#restorebtn').onclick=restoreWorkspace;
