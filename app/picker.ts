@@ -382,7 +382,7 @@ async function track(): Promise<void> {
   }
 }
 
-/** How an open went. Not ok: the overlay shows `detail` in place before it closes. */
+/** How an open went. Not ok: `detail` is shown as a notification (the overlay is already gone). */
 export interface GotoOutcome {
   ok: boolean;
   detail?: string;
@@ -668,8 +668,13 @@ async function onClick(msg: ClickMsg = {}): Promise<void> {
   machine.opening();
   if (ticker) clearInterval(ticker);
   ticker = null;
-  broadcast('rect', r.rect);
-  broadcast('busy', 'Opening…');
+  // The highlight goes the instant the click resolves, synchronously, before
+  // any async work: the overlay used to stay up (outline + "Opening…") until
+  // the chat was on screen, which read as a lingering blue border. Failures
+  // are reported by notification, since the overlay is no longer there.
+  for (const o of overlays) if (!o.win.isDestroyed()) o.win.hide();
+  broadcast('reset');
+  globalShortcut.unregister('Escape');
   openGuard = setTimeout(() => endPick('open-guard'), OPEN_GUARD_MS);
   const tGo = Date.now();
   log('goto-start', { channel: ref.url });
@@ -681,7 +686,10 @@ async function onClick(msg: ClickMsg = {}): Promise<void> {
   }
   log('goto-end', { ms: Date.now() - tGo, ok: out ? out.ok : true, phase: machine.phase });
   if (machine.phase as PickPhase !== 'opening') return; // dismissed (Esc, the hotkey) while it opened
-  if (out && !out.ok) return failPick(out.detail || 'Could not open the chat for this thread');
+  if (out && !out.ok) {
+    endPick('open-failed');
+    return deps.notify(out.detail || 'Could not open the chat for this thread');
+  }
   endPick('opened');
 }
 
