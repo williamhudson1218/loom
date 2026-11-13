@@ -126,7 +126,6 @@ function jumpCommands(){
     {kind:'cmd',id:'outbox',label:'Outbox',hay:'drafts slack email send',icon:'✉',run:function(){var b=document.querySelector('#outrail [data-rail="open"]');if(b)b.click();else if(typeof toast==='function')toast(document.querySelector('#outrail:not([hidden])')?'The Outbox is open':'The Outbox is empty');}}
   ];
   tabs.forEach(function(t){c.push({kind:'cmd',id:'tab-'+t[0],label:'Go to '+t[1],hay:t[1]+' tab view',icon:'▸',run:function(){jumpTab(t[0]);}});});
-  c.push({kind:'cmd',id:'side',label:'Toggle session list',hay:'sidebar hide show',icon:'☰',run:function(){$('#sidetoggle').click();}});
   return c;
 }
 function jumpChatItems(){

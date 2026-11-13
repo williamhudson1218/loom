@@ -124,12 +124,13 @@ describe('dashboard', () => {
     expect(header).toContain('id="moremenu"'); // Restore lives in the more menu
     expect(header.indexOf('id="moremenu"')).toBeLessThan(header.indexOf('id="setbtn"'));
     expect(html).toContain('id="jump"');
-    // One row: sidetoggle, brand, tabs, then jump box, connections, actions.
-    expect(header.indexOf('id="sidetoggle"')).toBeLessThan(header.indexOf('class="brand"'));
+    // One row: brand, tabs, then jump box, connections, actions. No session-list toggle.
     expect(header.indexOf('class="brand"')).toBeLessThan(header.indexOf('id="tabs"'));
     expect(header.indexOf('id="tabs"')).toBeLessThan(header.indexOf('id="jumpbtn"'));
     expect(header).not.toContain('row2');
-    expect(header).toContain('id="sidetoggle"');
+    expect(html).not.toContain('sidetoggle');
+    expect(html).not.toContain('body.sidehide');
+    expect(html).toContain("localStorage.removeItem('loom.sidehide')"); // a saved collapsed state is cleared
     expect(header).not.toContain('id="q"');
     expect(header).not.toContain('id="chips"');
 

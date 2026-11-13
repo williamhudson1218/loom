@@ -696,16 +696,12 @@ ${PRUNE_VIEW_CSS}
   /* ---- Layout: session sidebar + the selected chat ---------------------------
      The header is brand + actions and the view tabs. Everything that filters
      the session list lives at the top of the sidebar; the chat fills the rest. */
-  .sidetoggle { height:32px; width:34px; padding:0; border-radius:8px; background:#141826; border:1px solid #2b3040; color:#8b93a7; font-size:14px; }
-  .sidetoggle:hover { color:#e6e6e6; }
   #boardwrap { display:grid; grid-template-columns:var(--sidew,360px) minmax(0,1fr); height:calc(100vh - var(--hh,100px)); }
   /* The session list's width: drag its right edge, arrow keys on the handle, double-click to reset. */
   #side { position:relative; }
   .sidegrip { position:absolute; top:0; right:0; bottom:0; width:6px; cursor:col-resize; z-index:3; background:transparent; transition:background .12s; }
   .sidegrip:hover, .sidegrip:focus-visible, body.sideresizing .sidegrip { background:#3a63b8; outline:none; }
   body.sideresizing, body.sideresizing * { cursor:col-resize !important; user-select:none !important; }
-  body.sidehide #boardwrap { grid-template-columns:minmax(0,1fr); }
-  body.sidehide #side { display:none; }
   #boardwrap.tk { grid-template-columns:minmax(0,1fr); height:auto; }
   /* Home is a full-width tab like Tickets: no session list, the Overview takes the row. */
   #boardwrap.hm { grid-template-columns:minmax(0,1fr); }
@@ -1051,7 +1047,6 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
 <header>
   <div class="topbar">
     <div class="hleft">
-      <button id="sidetoggle" class="sidetoggle" aria-label="Show or hide the session list" title="show or hide the session list">\u2630</button>
     <div class="brand"><h1 class="wordmark" aria-label="${APP_NAME}">${WORDMARK_L_SVG}<span aria-hidden="true">${APP_NAME.slice(1)}</span></h1><span class="sub stalechip" id="stale" hidden></span></div>
       <div class="tabs" id="tabs"></div>
     </div>
@@ -1827,8 +1822,8 @@ function wireMain(){
   $('#mhead').addEventListener('click',onAct);$('#mbanner').addEventListener('click',onAct);wireSlackStart();wireSlackDD();wirePrDD();wireTestPop();$('#mhead').addEventListener('click',e=>{const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);}});
   $('#mtabs').addEventListener('click',e=>{const b=e.target.closest('button[data-t]');if(!b||b.disabled)return;mtab=b.dataset.t;if(mtab==='transcript')loadTranscript(true);renderMain();});
   document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-bv]');if(b)setBoardView(b.dataset.bv);});
-  $('#sidetoggle').onclick=()=>{const hide=!document.body.classList.contains('sidehide');document.body.classList.toggle('sidehide',hide);lsSet('loom.sidehide',hide?'1':'');};
-  if(lsGet('loom.sidehide')==='1')document.body.classList.add('sidehide');
+  // The session list used to be collapsible; drop any saved collapsed state so nobody keeps a hidden list.
+  try{localStorage.removeItem('loom.sidehide');}catch(e){}
   wireSidebar();wireSideGrip();wireHoverPrefetch();wireSideTop();wireRename();wireOrch();wireHome();wireOutbox();
   setInterval(()=>{if(!document.hidden&&sel&&mtab==='transcript'&&!sel.arch&&selChat()&&DATA.live[selKey()])loadTranscript(false);},1500);}
 // ---- Rename ---------------------------------------------------------------------
