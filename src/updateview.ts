@@ -10,11 +10,18 @@ export const UPDATE_VIEW_CSS = String.raw`
   button.updbtn { display:inline-flex; align-items:center; gap:6px; height:32px; box-sizing:border-box; padding:0 11px; background:rgba(110,162,255,.10); border:1px solid #34406a; border-radius:8px; color:#9cc0ff; font-size:12.5px; font-weight:600; white-space:nowrap; }
   button.updbtn:hover, button.updbtn[aria-expanded="true"] { background:rgba(110,162,255,.18); color:#fff; }
   button.updbtn svg { flex:none; }
-  #updmenu { min-width:280px; }
-  #updmenu .updv { color:#d4d9e6; font-size:13px; font-weight:600; padding:7px 9px 2px; }
-  #updmenu .updn { color:#7f879b; font-size:11.5px; padding:0 9px 6px; max-height:160px; overflow:auto; }
-  #updmenu .updn li { margin:2px 0 2px 14px; }
+  #updmenu { min-width:300px; padding:6px; }
+  #updmenu .updv { color:#d4d9e6; font-size:13px; font-weight:600; padding:6px 9px 2px; }
+  #updmenu .updn { color:#7f879b; font-size:11.5px; line-height:1.45; padding:0 9px 6px; }
+  #updmenu .updnl { list-style:none; margin:8px 0 0; padding:0 0 0 9px; border-left:2px solid #34406a; max-height:150px; overflow:auto; }
+  #updmenu .updnl li { margin:0 0 4px; padding:0; color:#9aa2b6; font-size:11.5px; }
+  #updmenu .updnl li:last-child { margin-bottom:0; }
   #updmenu .upderr { color:#ff8a8e; font-size:11.5px; padding:2px 9px 6px; }
+  #updmenu .updsep { height:1px; margin:4px 3px 6px; background:#2b3040; }
+  #updmenu button[data-upd] { align-items:flex-start; gap:10px; padding:8px 9px; margin-top:2px; cursor:pointer; }
+  #updmenu button[data-upd][disabled] { opacity:.5; cursor:default; }
+  #updmenu button[data-upd] .ck { width:16px; margin-top:1px; text-align:center; color:#9cc0ff; font-size:14px; line-height:1.2; }
+  #updmenu button[data-upd] .mi { font-weight:500; }
   #settings-section .updnotes { margin:6px 0 0 18px; padding:0; color:var(--sx-text2); font-size:12.5px; }
   #settings-section .updnotes li { margin:2px 0; }
 `;
@@ -50,10 +57,10 @@ function updNotes(n,cls){n=(n||[]).slice(0,8);return n.length?'<ul class="'+cls+
 function updHeader(){var w=$('#updwrap');if(!w)return;var s=UPD&&UPD.state;var show=!!(s&&(s.status==='ready'||s.status==='applying'));w.hidden=!show;if(!show)return;
   var b=$('#updbtn');if(b){var lab=b.querySelector('span');if(lab)lab.textContent=s.status==='applying'?'Restarting':'Update ready';b.title=s.ready?'Loom '+s.ready.version+' is downloaded and verified':'';}
   var m=$('#updmenu');if(!m)return;var r=s.ready||{};
-  m.innerHTML='<div class="updv">Loom '+updEsc(r.version||'')+'</div><div class="updn">You have '+updEsc(s.current)+'. Chats keep running in tmux while Loom restarts.'+updNotes(r.notes,'')+'</div>'+
+  m.innerHTML='<div class="updv">Loom '+updEsc(r.version||'')+'</div><div class="updn">You have '+updEsc(s.current)+'. Chats keep running in tmux while Loom restarts.'+updNotes(r.notes,'updnl')+'</div><div class="updsep"></div>'+
    (s.writable?'':'<div class="upderr">Loom cannot replace itself where it is installed. See Settings, Updates.</div>')+
    '<button type="button" role="menuitem" data-upd="apply"'+(s.writable&&s.status==='ready'?'':' disabled')+'><span class="ck">↻</span><span class="mi">Restart to update<span class="hint">Installed now, then Loom opens again</span></span></button>'+
-   '<button type="button" role="menuitem" data-upd="later"><span class="ck"></span><span class="mi">Later<span class="hint">Installed the next time Loom quits</span></span></button>';}
+   '<button type="button" role="menuitem" data-upd="later"><span class="ck">◷</span><span class="mi">Later<span class="hint">Installed the next time Loom quits</span></span></button>';}
 function updApply(btn){if(btn)btn.disabled=true;return fetch('/api/update/apply',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){if(!j.ok){toast(j.detail||'Could not install the update','#8a2b2e');if(btn)btn.disabled=false;updLoad();return;}toast('Installing Loom '+(j.version||'')+'. Loom will open again.');if(UPD&&UPD.state)UPD.state.status='applying';updHeader();}).catch(function(){/* the server going away is the restart */});}
 function updCheck(btn){UPD_ASKED=true;
   /* Show Checking now, in the state every re-render reads, so the board's 5s
