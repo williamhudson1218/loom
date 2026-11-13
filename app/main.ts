@@ -478,15 +478,29 @@ async function threadGoto(url: string, picked: { text?: string; author?: string 
   const inside = currentTerminal() === 'inside';
   const label = threadLabel(url);
   let pendingUp = false;
-  const showPending = (title: string, detail = '') => {
+  // The Slack screen (src/pendingview.ts, kind 'slack'): the page switches to it at once, so the
+  // chat that was selected before never shows while this one loads; the window itself only comes
+  // up after PENDING_AFTER_MS, so a fast jump does not flash it.
+  const where = label === 'this thread' ? 'This Slack thread' : label.charAt(0).toUpperCase() + label.slice(1);
+  const setScreen = (title: string, detail: string) => {
     pendingUp = true;
+    void pageCall('typeof loomPending==="function"&&loomPending(' + JSON.stringify({ kind: 'slack', label: title, where, detail }) + ')');
+  };
+  let windowUp = false;
+  const raise = () => {
+    windowUp = true;
     showWindow();
-    void pageCall('typeof loomPending==="function"&&loomPending(' + JSON.stringify({ label: title, detail }) + ')');
     pickEvent('pending-shown');
   };
-  const slow = inside ? setTimeout(() => showPending('Opening ' + label + '…', 'Finding the chat for this thread.'), PENDING_AFTER_MS) : null;
+  const showPending = (title: string, detail = '') => {
+    setScreen(title, detail);
+    raise();
+  };
+  if (inside) setScreen('Opening your chat from Slack', 'Finding the chat for this thread.');
+  const slow = inside ? setTimeout(raise, PENDING_AFTER_MS) : null;
   const fail = (detail: string): GotoOutcome => {
-    if (pendingUp) void pageCall('typeof loomPending==="function"&&loomPending(' + JSON.stringify({ label: 'Could not open ' + label, detail, state: 'error' }) + ')');
+    // A failure before the window came up is the notification alone, not a card left waiting in a hidden window.
+    if (pendingUp) void pageCall('typeof loomPending==="function"&&loomPending(' + (windowUp ? JSON.stringify({ label: 'Could not open ' + label, detail, state: 'error' }) : 'null') + ')');
     notify(detail);
     return { ok: false, detail };
   };
@@ -501,7 +515,7 @@ async function threadGoto(url: string, picked: { text?: string; author?: string 
       const context = await askNewThread({ channel: out.ask?.channel ?? '', channelName: out.ask?.channel_name, author: picked.author, text: picked.text, project: out.ask?.project });
       pickEvent('ask-answer', { start: context !== null });
       if (context === null) return { ok: true };
-      if (inside) showPending('Starting a chat for ' + label + '…', out.ask?.project ? 'In ' + out.ask.project + '.' : '');
+      if (inside) showPending('Starting your chat from Slack', out.ask?.project ? 'In ' + out.ask.project + '.' : 'Starting Claude for this thread.');
       out = await postThreadGoto({ ...base, mode: 'start', context });
     }
     if (!out.ok) return fail(out.detail || 'Could not open the chat for this thread');
@@ -526,6 +540,9 @@ async function threadGoto(url: string, picked: { text?: string; author?: string 
       // The server raised the window and published the focus request; take it now.
       showWindow();
       shown = await pageCall('typeof loomFocusNow==="function"&&loomFocusNow()');
+    } else if (pendingUp) {
+      // Nothing above lands in Loom's window (the chat opened in another terminal): clear the screen.
+      void pageCall('typeof loomPending==="function"&&loomPending(null)');
     }
     pickEvent('view-shown', { action: out.action, inside, shown });
     return { ok: true };

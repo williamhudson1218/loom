@@ -87,7 +87,7 @@ export const SETTINGS_VIEW_CSS = String.raw`
   #settings-section th { text-align:left; color:var(--sx-muted); font-weight:600; font-size:11.5px; padding:6px 8px; border-bottom:1px solid var(--sx-line); white-space:nowrap; }
   #settings-section td { padding:7px 8px; border-bottom:1px solid var(--sx-line); vertical-align:middle; color:var(--sx-text2); }
   #settings-section .sxrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
-  #settings-section .sxmodal { position:fixed; inset:0; z-index:200; background:rgba(5,6,10,.72); display:flex; align-items:center; justify-content:center; padding:16px; }
+  #settings-section .sxmodal { z-index:200; background:rgba(5,6,10,.72); }
   #settings-section .sxdlg { width:100%; max-width:440px; background:var(--sx-card); border:1px solid var(--sx-ctl-line); border-radius:12px; padding:18px; box-shadow:0 20px 60px rgba(0,0,0,.6); color:var(--sx-text2); font-size:13px; }
   #settings-section .sxdlg h3 { margin:0 0 8px; font-size:16px; color:var(--sx-text); }
   #settings-section .sxdlg .sxrow { justify-content:flex-end; margin-top:14px; }
@@ -454,7 +454,7 @@ function sxSet(k,v){
    sxConfirm({title:'Skip permissions for '+who,body:'These sessions will run with <code>--dangerously-skip-permissions</code>. Claude can run any command and edit any file without asking you first. Turn this on only on a machine and in folders you trust.',typed:'skip permissions',ok:'Turn on skip permissions',danger:true}).then(function(y){if(y){var o={};o[k]=v;sxPut(o);}else renderSettings();});return;}
   var o2={};o2[k]=v;sxPut(o2);}
 function sxConfirm(o){return new Promise(function(res){
-  var host=document.createElement('div');host.className='sxmodal';
+  var host=document.createElement('div');host.className='loverlay sxmodal';
   host.innerHTML='<div class="sxdlg" role="dialog" aria-modal="true"><h3>'+sxEsc(o.title)+'</h3><div>'+o.body+'</div>'+(o.typed?'<div style="margin-top:12px"><label class="def" for="sx-typed">Type <b>'+sxEsc(o.typed)+'</b> to confirm</label><br><input type="text" id="sx-typed" autocomplete="off" style="width:100%;margin-top:4px"></div>':'')+'<div class="sxrow"><button type="button" class="sxbtn" id="sx-no">Cancel</button><button type="button" class="sxbtn'+(o.danger?' danger':' pri')+'" id="sx-yes"'+(o.typed?' disabled':'')+'>'+sxEsc(o.ok||'Confirm')+'</button></div></div>';
   $('#settings-section').appendChild(host);
   var done=function(v){document.removeEventListener('keydown',kd,true);host.remove();res(v);};

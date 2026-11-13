@@ -6,7 +6,9 @@
 // Page globals it uses: $, esc, fetch, DATA, chatKey, mtab, TERM_TOKEN, refresh,
 // renderMain, flash, launchVerb, openInBoard, onlyGroup; snapFetch and loomErrorHtml when present.
 
-export const PENDING_VIEW_JS = String.raw`
+import { threadMark } from './logo.ts';
+
+export const PENDING_VIEW_JS = 'var PENDING_MARK=' + JSON.stringify(threadMark('mpsl-mark', 'mpsl')) + ';\n' + String.raw`
 function doLaunch(sid,sourceAgent,lane,el,p,action,proj,selectedAgent){const busy=action==='branch'?'branching…':(sourceAgent===selectedAgent?'resuming…':'starting new…');const okmsg=action==='branch'?'branched ✓':(sourceAgent===selectedAgent?'resumed ✓':'started fresh ✓');
   // A resume switches the view now and says so; the reply names the pane, which opens at once
   // (the board only sees the chat live a few seconds later).
@@ -29,9 +31,14 @@ var PENDING_LIVE={}; // chatKey -> {pane_id, at}: a resumed chat's pane, before 
 var PENDING_GEN=0;  // bumped by every setPending, so a poll for a chat stops once the card changed or was dismissed
 function setPending(p){PENDING=p||null;PENDING_GEN++;renderPending();}
 function dismissPending(){if(PENDING)setPending(null);}
-function renderPending(){let el=$('#mpending');if(!PENDING){if(el)el.remove();return;}
+function renderPending(){let el=$('#mpending');const err=!!PENDING&&PENDING.state==='error';const slack=!!PENDING&&PENDING.kind==='slack'&&!err;
+  // A chat opening from Slack hides the row that was selected before, so the old chat's highlight
+  // does not sit on screen while the new one loads (src/dashboard.ts, body.slackopen).
+  try{document.body.classList.toggle('slackopen',slack);}catch(e){}
+  if(!PENDING){if(el)el.remove();return;}
   if(!el){el=document.createElement('div');el.id='mpending';$('#chatmain').appendChild(el);}
-  const err=PENDING.state==='error';el.className=err?'err':'';
+  if(slack){renderSlackOpening(el);return;}
+  el.className='loverlay'+(err?' err':'');
   const acts=err?'<div class="mpacts">'+(PENDING.pane?'<button type="button" class="mbtn" id="mppane" data-pane="'+esc(PENDING.pane)+'">Show the pane</button>':'')+'<button type="button" class="mbtn" id="mpclose">Dismiss</button></div>':'';
   if(err&&typeof loomErrorHtml==='function'){
     el.innerHTML='<div class="mpcard mperr" role="alert"><div style="flex:1;min-width:0">'+loomErrorHtml({title:PENDING.label||'',message:PENDING.detail||'',output:PENDING.output||'',what:PENDING.label||'Open a chat'})+acts+'</div></div>';
@@ -40,6 +47,19 @@ function renderPending(){let el=$('#mpending');if(!PENDING){if(el)el.remove();re
   }
   const b=$('#mpclose');if(b)b.onclick=()=>setPending(null);
   const g=$('#mppane');if(g)g.onclick=()=>pendingShowPane(PENDING&&PENDING.pane);}
+// The Slack screen: the main area turns to the welcome screen's night sky (src/skyview.ts) with the
+// Loom mark weaving its threads, until the chat opens (or the card turns into the failure state).
+// Built once per visit so the sky keeps running; later steps only change its text.
+function renderSlackOpening(el){const p=PENDING;
+  if(el.className!=='mpslack'||!el.querySelector||!el.querySelector('.mpsl-in')){el.className='mpslack';
+    el.innerHTML='<canvas class="mpsl-sky" aria-hidden="true"></canvas><div class="mpsl-in" role="status" aria-live="polite"><div class="mpsl-halo"></div>'+PENDING_MARK
+      +'<h2 class="mpsl-h">'+esc(p.label||'')+'</h2><p class="mpsl-where">'+esc(p.where||'')+'</p><p class="mpsl-step">'+esc(p.detail||'')+'</p>'
+      +'<div class="mpsl-bar" aria-hidden="true"><i></i></div><button type="button" class="mpsl-x" id="mpclose" title="Stop waiting (Esc)">Cancel</button></div>';
+    const cv=el.querySelector?el.querySelector('canvas'):null;
+    if(cv&&typeof loomSky==='function'&&typeof LSKY_NEBULA!=='undefined')loomSky(cv,{nebula:LSKY_NEBULA,dim:.75,density:.7,maxStars:380,fps:30,dpr:1,shoot:2600,alive:function(){return cv.isConnected&&el.className==='mpslack';}});
+    return;}
+  const set=function(q,t){const n=el.querySelector(q);if(n&&n.textContent!==t)n.textContent=t;};
+  set('.mpsl-h',p.label||'');set('.mpsl-where',p.where||'');set('.mpsl-step',p.detail||'');}
 // Bring a pane up (the resumed chat's own pane, to see why it did not start), then clear the card.
 function pendingShowPane(pane){if(!pane)return;fetch('/api/panes/goto?pane='+encodeURIComponent(pane),{method:'POST',headers:{'x-loom-term-token':TERM_TOKEN}}).then(r=>r.json()).then(j=>{if(j&&j.ok)setPending(null);else if(PENDING)setPending(Object.assign({},PENDING,{detail:(PENDING.detail||'')+' The pane could not be shown: '+((j&&j.detail)||'no such pane')+'.'}));}).catch(()=>{});}
 // Dismiss is also caught at the document, in the capture phase: it clears the card however the
@@ -49,7 +69,7 @@ if(typeof document!=='undefined'&&document.addEventListener&&!window.__loomPendi
   document.addEventListener('click',function(e){const t=e.target;if(!PENDING||!t||!t.closest)return;
     if(t.closest('#mpclose')){setPending(null);return;}
     if(t.closest('#mppane'))return;
-    if(!t.closest('.mpcard'))setPending(null);},true);
+    if(!t.closest('.mpcard')&&!t.closest('.mpslack'))setPending(null);},true);
   document.addEventListener('keydown',function(e){if(e.key==='Escape')dismissPending();},true);}
 function pendingLiveFor(c){const k=chatKey(c);const p=PENDING_LIVE[k];if(!p)return null;
   if(DATA.live[k]||Date.now()-p.at>60000){delete PENDING_LIVE[k];return null;}
@@ -81,7 +101,8 @@ window.loomOpenResumed=function(agent,sid,pane,retried,how){const verb=how==='st
   // seconds on. Say "Opening…" and keep looking, up to PENDING_WAIT_MS; the call returns now so the
   // hotkey's pick is not held open for the wait. The pane is read each round too, so a chat that
   // exited at once (claude --resume on a session it cannot find) fails at once, with its output.
-  setPending({label:'Opening this chat…',detail:'Waiting for it to appear on the board.'});
+  if(PENDING&&PENDING.kind==='slack')setPending(Object.assign({},PENDING,{detail:'Waiting for the chat to come up.'}));
+  else setPending({label:'Opening this chat…',detail:'Waiting for it to appear on the board.'});
   const gen=PENDING_GEN;const t0=Date.now();const short=String(sid||'').slice(0,8);
   const fail=function(why,tail){setPending({label:'This chat did not open',state:'error',pane:pane||'',output:tail||'',
     detail:why+(pane?' Loom '+verb+' session '+short+' in pane '+pane+'; the pane shows what happened.':' Loom '+verb+' session '+short+'.')});};

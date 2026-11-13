@@ -90,7 +90,7 @@ describe('Resume on the board', () => {
     p.calls[0].resolve({ ok: false, detail: 'machine is short of memory' });
     await tick();
     const el = p.els['#mpending'];
-    expect(el.className).toBe('err');
+    expect(el.className).toBe('loverlay err');
     expect(el.innerHTML).toContain('Could not resume this chat');
     expect(el.innerHTML).toContain('machine is short of memory');
     expect(el.innerHTML).not.toContain('mpspin');
@@ -113,7 +113,7 @@ describe('a chat resumed by the Slack hotkey', () => {
     const p = page();
     const open = p.win.loomOpenResumed as Open;
     expect(open('claude', 's1', '%5')).toBe(true);
-    expect(p.els['#mpending'].className).toBe('');
+    expect(p.els['#mpending'].className).toBe('loverlay');
     expect(p.els['#mpending'].innerHTML).toContain('Opening this chat');
     await flush();
     expect(p.refreshes).toBeGreaterThan(0);
@@ -133,12 +133,12 @@ describe('a chat resumed by the Slack hotkey', () => {
     now.mockReturnValue(1_000_000 + 20_000);
     p.timers.shift()?.();
     await flush();
-    expect(p.els['#mpending'].className).toBe('');
+    expect(p.els['#mpending'].className).toBe('loverlay');
     now.mockReturnValue(1_000_000 + 26_000);
     p.timers.shift()?.();
     await flush();
     now.mockRestore();
-    expect(p.els['#mpending'].className).toBe('err');
+    expect(p.els['#mpending'].className).toBe('loverlay err');
     expect(p.els['#mpending'].innerHTML).toContain('did not appear on the board within 25 seconds');
     expect(p.els['#mpending'].innerHTML).toContain('pane %5');
     expect(p.els['#mpending'].innerHTML).toContain('id="mppane"');
@@ -155,7 +155,7 @@ describe('a chat resumed by the Slack hotkey', () => {
       const p = page();
       (p.win.loomOpenResumed as Open)('claude', 'd43a5f94-0000', '%1327');
       await flush();
-      expect(p.els['#mpending'].className).toBe('err');
+      expect(p.els['#mpending'].className).toBe('loverlay err');
       expect(p.els['#mpending'].innerHTML).toContain('exited as soon as it started');
       expect(p.lib.pending.output).toContain('No conversation found with session ID: d43a5f94');
       expect(p.lib.pending.output).not.toContain('\x1b');
@@ -196,7 +196,7 @@ describe('a chat resumed by the Slack hotkey', () => {
     p.timers.shift()?.();
     await flush();
     now.mockRestore();
-    expect(p.els['#mpending'].className).toBe('err');
+    expect(p.els['#mpending'].className).toBe('loverlay err');
     expect(p.els['#mpending'].innerHTML).toContain('Loom started session abcd1234 in pane %1397');
     expect(p.els['#mpending'].innerHTML).not.toContain('resumed');
   });
@@ -210,6 +210,68 @@ describe('a chat resumed by the Slack hotkey', () => {
     await flush();
     expect(p.refreshes).toBe(before);
     expect(p.els['#mpending']).toBeUndefined();
+  });
+});
+
+describe('a chat opened from Slack', () => {
+  type Open = (agent: string, sid: string, pane: string, retried?: boolean, how?: string) => boolean;
+  const flush = async () => { for (let i = 0; i < 5; i++) await tick(); };
+  const slack = { kind: 'slack', label: 'Opening your chat from Slack', where: 'The #filings thread', detail: 'Finding the chat for this thread.' };
+  it('shows the space screen, not the card, and hides the old selection while it is up', () => {
+    const body = { classList: { on: false, toggle(_c: string, v: boolean) { this.on = v; } } };
+    const p = page([], { body });
+    (p.win.loomPending as (x: unknown) => boolean)(slack);
+    const el = p.els['#mpending'];
+    expect(el.className).toBe('mpslack');
+    expect(el.innerHTML).toContain('mpsl-sky');
+    expect(el.innerHTML).toContain('class="mpsl-mark"');
+    expect(el.innerHTML).toContain('Opening your chat from Slack');
+    expect(el.innerHTML).toContain('The #filings thread');
+    expect(el.innerHTML).toContain('id="mpclose"');
+    expect(el.innerHTML).not.toContain('mpcard');
+    expect(body.classList.on).toBe(true);
+    p.lib.setPending(null);
+    expect(body.classList.on).toBe(false);
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+  it('keeps the space screen while a started chat comes up, then hands off to it', async () => {
+    const p = page();
+    (p.win.loomPending as (x: unknown) => boolean)(slack);
+    (p.win.loomOpenResumed as Open)('claude', 's9', '%9', false, 'started');
+    expect(p.lib.pending).toMatchObject({ kind: 'slack', label: 'Opening your chat from Slack', detail: 'Waiting for the chat to come up.' });
+    expect(p.els['#mpending'].className).toBe('mpslack');
+    await flush();
+    p.DATA.chats.push({ agent: 'claude', session_id: 's9' });
+    p.timers.shift()?.();
+    await flush();
+    expect(p.log).toContain('open:s9');
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+  it('turns into the failure card after 25 seconds, and the old selection shows again', async () => {
+    const body = { classList: { on: false, toggle(_c: string, v: boolean) { this.on = v; } } };
+    const p = page([], { body });
+    (p.win.loomPending as (x: unknown) => boolean)(slack);
+    (p.win.loomOpenResumed as Open)('claude', 'abcd1234ffff', '%1', false, 'started');
+    await flush();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 26000);
+    p.timers.shift()?.();
+    await flush();
+    now.mockRestore();
+    expect(p.els['#mpending'].className).toBe('loverlay err');
+    expect(p.els['#mpending'].innerHTML).toContain('This chat did not open');
+    expect(body.classList.on).toBe(false);
+  });
+});
+
+describe('modals', () => {
+  it('every modal sits in the one centring overlay', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude', [], [], 'tok');
+    expect(html).toContain('.loverlay > * { margin:auto;');
+    for (const id of ['composer', 'termbox', 'renamebox', 'shipmodal']) expect(html).toContain('<div id="' + id + '" class="loverlay" hidden>');
+    expect(html).toContain("host.className='loverlay tpmodal'");
+    expect(html).toContain("host.className='loverlay sxmodal'");
+    // Cmd-K (#jump) stays top-anchored on purpose; nothing else is.
+    expect(html).not.toMatch(/place-items:start center|padding-top:18vh|padding-top:96px/);
   });
 });
 

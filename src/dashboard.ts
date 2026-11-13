@@ -33,6 +33,7 @@ import { OUTBOX_PURE_JS, OUTBOX_VIEW_CSS, OUTBOX_VIEW_JS } from './outboxview.ts
 import { UPDATE_HEADER_HTML, UPDATE_VIEW_CSS, UPDATE_VIEW_JS } from './updateview.ts';
 import { SLACKMD_JS } from './slackmd.ts';
 import { SHIPMODAL_CSS, SHIPMODAL_HTML, SHIPMODAL_JS } from './shipmodal.ts';
+import { OVERLAY_CSS } from './overlayview.ts';
 import type { Agent, ChatRow, LaunchPreference } from './types.ts';
 
 export interface ChatView {
@@ -177,6 +178,7 @@ export function renderDashboard(
 <title>${APP_NAME}</title>
 <link rel="icon" href="${favicon}"/>
 <style>
+${OVERLAY_CSS}
 ${WELCOME_BOOT_CSS}
   :root { color-scheme: dark;
     --done:#2ea043; --waiting_on_user:#3b82f6; --warning:#d4a72c; --error:#e5484d; --pending:#6b7280; }
@@ -567,8 +569,7 @@ ${PRUNE_VIEW_CSS}
   .sthread { border:1px solid #232634; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; background:#11141d; }
   .sprev { font-size:12.5px; color:#c4ccdc; }
   .dft { color:#e8a6e0; font-weight:700; }
-  #composer { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.55); display:grid; place-items:start center; padding-top:12vh; }
-  #composer[hidden] { display:none; }
+  #composer { z-index:20; background:rgba(0,0,0,.55); }
   .cbox { width:min(760px,92vw); background:#11141d; border:1px solid #2b3040; border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; box-shadow:0 24px 60px rgba(0,0,0,.5); }
   .cbox.drop { border-color:#79b1ff; box-shadow:0 0 0 2px rgba(121,177,255,.35); }
   .cbox textarea { width:100%; box-sizing:border-box; min-height:140px; resize:vertical; background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:8px; padding:10px; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
@@ -830,7 +831,7 @@ ${TEST_LINKS_CSS}
     background:linear-gradient(rgba(14,16,28,.9), rgba(14,16,28,.9)) padding-box, linear-gradient(90deg,#ff5f8f,#ffb238,#5ec8ff) border-box; }
   #mhero .hx-acts button:focus-visible { outline:2px solid #5ec8ff; outline-offset:3px; }
   /* Opening / resuming: shown the moment the view switches, until the pane is there. */
-  #mpending { position:absolute; inset:0; z-index:30; display:flex; align-items:flex-start; justify-content:center; padding-top:96px; background:rgba(11,13,19,.72); }
+  #mpending.loverlay { z-index:30; background:rgba(11,13,19,.72); }
   .mpcard { display:flex; align-items:center; gap:12px; max-width:440px; padding:14px 18px; border-radius:10px; border:1px solid #2a2f40; background:#121620; color:#e4e7ee; font-size:13px; }
   .mpcard b { display:block; font-weight:600; }
   .mpcard span.mpd { display:block; color:#8a90a2; margin-top:2px; }
@@ -838,6 +839,36 @@ ${TEST_LINKS_CSS}
   #mpending.err .mpcard { pointer-events:auto; }
   #mpending.err .mpcard { border-color:#6b2a2e; background:#1d1215; }
   #mpending .mpcard.mperr { max-width:560px; flex-direction:column; align-items:stretch; padding:12px; }
+  /* Opening a chat from Slack: the welcome screen's night sky over the main area, the mark
+     weaving its three threads, until the chat is there (src/pendingview.ts, renderSlackOpening). */
+  #mpending.mpslack { position:absolute; inset:0; z-index:30; overflow:hidden; background:#05060b; display:flex; align-items:center; justify-content:center; animation:mpsl-in .2s ease both; }
+  .mpslack canvas.mpsl-sky { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .mpslack .mpsl-in { position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center; max-width:460px; padding:24px 16px; }
+  .mpslack .mpsl-halo { position:absolute; width:300px; height:300px; max-width:80vw; left:50%; top:0; transform:translate(-50%,-30%); border-radius:50%; pointer-events:none;
+    background:radial-gradient(circle, rgba(255,178,56,.10), rgba(255,95,143,.06) 40%, transparent 70%); }
+  .mpslack .mpsl-mark { position:relative; width:88px; height:auto; overflow:visible; margin-bottom:10px;
+    filter:drop-shadow(0 0 5px rgba(255,178,56,.45)) drop-shadow(0 0 18px rgba(255,95,143,.32)) drop-shadow(0 0 34px rgba(94,200,255,.28)); }
+  .mpslack .mpsl-mark path[pathLength] { stroke-dasharray:1; stroke-dashoffset:1; animation:mpsl-weave 2.8s cubic-bezier(.6,0,.2,1) infinite; }
+  .mpslack .mpsl-mark path.lw-t2[pathLength] { animation-delay:.45s; }
+  .mpslack .mpsl-h { margin:0; font-size:20px; font-weight:600; color:#eef1fb; letter-spacing:.01em; }
+  .mpslack .mpsl-where { margin:0; font-size:13.5px; font-weight:600; color:#e8a6e0; }
+  .mpslack .mpsl-where:empty, .mpslack .mpsl-step:empty { display:none; }
+  .mpslack .mpsl-step { margin:0; font-size:13px; color:#a3a9be; line-height:1.5; text-wrap:balance; }
+  .mpslack .mpsl-bar { position:relative; width:180px; height:2px; margin:12px 0 6px; border-radius:2px; overflow:hidden; background:rgba(238,241,251,.08); }
+  .mpslack .mpsl-bar i { position:absolute; top:0; bottom:0; width:40%; border-radius:2px; background:linear-gradient(90deg, transparent, #ff5f8f, #ffb238, #5ec8ff, transparent); animation:mpsl-comet 1.6s ease-in-out infinite; }
+  .mpslack .mpsl-x { margin-top:8px; height:30px; padding:0 14px; border-radius:999px; font:inherit; font-size:12px; letter-spacing:.06em; cursor:pointer; border:1px solid #2b3040; background:rgba(14,16,28,.7); color:#a3a9be; }
+  .mpslack .mpsl-x:hover { border-color:#4a5578; color:#eef1fb; }
+  .mpslack .mpsl-x:focus-visible { outline:2px solid #5ec8ff; outline-offset:3px; }
+  @keyframes mpsl-in { from { opacity:0; } }
+  @keyframes mpsl-weave { 0% { stroke-dashoffset:1; } 45%, 70% { stroke-dashoffset:0; } 100% { stroke-dashoffset:-1; } }
+  @keyframes mpsl-comet { from { left:-40%; } to { left:100%; } }
+  @media (prefers-reduced-motion:reduce) { #mpending.mpslack { animation:none; } .mpslack .mpsl-mark path[pathLength] { animation:none; stroke-dashoffset:0; } .mpslack .mpsl-bar i { animation:none; left:30%; } }
+  /* ...and the row that was selected before stops looking selected while it is up. */
+  body.slackopen #sidelist .srow.sel { background:transparent; border-color:transparent; }
+  body.slackopen #sidelist .srow.sel.age-today { background:#16150f; }
+  body.slackopen #sidelist .srow.sel.age-yday { background:#1f1a0e; }
+  body.slackopen #sidelist .srow.sel.age-old { background:#221316; }
+  body.slackopen #kanban .tkx .tk.sel, body.slackopen .tkx .tk.sel { background:#161a24; border-color:#232634; }
   .mpacts { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
   .mpspin { width:16px; height:16px; flex-shrink:0; border:2px solid #2f3a55; border-top-color:#8fb4ff; border-radius:50%; animation:mpspin .7s linear infinite; }
   @keyframes mpspin { to { transform:rotate(360deg); } }
@@ -939,12 +970,10 @@ ${TEST_LINKS_CSS}
   .cmi.danger.dis { color:#6b4a4e; }
   .cmh { font-size:11px; color:#8a90a2; }
   .cmdiv { height:1px; background:#2a2f40; margin:4px 2px; }
-  #termbox { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.55); display:grid; place-items:start center; padding-top:18vh; }
-  #termbox[hidden] { display:none; }
+  #termbox { z-index:20; background:rgba(0,0,0,.55); }
   .sgrp .tnew { padding:0 7px; height:20px; font-size:13px; line-height:1; border-radius:5px; }
   .tsel-win { height:28px; border-radius:7px; padding:0 8px; }
-  #renamebox { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.55); display:grid; place-items:start center; padding-top:18vh; }
-  #renamebox[hidden] { display:none; }
+  #renamebox { z-index:20; background:rgba(0,0,0,.55); }
   .rbox input { width:100%; box-sizing:border-box; height:34px; border-radius:8px; padding:0 10px; font:14px -apple-system,Segoe UI,Roboto,sans-serif; }
   #toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:40; padding:7px 14px; border-radius:8px; background:#1f6f3f; color:#fff; font-size:12.5px; opacity:0; pointer-events:none; transition:opacity .2s; }
   #toast.on { opacity:1; }
@@ -1097,7 +1126,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
   </div>
 </section>
 ${SHIPMODAL_HTML}
-<div id="composer" hidden>
+<div id="composer" class="loverlay" hidden>
   <div class="cbox" role="dialog" aria-label="New thread">
     <div class="crow"><b>New thread</b><span class="spacer"></span><span class="dsub">⌘↵ launch · Esc close</span></div>
     <textarea id="cprompt" placeholder="What should it work on? Paste or drop screenshots here."></textarea>
@@ -1113,14 +1142,14 @@ ${SHIPMODAL_HTML}
     <div class="crow"><span id="cmsg" class="dsub"></span><a id="crestore" href="#" hidden>Restore last message</a><span class="spacer"></span><button id="ccancel">Cancel</button><button id="claunch" class="send">Launch ↵</button></div>
   </div>
 </div>
-<div id="termbox" hidden>
+<div id="termbox" class="loverlay" hidden>
   <div class="cbox rbox" role="dialog" aria-label="New terminal session">
     <div class="crow"><b>New terminal session</b><span class="spacer"></span><span class="dsub">Enter create · Esc close</span></div>
     <div class="crow"><label>Name <input id="tbname" maxlength="40" placeholder="api"/></label><label>Project <select id="tbproj"></select></label></div>
     <div class="crow"><span id="tbmsg" class="dsub"></span><span class="spacer"></span><button id="tbcancel">Cancel</button><button id="tbgo" class="send">Create ↵</button></div>
   </div>
 </div>
-<div id="renamebox" hidden>
+<div id="renamebox" class="loverlay" hidden>
   <div class="cbox rbox" role="dialog" aria-label="Rename chat">
     <div class="crow"><b>Rename chat</b><span class="spacer"></span><span class="dsub">Enter save · Esc close · empty restores the generated title</span></div>
     <input id="rninput" maxlength="200" placeholder="Title"/>

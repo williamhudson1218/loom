@@ -84,7 +84,7 @@ describe('composer shell', () => {
   it('ships the New thread button, the composer and its launch call', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     expect(html).toContain('id="newbtn"');
-    expect(html).toContain('id="composer" hidden');
+    expect(html).toContain('id="composer" class="loverlay" hidden');
     expect(html).toContain("fetch('/api/new-thread'");
     expect(html).toContain("fetch('/api/lanes?all=1')");
   });

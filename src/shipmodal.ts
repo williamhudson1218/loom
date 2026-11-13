@@ -22,8 +22,7 @@ export const SHIPMODAL_CSS = `
   .shipicon:hover { background:rgba(255,255,255,.08); color:#e6e9ef; }
   .shipchip:disabled { opacity:.45; cursor:not-allowed; }
   #shipmodal { --sm-panel:#11141d; --sm-card:#161a24; --sm-inset:#0d1017; --sm-line:#232634; --sm-line2:#2b3040; --sm-ctl:#1b1f2a; --sm-text:#e6e9ef; --sm-text2:#c4ccdc; --sm-muted:#8b93a7; --sm-faint:#6b7388; --sm-accent:var(--waiting_on_user); --sm-amber:var(--warning); --sm-go:#1f6f3f; --sm-go-h:#26844a;
-    position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.6); display:grid; place-items:center; padding:16px; }
-  #shipmodal[hidden] { display:none; }
+    z-index:30; background:rgba(0,0,0,.6); }
   #shipmodal * { box-sizing:border-box; }
   .smbox { position:relative; width:min(640px,100%); max-height:92vh; background:var(--sm-panel); border:1px solid var(--sm-line2); border-radius:14px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.5); color:var(--sm-text2); font-size:13px; }
   .smhead { padding:16px 20px 14px; display:flex; align-items:flex-start; gap:12px; }
@@ -103,7 +102,7 @@ export const SHIPMODAL_CSS = `
   .smerr { color:#ff7b72; font-size:12.5px; }
 `;
 
-export const SHIPMODAL_HTML = `<div id="shipmodal" hidden>
+export const SHIPMODAL_HTML = `<div id="shipmodal" class="loverlay" hidden>
   <div class="smbox" role="dialog" aria-modal="true" aria-labelledby="smtitle">
     <div class="smhead" id="smhead"></div>
     <div class="smbody" id="smbody"></div>

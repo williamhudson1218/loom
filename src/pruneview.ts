@@ -19,7 +19,7 @@ export const PRUNE_VIEW_CSS = `
   .tphist ul { margin:4px 0 4px 72px; padding:0; list-style:none; }
   .tphist li { padding:1px 0; }
   .tphist .rm { color:#56d364; } .tphist .sk { color:#8b93a7; } .tphist .er { color:#ff8086; }
-  .tpmodal { position:fixed; inset:0; z-index:200; background:rgba(5,6,10,.72); display:flex; align-items:center; justify-content:center; padding:16px; }
+  .tpmodal { z-index:200; background:rgba(5,6,10,.72); }
   .tpdlg { width:100%; max-width:560px; max-height:80vh; display:flex; flex-direction:column; background:#161a24; border:1px solid #2b3040; border-radius:12px; padding:18px; box-shadow:0 20px 60px rgba(0,0,0,.6); color:#c4ccdc; font-size:13px; }
   .tpdlg h3 { margin:0 0 8px; font-size:16px; color:#e6e6e6; }
   .tpdlg .tplist { overflow-y:auto; margin:6px 0; border:1px solid #232634; border-radius:8px; }
@@ -65,7 +65,7 @@ function pruneDialog(results){var go=[],skipped=[],errs=[];
     +'<div class="tpsub">'+pruneEsc(w.branch)+' · '+pruneEsc(w.merge)+' ('+pruneEsc(x.r.base)+') · '+(w.branchDeleted?'branch deleted with -d':'branch kept')+'</div>'
     +(w.branchNote?'<div class="tpwarn">'+pruneEsc(w.branchNote)+'</div>':'')
     +'<div class="tpsub">'+pruneEsc(w.path)+'</div></div>';}).join('');
-  var host=document.createElement('div');host.className='tpmodal';
+  var host=document.createElement('div');host.className='loverlay tpmodal';
   host.innerHTML='<div class="tpdlg" role="dialog" aria-modal="true"><h3>'+(go.length?'Remove '+go.length+' merged worktree'+(go.length===1?'':'s'):'Nothing to prune')+'</h3>'
     +'<div>'+(go.length?'Each one is checked again just before it goes: still clean, merged, no stash, nothing running in it. Removal is <code>git worktree remove</code> then <code>git branch -d</code>, never forced.':'No worktree is merged, clean and unused right now.')+'</div>'
     +(go.length?'<div class="tplist">'+items+'</div>':'')
