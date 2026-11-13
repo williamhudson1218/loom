@@ -3,7 +3,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 // Loom's self-updater: GitHub Releases in, a swapped bundle out.
@@ -216,21 +215,41 @@ export const defaultDeps: UpdaterDeps = {
     return res.json();
   },
   async download(url, dest, onProgress) {
-    const res = await fetch(url, { headers: { 'user-agent': 'Loom-updater' }, signal: AbortSignal.timeout(15 * 60_000) });
-    if (!res.ok || !res.body) throw new Error(`download answered ${res.status}`);
-    const len = Number(res.headers.get('content-length') || 0);
-    if (len > MAX_ZIP_BYTES) throw new Error('download is larger than any Loom release');
-    let seen = 0;
-    const body = Readable.fromWeb(res.body as never);
-    body.on('data', (c: Buffer) => {
-      seen += c.length;
-      if (seen > MAX_ZIP_BYTES) body.destroy(new Error('download is larger than any Loom release'));
-      else onProgress?.(seen, len);
-    });
-    await pipeline(body, fs.createWriteStream(dest));
-    // A connection dropped mid-body (sleep, wifi change) can end the stream
-    // cleanly; a short file is a failed download, not a bad release.
-    if (len > 0 && seen !== len) throw new Error(`download ended early (${seen} of ${len} bytes)`);
+    // curl, not fetch: in the running app the fetch body (Readable.fromWeb into a
+    // write stream) wrote later chunks at earlier offsets, giving a full-size zip
+    // with a wrong sha256 on every try, while curl on the same machine was exact.
+    // Not reproducible outside the live app, so the download leaves that path.
+    let total = 0;
+    try {
+      const head = await fetch(url, { method: 'HEAD', headers: { 'user-agent': 'Loom-updater' }, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+      total = Number(head.headers.get('content-length') || 0);
+    } catch {
+      /* progress is just unknown */
+    }
+    if (total > MAX_ZIP_BYTES) throw new Error('download is larger than any Loom release');
+    const tick = setInterval(() => {
+      try {
+        onProgress?.(fs.statSync(dest).size, total);
+      } catch {
+        /* not created yet */
+      }
+    }, 500);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          '/usr/bin/curl',
+          ['--fail', '--location', '--silent', '--show-error', '--max-time', '900', '--max-filesize', String(MAX_ZIP_BYTES), '--user-agent', 'Loom-updater', '--output', dest, url],
+          { encoding: 'utf8' },
+          (err, _out, stderr) => (err ? reject(new Error(`download failed: ${(stderr || err.message).trim().split('\n').slice(-1)[0]}`)) : resolve()),
+        );
+      });
+    } finally {
+      clearInterval(tick);
+    }
+    const got = fs.statSync(dest).size;
+    // A connection dropped mid-body can end cleanly; a short file is a failed download.
+    if (total > 0 && got !== total) throw new Error(`download ended early (${got} of ${total} bytes)`);
+    onProgress?.(got, total || got);
   },
   async sha256File(p) {
     const h = crypto.createHash('sha256');
