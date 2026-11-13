@@ -84,6 +84,7 @@ export const JUMP_CSS = `
   .hmenu { position:absolute; top:calc(100% + 6px); right:0; min-width:200px; z-index:30; padding:4px; background:#161a26; border:1px solid #2b3040; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,.45); opacity:0; transform:translateY(-4px) scale(.98); transform-origin:top right; pointer-events:none; visibility:hidden; transition:opacity .14s ease, transform .16s ease, visibility 0s .16s; }
   .hmenu.on { opacity:1; transform:none; pointer-events:auto; visibility:visible; transition:opacity .14s ease, transform .16s ease; }
   .hmenu button { display:flex; width:100%; align-items:center; gap:8px; background:transparent; border-radius:7px; padding:7px 9px; text-align:left; font-size:13px; color:#d4d9e6; }
+  .hmenu button { height:auto; min-height:32px; }
   .hmenu button:hover, .hmenu button:focus-visible { background:#252b3c; outline:0; }
   .hmenu .ck { width:14px; flex:none; color:#7ee0a0; }
   .hmenu { min-width:250px; }
