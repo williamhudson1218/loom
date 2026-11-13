@@ -1,6 +1,10 @@
 import { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, Notification, shell, screen } from 'electron';
 import { loadWinState, saveWinState, restoreBounds } from '../src/winstate.ts';
-import { startPick, stopHelper, axTrusted, axRequest, warmPicker, endPick, askNewThread, pickEvent, type GotoOutcome } from './picker.ts';
+import { startPick, stopHelper, axTrusted, axRequest, warmPicker, endPick, askNewThread, pickEvent, flashRects, axList, prepareOverlays, picking, type GotoOutcome } from './picker.ts';
+import { flashOpenedThread } from '../src/slackflash.ts';
+import { SLACK_BUNDLE_ID } from '../src/pickstate.ts';
+import { frontBundleId } from '../src/frontapp.ts';
+import { pickLog } from '../src/picklog.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +20,7 @@ import { composePath, resolveTmuxTmpdir, loginEnv, shouldAutostartOrchestrator }
 import { practice, setShortcutHost, normalizeAccelerator } from '../src/routes/shortcut.ts';
 import { parseSlackThread, findOwner, defaultGotoDeps } from '../src/slackgoto.ts';
 import { getChannelProjects } from '../src/slackowner.ts';
-import { channelLabels } from '../src/slack.ts';
+import { channelLabels, cachedRoot, setSlackOpenedHook } from '../src/slack.ts';
 import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
@@ -745,6 +749,40 @@ function registerSlackHotkey(): string {
   return '';
 }
 
+/**
+ * After Open in Slack: outline the message Slack landed on for about a second
+ * (src/slackflash.ts). Fire-and-forget and silent on any miss: no Accessibility
+ * trust, Slack not in front, the message not found or off-screen.
+ */
+let flashing = false;
+function flashOpened(key: string): void {
+  if (flashing || picking() || process.platform !== 'darwin') return;
+  const db = openDb();
+  let on = true;
+  try {
+    on = getSetting(db, 'slack_open_flash', { env: false }) !== false;
+  } finally {
+    db.close();
+  }
+  if (!on) return;
+  flashing = true;
+  prepareOverlays(); // built and painted while Slack comes forward
+  void flashOpenedThread(key, {
+    list: () => axList().catch(() => ({ ok: false })),
+    slackFront: async () => (await frontBundleId().catch(() => null)) === SLACK_BUNDLE_ID,
+    displays: () => screen.getAllDisplays().map((d) => d.bounds),
+    root: () => cachedRoot(key),
+    flash: (rects) => void flashRects(rects),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    now: () => Date.now(),
+  })
+    .then((why) => pickLog().write('-', 'open-flash', { why }))
+    .catch(() => {})
+    .finally(() => {
+      flashing = false;
+    });
+}
+
 /** slack_goto_hotkey changed: swap the global shortcut live. The old one stays if the new one is refused. */
 function reRegisterSlackHotkey(): void {
   const next = slackHotkey();
@@ -987,6 +1025,7 @@ app.whenReady().then(() => {
   // paint below — after it, our own fresh tints would be swept too.
   clearPaneTints();
 
+  setSlackOpenedHook(flashOpened);
   slackAccel = registerSlackHotkey();
   // Helper, trust answer and hidden overlays ready before the first press.
   if (slackAccel) warmPicker();

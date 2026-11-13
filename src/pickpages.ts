@@ -16,7 +16,14 @@ export const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
     animation:spin .7s linear infinite}
   #hint.busy #spin{display:inline-block}
   @keyframes spin{to{transform:rotate(360deg)}}
-</style></head><body><div id="box"></div><div id="hint"><span id="spin"></span><span id="msg"></span></div><script>
+  /* After "Open in Slack": the landed message, outlined like a hover, pulsed once and faded. */
+  .fl{position:fixed;display:none;border:2px solid #4c8dff;border-radius:6px;background:rgba(76,141,255,0.14);
+    box-shadow:0 0 0 1px rgba(0,0,0,0.35),0 0 0 4px rgba(76,141,255,0.35);pointer-events:none;opacity:0}
+  .fl.on{display:block;animation:loomflash 1.1s ease-out forwards}
+  @keyframes loomflash{0%{opacity:0}12%{opacity:1}38%{opacity:.45}60%{opacity:1}100%{opacity:0}}
+  body.flashing{cursor:default}
+  body.flashing #hint,body.flashing #box{display:none !important}
+</style></head><body><div id="box"></div><div id="fl0" class="fl"></div><div id="fl1" class="fl"></div><div id="hint"><span id="spin"></span><span id="msg"></span></div><script>
   const { ipcRenderer } = require('electron');
   const origin = JSON.parse(decodeURIComponent(location.hash.slice(1)));
   const box = document.getElementById('box'), hint = document.getElementById('hint'), msg = document.getElementById('msg');
@@ -29,6 +36,7 @@ export const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
   // this display could really take a click, not just when it was ordered in.
   ipcRenderer.on('reset', () => {
     clearTimeout(timer); box.style.display = 'none'; say(IDLE); document.body.style.cursor = 'crosshair';
+    document.body.className = ''; for (const i of [0, 1]) { const f = document.getElementById('fl' + i); if (f) f.className = 'fl'; }
     requestAnimationFrame(() => requestAnimationFrame(() => ipcRenderer.send('loom-pick-painted', { d: origin.d, t: Date.now(), vis: document.visibilityState })));
   });
   // A message was picked: say so until the chat is on screen, so the wait is visible.
@@ -42,6 +50,20 @@ export const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
   ipcRenderer.on('rect', (_e, r) => {
     if (!r) { box.style.display = 'none'; return; }
     Object.assign(box.style, { display: 'block', left: (r.x - origin.x - 2) + 'px', top: (r.y - origin.y - 2) + 'px', width: r.w + 'px', height: r.h + 'px' });
+  });
+  // Flash rects (global screen points) once, then the main process hides the window.
+  ipcRenderer.on('flash', (_e, rects) => {
+    document.body.className = 'flashing';
+    [0, 1].forEach((i) => {
+      const f = document.getElementById('fl' + i);
+      if (!f) return;
+      const r = (rects || [])[i];
+      f.className = 'fl';
+      if (!r) return;
+      Object.assign(f.style, { left: (r.x - origin.x - 2) + 'px', top: (r.y - origin.y - 2) + 'px', width: r.w + 'px', height: r.h + 'px' });
+      void f.offsetWidth; // restart the animation
+      f.className = 'fl on';
+    });
   });
   ipcRenderer.on('hint', (_e, text) => {
     say(text);

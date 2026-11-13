@@ -310,6 +310,18 @@ export function threadsFor(sessionId: string, api: SlackLookups = defaultLookups
   return out.sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
+/** The cached root text and author of a thread, or null. Never fetches. */
+export function cachedRoot(key: string): { text: string; author: string } | null {
+  return cache().roots[key] ?? null;
+}
+
+// Set by the app (app/main.ts): after a successful open it flashes the landed
+// message on screen (src/slackflash.ts). Fire-and-forget; the open never waits.
+let openedHook: ((key: string) => void) | null = null;
+export function setSlackOpenedHook(fn: ((key: string) => void) | null): void {
+  openedHook = fn;
+}
+
 /**
  * Open a thread in the Slack app. `open slack://…` hands it to the app; when
  * there is no app (or no team id yet) the https permalink goes to the browser,
@@ -328,6 +340,11 @@ export async function openThread(key: string, run: Runner = defaultRunner, threa
   for (const target of deep === t.url ? [t.url] : [deep, t.url]) {
     try {
       await run('open', [target]);
+      try {
+        openedHook?.(key);
+      } catch {
+        /* the flash is a nicety; the open succeeded */
+      }
       return { ok: true, detail: target.startsWith('slack:') ? 'opened in Slack' : 'opened permalink' };
     } catch {
       /* try the next target */

@@ -206,7 +206,7 @@ function raise(w: BrowserWindow): void {
 }
 
 /** Build the overlays if the displays changed since they were built (or they died). */
-function prepareOverlays(): void {
+export function prepareOverlays(): void {
   const displays = screen.getAllDisplays().map((d) => d.bounds);
   const alive = overlays.every((o) => !o.win.isDestroyed() && !o.win.webContents.isCrashed());
   if (alive && overlaysMatch(overlays.map((o) => o.bounds), displays)) return;
@@ -295,6 +295,48 @@ export function failPick(text: string, ms = 2200): void {
   broadcast('error', text);
   if (openGuard) clearTimeout(openGuard);
   openGuard = setTimeout(() => endPick('error-shown'), ms);
+}
+
+/* ------------------------------------------------------------ the open-in-Slack flash */
+
+export const FLASH_SHOW_MS = 1_250; // the overlay's animation is 1.1 s
+let flashSeq = 0;
+
+/**
+ * Flash rects (global screen points) on the overlays they fall on, click-through
+ * and without focus, then hide them. Skipped while a pick is up (the overlays
+ * are in use) or when an overlay is not built yet: a missed flash is silent.
+ */
+export function flashRects(rects: AxRect[]): boolean {
+  if (machine.phase !== 'idle' || !rects.length) return false;
+  if (!overlays.length) prepareOverlays();
+  const seq = ++flashSeq;
+  const hits = overlays.filter((o) => o.ready && !o.win.isDestroyed() && rects.some((r) =>
+    r.x < o.bounds.x + o.bounds.width && r.x + r.w > o.bounds.x && r.y < o.bounds.y + o.bounds.height && r.y + r.h > o.bounds.y));
+  if (!hits.length) return false;
+  for (const o of hits) {
+    o.win.setAlwaysOnTop(true, 'screen-saver');
+    o.win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    o.win.setIgnoreMouseEvents(true); // raise() turns click capture back on for the next pick
+    o.win.webContents.send('flash', rects);
+    o.win.showInactive();
+  }
+  pickLog().write('-', 'flash', { n: rects.length, d: hits.map((o) => o.index).join(',') });
+  setTimeout(() => {
+    // A newer flash owns the overlays now, or a pick took them over.
+    if (seq !== flashSeq || machine.phase !== 'idle') return;
+    for (const o of hits) {
+      if (o.win.isDestroyed()) continue;
+      o.win.hide();
+      o.win.webContents.send('reset');
+    }
+  }, FLASH_SHOW_MS);
+  return true;
+}
+
+/** loom-ax `list`: every Slack message in the AX tree with its permalink and frame. */
+export function axList(): Promise<{ ok: boolean; messages?: { url: string; rect: AxRect; inThread: boolean; text?: string; author?: string }[] }> {
+  return ask({ op: 'list' });
 }
 
 function showOverlays(): boolean {

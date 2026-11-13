@@ -354,6 +354,10 @@ export const SETTINGS = [
     key: 'slack_poll_parked', section: 'slack', label: 'Watch parked threads', help: 'Poll parked chats’ Slack threads for replies (direct mode only).',
     defaultNew: true, legacyUnset: true, restart: false,
   }),
+  boolDef({
+    key: 'slack_open_flash', section: 'slack', label: 'Flash the opened message', help: 'After Open in Slack, briefly outline the message Slack scrolled to.',
+    defaultNew: true, legacyUnset: true, restart: false,
+  }),
   jsonDef(channelMap, {
     key: 'channel_projects', storageKey: 'slack_channel_projects', section: 'slack', label: 'Channel folders',
     help: 'Which project folder a chat started from a channel opens in.',

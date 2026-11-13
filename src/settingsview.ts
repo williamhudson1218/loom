@@ -296,6 +296,7 @@ function sxSlackSection(){var sl=SX.data.slack,mode=sxv('slack_mode'),st=sxs('sl
    h+=sxRow('Granted scopes','Loom compares these with what it needs.',sxPill(miss.length?'warn':'ok',(sc.granted||0)+' of '+(sc.required||0))+miss.map(function(m){return sxPill('warn',m+' missing');}).join('')+(miss.length?sxBtn('sreauth','Re-authorise'):''));
    if(miss.length)h+=sxNote('Add <code>'+miss.map(sxEsc).join('</code> <code>')+'</code> to the Slack app and reinstall it. Re-authorise copies an updated app manifest to paste at api.slack.com/apps (Your Apps, the app, App Manifest). Features that need those scopes stay off until then.','warn');}
   h+=sxKey('slack_poll_parked',{title:'Poll parked threads for replies',help:'Checks threads you parked with Send & park.'});
+  h+=sxKey('slack_open_flash',{title:'Flash the opened message',help:'After Open in Slack, briefly outlines the message Slack scrolled to. Uses the Accessibility access the shortcut uses.'});
   var dr=SX.data.dir;h+=sxRow('Directory and emoji cache','People, channels and custom emoji.'+(dr&&dr.fetchedAt?' Last refreshed '+sxEsc(sxAgo(dr.fetchedAt))+'.':' Not refreshed yet.'),sxBtn('sdir','Refresh now',{dis:mode!=='direct'}));
   h+=sxGrp('Channel to project map')+'<div class="def" style="margin-bottom:6px">The shortcut and watchers start chats in the project mapped to the channel.</div>';
   var cp=sxv('channel_projects')||{},ks=Object.keys(cp);var projs=(ALLP||[]).filter(function(p){return !p.hidden;});
