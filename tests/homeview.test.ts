@@ -131,8 +131,10 @@ describe('home view wiring', () => {
     expect(HOME_VIEW_JS).not.toMatch(/`|\$\{/);
     expect(HOME_VIEW_HTML).not.toMatch(/`|\$\{/);
   });
-  it('pins Home above the Orchestrator row and mounts the view inside the main area', () => {
-    expect(html.indexOf('id="homepin"')).toBeLessThan(html.indexOf('id="orchpin"'));
+  it('is the first top tab, the launch tab, and mounts the view inside the main area', () => {
+    expect(html).not.toContain('id="homepin"');
+    expect(html).toContain("const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board'");
+    expect(html).toContain("var tab='home';");
     expect(html).toContain('id="homeview"');
     expect(html).toContain('function selectHome(');
   });

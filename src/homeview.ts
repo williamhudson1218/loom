@@ -60,7 +60,6 @@ function homeOrbitLayout(W,H,groups){var m=Math.min(W,H),cx=W/2,cy=H/2,out={ring
 const keyOf = (action: string): string => KEYMAP.find((k) => k.action === action)?.keys ?? '';
 
 export const HOME_VIEW_CSS = String.raw`
-  #homepin:empty { display:none; }
   #chatmain.home > :not(#homeview) { display:none !important; }
   #homeview { display:none; flex:1 1 auto; min-height:0; position:relative; overflow:hidden; background:#05060b; container-type:inline-size; }
   #chatmain.home #homeview { display:block; }
@@ -170,14 +169,11 @@ var HOME_COL={turn:['#3b82f6','#a9c8ff'],working:['#2ea043','#8ee6a1'],stale:['#
 var HOME_LBL={turn:'Your turn',working:'Working',stale:'Stale'};
 function homeOn(){const v=$('#homeview');return homeSel&&!!v&&v.offsetParent!==null;}
 function homeStopSky(){if(HOME.sky){HOME.sky.stop();HOME.sky=null;}}
-function homePinHtml(){return '<button type="button" class="opin'+(homeSel?' sel':'')+'" data-home="1" aria-label="Home, overview"><span class="oic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8fb4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"></path><path d="M5 10v10h5v-6h4v6h5V10"></path></svg></span><span class="ot">Home</span></button>';}
-function renderHomePin(){const el=$('#homepin');if(!el)return;const h=homePinHtml();if(el.dataset.h!==h){el.dataset.h=h;el.innerHTML=h;}}
-function selectHome(){if(homeSel&&!sel&&!tsel&&!orchSel){renderHome();return;}
-  homeSel=true;leaveOrch();leaveTerminal();
-  if(tab!=='board'&&tab!=='saved'){tab='board';stateFilter='all';syncControls();liveToggle();chips();render();}
-  if(sel){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);closeCtx();document.querySelectorAll('#sidelist .srow.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));}
-  renderHomePin();renderMain();homeLoadOrch(true);}
-function leaveHome(){if(!homeSel)return;homeSel=false;homeStopSky();renderHomePin();}
+// Home is a top-level tab: tab==='home' and homeSel are one fact, kept in step by syncHomeTab (render and renderMain call it).
+function syncHomeTab(){const on=tab==='home';if(on===homeSel)return;homeSel=on;if(!on)homeStopSky();}
+function selectHome(){if(tab==='home'){renderHome();return;}tab='home';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();homeLoadOrch(true);}
+// Opening a chat, the orchestrator or a terminal from anywhere hands the view back to the Board tab.
+function leaveHome(){if(tab!=='home')return;tab='board';stateFilter='all';syncControls();liveToggle();chips();render();}
 // The orchestrator page's own feed: open items, read from /api/orch. Polled slowly, and sooner when the sidebar's count disagrees.
 function homeLoadOrch(force){if(HOME.orchBusy||document.hidden)return;
   const n=(DATA.orch&&DATA.orch.needsYou)||0;
@@ -264,7 +260,6 @@ function homeAct(a,el){
   if(a==='oldest'){const w=homeOldest(homeClassify(homeRows(),Date.now()).turn);const c=w&&w.c;if(c)openInBoard(c.session_id,c.agent);return;}
   if(a==='ship'){const t=homeShipTotals(DATA.ships,homeShortName);if(t.repos[0])openShipModal(t.repos[0].repo,false);}}
 function wireHome(){const v=$('#homeview');
-  $('#homepin').addEventListener('click',e=>{if(e.target.closest('[data-home]'))selectHome();});
   const wm=document.querySelector('.brand h1.wordmark');
   if(wm){wm.setAttribute('role','button');wm.setAttribute('tabindex','0');wm.setAttribute('title','Home');wm.setAttribute('aria-label','Loom, go to Home');wm.style.cursor='pointer';
     wm.addEventListener('click',selectHome);wm.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();selectHome();}});}
@@ -276,6 +271,5 @@ function wireHome(){const v=$('#homeview');
     const ac=e.target.closest('[data-hact]');if(ac&&!ac.disabled)homeAct(ac.dataset.hact,ac);});
   if(window.ResizeObserver){HOME.ro=new ResizeObserver(()=>{if(homeSel&&HOME.view==='B'&&v.offsetParent!==null)renderHome();});HOME.ro.observe($('#hm-orbit'));}
   HOME.clockT=setInterval(()=>{if(homeSel&&!document.hidden&&v.offsetParent!==null)homeClock();},5000);
-  document.addEventListener('visibilitychange',()=>{v.classList.toggle('paused',document.hidden);});
-  renderHomePin();}
+  document.addEventListener('visibilitychange',()=>{v.classList.toggle('paused',document.hidden);});}
 `;

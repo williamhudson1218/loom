@@ -707,6 +707,9 @@ ${PRUNE_VIEW_CSS}
   body.sidehide #boardwrap { grid-template-columns:minmax(0,1fr); }
   body.sidehide #side { display:none; }
   #boardwrap.tk { grid-template-columns:minmax(0,1fr); height:auto; }
+  /* Home is a full-width tab like Tickets: no session list, the Overview takes the row. */
+  #boardwrap.hm { grid-template-columns:minmax(0,1fr); }
+  #boardwrap.hm #side { display:none; }
   #boardwrap.tk #side, #boardwrap.tk #chatmain { display:none; }
   #boardwrap.tk #kanban { padding:16px 20px; }
   #side { border-right:1px solid #232634; background:#0f1218; display:flex; flex-direction:column; min-height:0; min-width:0; overflow:hidden; }
@@ -1099,7 +1102,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
       <div class="fchecks"><label class="fck"><input type="checkbox" id="fdraft"/> Has a draft</label><label class="fck"><input type="checkbox" id="fissue"/> Has issues</label></div>
     </div>
   </div>
-  <div id="sidepin"><div id="homepin"></div><div id="orchpin"></div><div id="shippin"></div></div>
+  <div id="sidepin"><div id="orchpin"></div><div id="shippin"></div></div>
   <div id="sidelist">
     <div id="list"></div>
     <section id="archive"></section>
@@ -1231,7 +1234,7 @@ function projects(){const cur=$('#proj').value;const set=DATA.projects?[...new S
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 var stateFilter='all';
 var liveOnly=true;
-var tab='board'; // 'board' | 'saved'
+var tab='home'; // 'home' | 'board' | 'saved' | ... Loom opens on Home (the Overview).
 const SLABEL={done:'Done',waiting_on_user:'Your turn',warning:'Caveats',error:'Error',pending:'Summarizing…'};
 function st(c){return c.summary_pending?'pending':(c.state||'done');}
 function agentLabel(agent){return agent==='codex'?'Codex':'Claude Code';}
@@ -1273,7 +1276,7 @@ function watchBadge(){var n=Number(WATCH.unreviewed)||0;(WATCH.watchers||[]).for
 // (old lastCommitAt) are not counted: with dozens of worktrees that made the badge noise.
 function treeIsStale(w){if(w.primary||(w.livePanes&&w.livePanes.length))return false;return w.verdict==='safe';}
 function staleTreeCount(){var n=0;TREES.repos.forEach(function(r){r.worktrees.forEach(function(w){if(treeIsStale(w))n++;});});return n;}
-function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['tickets','⊞ Tickets',kbCount(),' tktab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
+function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['tickets','⊞ Tickets',kbCount(),' tktab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'">'+d[1]+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
 // Header status: "Updated Ns ago" only when the data is over 30 s old or the last poll failed.
 var pollFailed=false;
 function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(DATA.generatedAt||0);
@@ -1286,7 +1289,7 @@ function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(
 // The Trees, Watchers and Settings tabs show something other than chats, so every
 // chat-scoped control goes away with them — leaving the project/sort pickers
 // visible would imply they filter it.
-function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa=tab==='watch';const se=tab==='settings';const other=tr||wa||se;
+function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa=tab==='watch';const se=tab==='settings';const other=tr||wa||se;const hm=tab==='home';
   $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
   $('.controls').style.display=other?'none':'';
   $('#row3').style.display=other?'none':'';
@@ -1298,6 +1301,7 @@ function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa
   $('#termlist').style.display=other||tk?'none':'';
   $('#kanban').style.display=tk?'grid':'none';
   $('#boardwrap').classList.toggle('tk',tk);
+  $('#boardwrap').classList.toggle('hm',hm);
   $('#boardwrap').style.display=other?'none':'';
   // 'block', NOT '': the stylesheet defaults these sections to display:none, and
   // clearing the inline style just lets that rule win again.
@@ -1350,7 +1354,7 @@ function wireSideTop(){$('#sort').value=sortMode;
     render();});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const h=e.target.closest&&e.target.closest('.sgrp[data-gk]');if(!h||e.target!==h)return;e.preventDefault();h.click();});}
 function matchFilter(c){if(fDraft&&!hasDrafts(c))return false;if(fIssue){const s=st(c);if(!(s==='warning'||s==='error'))return false;}return true;}
-function render(){renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
+function render(){syncHomeTab();renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||searchHay(c,(DATA.live[chatKey(c)]||{}).name).includes(q));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
@@ -1669,7 +1673,7 @@ function wireSlackStart(){$('#mslack').addEventListener('click',e=>{const b=e.ta
     postJ('/api/slack/start/project',{key:s.key,at:s.at,project:dir}).then(j=>{b.disabled=false;
       if(j.ok){SLK_OPEN='';SLK_PENDING=j.started;toast('restarted in '+shortPath(dir));setTimeout(refresh,800);setTimeout(refresh,3000);}
       else toast(j.detail||'could not restart','#8a2b2e');}).catch(()=>{b.disabled=false;toast('server off','#8a2b2e');});}});}
-function renderMain(){const box=$('#chatmain');renderOutbox();
+function renderMain(){const box=$('#chatmain');syncHomeTab();renderOutbox();
   box.classList.toggle('home',homeSel);
   if(homeSel){box.classList.remove('empty','orch');if(termKey)closeTerm();renderHome();return;}
   if(orchSel){box.classList.remove('empty');box.classList.add('orch');if(termKey&&termKey.indexOf('orch|')!==0)closeTerm();renderOrch(false);return;}

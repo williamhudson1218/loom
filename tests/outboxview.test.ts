@@ -36,7 +36,7 @@ describe('rail visibility', () => {
     const html = renderDashboard([], 1);
     expect(html).toContain('id="outrail"');
     expect(html).toContain('id="chatwrap" data-rail="hidden"');
-    expect(html).toContain("if(orchSel||tsel||!sel||sel.arch)return [];");
+    expect(html).toContain("if(homeSel||orchSel||tsel||!sel||sel.arch)return [];");
     // Open by default; a collapse is remembered per chat until a newer draft arrives.
     expect(html).toContain("outCollapsed=key?railCollapsed(key,ds):true;");
     expect(html).toContain("else if(outCollapsed&&key&&!railCollapsed(key,ds))outCollapsed=false;");

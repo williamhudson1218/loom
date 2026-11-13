@@ -332,7 +332,7 @@ function canPark(d){return !!(d.thread_ts||d.channel||d.email);}
 function parkWhyNot(d){return canPark(d)?'':(d.review?'a review with no Slack message has no thread to watch for a reply':'no thread or channel to watch for a reply');}
 function draftsBusy(box){return !!(box&&box.querySelector('textarea:focus'));}
 // ---- the rail
-function railDrafts(){if(orchSel||tsel||!sel||sel.arch)return [];const c=selChat();return c?draftsFor(c):[];}
+function railDrafts(){if(homeSel||orchSel||tsel||!sel||sel.arch)return [];const c=selChat();return c?draftsFor(c):[];}
 function railLoad(k){try{return Number(localStorage.getItem(railStoreKey(k)))||0;}catch(e){return 0;}}
 function railCollapsed(k,ds){return railShut(railLoad(k),ds);}
 function railSave(k,collapsed){try{if(collapsed)localStorage.setItem(railStoreKey(k),String(newestDraftAt(railDrafts())||Date.now()));else localStorage.removeItem(railStoreKey(k));}catch(e){}}
