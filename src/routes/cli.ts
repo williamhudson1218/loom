@@ -8,7 +8,13 @@ import { reactionsAdd, reactionsRemove, chatPostMessage, SlackError, type CallOp
 import { SLACK_OFF, slackFeatureOn } from '../slackmode.ts';
 import { ensureThreadState, recentAcks, type ThreadStateRow } from '../slackowner.ts';
 import { getSetting } from '../settingsSchema.ts';
-import { tmux } from '../tmux.ts';
+import fs from 'node:fs';
+import { isViewSession, tmux } from '../tmux.ts';
+import { gotoPane } from '../goto.ts';
+import { currentTerminal } from '../terminal.ts';
+import { attachGhosttyTabs } from '../ghostty.ts';
+import { pretrustFolder } from '../orchstart.ts';
+import { nameNewPanes } from '../panenames.ts';
 import { listTestLinks } from '../testlinks.ts';
 import type { RouteCtx, RouteDef, Verdict } from './index.ts';
 
@@ -37,6 +43,18 @@ export interface CliDeps {
   legacyThreads(): Record<string, ThreadRec>;
   slackOn(): boolean;
   slack: CallOpts;
+  /** Run a tmux command on Loom's socket (argv, never a shell). */
+  tmux(args: string[]): string;
+  /** Bring a pane forward in the user's terminal (the `terminal` setting decides how). */
+  goto(paneId: string, session: string): { ok: boolean; detail: string };
+  /** True when the user's terminal is Ghostty, so an unattached session needs a tab attached. */
+  ghostty(): boolean;
+  /** Attach a Ghostty tab to a session. */
+  attachTab(session: string): { ok: boolean; detail: string };
+  pretrust(dir: string): void;
+  /** Give any unnamed workspace pane its @name. */
+  namePanes(): void;
+  dirExists(dir: string): boolean;
 }
 
 export interface NamedPane {
@@ -80,6 +98,9 @@ export function tmuxDeliver(paneId: string, text: string, run: (args: string[]) 
 // Under vitest the tmux defaults are off: a test that forgot to stub them must not
 // list, or type into, the developer's own panes on the default socket.
 const inTests = !!process.env.VITEST;
+function failInTests(): never {
+  throw new Error('tmux is off under tests');
+}
 let deps: CliDeps = {
   openDb: () => realOpenDb(),
   outbox: {},
@@ -90,6 +111,22 @@ let deps: CliDeps = {
   legacyThreads: () => (legacyStateDir() ? readThreads(path.join(legacyStateDir(), 'slack-threads.json')) : {}),
   slackOn: () => slackFeatureOn('react'),
   slack: {},
+  tmux: (a) => (inTests ? failInTests() : tmux(a)),
+  goto: (p, s) => (inTests ? { ok: false, detail: 'focus is off under tests' } : gotoPane(p, s)),
+  ghostty: () => !inTests && currentTerminal() === 'ghostty',
+  attachTab: (s) => {
+    const r = attachGhosttyTabs([s]);
+    return { ok: r.ok, detail: r.detail };
+  },
+  pretrust: (d) => void pretrustFolder(d),
+  namePanes: () => void nameNewPanes(),
+  dirExists: (d) => {
+    try {
+      return fs.statSync(d).isDirectory();
+    } catch {
+      return false;
+    }
+  },
 };
 
 /** server.ts wires the live snapshot in; tests override any part. Returns the previous deps. */
@@ -286,7 +323,126 @@ async function postReply(ctx: RouteCtx): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------ focus + sessions */
+
+const SESSION_RE = /^loom-[a-z0-9][a-z0-9-]{0,62}$/;
+const FOCUS_SESSION_RE = /^loom-[A-Za-z0-9._-]{1,120}$/;
+const PANE_RE = /^%\d+$/;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const bad = (ctx: RouteCtx, detail: string) => ctx.json(400, { ok: false, error: 'bad-request', detail });
+
+/** The pane and session to bring forward: a session's active pane, or a pane's own session. */
+function resolveTarget(opts: { session?: string; pane?: string }): { paneId: string; session: string } | { error: 'no-such-session' | 'no-such-pane' } {
+  if (opts.session) {
+    let out = '';
+    try {
+      out = deps.tmux(['list-panes', '-t', '=' + opts.session, '-F', '#{pane_id}\t#{pane_active}\t#{window_active}']);
+    } catch {
+      return { error: 'no-such-session' };
+    }
+    const rows = out.split('\n').map((l) => l.split('\t')).filter((f) => f[0]?.startsWith('%'));
+    if (!rows.length) return { error: 'no-such-session' };
+    const active = rows.find((f) => f[1] === '1' && f[2] === '1') ?? rows.find((f) => f[1] === '1') ?? rows[0];
+    return { paneId: active[0], session: opts.session };
+  }
+  let out = '';
+  try {
+    out = deps.tmux(['list-panes', '-a', '-F', '#{pane_id}\t#{session_name}']);
+  } catch {
+    return { error: 'no-such-pane' };
+  }
+  for (const l of out.split('\n')) {
+    const [id, session] = l.split('\t');
+    if (id === opts.pane && session && !isViewSession(session)) return { paneId: id, session };
+  }
+  return { error: 'no-such-pane' };
+}
+
+/** Attach a Ghostty tab when the user's terminal is Ghostty and no tmux client shows the session, then focus. */
+function focusTarget(t: { paneId: string; session: string }): { ok: boolean; detail: string } {
+  let detail = '';
+  if (deps.ghostty()) {
+    let attached = true;
+    try {
+      attached = deps.tmux(['list-clients', '-F', '#{client_session}']).split('\n').includes(t.session);
+    } catch {
+      /* unknown: do not attach blindly */
+    }
+    if (!attached) {
+      const r = deps.attachTab(t.session);
+      detail = r.ok ? 'tab attached; ' : 'tab attach failed: ' + r.detail + '; ';
+    }
+  }
+  const r = deps.goto(t.paneId, t.session);
+  return { ok: r.ok, detail: detail + r.detail };
+}
+
+async function postFocus(ctx: RouteCtx): Promise<void> {
+  const b = await ctx.body();
+  const session = typeof b?.session === 'string' ? b.session : '';
+  const pane = typeof b?.pane === 'string' ? b.pane : '';
+  if (!!session === !!pane) return bad(ctx, 'exactly one of session or pane is required');
+  if (session && !FOCUS_SESSION_RE.test(session)) return bad(ctx, 'session must start with loom-');
+  if (pane && !PANE_RE.test(pane)) return bad(ctx, 'pane must look like %17');
+  const t = resolveTarget({ session, pane });
+  if ('error' in t) return ctx.json(404, { ok: false, error: t.error });
+  if (!t.session.startsWith('loom-')) return bad(ctx, 'only loom- sessions can be focused');
+  const r = focusTarget(t);
+  ctx.json(200, { ok: true, session: t.session, pane_id: t.paneId, detail: r.detail });
+}
+
+async function postSessions(ctx: RouteCtx): Promise<void> {
+  const b = await ctx.body();
+  const name = typeof b?.name === 'string' ? b.name : '';
+  const cwd = typeof b?.cwd === 'string' ? b.cwd : '';
+  const argv = Array.isArray(b?.argv) ? (b!.argv as unknown[]) : null;
+  if (!SESSION_RE.test(name)) return bad(ctx, 'name must match ^loom-[a-z0-9][a-z0-9-]{0,62}$');
+  if (!cwd || !path.isAbsolute(cwd)) return bad(ctx, 'cwd must be an absolute path');
+  if (!argv || !argv.length || argv.some((a) => typeof a !== 'string') || !(argv[0] as string)) return bad(ctx, 'argv must be a non-empty array of strings');
+  const env = b?.env;
+  if (env !== undefined && (!env || typeof env !== 'object' || Array.isArray(env))) return bad(ctx, 'env must be an object');
+  const envPairs = Object.entries((env ?? {}) as Record<string, unknown>);
+  if (envPairs.some(([k, v]) => !ENV_KEY_RE.test(k) || typeof v !== 'string')) return bad(ctx, 'env keys must be names and values strings');
+  if (!deps.dirExists(cwd)) return bad(ctx, 'cwd does not exist');
+  // Duplicate check first: an existing session is never touched.
+  let exists = true;
+  try {
+    deps.tmux(['has-session', '-t', '=' + name]);
+  } catch {
+    exists = false;
+  }
+  if (exists) return ctx.json(409, { ok: false, error: 'duplicate' });
+  if (b?.trust === true) deps.pretrust(cwd);
+  const args = ['new-session', '-d', '-s', name, '-c', cwd, '-P', '-F', '#{pane_id}'];
+  for (const [k, v] of envPairs) args.push('-e', `${k}=${v as string}`);
+  args.push('--', ...(argv as string[]));
+  let paneId = '';
+  try {
+    paneId = deps.tmux(args).trim();
+  } catch (e) {
+    return ctx.json(500, { ok: false, error: 'tmux', detail: (e as Error).message });
+  }
+  if (!PANE_RE.test(paneId)) {
+    const t = resolveTarget({ session: name });
+    paneId = 'error' in t ? '' : t.paneId;
+  }
+  let paneName = '';
+  if (paneId) {
+    try {
+      deps.namePanes();
+      paneName = deps.tmux(['display-message', '-p', '-t', paneId, '#{@name}']).trim();
+    } catch {
+      /* the sidebar names it on its next tick */
+    }
+  }
+  let focused = false;
+  if (b?.focus === true && paneId) focused = focusTarget({ paneId, session: name }).ok;
+  ctx.json(201, { ok: true, session: name, pane_id: paneId, name: paneName, focused });
+}
+
 export const routes: RouteDef[] = [
+  { method: 'POST', path: '/api/cli/focus', kind: 'cli', handler: postFocus },
+  { method: 'POST', path: '/api/cli/sessions', kind: 'cli', handler: postSessions },
   { method: 'GET', path: '/api/cli/threads', kind: 'cli', handler: getThreads },
   { method: 'GET', path: '/api/cli/outbox', kind: 'cli', handler: getOutbox },
   { method: 'GET', path: '/api/cli/ship-labels', kind: 'cli', handler: getShipLabels },
