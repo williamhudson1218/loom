@@ -55,6 +55,7 @@ export interface OrchItem {
   opened_at: number;
   updated_at: number;
   resolved_at: number;
+  resolved_why: string; // '' when Will or the orchestrator closed it; Loom's reason when the sweep did
 }
 
 export interface ItemInput {
@@ -95,7 +96,7 @@ export function upsertItem(db: Database.Database, input: ItemInput, now: number)
   if (input.id && !prev) throw new Error(`no item ${input.id}`);
   if (prev) {
     db.prepare(
-      `UPDATE orchestrator_items SET kind = ?, ref_type = ?, ref_id = ?, title = ?, why = ?, who = ?, updated_at = ?, resolved_at = ? WHERE id = ?`,
+      `UPDATE orchestrator_items SET kind = ?, ref_type = ?, ref_id = ?, title = ?, why = ?, who = ?, updated_at = ?, resolved_at = ?, resolved_why = '' WHERE id = ?`,
     ).run(fields.kind, input.ref_type ?? prev.ref_type, input.ref_id !== undefined ? refId : prev.ref_id, fields.title || prev.title, fields.why, fields.who, now, resolvedAt, prev.id);
     const item = db.prepare(`SELECT * FROM orchestrator_items WHERE id = ?`).get(prev.id) as OrchItem;
     return { item, created: false, becameNeedsYou: item.kind === 'needs_you' && (prev.kind !== 'needs_you' || prev.resolved_at !== 0) };
@@ -110,8 +111,10 @@ export function upsertItem(db: Database.Database, input: ItemInput, now: number)
 }
 
 /** Close an item. Resolving never changes its kind: a resolved needs_you item just leaves the rail. */
-export function resolveItem(db: Database.Database, id: number, now: number): OrchItem | null {
-  const changed = db.prepare(`UPDATE orchestrator_items SET resolved_at = ?, updated_at = ? WHERE id = ? AND resolved_at = 0`).run(now, now, id).changes;
+export function resolveItem(db: Database.Database, id: number, now: number, why = ''): OrchItem | null {
+  const changed = db
+    .prepare(`UPDATE orchestrator_items SET resolved_at = ?, updated_at = ?, resolved_why = ? WHERE id = ? AND resolved_at = 0`)
+    .run(now, now, why.slice(0, 200), id).changes;
   if (!changed) return null;
   return db.prepare(`SELECT * FROM orchestrator_items WHERE id = ?`).get(id) as OrchItem;
 }
@@ -138,7 +141,7 @@ export function startOfDay(now: number): number {
 
 /* ------------------------------------------------------------ log */
 
-export type LogKind = 'relay' | 'queued' | 'delivered' | 'failed' | 'events' | 'ask' | 'started';
+export type LogKind = 'relay' | 'queued' | 'delivered' | 'failed' | 'events' | 'ask' | 'started' | 'cleared';
 
 export interface LogRow {
   id: number;

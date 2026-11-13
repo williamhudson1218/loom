@@ -69,6 +69,9 @@ export const ORCH_VIEW_CSS = String.raw`
   .omv.link { cursor:pointer; }
   .odn { font-size:12px; line-height:1.5; color:#a3a9b8; display:flex; gap:6px; }
   .odn i { color:#7fd18b; font-style:normal; }
+  .ocl summary { cursor:pointer; list-style:none; }
+  .ocl .odn { color:#7d8394; }
+  .ocl .odn i { color:#7d8394; }
   .oempty { font-size:12px; color:#6f778a; }
   @media (max-width:900px) { #ohead, #omsgs, .oinput { padding-left:14px; padding-right:14px; } .obody { flex-direction:column; overflow:auto; } #oconvo { flex:none; height:70vh; border-right:0; border-bottom:1px solid #232634; } #orail { flex:none; overflow:visible; } }
 `;
@@ -108,7 +111,7 @@ function loadOrch(toBottom){fetch('/api/orch').then(r=>r.json()).then(j=>{if(!or
 function hhmm(ms){if(!ms)return '';const d=new Date(ms);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
 // Conversation + Loom's own log, by time. An event batch is already in the
 // transcript as a user turn, so its log row is skipped; it renders as a line.
-var OLOG_TXT={relay:'Sent to',queued:'Queued for',delivered:'Delivered to',failed:'Not sent to',started:'',ask:''};
+var OLOG_TXT={relay:'Sent to',queued:'Queued for',delivered:'Delivered to',failed:'Not sent to',started:'',ask:'',cleared:'Cleared'};
 // The client keeps every turn it has seen (the 4 s tail plus any pages loaded on demand), so a
 // tail that slides forward never leaves a gap behind an earlier page.
 function orchMerge(store,keys,msgs){let n=0;(msgs||[]).forEach(m=>{const k=(m.at||0)+'|'+m.role+'|'+(m.text||'').length+'|'+(m.text||'').slice(0,40);if(keys[k])return;keys[k]=1;store.push(m);n++;});if(n)store.sort((a,b)=>(a.at||0)-(b.at||0));return n;}
@@ -138,7 +141,7 @@ function orchLoadEarlier(){if(ORCH_LOADING||!ORCH_STORE.length)return;const firs
 function orchJumpLabel(i){return i.ref_type==='chat'?'Open chat':i.ref_type==='pr'?'Open PR':i.ref_type==='slack'?'Open Slack thread':'';}
 function orchItemChat(i){if(i.ref_type!=='chat')return null;const k=i.ref_id;const c=DATA.chats.find(x=>chatKey(x)===k||x.session_id===k);return c||null;}
 function orchRailHtml(o){const items=o.items||[];const open=items.filter(i=>!i.resolved_at);
-  const nd=open.filter(i=>i.kind==='needs_you'),bl=open.filter(i=>i.kind==='blocked'),mv=open.filter(i=>i.kind==='moving'),dn=items.filter(i=>i.kind==='done'&&i.resolved_at);
+  const nd=open.filter(i=>i.kind==='needs_you'),bl=open.filter(i=>i.kind==='blocked'),mv=open.filter(i=>i.kind==='moving'),dn=items.filter(i=>i.kind==='done'&&i.resolved_at),cl=items.filter(i=>i.kind!=='done'&&i.resolved_at&&i.resolved_why);
   const sec=(cls,label,n,body,empty)=>'<div class="orsec"><div class="orh'+cls+'">'+label+(n===null?'':' · '+n)+'</div>'+(body||'<div class="oempty">'+empty+'</div>')+'</div>';
   const needs=nd.map(i=>{const j=orchJumpLabel(i);return '<div class="ocard"><div class="oct"><b>'+esc(i.title)+'</b><span>'+esc(rel(i.opened_at))+'</span></div>'+(i.why?'<div class="ocw">'+esc(i.why)+'</div>':'')+
     '<div class="ocbtns">'+(j?'<button type="button" class="ocbtn" data-jump="'+i.id+'">'+(i.ref_type==='pr'?brandIcon('github'):i.ref_type==='slack'?brandIcon('slack'):'')+j+'</button>':'')+'<button type="button" class="ocbtn q" data-resolve="'+i.id+'" title="close this item">Resolve</button></div></div>';}).join('');
@@ -147,7 +150,8 @@ function orchRailHtml(o){const items=o.items||[];const open=items.filter(i=>!i.r
   const all=mv.concat(extra);
   const moving=all.map(i=>'<div class="omv'+(i.ref_type?' link':'')+'"'+(i.ref_type==='chat'?' data-chat="'+esc(i.ref_id)+'"':'')+'><span class="sdot d-working"></span><span class="omb"><span><b>'+esc(i.who||'agent')+'</b> · '+esc(i.title)+'</span><span>'+esc(i.why||'')+'</span></span><span class="oag">'+(i.updated_at?esc(rel(i.updated_at)):'')+'</span></div>').join('');
   const done=dn.map(i=>'<div class="odn"><i>✓</i><span>'+esc(i.title)+(i.why?' · '+esc(i.why):'')+'</span></div>').join('');
-  return sec(' nd','Needs you',nd.length,needs,'Nothing needs you.')+sec('','Blocked on others',bl.length,blocked,'Nothing is waiting on anyone else.')+sec('','Moving',all.length,moving,'No agent is working.')+sec('','Done today',null,done,'Nothing finished yet today.');}
+  const cleared=cl.length?'<details class="orsec ocl"><summary class="orh">Cleared today · '+cl.length+'</summary>'+cl.map(i=>'<div class="odn"><i>–</i><span>'+esc(i.title)+' · '+esc(i.resolved_why)+'</span></div>').join('')+'</details>':'';
+  return sec(' nd','Needs you',nd.length,needs,'Nothing needs you.')+sec('','Blocked on others',bl.length,blocked,'Nothing is waiting on anyone else.')+sec('','Moving',all.length,moving,'No agent is working.')+sec('','Done today',null,done,'Nothing finished yet today.')+cleared;}
 function orchHeadHtml(o){const on=!!o.live;
   return '<div class="mh-l"><div class="mh-t"><h1>Orchestrator</h1><span class="mpill rc'+(on?'':' off')+'">'+PHONE_SVG+esc(orchStatusText(o))+'</span></div><div class="mh-sub">Watches every chat, PR and Slack thread Loom knows about. Messages your phone only when something needs you.</div></div>'+
     '<div class="mh-r"><button type="button" class="mbtn" data-oa="notify" title="notify on a new Needs you item">Notify: '+(o.notify==='off'?'Off':'Needs you only')+'</button>'+

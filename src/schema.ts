@@ -214,6 +214,12 @@ CREATE TABLE IF NOT EXISTS chat_hidden (
 // orchestrator_log is what Loom did on its behalf (relays, queued relays, event
 // batches), echoed in its conversation. orchestrator_outbox holds relays to a chat
 // Will was looking at, delivered once he leaves it.
+/** resolved_why came after the table: an existing install gets it here. */
+function ensureOrchestratorColumns(db: Database.Database): void {
+  const have = new Set((db.prepare(`PRAGMA table_info(orchestrator_items)`).all() as { name: string }[]).map((c) => c.name));
+  if (!have.has('resolved_why')) db.exec(`ALTER TABLE orchestrator_items ADD COLUMN resolved_why TEXT NOT NULL DEFAULT ''`);
+}
+
 export const ORCHESTRATOR_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS orchestrator_items (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,7 +231,8 @@ CREATE TABLE IF NOT EXISTS orchestrator_items (
   who         TEXT NOT NULL DEFAULT '',
   opened_at   INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
-  resolved_at INTEGER NOT NULL DEFAULT 0
+  resolved_at INTEGER NOT NULL DEFAULT 0,
+  resolved_why TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS orchestrator_items_open_idx ON orchestrator_items(resolved_at, kind);
 CREATE TABLE IF NOT EXISTS orchestrator_log (
@@ -453,6 +460,7 @@ export function applySchema(db: Database.Database): void {
   db.exec(PROJECTS_SCHEMA_SQL);
   db.exec(SLACK_THREADS_SCHEMA_SQL);
   db.exec(ORCHESTRATOR_SCHEMA_SQL);
+  ensureOrchestratorColumns(db);
   db.exec(PARKED_SCHEMA_SQL);
   db.exec(TEST_LINKS_SCHEMA_SQL);
   db.exec(PRUNE_SCHEMA_SQL);

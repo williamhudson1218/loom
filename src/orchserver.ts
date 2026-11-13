@@ -11,7 +11,10 @@ import { sendToPane } from './goto.ts';
 import { readTranscript, type Msg } from './transcript.ts';
 import { readAllThreads, type ThreadRec } from './slack.ts';
 import { parseSlackThread } from './slackref.ts';
-import { cachedPipeline, parsePrRef } from './pipeline.ts';
+import { cachedPipeline, parsePrRef, wantPipeline } from './pipeline.ts';
+import { readOutbox } from './outbox.ts';
+import { threadState } from './slackowner.ts';
+import { sweepItems, type ChatFact, type PrFact, type SweepFacts } from './orchsweep.ts';
 import { detectFirstRunPrompt, type OrchStartState } from './orchstart.ts';
 import { acquireManagedPane } from './managed.ts';
 import { waitForShellReady } from './newthread.ts';
@@ -70,6 +73,9 @@ const memo: SuperviseMemo = { launches: [] };
 let lastSupervise: SuperviseResult | null = null;
 const obs = newObsState();
 const batcher = new EventBatcher();
+let sweptAt = 0;
+/** The sweep re-reads the outbox and the PR cache; once a minute is plenty for a rail. */
+export const SWEEP_EVERY_MS = 60_000;
 
 /**
  * Turn the orchestrator on for this process: write its prompt + MCP config and
@@ -174,6 +180,65 @@ export function toolDeps(getSnap: () => Snap): OrchToolDeps {
   };
 }
 
+/* ------------------------------------------------------------ the sweep */
+
+/**
+ * The facts the sweep checks items against, from what Loom already holds: the
+ * board snapshot, the outbox, the PR pipeline cache, the Slack thread stages.
+ * Each lookup answers null when Loom has no data, which never clears anything:
+ * a board that has not indexed yet must not read as "every chat archived".
+ */
+export function sweepFacts(snap: Snap, db: Database.Database, readDrafts: () => Record<string, { status: string }> = readOutbox, now: number = Date.now()): SweepFacts {
+  const views = new Map(snap.views.map((v) => [agentSessionKey(v.agent, v.session_id), v]));
+  let drafts: Record<string, { status: string }> | null = null;
+  return {
+    chat: (ref): ChatFact | null => {
+      if (!snap.views.length || !/^[a-z]+:./.test(ref)) return null;
+      const v = views.get(ref);
+      const L = snap.live[ref];
+      if (!v) return L ? null : { onBoard: false, closed: false, live: false, working: false, lastTurnAt: 0, lastActiveAt: 0 };
+      return { onBoard: true, closed: !!v.done && !L, live: !!L, working: !!L?.working, lastTurnAt: v.last_turn_at || 0, lastActiveAt: v.last_active_at || 0 };
+    },
+    pr: (url): PrFact | null => {
+      const r = parsePrRef(url);
+      if (!r) return null;
+      // Register interest so the pipeline tick fetches a PR no chat is showing.
+      const p = wantPipeline(r.repo, r.number, false, now);
+      if (!p) return null;
+      const st = (k: string) => p.steps.find((x) => x.key === k)?.state ?? '';
+      const merged = st('merged');
+      return { state: merged === 'pass' ? 'merged' : merged === 'fail' ? 'closed' : 'open', deploy: st('deploy') };
+    },
+    draft: (id) => {
+      try {
+        drafts ??= readDrafts();
+      } catch {
+        drafts = {};
+      }
+      return drafts[id]?.status ?? null;
+    },
+    slack: (url) => {
+      const ref = parseSlackThread(url);
+      if (!ref) return null;
+      try {
+        return threadState(db, ref.key)?.stage || null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/** Clear every open item whose condition no longer holds, and say so in the log. Returns what it cleared. */
+export function sweepRail(db: Database.Database, facts: SweepFacts, now: number): { id: number; title: string; why: string }[] {
+  const cleared = sweepItems(listItems(db), facts, now).filter((c) => resolveItem(db, c.id, now, c.why));
+  if (cleared.length) {
+    const text = cleared.map((c) => `${c.title} (${c.why})`).join(' · ');
+    logOrch(db, 'cleared', `${cleared.length} item${cleared.length === 1 ? '' : 's'}`, text, now);
+  }
+  return cleared;
+}
+
 /* ------------------------------------------------------------ the tick */
 
 /** What the orchestrator session itself looks like right now. */
@@ -238,6 +303,14 @@ export function orchTick(snap: Snap, now: number = Date.now(), io: TickIo = real
           now: () => now,
           exists: (f) => fs.existsSync(f),
         }, memo);
+      }
+      if (now - sweptAt >= SWEEP_EVERY_MS) {
+        sweptAt = now;
+        try {
+          sweepRail(db, sweepFacts(snap, db, readOutbox, now), now);
+        } catch (e) {
+          console.error('[loom] orchestrator sweep failed:', (e as Error).message);
+        }
       }
       const relay: RelayDeps = { ...relayDeps(() => snap, run), send: io.send, now: () => now };
       if (queuedRelays(db).length) deliverQueued(db, relay);
