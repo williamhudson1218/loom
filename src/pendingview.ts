@@ -116,4 +116,24 @@ window.loomOpenResumed=function(agent,sid,pane,retried,how){const verb=how==='st
         if(Date.now()-t0>PENDING_WAIT_MS){fail('It did not appear on the board within '+Math.round(PENDING_WAIT_MS/1000)+' seconds.',tail);return;}
         setTimeout(look,1500);});});};
   look();return true;};
+// app/main.ts: a chat started from the CLI (POST /api/cli/sessions, focus) is in this pane; its session id is not known,
+// so wait for the board to show a live chat in the pane, then open it. Same wait and failure card as loomOpenResumed.
+window.loomOpenPane=function(pane){
+  const find=function(){const k=Object.keys(DATA.live).find(function(x){return DATA.live[x].pane_id===pane;});if(!k)return null;return DATA.chats.find(function(x){return chatKey(x)===k;})||null;};
+  const open=function(c){const q=$('#q');if(q&&q.value)q.value='';onlyGroup=null;
+    openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();setPending(null);setTimeout(refresh,1500);return true;};
+  const c0=find();if(c0)return open(c0);
+  if(PENDING&&PENDING.kind==='slack')setPending(Object.assign({},PENDING,{detail:'Waiting for the chat to come up.'}));
+  else setPending({kind:'slack',label:'Starting your chat',detail:'Waiting for the chat to come up.'});
+  const gen=PENDING_GEN;const t0=Date.now();
+  const fail=function(why,tail){setPending({label:'This chat did not open',state:'error',pane:pane||'',output:tail||'',detail:why+' Pane '+pane+' shows what happened.'});};
+  const look=function(){if(gen!==PENDING_GEN)return;
+    Promise.resolve(refresh()).catch(function(){}).then(function(){if(gen!==PENDING_GEN)return;
+      const c=find();if(c){open(c);return;}
+      return Promise.resolve(typeof snapFetch==='function'?snapFetch(pane):null).catch(function(){return null;}).then(pendingScreenTail).then(function(tail){if(gen!==PENDING_GEN)return;
+        const c2=find();if(c2){open(c2);return;}
+        if(tail&&PENDING_DEAD.test(tail)){fail('The chat exited as soon as it started.',tail);return;}
+        if(Date.now()-t0>PENDING_WAIT_MS){fail('It did not appear on the board within '+Math.round(PENDING_WAIT_MS/1000)+' seconds.',tail);return;}
+        setTimeout(look,1500);});});};
+  look();return true;};
 `;

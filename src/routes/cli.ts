@@ -11,7 +11,7 @@ import { getSetting } from '../settingsSchema.ts';
 import fs from 'node:fs';
 import { isViewSession, tmux } from '../tmux.ts';
 import { gotoPane } from '../goto.ts';
-import { currentTerminal } from '../terminal.ts';
+import { currentTerminal, insideLoading, type InsideLoading } from '../terminal.ts';
 import { attachGhosttyTabs } from '../ghostty.ts';
 import { pretrustFolder } from '../orchstart.ts';
 import { nameNewPanes } from '../panenames.ts';
@@ -51,6 +51,8 @@ export interface CliDeps {
   ghostty(): boolean;
   /** Attach a Ghostty tab to a session. */
   attachTab(session: string): { ok: boolean; detail: string };
+  /** Loom's own window's loading screen, when the terminal is Loom's own and its window is there; null otherwise. */
+  loading(): InsideLoading | null;
   pretrust(dir: string): void;
   /** Give any unnamed workspace pane its @name. */
   namePanes(): void;
@@ -118,6 +120,7 @@ let deps: CliDeps = {
     const r = attachGhosttyTabs([s]);
     return { ok: r.ok, detail: r.detail };
   },
+  loading: () => (inTests || currentTerminal() !== 'inside' ? null : insideLoading()),
   pretrust: (d) => void pretrustFolder(d),
   namePanes: () => void nameNewPanes(),
   dirExists: (d) => {
@@ -403,6 +406,8 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
   if (env !== undefined && (!env || typeof env !== 'object' || Array.isArray(env))) return bad(ctx, 'env must be an object');
   const envPairs = Object.entries((env ?? {}) as Record<string, unknown>);
   if (envPairs.some(([k, v]) => !ENV_KEY_RE.test(k) || typeof v !== 'string')) return bad(ctx, 'env keys must be names and values strings');
+  const title = b?.title;
+  if (title !== undefined && (typeof title !== 'string' || title.length > 120)) return bad(ctx, 'title must be a string of at most 120 characters');
   if (!deps.dirExists(cwd)) return bad(ctx, 'cwd does not exist');
   // Duplicate check first: an existing session is never touched.
   let exists = true;
@@ -413,6 +418,11 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
   }
   if (exists) return ctx.json(409, { ok: false, error: 'duplicate' });
   if (b?.trust === true) deps.pretrust(cwd);
+  // With focus, in Loom's own window: the loading screen the Slack open uses, up before tmux is
+  // asked for the session. Everything above only validates, so a rejected request never flashes it.
+  const loading = b?.focus === true ? deps.loading() : null;
+  const where = (typeof title === 'string' && title.trim()) || name;
+  loading?.show({ label: 'Starting your chat', where, detail: 'Starting Claude for this session.' });
   const args = ['new-session', '-d', '-s', name, '-c', cwd, '-P', '-F', '#{pane_id}'];
   for (const [k, v] of envPairs) args.push('-e', `${k}=${v as string}`);
   args.push('--', ...(argv as string[]));
@@ -420,6 +430,7 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
   try {
     paneId = deps.tmux(args).trim();
   } catch (e) {
+    loading?.end({ label: 'Could not start ' + where, detail: (e as Error).message });
     return ctx.json(500, { ok: false, error: 'tmux', detail: (e as Error).message });
   }
   if (!PANE_RE.test(paneId)) {
@@ -436,7 +447,15 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
     }
   }
   let focused = false;
-  if (b?.focus === true && paneId) focused = focusTarget({ paneId, session: name }).ok;
+  if (b?.focus === true && paneId) {
+    const f = focusTarget({ paneId, session: name });
+    focused = f.ok;
+    // The screen stays until the chat is on the board (the page's own wait, 25 s at most, then the failure card).
+    if (loading) {
+      if (f.ok) loading.openPane(paneId);
+      else loading.end({ label: 'Could not open ' + where, detail: f.detail });
+    }
+  } else loading?.end({ label: 'Could not open ' + where, detail: 'The session has no pane to show.' });
   ctx.json(201, { ok: true, session: name, pane_id: paneId, name: paneName, focused });
 }
 

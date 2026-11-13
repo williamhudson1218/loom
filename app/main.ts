@@ -25,7 +25,7 @@ import { runPass } from '../src/cli.ts';
 import { writeLayout } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
-import { currentTerminal, setInsideRaiser } from '../src/terminal.ts';
+import { currentTerminal, setInsideLoading, setInsideRaiser } from '../src/terminal.ts';
 import { LOOM_SCHEME, parseLoomUrl, raiseLoom, setConnectRaiser } from '../src/connectreturn.ts';
 import { SESSION_PREFIX, TOOL_DIR } from '../src/paths.ts';
 import { trayIcon } from './trayIcon.ts';
@@ -252,6 +252,17 @@ function showWindow(): void {
 
 // "Jump" with the terminal set to inside Loom: raise this window; the page opens the chat.
 setInsideRaiser(showWindow);
+
+// The loading screen for a chat the CLI starts with focus (POST /api/cli/sessions): the same sky
+// screen the Slack open uses, driven through the page's loomPending / loomOpenPane hooks.
+setInsideLoading({
+  show: (p) => {
+    void pageCall('typeof loomPending==="function"&&loomPending(' + JSON.stringify({ kind: 'slack', ...p }) + ')');
+    showWindow();
+  },
+  openPane: (paneId) => void pageCall('typeof loomOpenPane==="function"&&loomOpenPane(' + JSON.stringify(paneId) + ')'),
+  end: (error) => void pageCall('typeof loomPending==="function"&&loomPending(' + (error ? JSON.stringify({ ...error, state: 'error' }) : 'null') + ')'),
+});
 
 // A sign-in that finished in the browser (Slack, Gmail, GitHub) brings Loom back
 // in front of the browser. macOS 14+ may ignore a background app's own request

@@ -306,6 +306,25 @@ export function setInsideRaiser(fn: (() => void) | null): void {
   raiser = fn;
 }
 
+/** The loading screen inside Loom's window (src/pendingview.ts); app/main.ts wires it, tests fake it. */
+export interface InsideLoading {
+  /** Show the screen now (and bring the window forward). */
+  show(p: { label: string; where: string; detail: string }): void;
+  /** Hand a started chat's pane to the page: it keeps the screen until the chat is on the board, then opens it, or shows the failure card. */
+  openPane(paneId: string): void;
+  /** Take the screen down, or turn it into the failure card when `error` is given. */
+  end(error?: { label: string; detail: string }): void;
+}
+let loading: InsideLoading | null = null;
+
+export function setInsideLoading(l: InsideLoading | null): void {
+  loading = l;
+}
+
+export function insideLoading(): InsideLoading | null {
+  return loading;
+}
+
 export function requestInsideFocus(paneId: string): void {
   focusSeq++;
   focusPane = paneId;

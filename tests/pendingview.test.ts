@@ -295,3 +295,43 @@ describe('the terminal follows the selected chat', () => {
     expect(html).toContain("termWs.send(JSON.stringify({t:'a'}))");
   });
 });
+
+describe('a chat the CLI started with focus', () => {
+  type OpenPane = (pane: string) => boolean;
+  const flush = async () => { for (let i = 0; i < 5; i++) await tick(); };
+  it('keeps the sky screen until the chat is live in the pane, then opens it', async () => {
+    const p = page([{ agent: 'claude', session_id: 's1' }]);
+    p.lib.setPending({ kind: 'slack', label: 'Starting your chat', where: 'loom-demo-2', detail: 'Starting Claude for this session.' });
+    expect((p.win.loomOpenPane as OpenPane)('%23')).toBe(true);
+    expect(p.els['#mpending'].className).toBe('mpslack');
+    expect(p.els['#mpending'].innerHTML).toContain('Waiting for the chat to come up.');
+    await flush();
+    p.DATA.live['claude:s1'] = { pane_id: '%23' };
+    p.timers.shift()?.();
+    await flush();
+    expect(p.log).toContain('open:s1');
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+  it('opens at once when the chat is already live in the pane', () => {
+    const p = page([{ agent: 'claude', session_id: 's1' }]);
+    p.DATA.live['claude:s1'] = { pane_id: '%23' };
+    expect((p.win.loomOpenPane as OpenPane)('%23')).toBe(true);
+    expect(p.log).toContain('open:s1');
+    expect(p.els['#mpending']).toBeUndefined();
+  });
+  it('never hangs: after 25 seconds the screen becomes the failure card naming the pane', async () => {
+    const p = page();
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(3_000_000);
+    (p.win.loomOpenPane as OpenPane)('%23');
+    expect(p.els['#mpending'].className).toBe('mpslack');
+    await flush();
+    now.mockReturnValue(3_000_000 + 26_000);
+    p.timers.shift()?.();
+    await flush();
+    now.mockRestore();
+    expect(p.els['#mpending'].className).toBe('loverlay err');
+    expect(p.els['#mpending'].innerHTML).toContain('did not appear on the board within 25 seconds');
+    expect(p.els['#mpending'].innerHTML).toContain('%23');
+  });
+});

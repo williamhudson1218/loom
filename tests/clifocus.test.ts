@@ -182,3 +182,60 @@ describe('POST /api/cli/sessions', () => {
     expect(r).toMatchObject({ status: 500, body: { ok: false, error: 'tmux', detail: 'boom' } });
   });
 });
+
+describe('POST /api/cli/sessions loading screen', () => {
+  let events: string[] = [];
+  const loading = {
+    show: (p: { label: string; where: string; detail: string }) => void events.push('show:' + p.where),
+    openPane: (id: string) => void events.push('openPane:' + id),
+    end: (e?: { label: string; detail: string }) => void events.push('end:' + (e?.detail ?? '')),
+  };
+  let before: CliDeps;
+  beforeEach(() => {
+    events = [];
+    before = setCliDeps({ loading: () => loading });
+  });
+  afterAll(() => void setCliDeps({ loading: () => null }));
+
+  it('shows before tmux creates the session, then hands the pane to the page after the focus jump', async () => {
+    const order: string[] = [];
+    setCliDeps({
+      loading: () => ({ ...loading, show: (p) => { order.push('show'); loading.show(p); } }),
+      tmux: (a) => { if (a[0] === 'new-session') order.push('new-session'); return fakeTmux(a); },
+    });
+    const r = await post('/api/cli/sessions', { ...NEW, focus: true });
+    expect(r.status).toBe(201);
+    expect(order).toEqual(['show', 'new-session']);
+    expect(events).toEqual(['show:loom-demo-2', 'openPane:%23']);
+    setCliDeps({ tmux: fakeTmux });
+  });
+
+  it('uses the optional title as the heading, and the session name without it', async () => {
+    await post('/api/cli/sessions', { ...NEW, focus: true, title: 'Ticket 8813' });
+    expect(events[0]).toBe('show:Ticket 8813');
+    expect((await post('/api/cli/sessions', { ...NEW, name: 'loom-demo-3', focus: true, title: 5 })).status).toBe(400);
+  });
+
+  it('shows nothing without focus, for a rejected request, or for a duplicate', async () => {
+    await post('/api/cli/sessions', { ...NEW });
+    await post('/api/cli/sessions', { ...NEW, name: 'loom-demo-1', focus: true });
+    await post('/api/cli/sessions', { ...NEW, cwd: 'relative', focus: true });
+    expect(events).toEqual([]);
+  });
+
+  it('turns the screen into the failure card when tmux fails or the jump fails', async () => {
+    setCliDeps({ tmux: (a) => { if (a[0] === 'new-session') throw new Error('tmux: no server'); return fakeTmux(a); } });
+    expect((await post('/api/cli/sessions', { ...NEW, focus: true })).status).toBe(500);
+    expect(events).toEqual(['show:loom-demo-2', 'end:tmux: no server']);
+    events = [];
+    setCliDeps({ tmux: fakeTmux, goto: () => ({ ok: false, detail: 'jump failed' }) });
+    expect((await post('/api/cli/sessions', { ...NEW, focus: true })).status).toBe(201);
+    expect(events).toEqual(['show:loom-demo-2', 'end:jump failed']);
+    setCliDeps({ goto: (p, s) => { focused.push([p, s]); return { ok: true, detail: 'tmux ok' }; } });
+  });
+
+  it('leaves /api/cli/focus alone', async () => {
+    await post('/api/cli/focus', { session: 'loom-demo-1' });
+    expect(events).toEqual([]);
+  });
+});
