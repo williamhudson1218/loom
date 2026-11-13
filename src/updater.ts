@@ -133,7 +133,10 @@ export function disabledReason(o: { packaged: boolean; app: string | null; env?:
 
 /* ------------------------------------------------------------ state */
 
-export type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'current' | 'downloading' | 'ready' | 'applying' | 'error';
+export type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'current' | 'downloading' | 'verifying' | 'ready' | 'applying' | 'error';
+
+/** A check is under way: the page shows progress and keeps polling or listening. */
+export const UPDATE_BUSY: readonly UpdateStatus[] = ['checking', 'downloading', 'verifying'];
 
 export interface UpdateState {
   status: UpdateStatus;
@@ -146,6 +149,8 @@ export interface UpdateState {
   lastChecked: number | null;
   /** The newest release seen, ready or not. */
   latest: Latest | null;
+  /** While downloading: whole percent received, or null when the size is unknown. */
+  progress: number | null;
   /** The verified bundle waiting to be swapped in. */
   ready: { version: string; app: string; notes: string[] } | null;
   detail: string | null;
@@ -163,7 +168,8 @@ export interface ApplyResult {
 
 export interface UpdaterDeps {
   fetchJson(url: string): Promise<unknown>;
-  download(url: string, dest: string): Promise<void>;
+  /** `onProgress(received, total)`; total is 0 when the server sends no length. */
+  download(url: string, dest: string, onProgress?: (received: number, total: number) => void): Promise<void>;
   sha256File(p: string): Promise<string>;
   /** ditto -x -k zip dir */
   extract(zip: string, dir: string): Promise<void>;
@@ -203,7 +209,7 @@ export const defaultDeps: UpdaterDeps = {
     if (!res.ok) throw new Error(`feed answered ${res.status}`);
     return res.json();
   },
-  async download(url, dest) {
+  async download(url, dest, onProgress) {
     const res = await fetch(url, { headers: { 'user-agent': 'Loom-updater' }, signal: AbortSignal.timeout(15 * 60_000) });
     if (!res.ok || !res.body) throw new Error(`download answered ${res.status}`);
     const len = Number(res.headers.get('content-length') || 0);
@@ -213,6 +219,7 @@ export const defaultDeps: UpdaterDeps = {
     body.on('data', (c: Buffer) => {
       seen += c.length;
       if (seen > MAX_ZIP_BYTES) body.destroy(new Error('download is larger than any Loom release'));
+      else onProgress?.(seen, len);
     });
     await pipeline(body, fs.createWriteStream(dest));
   },
@@ -246,6 +253,7 @@ export class Updater {
   private d: UpdaterDeps;
   private s: UpdateState;
   private inflight: Promise<UpdateState> | null = null;
+  private inflightManual = false;
   private timer: NodeJS.Timeout | null = null;
 
   private o: UpdaterOpts;
@@ -268,6 +276,7 @@ export class Updater {
       auto: this.auto(),
       lastChecked: p.lastChecked ?? null,
       latest: null,
+      progress: null,
       ready: null,
       detail: off,
       lastApply: this.readApplyResult(),
@@ -357,16 +366,24 @@ export class Updater {
    */
   check(opts: { manual?: boolean } = {}): Promise<UpdateState> {
     if (this.disabled) return Promise.resolve(this.state());
-    if (this.inflight) return this.inflight;
-    this.inflight = this.doCheck(!!opts.manual).finally(() => {
+    const manual = !!opts.manual;
+    if (this.inflight) {
+      // A click during a background check: that check may stop at "available,
+      // automatic updates are off", so the click gets its own check after it.
+      if (manual && !this.inflightManual) return this.inflight.then(() => this.check({ manual: true }));
+      return this.inflight;
+    }
+    this.inflightManual = manual;
+    this.inflight = this.doCheck(manual).finally(() => {
       this.inflight = null;
+      this.inflightManual = false;
     });
     return this.inflight;
   }
 
   private async doCheck(manual: boolean): Promise<UpdateState> {
     const before = this.s.status;
-    this.set({ status: 'checking', detail: null });
+    this.set({ status: 'checking', detail: null, progress: null });
     let latest: Latest;
     try {
       const parsed = parseLatest(await this.d.fetchJson(this.feedUrl), this.feedUrl);
@@ -407,14 +424,19 @@ export class Updater {
 
   /** Download, check, unpack and verify one release. Throws with a reason; leaves nothing half-done behind. */
   async fetchAndVerify(latest: Latest): Promise<{ version: string; app: string; notes: string[] }> {
-    this.set({ status: 'downloading' });
+    this.set({ status: 'downloading', progress: null });
     fs.mkdirSync(this.cacheDir, { recursive: true });
     const zip = path.join(this.cacheDir, `Loom-${latest.version}.zip.part`);
     const dir = path.join(this.cacheDir, latest.version);
     const tmp = path.join(this.cacheDir, `${latest.version}.unpacking`);
     try {
       fs.rmSync(zip, { force: true });
-      await this.d.download(latest.zip, zip);
+      // One push per whole percent, not one per chunk.
+      await this.d.download(latest.zip, zip, (got, total) => {
+        const pct = total > 0 ? Math.min(100, Math.floor((got / total) * 100)) : null;
+        if (pct !== this.s.progress) this.set({ progress: pct });
+      });
+      this.set({ status: 'verifying', progress: null });
       const sum = await this.d.sha256File(zip);
       if (sum.toLowerCase() !== latest.sha256) throw new Error(`the download's sha256 is ${sum}, the release says ${latest.sha256}`);
       fs.rmSync(tmp, { recursive: true, force: true });

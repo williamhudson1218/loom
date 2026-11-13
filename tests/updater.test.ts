@@ -16,6 +16,7 @@ import {
   parseLatest,
   parseVersion,
   type UpdaterDeps,
+  type UpdateState,
 } from '../src/updater.ts';
 
 let tmp: string;
@@ -124,7 +125,7 @@ describe('where Loom runs', () => {
 });
 
 describe('Updater', () => {
-  function make(o: { current?: string; feed?: unknown; zip?: string; packaged?: boolean; fetchFails?: boolean; deps?: Partial<UpdaterDeps>; auto?: boolean; app?: string } = {}) {
+  function make(o: { current?: string; feed?: unknown; zip?: string; packaged?: boolean; fetchFails?: boolean; deps?: Partial<UpdaterDeps>; auto?: boolean; app?: string; onChange?: (s: UpdateState) => void } = {}) {
     let fetched = 0;
     const deps: Partial<UpdaterDeps> = {
       fetchJson: async () => {
@@ -147,6 +148,7 @@ describe('Updater', () => {
       env: {},
       auto: () => o.auto ?? true,
       deps,
+      onChange: o.onChange,
     });
     return { u, fetched: () => fetched };
   }
@@ -219,6 +221,37 @@ describe('Updater', () => {
     expect(s.status).toBe('idle');
     expect(s.detail).toMatch(/0\.1\.9 is available/);
     expect((await u.check({ manual: true })).status).toBe('ready');
+  });
+
+  it('reports every step of a check as it happens: checking, download percent, verifying, ready', async () => {
+    const r = release('0.1.9');
+    const seen: string[] = [];
+    const { u } = make({
+      feed: r.feed,
+      zip: r.zip,
+      onChange: (s) => seen.push(s.status === 'downloading' && s.progress != null ? `downloading ${s.progress}%` : s.status),
+      deps: {
+        download: async (_url, dest, onProgress) => {
+          for (const got of [0, 25, 25, 50, 100]) onProgress?.(got, 100);
+          fs.copyFileSync(r.zip, dest);
+        },
+      },
+    });
+    const done = u.check({ manual: true });
+    // The click's state is there before anything is awaited.
+    expect(u.state().status).toBe('checking');
+    await done;
+    const steps = seen.filter((x, i) => x !== seen[i - 1]);
+    expect(steps).toEqual(['checking', 'downloading', 'downloading 0%', 'downloading 25%', 'downloading 50%', 'downloading 100%', 'verifying', 'ready']);
+  });
+
+  it('a click during a background check that stops at "available" still downloads', async () => {
+    const r = release('0.1.9');
+    const { u } = make({ feed: r.feed, zip: r.zip, auto: false });
+    const bg = u.check();
+    const click = u.check({ manual: true });
+    expect((await bg).status).toBe('idle');
+    expect((await click).status).toBe('ready');
   });
 
   it('never checks when running from source', async () => {

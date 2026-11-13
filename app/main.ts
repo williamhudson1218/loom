@@ -786,6 +786,9 @@ const updater = new Updater({
   onChange: (st) => {
     // The tray's Restart to update item comes and goes with a ready update.
     if ((st.status === 'ready') !== trayShowsUpdate) buildTrayMenu();
+    // Pushed to the page (src/updateview.ts) so Checking, Downloading and Update
+    // ready show as they happen, not on the next poll or the next click.
+    if (win && !win.isDestroyed()) win.webContents.send('loom:update-state', st);
   },
 });
 // install-app.sh drops this file before it quits Loom, so the quit it causes does

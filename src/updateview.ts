@@ -29,10 +29,23 @@ export const UPDATE_HEADER_HTML = `<div class="moresel updsel" id="updwrap" hidd
 
 export const UPDATE_VIEW_JS = String.raw`
 // ---- Updates (src/updateview.ts) --------------------------------------------------
-var UPD=null,UPD_T=0;
+var UPD=null,UPD_T=0,UPD_POLL=0,UPD_ASKED=false;
+var UPD_BUSY=['checking','downloading','verifying'];
 if(typeof HMENUS!=='undefined')HMENUS.push('updmenu');
 function updEsc(s){return esc(String(s==null?'':s));}
-function updLoad(){return fetch('/api/update').then(function(r){return r.json();}).then(function(j){UPD=j;updHeader();if(typeof tab!=='undefined'&&tab==='settings'&&typeof SX!=='undefined'&&SX.sec==='updates'&&typeof sxRerender==='function')sxRerender();return j;}).catch(function(){return null;});}
+function updBusy(s){return !!(s&&UPD_BUSY.indexOf(s.status)>=0);}
+/* Every state the page learns (GET, the check's answer, a push from the main
+   process) goes through here: header, Settings, the toast a click asked for,
+   and a 1s poll while a check runs (the fallback when nothing is pushed). */
+function updSet(j){if(!j||!j.state)return;UPD=j;var s=j.state;updHeader();
+  if(typeof tab!=='undefined'&&tab==='settings'&&typeof SX!=='undefined'&&SX.sec==='updates'&&typeof sxRerender==='function')sxRerender();
+  if(UPD_ASKED&&!updBusy(s)){UPD_ASKED=false;
+    if(s.status==='current')toast("You're on the latest version ("+s.current+')');
+    else if(s.status==='ready'&&s.ready)toast('Loom '+s.ready.version+' is ready to install');
+    else if(s.status==='error')toast(s.detail||'Could not check for updates','#8a2b2e');
+    else if(s.detail)toast(s.detail);}
+  var busy=updBusy(s);if(busy&&!UPD_POLL)UPD_POLL=setInterval(updLoad,1000);else if(!busy&&UPD_POLL){clearInterval(UPD_POLL);UPD_POLL=0;}}
+function updLoad(){return fetch('/api/update').then(function(r){return r.json();}).then(function(j){updSet(j);return j;}).catch(function(){return null;});}
 function updNotes(n,cls){n=(n||[]).slice(0,8);return n.length?'<ul class="'+cls+'">'+n.map(function(x){return '<li>'+updEsc(x)+'</li>';}).join('')+'</ul>':'';}
 function updHeader(){var w=$('#updwrap');if(!w)return;var s=UPD&&UPD.state;var show=!!(s&&(s.status==='ready'||s.status==='applying'));w.hidden=!show;if(!show)return;
   var b=$('#updbtn');if(b){var lab=b.querySelector('span');if(lab)lab.textContent=s.status==='applying'?'Restarting':'Update ready';b.title=s.ready?'Loom '+s.ready.version+' is downloaded and verified':'';}
@@ -42,22 +55,31 @@ function updHeader(){var w=$('#updwrap');if(!w)return;var s=UPD&&UPD.state;var s
    '<button type="button" role="menuitem" data-upd="apply"'+(s.writable&&s.status==='ready'?'':' disabled')+'><span class="ck">↻</span><span class="mi">Restart to update<span class="hint">Installed now, then Loom opens again</span></span></button>'+
    '<button type="button" role="menuitem" data-upd="later"><span class="ck"></span><span class="mi">Later<span class="hint">Installed the next time Loom quits</span></span></button>';}
 function updApply(btn){if(btn)btn.disabled=true;return fetch('/api/update/apply',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){if(!j.ok){toast(j.detail||'Could not install the update','#8a2b2e');if(btn)btn.disabled=false;updLoad();return;}toast('Installing Loom '+(j.version||'')+'. Loom will open again.');if(UPD&&UPD.state)UPD.state.status='applying';updHeader();}).catch(function(){/* the server going away is the restart */});}
-function updCheck(btn){if(btn){btn.disabled=true;btn.textContent='Checking';}return fetch('/api/update/check',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){UPD=j;updHeader();if(typeof sxRerender==='function')sxRerender(true);var s=j.state||{};if(s.status==='current')toast('Loom '+s.current+' is the latest version');else if(s.status==='ready')toast('Loom '+s.ready.version+' is ready to install');else if(s.status==='error')toast(s.detail||'Could not check for updates','#8a2b2e');}).catch(function(){toast('Could not reach Loom','#8a2b2e');if(typeof sxRerender==='function')sxRerender(true);});}
+function updCheck(btn){UPD_ASKED=true;
+  /* Show Checking now, in the state every re-render reads, so the board's 5s
+     re-render cannot put the idle button back while the check runs. */
+  var cur=(UPD&&UPD.state)||{};var st={};for(var k in cur)st[k]=cur[k];st.status='checking';st.detail=null;st.progress=null;
+  updSet({ok:true,state:st});if(typeof sxRerender==='function')sxRerender(true);
+  return fetch('/api/update/check',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){updSet(j);}).catch(function(){UPD_ASKED=false;toast('Could not reach Loom','#8a2b2e');updLoad();});}
 function wireUpdates(){var b=$('#updbtn');if(b)b.onclick=function(e){e.stopPropagation();hmenuToggle('updmenu');};
   var m=$('#updmenu');if(m)m.addEventListener('click',function(e){var t=e.target.closest('[data-upd]');if(!t||t.disabled)return;hmenuClose();if(t.dataset.upd==='apply')updApply(t);});
+  /* Subscribe before the first read, so a change in between is not missed. */
+  if(window.loomNative&&typeof window.loomNative.onUpdateState==='function')window.loomNative.onUpdateState(function(st){updSet({ok:true,state:st});});
   updLoad();UPD_T=setInterval(updLoad,60000);}
 
 /* Settings › Updates (called from settingsview.ts's sxBody) */
+function updBusyLabel(s){if(s.status==='checking')return 'Checking…';if(s.status==='verifying')return 'Verifying '+((s.latest&&s.latest.version)||'');
+  return 'Downloading '+((s.latest&&s.latest.version)||'')+(s.progress!=null?' '+s.progress+'%':'');}
 function sxUpdatesStatus(){var s=UPD&&UPD.state;if(!s)return ['off','Checking'];
-  if(s.status==='disabled')return ['off','Off'];if(s.status==='ready')return ['warn','Update ready'];if(s.status==='applying')return ['warn','Installing'];
+  if(s.status==='disabled')return ['off','Off'];if(updBusy(s))return ['off',updBusyLabel(s)];if(s.status==='ready')return ['warn','Update ready'];if(s.status==='applying')return ['warn','Installing'];
   if(s.status==='error')return ['warn','Problem'];if(s.status==='current')return ['ok','Up to date'];return ['ok',s.current];}
 function sxUpdates(){if(!UPD){updLoad();return '<p class="sxempty">loading…</p>';}var s=UPD.state||{};
   var ver=sxPill('off','Loom '+(s.current||'?'))+'<span class="def">'+sxEsc(s.channel==='release'?'Release build':'Built locally')+(s.commit?' · <code>'+sxEsc(String(s.commit).slice(0,12))+'</code>':'')+'</span>';
-  var st;if(s.status==='disabled')st=sxPill('off','Not available');else if(s.status==='checking')st=sxPill('off','Checking');else if(s.status==='downloading')st=sxPill('off','Downloading '+((s.latest&&s.latest.version)||''));
-  else if(s.status==='ready')st=sxPill('warn','Loom '+s.ready.version+' is ready');else if(s.status==='applying')st=sxPill('warn','Installing');else if(s.status==='current')st=sxPill('ok','Up to date');else if(s.status==='error')st=sxPill('err','Problem');else st=sxPill('off','Not checked yet');
+  var st;if(s.status==='disabled')st=sxPill('off','Not available');else if(updBusy(s))st=sxPill('off',updBusyLabel(s));
+  else if(s.status==='ready')st=sxPill('warn','Loom '+s.ready.version+' is ready');else if(s.status==='applying')st=sxPill('warn','Installing');else if(s.status==='current')st=sxPill('ok','Up to date ('+s.current+')');else if(s.status==='error')st=sxPill('err','Problem');else st=sxPill('off','Not checked yet');
   var off=s.status==='disabled';
   var h=sxRow('Version','The version running now, and the commit it was built from.',ver)+
-   sxRow('Status',s.detail?sxEsc(s.detail):'New releases are published on GitHub when the Loom repo changes.',st+(off?'':sxBtn('updcheck','Check for updates',{dis:s.status==='checking'||s.status==='downloading'||s.status==='applying'}))+(s.status==='ready'?sxBtn('updapply','Restart to update',{pri:true,dis:!s.writable}):'')+(s.status==='error'&&typeof lerrCopyBtn==='function'?lerrCopyBtn({what:'Check for Loom updates',message:s.detail||'The update check failed.'}):''))+
+   sxRow('Status',s.detail?sxEsc(s.detail):'New releases are published on GitHub when the Loom repo changes.',st+(off?'':sxBtn('updcheck',updBusy(s)?'Checking…':'Check for updates',{dis:updBusy(s)||s.status==='applying'}))+(s.status==='ready'?sxBtn('updapply','Restart to update',{pri:true,dis:!s.writable}):'')+(s.status==='error'&&typeof lerrCopyBtn==='function'?lerrCopyBtn({what:'Check for Loom updates',message:s.detail||'The update check failed.'}):''))+
    sxRow('Last checked','Loom checks soon after it opens and every 4 hours.',s.lastChecked?sxPill('off',sxAgo(s.lastChecked))+'<span class="def">'+sxEsc(sxWhen(s.lastChecked))+'</span>':sxPill('off','Never'));
   if(!off)h+=sxKey('auto_update',{title:'Update automatically',help:'Downloads and verifies new releases in the background, and installs a ready one when you click Restart to update or the next time Loom quits.'});
   if(!off&&s.app&&!s.writable)h+=sxNote('Loom cannot replace itself in <code>'+sxEsc(s.app.replace(/\/[^\/]+$/,''))+'</code> because that folder is not writable. Move Loom to Applications or ~/Applications, or install new versions by hand from the Releases page.','warn');

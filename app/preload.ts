@@ -11,6 +11,13 @@ contextBridge.exposeInMainWorld('loomNative', {
   axRequest: (): Promise<{ trusted: boolean; helperDown: boolean }> => ipcRenderer.invoke('loom:ax-request'),
   // Opens System Settings at Privacy & Security, Accessibility.
   openAccessibility: (): Promise<void> => ipcRenderer.invoke('loom:open-accessibility'),
+  // The updater's state, pushed by the main process on every change (src/updateview.ts).
+  // Returns the unsubscribe.
+  onUpdateState: (cb: (state: unknown) => void): (() => void) => {
+    const h = (_e: unknown, st: unknown) => cb(st);
+    ipcRenderer.on('loom:update-state', h);
+    return () => ipcRenderer.removeListener('loom:update-state', h);
+  },
   pathForFile: (f: File): string => {
     try {
       return webUtils.getPathForFile(f) || '';

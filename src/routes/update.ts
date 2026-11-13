@@ -8,6 +8,7 @@ import type { UpdateState } from '../updater.ts';
 
 export interface UpdateHost {
   state(): UpdateState;
+  /** Starts a check (or joins the one running); the route does not wait for it. */
   check(): Promise<UpdateState>;
   /** Hand the ready update to the apply script and quit. */
   restart(): { ok: true; version: string } | { ok: false; detail: string };
@@ -27,9 +28,14 @@ export const routes: RouteDef[] = [
   },
   {
     method: 'POST', path: '/api/update/check', kind: 'browser',
-    handler: async (ctx) => {
+    handler: (ctx) => {
       if (!host) return ctx.json(200, { ok: true, state: NO_HOST });
-      ctx.json(200, { ok: true, state: await host.check() });
+      // Answer at once with the check under way ("checking"), not after the
+      // download and verify: the page follows it through the pushed state and
+      // GET /api/update. Waiting here left the button looking dead for the
+      // whole download, so it got clicked twice.
+      host.check().catch(() => {});
+      ctx.json(200, { ok: true, state: host.state() });
     },
   },
   {
