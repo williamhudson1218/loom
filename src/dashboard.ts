@@ -720,6 +720,11 @@ ${PRUNE_VIEW_CSS}
   #sidepin > #orchpin { flex:none; } #sidepin > #shippin { flex:0 1 auto; min-height:0; overflow-y:auto; }
   #sidepin:not(:has(#orchpin:not(:empty), #shippin:not(:empty))) { display:none; }
   #side.listscrolled #sidepin { border-bottom-color:#232634; box-shadow:0 6px 8px -6px rgba(0,0,0,.65); }
+  #termlist { flex:none; max-height:50%; display:flex; flex-direction:column; min-height:0; background:#0f1218; border-top:1px solid #232634; }
+  #termlist:empty { display:none; }
+  #termlist > .sgrp { flex:none; padding:8px 16px; }
+  #termlist .tbody { flex:1 1 auto; min-height:0; overflow-y:auto; padding-bottom:6px; }
+  #termlist .tbody .sidehint { padding:6px 16px; }
   #sidelist { flex:1; min-height:0; overflow-y:auto; padding:2px 0 12px; }
   #archive { padding:0; max-width:none; display:block; }
   .sidehint { padding:14px 16px 4px; font-size:11px; color:#6f778a; }
@@ -1095,10 +1100,10 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
   <div id="sidepin"><div id="orchpin"></div><div id="shippin"></div></div>
   <div id="sidelist">
     <div id="list"></div>
-    <div id="termlist"></div>
     <section id="archive"></section>
     <div class="sidehint">Right-click a chat for actions</div>
   </div>
+  <div id="termlist"></div>
   <div class="sidegrip" id="sidegrip" role="separator" aria-orientation="vertical" aria-label="Resize the session list" aria-valuemin="240" aria-valuemax="720" tabindex="0" title="Drag to resize. Double-click to reset."></div>
 </aside>
 <section class="tkx tkboard" id="kanban" aria-label="Chats by stage"></section>
@@ -1884,10 +1889,13 @@ function termRow(t){const w=t.windows.find(x=>x.active)||t.windows[0];const on=t
 // While searching, terminals that match the query join the Open section and the group itself is hidden.
 var termSearchState=false;
 function termMatches(q){return TERMS.filter(t=>(t.session+' '+t.windows.map(w=>w.name).join(' ')).toLowerCase().includes(q));}
-function renderTermList(){const el=$('#termlist');if(termSearchState){el.innerHTML='';return;}const rows=TERMS.map(termRow).join('');
-  el.innerHTML='<div class="sgrp"><span>Terminals <span class="cnt">'+TERMS.length+'</span></span>'+(TERM_TOKEN?'<button class="tnew" id="tnew" title="New terminal session">+</button>':'')+'</div>'+(rows||'<p class="meta sidehint">No terminal sessions.</p>');
+var termOpen=lsGet('loom.termOpen')==='1';
+function renderTermList(){const el=$('#termlist');if(termSearchState){el.innerHTML='';return;}const rows=termOpen?TERMS.map(termRow).join(''):'';
+  el.innerHTML='<div class="sgrp'+(termOpen?'':' closed')+'" id="termhead" role="button" tabindex="0" aria-expanded="'+termOpen+'" title="Click to collapse or expand."><span><span class="car">▾</span>Terminals <span class="cnt">'+TERMS.length+'</span></span>'+(TERM_TOKEN?'<button class="tnew" id="tnew" title="New terminal session">+</button>':'')+'</div>'+(termOpen?'<div class="tbody">'+(rows||'<p class="meta sidehint">No terminal sessions.</p>')+'</div>':'');
   el.querySelectorAll('.tsrow').forEach(r=>{r.onclick=()=>selectTerminal(r.dataset.term,r.dataset.win);r.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectTerminal(r.dataset.term,r.dataset.win);}};});
-  if($('#tnew'))$('#tnew').onclick=openTermBox;}
+  const th=$('#termhead');th.onclick=e=>{if(e.target.closest('#tnew'))return;termOpen=!termOpen;lsSet('loom.termOpen',termOpen?'1':'0');renderTermList();};
+  th.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===th){e.preventDefault();th.click();}};
+  if($('#tnew'))$('#tnew').onclick=e=>{e.stopPropagation();openTermBox();};}
 function selectTerminal(session,win){if(!TERM_TOKEN)return;leaveOrch();if(sel)deselect();tsel={session,window:String(win)};$('#mhead').dataset.sig='';renderTermList();renderMain();}
 function leaveTerminal(){if(!tsel)return;tsel=null;if(termKey.indexOf('tw|')===0)closeTerm();['#mtabs','#mslack'].forEach(q=>{$(q).style.display='';});$('#mhead').dataset.sig='';renderTermList();}
 function renderTermMain(){const box=$('#chatmain');const t=TERMS.find(x=>x.session===tsel.session);
