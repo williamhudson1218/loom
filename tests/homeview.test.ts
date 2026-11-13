@@ -108,6 +108,17 @@ describe('orbit layout', () => {
       expect(p.x).toBeLessThan(900);
     }
   });
+  it('staggers a crowded ring and drops labels past 14', () => {
+    const keys = Array.from({ length: 16 }, (_, i) => 'k' + i);
+    const d = api.homeOrbitLayout(900, 500, { turn: [], working: keys, stale: [] }).planets as any[];
+    expect(d.filter((p) => p.alt)).toHaveLength(8);
+    expect(d.every((p) => p.dense && p.bare)).toBe(true);
+    const few = api.homeOrbitLayout(900, 500, { turn: ['a', 'b'], working: [], stale: [] }).planets as any[];
+    expect(few.some((p) => p.alt || p.dense || p.bare)).toBe(false);
+  });
+  it('lays out an empty orbit', () => {
+    expect(api.homeOrbitLayout(900, 500, { turn: [], working: [], stale: [] }).planets).toEqual([]);
+  });
   it('keeps the widest ring inside a narrow box', () => {
     const n = api.homeOrbitLayout(320, 500, { turn: [], working: [], stale: ['z'] });
     expect(n.rings[2].rx).toBeLessThanOrEqual(160 - 48);
@@ -124,6 +135,9 @@ describe('home view wiring', () => {
     expect(html.indexOf('id="homepin"')).toBeLessThan(html.indexOf('id="orchpin"'));
     expect(html).toContain('id="homeview"');
     expect(html).toContain('function selectHome(');
+  });
+  it('defaults to the orbit layout', () => {
+    expect(HOME_VIEW_JS).toContain("lsGet('loom.homeView')==='A'?'A':'B'");
   });
   it('shows only shortcuts that exist', () => {
     expect(HOME_VIEW_JS).toContain('var HOME_KEYS={"newThread":"⌘N","jump":"⌘K"}');

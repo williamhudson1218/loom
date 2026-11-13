@@ -50,8 +50,10 @@ function homeOrbitLayout(W,H,groups){var m=Math.min(W,H),cx=W/2,cy=H/2,out={ring
   var ring={turn:{r:.22,size:22},working:{r:.34,size:18},stale:{r:.45,size:12}};
   ['turn','working','stale'].forEach(function(k,ri){var ry=m*ring[k].r,rx=Math.min(ry*1.55,Math.max(40,W/2-48));
     out.rings.push({k:k,cx:cx,cy:cy,rx:rx,ry:ry});
-    var list=groups[k]||[];list.forEach(function(key,i){var a=(i/list.length)*Math.PI*2+ri*.9-.6;
-      out.planets.push({key:key,k:k,x:cx+Math.cos(a)*rx,y:cy+Math.sin(a)*ry,size:ring[k].size});});});
+    var list=groups[k]||[],n=list.length;list.forEach(function(key,i){var a=(i/n)*Math.PI*2+ri*.9-.6;
+      // Crowded ring: every other planet sits a little inside it and its label flips above, so neighbours do not share a row.
+      var alt=n>6&&i%2===1,f=alt&&n>8?.9:1;
+      out.planets.push({key:key,k:k,x:cx+Math.cos(a)*rx*f,y:cy+Math.sin(a)*ry*f,size:ring[k].size,alt:alt,dense:n>8,bare:n>14});});});
   return out;}
 `;
 
@@ -125,6 +127,11 @@ export const HOME_VIEW_CSS = String.raw`
   #homeview .hm-body.turn .pl { animation:hmring 2.2s ease-out infinite; }
   @keyframes hmring { 0% { box-shadow:0 0 0 0 rgba(59,130,246,.7),0 0 14px var(--c1); } 100% { box-shadow:0 0 0 14px rgba(59,130,246,0),0 0 14px var(--c1); } }
   #homeview .hm-body .lb { font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace; color:#fff; white-space:nowrap; background:rgba(7,8,13,.7); padding:0 5px; border-radius:4px; }
+  #homeview .hm-body.alt { flex-direction:column-reverse; }
+  #homeview .hm-body.dense .lb { font-size:9.5px; padding:0 3px; }
+  #homeview .hm-body.bare .lb { display:none; }
+  #homeview .hm-body.bare:hover .lb, #homeview .hm-body.bare:focus-visible .lb { display:block; }
+  #homeview.paused *, #homeview.paused *:before { animation-play-state:paused !important; }
   #homeview .hm-body .tp { font-size:10.5px; color:#8b93a7; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:none; background:rgba(7,8,13,.85); padding:0 4px; border-radius:4px; }
   #homeview .hm-body:hover, #homeview .hm-body:focus-visible { z-index:3; }
   #homeview .hm-body:hover .tp, #homeview .hm-body:focus-visible .tp { display:block; }
@@ -158,7 +165,7 @@ export const HOME_VIEW_JS =
 // ---- Overview rendering (src/homeview.ts) -------------------------------------------
 // homeSel: the Overview is the open view. True at launch; any other selection leaves it.
 var homeSel=true;
-var HOME={sky:null,orch:null,orchAt:0,orchBusy:false,orchSig:'',view:lsGet('loom.homeView')==='B'?'B':'A',sig:{},ro:null,clockT:null};
+var HOME={sky:null,orch:null,orchAt:0,orchBusy:false,orchSig:'',view:lsGet('loom.homeView')==='A'?'A':'B',sig:{},ro:null,clockT:null};
 var HOME_COL={turn:['#3b82f6','#a9c8ff'],working:['#2ea043','#8ee6a1'],stale:['#6b7280','#b5bcc9']};
 var HOME_LBL={turn:'Your turn',working:'Working',stale:'Stale'};
 function homeOn(){const v=$('#homeview');return homeSel&&!!v&&v.offsetParent!==null;}
@@ -219,7 +226,7 @@ function homeOrbitHtml(cl,total,now){const box=$('#hm-orbit');const W=box.client
   const lay=homeOrbitLayout(W,H,{turn:keys(cl.turn),working:keys(cl.working),stale:keys(cl.stale)});
   const svg='<svg viewBox="0 0 '+W+' '+H+'" aria-hidden="true">'+lay.rings.map((r,i)=>'<ellipse cx="'+r.cx+'" cy="'+r.cy+'" rx="'+r.rx.toFixed(1)+'" ry="'+r.ry.toFixed(1)+'" fill="none" stroke="#2b3550" stroke-width="1" stroke-dasharray="'+(i?'2 5':'0')+'" opacity=".8"/>').join('')+'</svg>';
   const pl=lay.planets.map(p=>{const r=byKey[p.key],c=r.c,col=HOME_COL[p.k];
-    return '<button type="button" class="hm-body '+p.k+'" style="left:'+p.x.toFixed(1)+'px;top:'+p.y.toFixed(1)+'px;--s:'+p.size+'px;--c1:'+col[0]+';--c2:'+col[1]+'" data-hchat="'+esc(p.key)+'" data-hk="p'+esc(p.key)+'" aria-label="'+esc(homeChatName(c)+', '+HOME_LBL[p.k]+', '+disp(c))+'"><span class="pl"></span><span class="lb">'+esc(homeChatName(c))+'</span><span class="tp">'+esc(disp(c)+' · '+homeAge(r.at,now))+'</span></button>';}).join('');
+    return '<button type="button" class="hm-body '+p.k+(p.alt?' alt':'')+(p.dense?' dense':'')+(p.bare?' bare':'')+'" style="left:'+p.x.toFixed(1)+'px;top:'+p.y.toFixed(1)+'px;--s:'+p.size+'px;--c1:'+col[0]+';--c2:'+col[1]+'" data-hchat="'+esc(p.key)+'" data-hk="p'+esc(p.key)+'" aria-label="'+esc(homeChatName(c)+', '+HOME_LBL[p.k]+', '+disp(c))+'"><span class="pl"></span><span class="lb">'+esc(homeChatName(c))+'</span><span class="tp">'+esc(disp(c)+' · '+homeAge(r.at,now))+'</span></button>';}).join('');
   homeSet('hm-orbit',svg+'<div class="hm-core"><b>'+total+'</b><span>'+(total===1?'chat':'chats')+' in orbit</span></div>'+pl);
   homeSet('hm-legend','<span><i class="hdot d-turn"></i>Your turn, inner ring</span><span><i class="hdot d-working"></i>Working, middle ring</span><span><i class="hdot d-stale"></i>Stale, outer ring</span><span>Hover for the topic, click to open.</span>');}
 function homeClock(){const el=$('#hm-clock');if(!el)return;const d=new Date();
@@ -269,5 +276,6 @@ function wireHome(){const v=$('#homeview');
     const ac=e.target.closest('[data-hact]');if(ac&&!ac.disabled)homeAct(ac.dataset.hact,ac);});
   if(window.ResizeObserver){HOME.ro=new ResizeObserver(()=>{if(homeSel&&HOME.view==='B'&&v.offsetParent!==null)renderHome();});HOME.ro.observe($('#hm-orbit'));}
   HOME.clockT=setInterval(()=>{if(homeSel&&!document.hidden&&v.offsetParent!==null)homeClock();},5000);
+  document.addEventListener('visibilitychange',()=>{v.classList.toggle('paused',document.hidden);});
   renderHomePin();}
 `;
