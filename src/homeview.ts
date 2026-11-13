@@ -147,11 +147,11 @@ export const HOME_VIEW_HTML = String.raw`<div id="homeview" aria-label="Overview
   <div class="hm-scroll"><div class="hm-in">
     <div class="hm-top">
       <div><div class="hm-eyebrow"><span>Mission status</span><span class="hm-live" id="hm-live"></span></div><h2 class="hm-h" id="hm-h" aria-live="polite"></h2></div>
-      <div class="hm-side"><div class="hm-seg" id="hm-seg" role="group" aria-label="Overview layout"><button type="button" data-hv="A" aria-pressed="true">Dashboard</button><button type="button" data-hv="B" aria-pressed="false">Orbit</button></div><div class="hm-clock" id="hm-clock"></div></div>
+      <div class="hm-side"><div class="hm-seg" id="hm-seg" role="group" aria-label="Overview layout"><button type="button" data-hv="B" aria-pressed="true">Orbit</button><button type="button" data-hv="A" aria-pressed="false">Dashboard</button></div><div class="hm-clock" id="hm-clock"></div></div>
     </div>
     <section class="hm-tiles" id="hm-tiles" aria-label="Stats"></section>
-    <div id="hm-A"><div class="hm-grid"><section class="hm-card" id="hm-recent" aria-label="Recent chats"></section><div class="hm-col"><section class="hm-card" id="hm-needs" aria-label="Needs you"></section><section class="hm-card" id="hm-ship" aria-label="Ship card"></section></div></div></div>
-    <div id="hm-B" hidden><div class="hm-orbit" id="hm-orbit"></div><div class="hm-legend" id="hm-legend"></div><div class="hm-strip"><section class="hm-card" id="hm-needs2" aria-label="Needs you"></section><section class="hm-card" id="hm-ship2" aria-label="Ship card"></section></div></div>
+    <div id="hm-A" hidden><div class="hm-grid"><section class="hm-card" id="hm-recent" aria-label="Recent chats"></section><div class="hm-col"><section class="hm-card" id="hm-needs" aria-label="Needs you"></section><section class="hm-card" id="hm-ship" aria-label="Ship card"></section></div></div></div>
+    <div id="hm-B"><div class="hm-orbit" id="hm-orbit"></div><div class="hm-legend" id="hm-legend"></div><div class="hm-strip"><section class="hm-card" id="hm-needs2" aria-label="Needs you"></section><section class="hm-card" id="hm-ship2" aria-label="Ship card"></section></div></div>
     <div class="hm-acts" id="hm-acts" role="group" aria-label="Jump off"></div>
   </div></div>
 </div>`;
