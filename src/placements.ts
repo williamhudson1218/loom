@@ -33,14 +33,17 @@ function placementKey(agent: Agent | null, sessionId: string): string {
 }
 
 // Read the append-only placements log; last line per (agent, session_id) wins.
-export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Placement> {
-  const map = new Map<string, Placement>();
-  let text: string;
-  try {
-    text = fs.readFileSync(file, 'utf-8');
-  } catch {
-    return map;
-  }
+//
+// The log only grows (44k lines, 10 MB on a long-lived install), and the
+// snapshot reads it every time its 1.5 s memo expires, on Electron's main
+// thread: a whole-file parse measured 26 ms. So each file keeps its parsed map
+// and the byte offset it has read to, and a later call parses only the lines
+// appended since. A file that shrank, was replaced (new inode) or changed
+// without growing is read again from the start.
+interface PlacementsCache { ino: number; size: number; mtimeMs: number; offset: number; map: Map<string, Placement> }
+const placementsCache = new Map<string, PlacementsCache>();
+
+function parsePlacementLines(text: string, map: Map<string, Placement>): void {
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
@@ -54,7 +57,62 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
       /* skip malformed */
     }
   }
-  return map;
+}
+
+function readBytes(file: string, from: number, to: number): Buffer {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(to - from);
+    let got = 0;
+    while (got < buf.length) {
+      const n = fs.readSync(fd, buf, got, buf.length - got, from + got);
+      if (!n) break;
+      got += n;
+    }
+    return buf.subarray(0, got);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Placement> {
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    placementsCache.delete(file);
+    return new Map();
+  }
+  let c = placementsCache.get(file);
+  const unchanged = c && c.ino === st.ino && c.size === st.size && c.mtimeMs === st.mtimeMs;
+  const grew = c && c.ino === st.ino && st.size > c.size;
+  if (!c || (!unchanged && !grew)) c = { ino: st.ino, size: 0, mtimeMs: 0, offset: 0, map: new Map() };
+  if (!unchanged) {
+    try {
+      const buf = readBytes(file, c.offset, st.size);
+      // Only whole lines: a line still being appended is read on the next call.
+      // A last line with no newline that already parses is whole (a hand-written file).
+      let end = buf.lastIndexOf(0x0a) + 1;
+      if (end < buf.length) {
+        try {
+          JSON.parse(buf.subarray(end).toString('utf-8'));
+          end = buf.length;
+        } catch {
+          /* still being written */
+        }
+      }
+      parsePlacementLines(buf.subarray(0, end).toString('utf-8'), c.map);
+      c.offset += end;
+      c.size = st.size;
+      c.mtimeMs = st.mtimeMs;
+    } catch {
+      placementsCache.delete(file);
+      return new Map();
+    }
+    placementsCache.set(file, c);
+  }
+  // A copy: callers may hold or change what they get without touching the cache.
+  return new Map(c.map);
 }
 
 export function recordPlacement(placement: Placement, file: string = PLACEMENTS_PATH): void {

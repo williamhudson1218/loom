@@ -59,6 +59,59 @@ describe('readPlacements', () => {
   it('returns an empty map when the file is missing', () => {
     expect(readPlacements('/no/such/placements.jsonl').size).toBe(0);
   });
+
+  it('reads only what was appended since the last call, and the result matches a fresh parse', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-pl-'));
+    const file = path.join(dir, 'placements.jsonl');
+    const row = (sid: string, pane: string, ts: number) => JSON.stringify({ agent: 'claude', session_id: sid, pane_id: pane, tmux_session: 'a', window_index: '1', pane_index: '0', cwd: '/x', ts }) + '\n';
+    fs.writeFileSync(file, row('s1', '%1', 1) + row('s2', '%2', 2));
+    expect(readPlacements(file).size).toBe(2);
+
+    const reads = vi.spyOn(fs, 'readSync');
+    expect(readPlacements(file).size).toBe(2); // unchanged: no read at all
+    expect(reads).not.toHaveBeenCalled();
+
+    const before = fs.statSync(file).size;
+    fs.appendFileSync(file, row('s1', '%7', 3) + row('s3', '%3', 4));
+    const map = readPlacements(file);
+    // Only the appended bytes were read.
+    const asked = reads.mock.calls.reduce((n, c) => n + Number((c as unknown[])[3] ?? 0), 0);
+    expect(asked).toBe(fs.statSync(file).size - before);
+    reads.mockRestore();
+    expect(map.get(agentSessionKey('claude', 's1'))?.pane_id).toBe('%7');
+    expect(map.get(agentSessionKey('claude', 's3'))?.pane_id).toBe('%3');
+    expect(map.size).toBe(3);
+  });
+
+  it('leaves a half-written last line for the next call', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-pl-'));
+    const file = path.join(dir, 'placements.jsonl');
+    const line = JSON.stringify({ agent: 'claude', session_id: 's1', pane_id: '%1', tmux_session: 'a', window_index: '1', pane_index: '0', cwd: '/x', ts: 1 });
+    fs.writeFileSync(file, line.slice(0, 20));
+    expect(readPlacements(file).size).toBe(0);
+    fs.appendFileSync(file, line.slice(20) + '\n');
+    expect(readPlacements(file).get(agentSessionKey('claude', 's1'))?.pane_id).toBe('%1');
+  });
+
+  it('starts over when the file is replaced or shrinks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-pl-'));
+    const file = path.join(dir, 'placements.jsonl');
+    const row = (sid: string, pane: string) => JSON.stringify({ agent: 'claude', session_id: sid, pane_id: pane, tmux_session: 'a', window_index: '1', pane_index: '0', cwd: '/x', ts: 1 }) + '\n';
+    fs.writeFileSync(file, row('s1', '%1') + row('s2', '%2'));
+    expect(readPlacements(file).size).toBe(2);
+    fs.writeFileSync(file + '.new', row('s9', '%9'));
+    fs.renameSync(file + '.new', file);
+    const map = readPlacements(file);
+    expect([...map.keys()]).toEqual([agentSessionKey('claude', 's9')]);
+  });
+
+  it('hands out a copy, so a caller cannot change the cached map', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-pl-'));
+    const file = path.join(dir, 'placements.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ agent: 'claude', session_id: 's1', pane_id: '%1', ts: 1 }) + '\n');
+    readPlacements(file).clear();
+    expect(readPlacements(file).size).toBe(1);
+  });
 });
 
 describe('liveSessionsFrom', () => {

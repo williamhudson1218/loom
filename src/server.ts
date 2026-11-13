@@ -22,6 +22,7 @@ import { startPluginStateSync } from './pluginmgr.ts';
 import { SESSION_PREFIX, TOOL_DIR } from './paths.ts';
 import { paneNameMap, rememberPaneNames } from './panenames.ts';
 import { realTopicDeps } from './panetopics.ts';
+import { panesMidTurn } from './midturn.ts';
 import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
 import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
@@ -214,43 +215,10 @@ const WORKING_MS = 10_000;
  * animation is worse than a missing one, because it is the thing he uses to
  * decide whether an agent needs poking.
  */
-function paneIsMidTurn(paneId: string | undefined): boolean {
-  if (!paneId) return false;
-  try {
-    const out = tmux(['capture-pane', '-p', '-t', paneId, '-S', '-4'], { timeout: 1000 });
-    /* THREE SIGNALS, because a pane can be working in two different ways.
-     *
-     * Will: "this page doesn't show that it's being worked on if the main agent
-     * kicks it off to a sub-agent."
-     *
-     * Right, and the interrupt hint alone cannot catch it. While a subagent
-     * runs, the PARENT is genuinely not mid-turn — it is blocked on the Task
-     * tool, its prompt is free, and it writes nothing to its transcript. So it
-     * fails the mtime proxy AND the interrupt test, while real work is going on
-     * in its name.
-     *
-     * What the pane does show is an agent roster:
-     *
-     *     ✻ Waiting for 1 background agent to finish
-     *       ⏺ main
-     *       ◯ Explore  Confirming no CADE9C conversion migration exists   3m 46s
-     *
-     * Measured across 23 panes: 3 showed the interrupt hint, 2 showed a roster
-     * line, and the two sets did not overlap — so this is additive, not a
-     * widening. The 18 idle panes matched none of the three, which is the part
-     * that matters: unlike the `✻` glyph, which persists as a finished-turn
-     * summary, `◯` is present only while a subagent is live.
-     *
-     * Still fails closed. No match means not working, so a tmux hiccup cannot
-     * invent activity. */
-    return (
-      /esc to interrupt/i.test(out) ||
-      /^\s*◯ /m.test(out) ||
-      /Waiting for \d+ background agent/i.test(out)
-    );
-  } catch {
-    return false;
-  }
+// The check itself (three signals, fails closed) is textIsMidTurn in src/midturn.ts,
+// run for every live pane in ONE tmux process rather than one per pane.
+function livePanesMidTurn(paneIds: string[]): Set<string> {
+  return panesMidTurn(paneIds, (args) => tmux(args, { timeout: 1000 }));
 }
 
 // path -> the last turn read off the tail at a given mtime, so a 5s poll with
@@ -267,8 +235,8 @@ function tailTurnAt(jsonlPath: string, mtime: number): number {
 type Snap = { defaultAgent: LaunchPreference; views: ChatView[]; live: Record<string, LiveLoc> };
 
 // Building a snapshot is ~170 ms of synchronous work (DB read, a stat per chat,
-// list-panes, a whole-machine ps, a capture-pane per live chat). The board poll,
-// the orchestrator view, the EM/ship ticks and the detail route all ask within
+// list-panes, a whole-machine ps, one batched capture-pane for the live chats).
+// The board poll, the orchestrator view, the EM/ship ticks and the detail route all ask within
 // the same second, so they share one copy for SNAP_TTL_MS. Not reused under
 // vitest, where tests change tmux between calls.
 const SNAP_TTL_MS = 1500;
@@ -793,6 +761,7 @@ function buildSnapshot(): Snap {
   // The pane classifier's @stage, trusted only for the session it labelled.
   const stages = liveMap.size ? new Map(realTopicDeps.readPanes().map((r) => [r.pane_id, r] as const)) : new Map();
   const live: Record<string, LiveLoc> = {};
+  const midTurn = liveMap.size ? livePanesMidTurn([...liveMap.values()].map((i) => i.pane_id)) : new Set<string>();
   for (const [key, info] of liveMap) {
     const mt = mtime.get(key) ?? 0;
     const name = names.get(info.pane_id);
@@ -800,7 +769,7 @@ function buildSnapshot(): Snap {
        saying yes is enough, because they fail in opposite directions: mtime
        misses a long tool call, and the pane hint misses the instant between a
        tool returning and the next one starting. */
-    const working = paneIsMidTurn(info.pane_id) || now - mt < WORKING_MS;
+    const working = midTurn.has(info.pane_id) || now - mt < WORKING_MS;
     const ps = stages.get(info.pane_id);
     const stage = ps && ps.sid === info.session_id && ps.stage ? ps.stage : '';
     live[key] = { ...info, working, ...(name ? { name } : {}), ...(stage ? { stage } : {}) };
