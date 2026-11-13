@@ -9,6 +9,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, startGhTicks, loomWriteHeaders } from '../src/server.ts';
+import { openUrl, realDeps as realOpenDeps } from '../src/openurl.ts';
 import { serverPort } from '../src/serverport.ts';
 import { startListening, startFailure } from '../src/serverstart.ts';
 import { removeServerJson } from '../src/serverjson.ts';
@@ -154,7 +155,7 @@ function createWindow(): void {
   // browser or app. Electron's default is a bare child BrowserWindow, which hangs
   // on Slack's app-redirect page.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url) && !url.startsWith(own)) void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url) && !url.startsWith(own)) void openUrl(url, { ...realOpenDeps, open: (u) => shell.openExternal(u) });
     return { action: 'deny' };
   });
   win.loadURL(`http://localhost:${serverPort()}/`);

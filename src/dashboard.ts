@@ -833,6 +833,8 @@ ${PRUNE_VIEW_CSS}
   .chp { font-size:10px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
   .chp.pr { background:#15301d; color:#9fe0aa; }
   .chp.sl { background:#2a2140; color:#c9b4ff; }
+  .chp.hm { background:#1b2a4d; color:#bcd0ff; border:0; font:inherit; font-size:inherit; cursor:pointer; }
+  .chp.hm:hover { background:#233a6e; }
   .chp.dr { background:#3a2238; color:#e8a6e0; }
   .chp.dr.stl { opacity:.5; }
   .chp.rp { background:#1d3b2c; color:#a6e8c0; }
@@ -1404,7 +1406,7 @@ function subLine(c){const st=(flatList()&&!c.arch?'<span class="sstate '+dotCls(
   if(!nm)return '<span class="ssub">'+st+rowSub(c)+'</span>';
   return '<span class="ssub named"">'+(st?'<span class="ssl">'+st.trim()+'&nbsp;</span>':'')+nm.html+'</span>';}
 function srow(c){const prn=chatPrNum(c);const a=c.arch?' data-jsonl="'+esc(c.arch.jsonl)+'"':'';
-const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
+const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(c.arch?'':homeChipHtml(c))+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
 return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+'>'+
 '<span class="sdot '+dotCls(c)+'" title="'+esc(DOT_LABEL[dotCls(c)])+'"></span>'+
 '<span class="sbody"><span class="shead"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span></span>'+'<span class="sline">'+subLine(c)+(chips?'<span class="schips">'+chips+'</span>':'')+'</span></span></div>';}
@@ -1456,7 +1458,7 @@ function rowChat(r){if(r.classList.contains('ghost'))return null;if(r.dataset.js
 function wireSidebar(){const sl=$('#sidelist');
   $('#list').addEventListener('click',e=>{const r=e.target.closest('.tsrow');if(r)selectTerminal(r.dataset.term,r.dataset.win);});
   $('#list').addEventListener('keydown',e=>{const r=e.target.closest&&e.target.closest('.tsrow');if(r&&e.key==='Enter'){e.preventDefault();selectTerminal(r.dataset.term,r.dataset.win);}});
-  sl.addEventListener('click',e=>{const la=e.target.closest('[data-lact]');if(la){e.stopPropagation();const row=la.closest('[data-lid]');if(row)launchAct(la.dataset.lact,row.dataset.lid,la);return;}const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);return;}const r=e.target.closest('.srow[data-sid]');if(!r||e.target.closest('button,a'))return;const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
+  sl.addEventListener('click',e=>{const la=e.target.closest('[data-lact]');if(la){e.stopPropagation();const row=la.closest('[data-lid]');if(row)launchAct(la.dataset.lact,row.dataset.lid,la);return;}const hm=e.target.closest('[data-home]');if(hm){e.stopPropagation();testOpen(hm.dataset.home);return;}const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);return;}const r=e.target.closest('.srow[data-sid]');if(!r||e.target.closest('button,a'))return;const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const r=e.target.closest&&e.target.closest('.srow[data-sid]');if(!r||e.target!==r)return;e.preventDefault();const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('contextmenu',e=>{const r=e.target.closest('.srow[data-sid]');if(!r)return;const c=rowChat(r);if(!c)return;e.preventDefault();openCtx(c,e.clientX,e.clientY,null);});}
 function doSave(sid,agent,el){const nav=tab==='saved'?null:closeNavPlan(DATA.chats.find(x=>x.agent===agent&&x.session_id===sid));flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved, pane freed':'saved'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');if(j.ok){markSaved(sid,agent,true);closeNavGo(nav);}setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}

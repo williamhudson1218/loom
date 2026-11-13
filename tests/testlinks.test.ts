@@ -39,8 +39,8 @@ describe('test links store', () => {
     addTestLink(db, SID, 'http://localhost:3000/b', 'other', 20);
     addTestLink(db, SID, 'http://localhost:3000/a', 'second', 30);
     expect(listTestLinks(db, SID)).toEqual([
-      { url: 'http://localhost:3000/a', label: 'second', added_at: 30 },
-      { url: 'http://localhost:3000/b', label: 'other', added_at: 20 },
+      { url: 'http://localhost:3000/a', label: 'second', added_at: 30, kind: 'link' },
+      { url: 'http://localhost:3000/b', label: 'other', added_at: 20, kind: 'link' },
     ]);
     addTestLink(db, 'other-chat', 'http://localhost:3000/a', 'x', 5);
     expect(listTestLinks(db, SID)).toHaveLength(2);
@@ -181,6 +181,17 @@ describe('board UI', () => {
     const h = run({ a: [{ url: 'http://x/1', label: 'one', added_at: 1 }, { url: 'http://x/2', label: '', added_at: 2 }] });
     expect(h).toContain('data-act="testlinks"');
     expect(h).toContain('>2<');
+  });
+
+  it('a home link shows as a chip on the row and as a distinct popover row; ordinary links do not', () => {
+    const ctx: any = { DATA: { testLinks: { a: [{ url: 'https://example.com/t/1', label: 'Origin', added_at: 1, kind: 'home' }, { url: 'http://x/2', label: '', added_at: 2, kind: 'link' }], b: [{ url: 'http://x/2', label: '', added_at: 2, kind: 'link' }] } }, mbtn() { return ''; }, esc: (s: string) => String(s), $: () => null, document: { querySelector: () => null, addEventListener() {} }, window: { open() {}, addEventListener() {} }, URL };
+    vm.createContext(ctx);
+    vm.runInContext(TEST_LINKS_VIEW_JS, ctx);
+    const chip = (sid: string) => vm.runInContext(`homeChipHtml({session_id:${JSON.stringify(sid)}})`, ctx) as string;
+    expect(chip('a')).toContain('data-home="https://example.com/t/1"');
+    expect(chip('b')).toBe('');
+    expect(chip('none')).toBe('');
+    expect(TEST_LINKS_VIEW_JS).toContain("(l.kind==='home'?' home':'')");
   });
 
   it('page carries the popover, opens via window.open noopener, and parses', () => {

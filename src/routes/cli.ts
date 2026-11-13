@@ -15,7 +15,8 @@ import { currentTerminal, insideLoading, type InsideLoading } from '../terminal.
 import { attachGhosttyTabs } from '../ghostty.ts';
 import { pretrustFolder } from '../orchstart.ts';
 import { nameNewPanes } from '../panenames.ts';
-import { listTestLinks } from '../testlinks.ts';
+import { addTestLink, listTestLinks } from '../testlinks.ts';
+import { heldCount, holdLinks, parseLinksInput, resolveHeldLinks } from '../pendinglinks.ts';
 import type { RouteCtx, RouteDef, Verdict } from './index.ts';
 
 // The plugin's `loom` CLI and hooks (§4.3). Every route here is kind 'cli' (§13):
@@ -408,6 +409,8 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
   if (envPairs.some(([k, v]) => !ENV_KEY_RE.test(k) || typeof v !== 'string')) return bad(ctx, 'env keys must be names and values strings');
   const title = b?.title;
   if (title !== undefined && (typeof title !== 'string' || title.length > 120)) return bad(ctx, 'title must be a string of at most 120 characters');
+  const parsedLinks = parseLinksInput(b?.links);
+  if (!parsedLinks.ok) return bad(ctx, parsedLinks.detail);
   if (!deps.dirExists(cwd)) return bad(ctx, 'cwd does not exist');
   // Duplicate check first: an existing session is never touched.
   let exists = true;
@@ -437,6 +440,8 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
     const t = resolveTarget({ session: name });
     paneId = 'error' in t ? '' : t.paneId;
   }
+  // The chat's session id is not known yet: the links wait on the pane until a live chat shows there (tickPendingLinks).
+  if (paneId) holdLinks(paneId, parsedLinks.links, Date.now());
   let paneName = '';
   if (paneId) {
     try {
@@ -457,6 +462,29 @@ async function postSessions(ctx: RouteCtx): Promise<void> {
     }
   } else loading?.end({ label: 'Could not open ' + where, detail: 'The session has no pane to show.' });
   ctx.json(201, { ok: true, session: name, pane_id: paneId, name: paneName, focused });
+}
+
+/** Every pane id on Loom's tmux socket, or null when tmux does not answer. */
+function alivePaneIds(): Set<string> | null {
+  try {
+    return new Set(deps.tmux(['list-panes', '-a', '-F', '#{pane_id}']).split('\n').map((l) => l.trim()).filter((l) => PANE_RE.test(l)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Attach links held at session creation to chats that have come up, and drop holds whose
+ * pane died or that timed out. server.ts runs it every couple of seconds.
+ */
+export function tickPendingLinks(now: number = Date.now()): { attached: number; expired: number } {
+  if (!heldCount()) return { attached: 0, expired: 0 };
+  return resolveHeldLinks({
+    now,
+    live: deps.live(),
+    alivePanes: alivePaneIds(),
+    attach: (sid, l, at) => withDb((db) => void addTestLink(db, sid, l.url, l.label, at, l.kind)),
+  });
 }
 
 export const routes: RouteDef[] = [

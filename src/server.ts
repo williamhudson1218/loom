@@ -35,7 +35,7 @@ import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
 import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
-import { handleCliPath, setCliDeps } from './routes/cli.ts';
+import { handleCliPath, setCliDeps, tickPendingLinks } from './routes/cli.ts';
 import { firstPaint } from './routes/wizard.ts';
 import { connectionsSafe } from './connections.ts';
 import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmode.ts';
@@ -2030,6 +2030,15 @@ export function createServer(): http.Server {
  * and ship groups. Exported so a test harness can run them against its own port.
  */
 export function startGhTicks(): void {
+  // Links handed over with a new session attach to its chat once it is live (src/pendinglinks.ts).
+  setInterval(() => {
+    try {
+      tickPendingLinks();
+    } catch (e) {
+      console.error('[loom] pending links failed:', (e as Error).message);
+    }
+  }, 2_000).unref?.();
+
   // PR pipelines: refresh whatever the board or a panel asked about and is due.
   // Each entry decides its own pace (20s in flight on a live chat, minutes otherwise).
   let piping = false;
