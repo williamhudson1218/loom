@@ -50,6 +50,14 @@ function jumpAge(ts,now){
   if(s<60)return 'now';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';
   if(s<604800)return Math.floor(s/86400)+'d';return Math.floor(s/604800)+'w';
 }
+// What a row does. Archived (ended) chats resume on Enter and preview on Cmd/Ctrl+Enter; everything
+// else keeps its one action. hint is the label shown on the selected row.
+function jumpActions(it,meta){
+  if(!it)return null;
+  if(it.kind==='arch')return meta?{act:'preview',hint:'Preview'}:{act:'resume',hint:'Resume'};
+  if(it.kind==='cmd')return {act:'run',hint:'Run'};
+  return {act:'open',hint:'Open'};
+}
 // Flat list of the selectable items, for arrow keys.
 function jumpFlat(sections){var f=[];sections.forEach(function(s){s.items.forEach(function(it){f.push(it);});});return f;}
 `;
@@ -104,6 +112,9 @@ export const JUMP_CSS = `
   #jump .jrow .ji { flex:none; width:16px; text-align:center; color:#8b93a7; }
   #jump .jrow .jt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px; }
   #jump .jrow .js { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7f879b; font-size:12px; }
+  #jump .jrow .jhint { display:none; flex:none; color:#8b93a7; font-size:11.5px; white-space:nowrap; }
+  #jump .jrow.sel .jhint { display:inline; }
+  #jump .jrow .jhint kbd { font:inherit; border:1px solid #2b3040; border-radius:4px; padding:1px 4px; background:#141826; margin-left:3px; }
   #jump .jrow .jage { flex:none; min-width:26px; text-align:right; color:#6b7280; font-size:12px; font-variant-numeric:tabular-nums; }
   #jump .jempty, #jump .jload { color:#7f879b; font-size:13px; padding:10px; }
   #jump .jfoot { display:flex; gap:14px; padding:7px 14px; border-top:1px solid #232634; color:#6b7280; font-size:11.5px; flex:none; }
@@ -152,7 +163,7 @@ function jumpRender(){
   jumpBuild();var box=$('#jlist');if(!box)return;var h='',idx=0;
   JUMP.sections.forEach(function(s){h+='<div class="jh">'+esc(s.title)+'</div>';
     s.items.forEach(function(it){var lead=it.kind==='chat'?'<span class="sdot '+esc(it.dot||'')+'" style="margin-top:0"></span>':'<span class="ji">'+(it.kind==='arch'?'❖':esc(it.icon||''))+'</span>';
-      h+='<div class="jrow'+(idx===JUMP.sel?' sel':'')+'" role="option" data-i="'+idx+'">'+lead+'<span class="jt">'+esc(it.label)+'</span>'+(it.sub?'<span class="js">'+esc(it.sub)+'</span>':'')+(it.kind==='arch'&&jumpAge(it.ts)?'<span class="jage" title="last updated '+esc(new Date(it.ts<1e11?it.ts*1000:it.ts).toLocaleString())+'">'+esc(jumpAge(it.ts))+'</span>':'')+'</div>';idx++;});
+      h+='<div class="jrow'+(idx===JUMP.sel?' sel':'')+'" role="option" data-i="'+idx+'">'+lead+'<span class="jt">'+esc(it.label)+'</span>'+(it.sub?'<span class="js">'+esc(it.sub)+'</span>':'')+(it.kind==='arch'&&jumpAge(it.ts)?'<span class="jage" title="last updated '+esc(new Date(it.ts<1e11?it.ts*1000:it.ts).toLocaleString())+'">'+esc(jumpAge(it.ts))+'</span>':'')+(it.kind==='arch'?'<span class="jhint">Resume<kbd>⏎</kbd> · Preview<kbd>⌘⏎</kbd></span>':'')+'</div>';idx++;});
     if(s.loading)h+='<div class="jload">Searching archived chats…</div>';});
   if(!JUMP.flat.length&&!JUMP.sections.some(function(s){return s.loading;}))h+='<div class="jempty">Nothing matches “'+esc(JUMP.q.trim())+'”.</div>';
   box.innerHTML=h;var sel=box.querySelector('.jrow.sel');if(sel&&sel.scrollIntoView)sel.scrollIntoView({block:'nearest'});
@@ -172,12 +183,16 @@ function jumpClose(restore){
   var el=$('#jump');if(!el||!JUMP.open)return;JUMP.open=false;clearTimeout(JUMP.archT);el.classList.remove('on');el.setAttribute('aria-hidden','true');
   var p=JUMP.prevFocus;JUMP.prevFocus=null;if(restore&&p&&p.focus&&document.contains(p)){try{p.focus();}catch(e){}}
 }
-function jumpGo(it){
-  if(!it)return;jumpClose(false);
+function jumpGo(it,meta){
+  if(!it)return;var a=jumpActions(it,meta);jumpClose(false);
   setTimeout(function(){
     if(it.kind==='cmd'){it.run();return;}
     if(it.kind==='chat'){openInBoard(it.chat.session_id,it.chat.agent);var r=document.querySelector('#sidelist .srow.sel');if(r&&r.scrollIntoView)r.scrollIntoView({block:'nearest'});return;}
-    if(it.kind==='arch'){jumpToBoard();var ac=archChat(it.hit);selectChat(ac.session_id,ac.agent,ac.arch);}
+    if(it.kind==='arch'){jumpToBoard();var ac=archChat(it.hit);
+      // Resume reuses the archive view's own path: select the chat, then the same lane/managed-pane launch
+      // the Resume button runs; the main area shows the loading card until the pane is up.
+      if(a.act==='resume'&&typeof startLaunch==='function')startLaunch(ac,'resume');
+      else selectChat(ac.session_id,ac.agent,ac.arch);}
   },0);
 }
 function jumpToggle(){if(JUMP.open)jumpClose(true);else jumpOpen();}
@@ -189,7 +204,7 @@ function wireJump(){
   inp.addEventListener('keydown',function(e){
     if(e.key==='Escape'){e.preventDefault();e.stopPropagation();jumpClose(true);return;}
     if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();var n=JUMP.flat.length;if(!n)return;JUMP.sel=(JUMP.sel+(e.key==='ArrowDown'?1:n-1))%n;jumpRender();return;}
-    if(e.key==='Enter'){e.preventDefault();jumpGo(JUMP.flat[JUMP.sel]);return;}
+    if(e.key==='Enter'){e.preventDefault();jumpGo(JUMP.flat[JUMP.sel],e.metaKey||e.ctrlKey);return;}
     if(e.key==='Tab'){e.preventDefault();}
   });
   var list=$('#jlist');

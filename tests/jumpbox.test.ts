@@ -4,13 +4,14 @@ import { pageBindings } from '../src/keymap.ts';
 
 type It = { label: string; hay?: string; id?: string; ts?: number; keep?: boolean };
 type Sec = { id: string; title: string; items: It[]; loading?: boolean };
-const api = new Function(`${JUMP_PURE_JS}; return {jumpScore,jumpFilter,jumpSections,jumpFlat,jumpAge,jumpPenalty};`)() as {
+const api = new Function(`${JUMP_PURE_JS}; return {jumpScore,jumpFilter,jumpSections,jumpFlat,jumpAge,jumpPenalty,jumpActions};`)() as {
   jumpPenalty: (ts: number, now?: number) => number;
   jumpScore: (l: string, h: string, q: string) => number;
   jumpFilter: (i: It[], q: string, n?: number, now?: number) => It[];
   jumpSections: (c: It[], m: It[], a: It[], q: string, o?: { archWanted?: boolean; archLoading?: boolean; now?: number }) => Sec[];
   jumpFlat: (s: Sec[]) => It[];
   jumpAge: (ts: number, now?: number) => string;
+  jumpActions: (it: { kind: string } | null, meta?: boolean) => { act: string; hint: string } | null;
 };
 
 describe('jump box ranking', () => {
@@ -104,5 +105,17 @@ describe('jump box recency', () => {
     ];
     const s = api.jumpSections([], [], arch, 'unrelated', { archWanted: true, now });
     expect(s[0].items.map((i) => i.label)).toEqual(['zzz new', 'zzz old']);
+  });
+});
+
+describe('jump box row actions', () => {
+  it('archived chats resume on Enter and preview on Cmd+Enter', () => {
+    expect(api.jumpActions({ kind: 'arch' })).toEqual({ act: 'resume', hint: 'Resume' });
+    expect(api.jumpActions({ kind: 'arch' }, true)).toEqual({ act: 'preview', hint: 'Preview' });
+  });
+  it('open chats and commands keep their single action', () => {
+    expect(api.jumpActions({ kind: 'chat' }, true)?.act).toBe('open');
+    expect(api.jumpActions({ kind: 'cmd' })?.act).toBe('run');
+    expect(api.jumpActions(null)).toBeNull();
   });
 });
