@@ -19,8 +19,16 @@ function jumpScore(label,hay,q){
   return total;
 }
 // Filter and sort one group: best score first, ties keep the input order (callers pass newest first).
-function jumpFilter(items,q,limit){
-  var out=[];items.forEach(function(it,i){var s=jumpScore(it.label,it.hay,q);if(s>=0)out.push({it:it,s:s,i:i});});
+// An item with keep set (an archive hit the archive search already matched in its body) never drops out.
+// Recency: items carrying a last-update time (ms or epoch seconds) are docked up to 1.5 points as they
+// age (30 days to the cap), so a recent chat beats an old one with a similar text score while a clearly
+// better text match still wins. Items with no time (commands) are not docked.
+function jumpPenalty(ts,now){
+  var t=+ts;if(!t||t<0)return 0;if(t<1e11)t*=1000;
+  var d=Math.max(0,((now||Date.now())-t)/86400000);return Math.min(1.5,d/20);
+}
+function jumpFilter(items,q,limit,now){
+  var out=[];items.forEach(function(it,i){var s=jumpScore(it.label,it.hay,q);if(s<0&&it.keep)s=3;if(s>=0)out.push({it:it,s:s+jumpPenalty(it.ts,now),i:i});});
   out.sort(function(a,b){return a.s-b.s||a.i-b.i;});
   var r=out.map(function(x){return x.it;});return limit?r.slice(0,limit):r;
 }
@@ -28,9 +36,9 @@ function jumpFilter(items,q,limit){
 // match is dropped; archived hits are already filtered by the archive search itself.
 function jumpSections(chats,cmds,arch,q,opts){
   opts=opts||{};var out=[];
-  var c=jumpFilter(chats,q,q?8:6);if(c.length)out.push({id:'chats',title:'Open chats',items:c});
+  var c=jumpFilter(chats,q,q?8:6,opts.now);if(c.length)out.push({id:'chats',title:q?'Chats':'Open chats',items:c});
   var m=jumpFilter(cmds,q,q?8:20);if(m.length)out.push({id:'cmds',title:'Commands',items:m});
-  if(opts.archWanted){var a=(arch||[]).slice(0,8);
+  if(opts.archWanted){var a=jumpFilter(arch||[],q,8,opts.now);
     if(a.length||opts.archLoading)out.push({id:'arch',title:'Archived',items:a,loading:!!opts.archLoading});}
   return out;
 }
@@ -122,13 +130,16 @@ function jumpCommands(){
   return c;
 }
 function jumpChatItems(){
-  var rows=DATA.chats.filter(isOpenChat).slice().sort(function(a,b){return (b.last_active_at||0)-(a.last_active_at||0);});
+  // Typing searches every chat the board knows (the sidebar's set, matched with its searchHay);
+  // the empty palette lists only the open ones.
+  var typed=!!JUMP.q.trim();
+  var rows=DATA.chats.filter(function(c){return typed?!isSaved(c)||isOpenChat(c):isOpenChat(c);}).slice().sort(function(a,b){return (b.last_active_at||0)-(a.last_active_at||0);});
   return rows.map(function(c){var nm=chatNameOf(c);
-    return {kind:'chat',chat:c,label:(nm?'@'+nm+' · ':'')+disp(c),sub:c.project||'',hay:searchHay(c,nm)+' '+(c.project||''),dot:dotCls(c)};});
+    return {kind:'chat',chat:c,label:(nm?'@'+nm+' · ':'')+disp(c),sub:c.project||'',hay:searchHay(c,nm)+' '+(c.project||''),dot:dotCls(c),ts:isOpenChat(c)?Date.now():c.last_active_at||0};});
 }
 function jumpArchItems(){
   var known={};DATA.chats.forEach(function(c){known[c.session_id]=1;});
-  return JUMP.hits.filter(function(h){return !known[h.session_id];}).map(function(h){var ac=archChat(h);return {kind:'arch',hit:h,label:disp(ac),sub:ac.project||'',hay:'',ts:h.ended_at||0};});
+  return JUMP.hits.filter(function(h){return !known[h.session_id];}).map(function(h){var ac=archChat(h);return {kind:'arch',hit:h,label:disp(ac),sub:ac.project||'',hay:h.snippet||'',ts:h.ended_at||0,keep:true};});
 }
 function jumpBuild(){
   var q=JUMP.q.trim();var want=archiveWanted(q)&&DATA.archiveSearch!==false;
