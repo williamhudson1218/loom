@@ -715,6 +715,11 @@ ${PRUNE_VIEW_CSS}
   .sidetop .two { display:flex; gap:6px; }
   .sidetop #row3 { display:flex; flex-direction:column; gap:6px; margin:0; }
   .sidetop .seg { margin-left:0; align-self:flex-start; }
+  /* Orchestrator row + ship card stay pinned above the scrolling list; the ship card scrolls inside itself. */
+  #sidepin { flex:none; max-height:45%; display:flex; flex-direction:column; min-height:0; background:#0f1218; position:relative; z-index:2; border-bottom:1px solid transparent; }
+  #sidepin > #orchpin { flex:none; } #sidepin > #shippin { flex:0 1 auto; min-height:0; overflow-y:auto; }
+  #sidepin:not(:has(#orchpin:not(:empty), #shippin:not(:empty))) { display:none; }
+  #side.listscrolled #sidepin { border-bottom-color:#232634; box-shadow:0 6px 8px -6px rgba(0,0,0,.65); }
   #sidelist { flex:1; min-height:0; overflow-y:auto; padding:2px 0 12px; }
   #archive { padding:0; max-width:none; display:block; }
   .sidehint { padding:14px 16px 4px; font-size:11px; color:#6f778a; }
@@ -1078,8 +1083,8 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
       <div class="fchecks"><label class="fck"><input type="checkbox" id="fdraft"/> Has a draft</label><label class="fck"><input type="checkbox" id="fissue"/> Has issues</label></div>
     </div>
   </div>
+  <div id="sidepin"><div id="orchpin"></div><div id="shippin"></div></div>
   <div id="sidelist">
-    <div id="orchpin"></div>
     <div id="list"></div>
     <div id="termlist"></div>
     <section id="archive"></section>
@@ -1270,6 +1275,7 @@ function syncControls(){const tr=tab==='trees';const tk=tab==='tickets';const wa
   $('#fchips').style.display=other?'none':'';
   // Tickets is the Board's own chats and filters, drawn as columns in place of the list.
   $('#list').style.display=other||tk?'none':'';
+  $('#sidepin').style.display=other||tk?'none':'';
   $('#archive').style.display=other||tk?'none':'';
   $('#termlist').style.display=other||tk?'none':'';
   $('#kanban').style.display=tk?'grid':'none';
@@ -1318,7 +1324,7 @@ function wireSideTop(){$('#sort').value=sortMode;
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#fpop').hidden&&$('#tagpop').hidden){setFilterPop(false);$('#fbtn').focus();}});
   $('#fchips').addEventListener('click',e=>{const b=e.target.closest('[data-fk]');if(b)removeFilter(b.dataset.fk);});
   $('#fdraft').onchange=e=>{fDraft=e.target.checked;render();};$('#fissue').onchange=e=>{fIssue=e.target.checked;render();};
-  const sl=$('#sidelist');sl.addEventListener('mouseenter',()=>{pointerIn=true;});
+  const sl=$('#sidelist');sl.addEventListener('scroll',()=>{$('#side').classList.toggle('listscrolled',sl.scrollTop>2);},{passive:true});sl.addEventListener('mouseenter',()=>{pointerIn=true;});
   sl.addEventListener('mouseleave',()=>{pointerIn=false;if(pendingReorder){pendingReorder=false;render();}});
   sl.addEventListener('click',e=>{const h=e.target.closest('.sgrp[data-gk]');if(!h)return;
     if(e.altKey){onlyGroup=onlyGroup===h.dataset.gn?null:h.dataset.gn;}
@@ -1335,7 +1341,7 @@ const tmatch=searching?termMatches(q):[];
 if(searching){SPLIT=splitMatches(rows,isOpenChat,archHits,DATA.chats.map(c=>c.session_id));rows=SPLIT.open;}else SPLIT=null;
 // Order inside each group is the chosen sort; the groups (Working, Your turn, ...) only
 // decide which heading a row sits under.
-CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();list.innerHTML=shipStrip()+(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows,true)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));wireShips(list);flipPlay(flipBefore);renderArchive();renderMain();}
+CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='saved'?'<p class="meta sidehint">Nothing saved yet. Use Save for later on any chat to bookmark it here. Saved chats stay put no matter how long they sit, and saving a live one frees its pane.</p>':(liveOnly&&boardBase().length===0?'<p class="meta sidehint">No live sessions detected yet. Send a prompt in a chat to register it, or switch to All.</p>':'<p class="meta sidehint">no matches</p>');if(tab==='tickets'){renderKanban(rows);renderMain();return;}const flipBefore=flipTops();const sp=$('#shippin');sp.innerHTML=shipStrip();wireShips(sp);list.innerHTML=(searching?'<div class="ahead">Open · '+(rows.length+tmatch.length)+'</div>'+((sidebarRows(rows,true)+tmatch.map(termRow).join(''))||'<p class="meta sidehint">no open matches</p>'):(sidebarRows(rows)||empty));flipPlay(flipBefore);renderArchive();renderMain();}
 // ---- Sidebar rows ------------------------------------------------------------
 // One row per chat: state dot, title, project and pane name, age, PR / Slack /
 // draft chips. Click selects it into the main area; right-click opens the action
