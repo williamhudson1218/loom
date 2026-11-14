@@ -99,10 +99,12 @@ function sendDraftAfterFire(s: ActionItem, facts: ActionFacts, now: number): Dec
   if (s.status === 'held') {
     // The chat replaced the draft: check the new text from the top (a Run click does not carry over to it).
     if (d.revised_at !== s.held_rev) {
-      return [{ id: s.id, patch: { status: 'waiting', status_why: 'the draft was replaced; checking again', held_rev: '', fired_at: 0 }, log: `${s.title}: draft replaced; checking again` }];
+      return [{ id: s.id, patch: { status: 'waiting', status_why: 'the draft was replaced; checking again', held_rev: '', held_at: 0, fired_at: 0, approved_rev: '' }, log: `${s.title}: draft replaced; checking again` }];
     }
+    // Only the answer to the redraft this hold asked for sends: a mark kept after the hold, for this revision.
+    // A hold that asked for none (Slack off, a refused send) has held_at 0 and never sends on a mark.
     const m = facts.redraftMark(id);
-    if (m && m.state === 'kept' && m.revised_at === d.revised_at && !(d.kind !== 'email' && facts.slackOff())) {
+    if (s.held_at > 0 && m && m.state === 'kept' && m.at > s.held_at && m.revised_at === d.revised_at && !(d.kind !== 'email' && facts.slackOff())) {
       return [{ id: s.id, patch: { status: 'running', status_why: 'sending (the chat kept the draft)' }, effect: 'send_kept', ack: [...m.ids], log: `${s.title}: the chat kept the draft; sending` }];
     }
   }
@@ -145,16 +147,20 @@ function sendDraftFired(s: ActionItem, why: string, approved: boolean, facts: Ac
   const stay = (w: string): Decision[] => (w === s.status_why ? [] : [{ id: s.id, patch: { status_why: w } }]);
   if (!d) return stay(`draft ${id} not found`);
   if (d.status !== 'pending') return stay(`draft ${id} is ${d.status}`);
+  // A Run approves the text it was clicked on; a draft revised since goes back to due for another Run.
+  if (approved && d.revised_at !== s.approved_rev) {
+    return [{ id: s.id, patch: { status: 'due', fired_at: now, approved_rev: '', status_why: 'the draft changed after Run; Run again to send the new text' }, log: `${s.title}: draft changed after Run; due again` }];
+  }
   if (!approved) {
     if (d.kind !== 'slack') return [{ id: s.id, patch: { status: 'due', fired_at: now, status_why: `${why}; emails and reviews wait for Run` } }];
     if (s.ask_first) return [{ id: s.id, patch: { status: 'due', fired_at: now, status_why: `${why}; waiting for Run` } }];
   }
   const off = d.kind !== 'email' ? facts.slackOff() : '';
-  if (off) return [{ id: s.id, patch: { status: 'held', status_why: off, held_rev: d.revised_at }, log: `${s.title}: held: ${off}` }];
+  if (off) return [{ id: s.id, patch: { status: 'held', status_why: off, held_rev: d.revised_at, held_at: 0 }, log: `${s.title}: held: ${off}` }];
   const p = facts.preSend(id);
   if (p.decision === 'pending') return stay('checking the thread before sending');
   if (p.decision === 'hold') {
-    return [{ id: s.id, patch: { status: 'held', status_why: `held: ${p.why}`, held_rev: d.revised_at }, effect: 'redraft', log: `${s.title}: held: ${p.why}` }];
+    return [{ id: s.id, patch: { status: 'held', status_why: `held: ${p.why}`, held_rev: d.revised_at, held_at: now }, effect: 'redraft', log: `${s.title}: held: ${p.why}` }];
   }
   return [{ id: s.id, patch: { status: 'running', status_why: 'sending', fired_at: now }, effect: 'send', ack: [...p.ack], log: `${s.title}: ${why}; sending` }];
 }

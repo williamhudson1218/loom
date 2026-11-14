@@ -30,6 +30,10 @@ export interface ActionItem {
   done_at: number;
   attempts: number;
   held_rev: string;
+  /** ms: when a hold asked the chat to redraft (0 for any other hold). Only a redraft kept after this sends. */
+  held_at: number;
+  /** The draft revision a person clicked Run on. The approval covers only that text. */
+  approved_rev: string;
   removed_from: StepStatus | '';
 }
 
@@ -53,7 +57,9 @@ CREATE TABLE IF NOT EXISTS action_items (
   done_at        INTEGER NOT NULL DEFAULT 0,
   attempts       INTEGER NOT NULL DEFAULT 0,
   held_rev       TEXT NOT NULL DEFAULT '',
-  removed_from   TEXT NOT NULL DEFAULT ''
+  removed_from   TEXT NOT NULL DEFAULT '',
+  held_at        INTEGER NOT NULL DEFAULT 0,
+  approved_rev   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS action_items_session_idx ON action_items(session_id, position);
 
@@ -70,6 +76,13 @@ CREATE TABLE IF NOT EXISTS action_verdicts (
   at     INTEGER NOT NULL
 );
 `;
+
+/** Columns added after action_items first shipped. */
+export function ensureActionColumns(db: Database.Database): void {
+  const have = new Set((db.prepare(`PRAGMA table_info(action_items)`).all() as { name: string }[]).map((c) => c.name));
+  if (!have.has('held_at')) db.exec(`ALTER TABLE action_items ADD COLUMN held_at INTEGER NOT NULL DEFAULT 0`);
+  if (!have.has('approved_rev')) db.exec(`ALTER TABLE action_items ADD COLUMN approved_rev TEXT NOT NULL DEFAULT ''`);
+}
 
 export function newStepId(): string {
   return 'a' + crypto.randomBytes(6).toString('hex');
@@ -204,7 +217,7 @@ export function getStep(db: Database.Database, id: string): ActionItem | null {
   return r ? toItem(r) : null;
 }
 
-const PATCHABLE = ['status', 'status_why', 'current_at', 'fired_at', 'done_at', 'attempts', 'held_rev', 'ask_first', 'removed_from'] as const;
+const PATCHABLE = ['status', 'status_why', 'current_at', 'fired_at', 'done_at', 'attempts', 'held_rev', 'held_at', 'approved_rev', 'ask_first', 'removed_from'] as const;
 
 export function setStep(
   db: Database.Database,

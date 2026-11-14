@@ -165,7 +165,7 @@ async function runSend(job: Extract<Job, { kind: 'send' }>, io: ActionIo, withDb
           rev = job.rev;
         }
       }
-      setStep(db, job.stepId, { status: 'held', status_why: `held: ${r.detail}`, held_rev: rev });
+      setStep(db, job.stepId, { status: 'held', status_why: `held: ${r.detail}`, held_rev: rev, held_at: 0 });
       logAction(db, job.sid, `${job.title}: send held: ${r.detail}`, now);
     });
   } catch (e) {

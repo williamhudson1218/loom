@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { parseBoolVerdict } from './orchjudge.ts';
 import type { Draft } from './outbox.ts';
@@ -140,7 +141,9 @@ export class PreSendWork {
     if (!items.length) return { decision: 'send', ack: [] };
     const n = items.length;
     const cannot: PreSend = { decision: 'hold', why: `couldn't check ${n} new message${n === 1 ? '' : 's'}; review before sending` };
-    const key = verdictKey(d.id, rev, items[n - 1].id);
+    // The latest item, plus a digest of every item: a message that sorts earlier (email or GitHub clocks) is still a new question.
+    const latest = `${items[n - 1].id}#${crypto.createHash('sha1').update(items.map((i) => i.id).join('\n')).digest('hex').slice(0, 10)}`;
+    const key = verdictKey(d.id, rev, latest);
     const rec = this.read(key);
     if (rec) return rec.state === 'send' ? { decision: 'send', ack: items.map((i) => i.id) } : { decision: 'hold', why: rec.reason };
     const fail = this.failed.get(key);

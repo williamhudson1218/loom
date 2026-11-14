@@ -186,6 +186,34 @@ describe('actionTick: send_draft effects', () => {
   });
 });
 
+describe('actionTick: a refused send_kept', () => {
+  it('stays held across ticks and never re-sends on the same mark', async () => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a00000000010', session_id: 's1', title: 'Send', when: 'now', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
+    db.prepare(`UPDATE action_items SET status = 'held', held_rev = 'R1', held_at = 100 WHERE id = 'a00000000010'`).run();
+    let sends = 0;
+    const io = {
+      withDb: <T,>(fn: (d: Database.Database) => T) => fn(db),
+      facts: () => ({
+        pr: () => null,
+        draft: () => ({ status: 'pending', kind: 'slack' as const, revised_at: 'R1' }),
+        preSend: () => ({ decision: 'pending' as const }),
+        redraftMark: () => ({ at: 200, n: 1, revised_at: 'R1', ids: ['slack:1.2'], state: 'kept' as const }),
+        sendInFlight,
+        slackOff: () => '',
+      }),
+      send: async () => (sends++, { ok: false, detail: '1 new message since this was drafted. Nothing was sent.' }),
+    };
+    for (let t = 0; t < 4; t++) {
+      await actionTick({ views: [], live: {} }, 1000 + t * 15_000, io);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(sends).toBe(1);
+    expect(getStep(db, 'a00000000010')).toMatchObject({ status: 'held', held_at: 0 });
+  });
+});
+
 describe('scheduled drafts', () => {
   it('lists the draft of every open send_draft step, with its label', () => {
     const db = new Database(':memory:');
@@ -195,5 +223,15 @@ describe('scheduled drafts', () => {
     db.prepare(`UPDATE action_items SET status = 'done' WHERE id = 'a00000000002'`).run();
     expect([...scheduledDraftIds(db)]).toEqual(['d0123456789ab']);
     expect(scheduledDrafts(db).get('d0123456789ab')).toEqual({ step_id: 'a00000000001', label: 'Scheduled: sends when PR #123 merges' });
+  });
+});
+
+describe('action_items columns', () => {
+  it('adds held_at and approved_rev to a table created before them', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE action_items (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, position INTEGER NOT NULL, held_rev TEXT NOT NULL DEFAULT '', removed_from TEXT NOT NULL DEFAULT '')`);
+    applySchema(db);
+    const cols = (db.prepare(`PRAGMA table_info(action_items)`).all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(expect.arrayContaining(['held_at', 'approved_rev']));
   });
 });

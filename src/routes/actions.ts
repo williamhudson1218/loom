@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { openDb as realOpenDb } from '../db.ts';
 import { addStep, chatFlags, getStep, listSteps, newStepId, setStep } from '../actions.ts';
 import { logAction } from '../actionserver.ts';
+import { readOutbox } from '../outbox.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // The Actions panel's routes. The panel reads one chat's steps and makes small
@@ -13,8 +14,17 @@ import type { RouteCtx, RouteDef } from './index.ts';
 interface ActionsDeps {
   openDb(): Database.Database;
   now(): number;
+  /** A draft's current revision and status, for pinning a Run to the text it was clicked on. */
+  draft(id: string): { status: string; revised_at: string } | null;
 }
-let deps: ActionsDeps = { openDb: () => realOpenDb(), now: () => Date.now() };
+let deps: ActionsDeps = {
+  openDb: () => realOpenDb(),
+  now: () => Date.now(),
+  draft: (id) => {
+    const d = readOutbox()[id];
+    return d ? { status: d.status, revised_at: d.revised_at ?? '' } : null;
+  },
+};
 
 export function setActionsDeps(over: Partial<ActionsDeps>): ActionsDeps {
   const prev = deps;
@@ -113,7 +123,7 @@ async function postUndo(ctx: RouteCtx): Promise<void> {
     if (s.status !== 'removed') return ctx.json(409, { ok: false, detail: 'not removed' });
     const to = s.removed_from || 'waiting';
     // A send_draft step's Run approval does not survive a remove: back in the chain, it asks again.
-    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' && s.action_type === 'send_draft' ? { fired_at: 0 } : {}) });
+    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' && s.action_type === 'send_draft' ? { fired_at: 0, approved_rev: '' } : {}) });
     ctx.json(200, { ok: true });
   });
 }
@@ -141,7 +151,9 @@ async function postRun(ctx: RouteCtx): Promise<void> {
     if (s.action_type === 'send_draft') {
       // Approve only: the tick checks the thread first, then sends or holds. fired_at on a waiting step is the approval.
       if (s.status !== 'due') return ctx.json(409, { ok: false, detail: `nothing to run: the step is ${s.status}` });
-      setStep(db, s.id, { status: 'waiting', status_why: 'checking the thread before sending', fired_at: now });
+      const d = deps.draft(String(s.action_params.draft_id ?? ''));
+      if (!d || d.status !== 'pending') return ctx.json(409, { ok: false, detail: d ? `the draft is ${d.status}` : 'draft not found' });
+      setStep(db, s.id, { status: 'waiting', status_why: 'checking the thread before sending', fired_at: now, approved_rev: d.revised_at });
       logAction(db, s.session_id, `Run: ${s.title}`, now);
       return ctx.json(200, { ok: true });
     }
@@ -159,7 +171,7 @@ async function postRetry(ctx: RouteCtx): Promise<void> {
     if (s.action_type === 'wake_chat') return ctx.json(409, NOT_YET);
     if (s.status !== 'failed' && s.status !== 'held') return ctx.json(409, { ok: false, detail: 'nothing to retry' });
     // fired_at back to 0: a retried step fires on its trigger again, and an ask-first step asks for Run again.
-    setStep(db, s.id, { status: 'waiting', status_why: '', held_rev: '', fired_at: 0, attempts: s.attempts + 1 });
+    setStep(db, s.id, { status: 'waiting', status_why: '', held_rev: '', held_at: 0, fired_at: 0, approved_rev: '', attempts: s.attempts + 1 });
     ctx.json(200, { ok: true });
   });
 }

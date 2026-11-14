@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { PARKED_SCHEMA_SQL } from './parked.ts';
 import { TEST_LINKS_SCHEMA_SQL, ensureTestLinkColumns } from './testlinks.ts';
-import { ACTIONS_SCHEMA_SQL } from './actions.ts';
+import { ACTIONS_SCHEMA_SQL, ensureActionColumns } from './actions.ts';
 import { PRUNE_SCHEMA_SQL } from './prunesql.ts';
 
 export const SCHEMA_SQL = `
@@ -474,6 +474,7 @@ export function applySchema(db: Database.Database): void {
   db.exec(PARKED_SCHEMA_SQL);
   db.exec(TEST_LINKS_SCHEMA_SQL);
   db.exec(ACTIONS_SCHEMA_SQL);
+  ensureActionColumns(db);
   ensureTestLinkColumns(db);
   db.exec(PRUNE_SCHEMA_SQL);
 }

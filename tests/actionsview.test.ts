@@ -98,6 +98,7 @@ describe('routes', () => {
   let dir = '';
   let file = '';
   let now = 1000;
+  const DRAFTS: Record<string, { status: string; revised_at: string }> = { d0123456789ab: { status: 'pending', revised_at: 'R1' } };
   const SID = 'sess-1';
   beforeAll(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-actroutes-'));
@@ -109,6 +110,7 @@ describe('routes', () => {
         return db;
       },
       now: () => now,
+      draft: (id) => DRAFTS[id] ?? null,
     });
   });
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -193,7 +195,7 @@ describe('routes', () => {
     expect((await call('POST', '/api/actions/retry', { id: 'a00000000002' })).code).toBe(409);
     withDb((db) => db.prepare(`UPDATE action_items SET status = 'due', fired_at = 5 WHERE id = 'a00000000002'`).run());
     expect((await call('POST', '/api/actions/run', { id: 'a00000000002' })).body.ok).toBe(true);
-    expect(withDb((db) => getStep(db, 'a00000000002'))).toMatchObject({ status: 'waiting', status_why: 'checking the thread before sending' });
+    expect(withDb((db) => getStep(db, 'a00000000002'))).toMatchObject({ status: 'waiting', status_why: 'checking the thread before sending', approved_rev: 'R1' });
     expect(withDb((db) => getStep(db, 'a00000000002')?.fired_at)).toBeGreaterThan(0);
     const w = await call('POST', '/api/actions/run', { id: 'a00000000007' });
     expect(w.code).toBe(409);

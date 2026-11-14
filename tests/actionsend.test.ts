@@ -101,7 +101,9 @@ describe('PreSendWork', () => {
     const s = setup({ items: [item(1)], reply: async () => '{"send":false,"reason":"wait for #130"}' });
     await settle(s.work, draft('d0123456789ab'));
     expect(s.asks).toHaveLength(1);
-    expect([...s.rows.keys()]).toEqual([verdictKey('d0123456789ab', '', item(1).id)]);
+    const keys = [...s.rows.keys()];
+    expect(keys).toHaveLength(1);
+    expect(keys[0].startsWith(verdictKey('d0123456789ab', '', item(1).id) + '#')).toBe(true);
     // A second worker over the same store (a restart) reads the verdict and does not ask.
     const again = new PreSendWork({ fresh: async () => ({ ok: true, items: [item(1)] }), ask: (p) => (s.asks.push(p), Promise.resolve('{}')), enabled: () => true, store: { get: (k) => s.rows.get(k) ?? null, put: (k, r) => void s.rows.set(k, r) }, now: () => T });
     again.beginTick();
@@ -109,6 +111,17 @@ describe('PreSendWork', () => {
     expect(s.asks).toHaveLength(1);
     // The chat replaced the draft: a new revision is a new question.
     await settle(s.work, draft('d0123456789ab', { revised_at: '2026-11-01T10:00:00' }));
+    expect(s.asks).toHaveLength(2);
+  });
+
+  it('a new message that sorts before the latest (another clock) is a new question, never acked under the old verdict', async () => {
+    let items = [item(5)];
+    const s = setup({ fresh: async () => ({ ok: true, items }) });
+    expect(await settle(s.work, draft('d0123456789ab'))).toEqual({ decision: 'send', ack: [item(5).id] });
+    items = [item(1), item(5)];
+    const later = new PreSendWork({ fresh: async () => ({ ok: true, items }), ask: (p) => (s.asks.push(p), Promise.resolve('{"send":false,"reason":"hold"}')), enabled: () => true, store: { get: (k) => s.rows.get(k) ?? null, put: (k, r) => void s.rows.set(k, r) }, now: () => T });
+    later.beginTick();
+    expect(await settle(later, draft('d0123456789ab'))).toEqual({ decision: 'hold', why: 'hold' });
     expect(s.asks).toHaveLength(2);
   });
 
