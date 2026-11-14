@@ -45,6 +45,12 @@ A Slack message is written in the user's name, so it is **drafted, shown, record
 
 `loom outbox list` shows pending drafts; `loom outbox show <id>` shows one.
 
+## Sending later
+
+If the user wants a draft sent after something happens (a PR merges, someone replies), record the draft as usual and
+add a step: `loom action add --title "..." --when <trigger> --then send-draft:<id>`. Revise with `loom outbox update`,
+not `supersede`, which removes the step. See the action-items skill.
+
 ## A GitHub review in the same draft
 
 A draft can also carry a pull request review, so the review and the Slack reply about it go out together
