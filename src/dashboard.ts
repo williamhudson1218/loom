@@ -1385,7 +1385,7 @@ CMP=rowComparator();rows.sort(CMP);const list=$('#list');const empty=tab==='save
 // draft chips. Click selects it into the main area; right-click opens the action
 // menu (chatmenu.ts). Archive hits render as the same rows, flagged .arch.
 function parkedOf(c){return c.arch?null:((DATA.parked||[]).find(p=>p.session_id===c.session_id&&p.agent===c.agent)||null);}
-function dotCls(c){const pk=parkedOf(c);if(pk)return pk.state==='replied'?'d-turn':'d-wait';const L=DATA.live[chatKey(c)];if(c.arch||!L)return 'd-stale';if(L.working)return 'd-working';const s=st(c);if(s==='waiting_on_user')return 'd-turn';if(s==='error')return 'd-error';if(s==='warning')return 'd-warn';return 'd-done';}
+function dotCls(c){const pk=parkedOf(c);if(pk)return pk.state==='replied'?'d-turn':'d-wait';const L=DATA.live[chatKey(c)];if(c.arch||!L)return 'd-stale';if(L.working)return 'd-working';if(actAttention((DATA.actions||{})[c.session_id]))return 'd-turn';const s=st(c);if(s==='waiting_on_user')return 'd-turn';if(s==='error')return 'd-error';if(s==='warning')return 'd-warn';return 'd-done';}
 const DOT_LABEL={'d-wait':'Waiting on others','d-working':'Working','d-turn':'Your turn','d-done':'Done','d-warn':'Caveats','d-error':'Error','d-stale':'Not running'};
 function paneLabel(c){const L=DATA.live[chatKey(c)];if(c.arch)return 'archive';return L?(L.name||(L.tmux_session+':'+L.pane_index)):'not running';}
 function chatPrUrl(c){const k=(DATA.chatPr||{})[chatKey(c)]||'';return c.pr_url||(k.split('#')[1]?'https://github.com/'+k.replace('#','/pull/'):'');}

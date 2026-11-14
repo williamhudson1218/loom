@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import { OUTBOX_PURE_JS, OUTBOX_VIEW_JS } from '../src/outboxview.ts';
+import { ACTIONS_PURE_JS } from '../src/actionsview.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
 const lib = new Function(`${OUTBOX_PURE_JS}; return { draftDate, sortDrafts, draftStaleReason, railMode, draftsOfChat, destInitial, draftThreadOf, railShut };`)() as {
@@ -257,12 +258,19 @@ describe('rail keeps the reader\'s place across a re-render', () => {
 });
 
 describe('actions tab in the rail', () => {
-  it('has Actions and Outbox tabs, counts steps toward visibility, and keeps the draft guard', () => {
+  const acts = new Function(`${ACTIONS_PURE_JS}; return { railCount };`)() as { railCount: (d: unknown, s: unknown) => number };
+  it('has Actions and Outbox tabs and sizes the rail from drafts plus steps', () => {
     const html = renderDashboard([], 1);
     expect(html).toContain('data-otab="actions"');
     expect(html).toContain('data-otab="outbox"');
     expect(html).toContain("if(homeSel||orchSel||tsel||!sel||sel.arch)return [];");
-    expect(html).toContain('const n=ds.length+as.length;');
-    expect(lib.railMode(0 + 1, false)).toBe('open'); // one step, zero drafts: the rail's count is 1
+    expect(html).toContain('const n=railCount(ds,as);');
+    expect(html).toContain('const mode=railMode(n,outCollapsed);');
+  });
+  it('one step and zero drafts opens the rail; nothing at all hides it', () => {
+    expect(lib.railMode(acts.railCount([], [{ status: 'waiting' }]), false)).toBe('open');
+    expect(lib.railMode(acts.railCount([], [{ status: 'waiting' }]), true)).toBe('collapsed');
+    expect(lib.railMode(acts.railCount([d('d0123456789ab', 'S', '2026-01-01')], []), false)).toBe('open');
+    expect(lib.railMode(acts.railCount([], []), false)).toBe('hidden');
   });
 });

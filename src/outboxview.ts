@@ -360,7 +360,7 @@ function railDrafts(){if(homeSel||orchSel||tsel||!sel||sel.arch)return [];const 
 function railLoad(k){try{return Number(localStorage.getItem(railStoreKey(k)))||0;}catch(e){return 0;}}
 function railCollapsed(k,ds){return railShut(railLoad(k),ds);}
 function railSave(k,collapsed){try{if(collapsed)localStorage.setItem(railStoreKey(k),String(newestDraftAt(railDrafts())||Date.now()));else localStorage.removeItem(railStoreKey(k));}catch(e){}}
-function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wrap)return;actSync();const ds=railDrafts(),as=railSteps();const n=ds.length+as.length;
+function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wrap)return;actSync();const ds=railDrafts(),as=railSteps();const n=railCount(ds,as);
   const key=n?selKey():'';if(key!==outRailKey){outRailKey=key;outCollapsed=key?railCollapsed(key,ds):true;}
   else if(outCollapsed&&key&&!railCollapsed(key,ds))outCollapsed=false; // a newer draft arrived: open
   if(wrap.dataset.closing){return;}

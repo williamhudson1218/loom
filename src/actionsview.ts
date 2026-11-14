@@ -71,6 +71,14 @@ function railTab(drafts,steps,remembered){var ss=Array.isArray(steps)?steps:[];
   if(remembered==='actions'&&countOf(steps)>0)return 'actions';
   if(remembered==='outbox'&&countOf(drafts)>0)return 'outbox';
   return countOf(drafts)>0?'outbox':'actions';}
+function railCount(drafts,steps){return countOf(drafts)+countOf(steps);}
+// A manual pick holds only while its tab has something to show (the Actions tab always does: it carries the add form),
+// and a step that needs a look pulls the rail back to Actions whatever was picked.
+function railTabFor(drafts,steps,pick,remembered){var ss=Array.isArray(steps)?steps:[];
+  if(ss.some(stepNeedsYou))return 'actions';
+  if(pick==='actions'||(pick==='outbox'&&countOf(drafts)>0))return pick;
+  return railTab(drafts,steps,remembered);}
+function actAttention(a){return !!(a&&a.attention);}
 `;
 
 export const ACTIONS_VIEW_JS = String.raw`
@@ -88,7 +96,7 @@ function actSync(){const sid=actSid();if(!sid)return;const have=STEPS[sid];const
 function actTabKey(k){return 'loom.actions.tab.'+k;}
 function actTabLoad(k){try{return localStorage.getItem(actTabKey(k))||'';}catch(e){return '';}}
 function actTabSave(k,t){try{localStorage.setItem(actTabKey(k),t);}catch(e){}}
-function actTab(ds,as){const k=selKey();return ACT_PICK[k]||railTab(ds,as,actTabLoad(k));}
+function actTab(ds,as){const k=selKey();return railTabFor(ds,as,ACT_PICK[k]||'',actTabLoad(k));}
 function actBusy(rail){const i=rail&&rail.querySelector('.act-add input');return !!(i&&i===document.activeElement&&i.value);}
 function actPollSync(){const want=!document.hidden&&railSteps().length>0;
   if(want&&!actPoll)actPoll=setInterval(function(){const sid=actSid();if(sid&&!document.hidden){STEPS_AT[sid]=0;actLoad(sid);}},1500);

@@ -7,13 +7,16 @@ import { ACTIONS_PURE_JS, ACTIONS_VIEW_CSS, ACTIONS_VIEW_JS } from '../src/actio
 import { routes, setActionsDeps, actionSummary } from '../src/routes/actions.ts';
 import { applySchema } from '../src/schema.ts';
 import { addStep, getStep, listSteps } from '../src/actions.ts';
+import { renderDashboard } from '../src/dashboard.ts';
 import { ROUTES } from '../src/routes/index.ts';
 import type { RouteCtx } from '../src/routes/index.ts';
 
-const lib = new Function(`${ACTIONS_PURE_JS}; return { stepPill, stepButtons, railTab };`)() as {
+const lib = new Function(`${ACTIONS_PURE_JS}; return { stepPill, stepButtons, railTab, railTabFor, actAttention };`)() as {
   stepPill: (s: string) => { label: string; cls: string };
   stepButtons: (s: object) => string[];
   railTab: (drafts: unknown[], steps: unknown[], remembered: string) => string;
+  railTabFor: (drafts: unknown[], steps: unknown[], pick: string, remembered: string) => string;
+  actAttention: (a: unknown) => boolean;
 };
 const step = (over: object) => ({ status: 'waiting', trigger_type: 'manual', action_type: 'none', ...over });
 
@@ -55,6 +58,32 @@ describe('railTab', () => {
     expect(lib.railTab(d, [{ status: 'waiting' }], '')).toBe('outbox');
     expect(lib.railTab([], [{ status: 'waiting' }], '')).toBe('actions');
     expect(lib.railTab([], [{ status: 'waiting' }], 'outbox')).toBe('actions');
+  });
+});
+
+describe('railTabFor', () => {
+  const d = [{ id: 'd0123456789ab' }];
+  it('keeps a manual pick only while its tab has content', () => {
+    expect(lib.railTabFor(d, [{ status: 'waiting' }], 'outbox', '')).toBe('outbox');
+    expect(lib.railTabFor([], [{ status: 'waiting' }], 'outbox', '')).toBe('actions'); // outbox emptied
+    expect(lib.railTabFor(d, [], 'actions', '')).toBe('actions'); // the add form lives there
+  });
+  it('a step that goes held, failed or due pulls the rail back to Actions over a pick', () => {
+    for (const status of ['held', 'failed', 'due']) expect(lib.railTabFor(d, [{ status }], 'outbox', 'outbox')).toBe('actions');
+  });
+  it('falls back to the remembered tab, then the default', () => {
+    expect(lib.railTabFor(d, [{ status: 'waiting' }], '', 'actions')).toBe('actions');
+    expect(lib.railTabFor(d, [{ status: 'waiting' }], '', '')).toBe('outbox');
+  });
+});
+
+describe('row tint', () => {
+  it('attention is the your-turn tint on the row itself, ahead of the waiting-on-you check', () => {
+    expect(lib.actAttention({ open: 1, attention: true })).toBe(true);
+    expect(lib.actAttention({ open: 1, attention: false })).toBe(false);
+    expect(lib.actAttention(undefined)).toBe(false);
+    const html = renderDashboard([], 1);
+    expect(html).toContain("if(L.working)return 'd-working';if(actAttention((DATA.actions||{})[c.session_id]))return 'd-turn';");
   });
 });
 
@@ -190,7 +219,7 @@ describe('routes', () => {
 
 describe('panel markup', () => {
   const esc = (s: unknown) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const view = new Function('esc', `${ACTIONS_PURE_JS}; ${ACTIONS_VIEW_JS}; return { stepRowHtml, actionsBodyHtml, railHeadHtml, stepLine, actChip };`)(esc) as any;
+  const view = new Function('esc', `${ACTIONS_PURE_JS}; ${ACTIONS_VIEW_JS}; return { stepRowHtml, actionsBodyHtml, railHeadHtml, stepLine, actChip, ACT_ERR };`)(esc) as any;
   const base = { id: 'a00000000001', title: 'Reply <b>', trigger_type: 'manual', trigger_params: {}, action_type: 'none', action_params: {}, ask_first: false, status: 'waiting', status_why: '' };
 
   it('escapes the title and shows the pill, summary and why', () => {
@@ -206,6 +235,11 @@ describe('panel markup', () => {
     expect(h).toContain('data-act="draft" data-draft="d0123456789ab"');
     expect(h).toContain('When draft d0123456789ab is sent');
     expect(view.stepRowHtml({ ...base, status: 'removed' })).toContain('data-act="undo"');
+  });
+  it('shows a 409 detail inline on the row', () => {
+    view.ACT_ERR[base.id] = 'not available yet';
+    expect(view.stepRowHtml({ ...base, status: 'due' })).toContain('<div class="act-err" role="alert">not available yet</div>');
+    delete view.ACT_ERR[base.id];
   });
   it('the body ends with the add form, and the tabs carry both counts', () => {
     expect(view.actionsBodyHtml([])).toContain('data-actadd');
