@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ChatJudge, buildJudgeAsk, parseVerdict, tailText, verdictKey, type VerdictRec, type VerdictStore } from '../src/orchjudge.ts';
+import { ChatJudge, buildJudgeAsk, parseBoolVerdict, parseVerdict, tailText, verdictKey, type VerdictRec, type VerdictStore } from '../src/orchjudge.ts';
 import type { ChatFact } from '../src/orchsweep.ts';
 import type { OrchItem } from '../src/orchestrator.ts';
 import type { Msg } from '../src/transcript.ts';
@@ -112,5 +112,16 @@ describe('ChatJudge', () => {
     rows.set(verdictKey(1, 'claude:s1'), { activity_at: T, item_updated_at: T, state: 'open', reason: 'stored', at: T });
     expect(judge.verdict(item(1), 'claude:s1', chat())).toEqual({ state: 'open', reason: 'stored' });
     expect(asks).toHaveLength(0);
+  });
+});
+
+describe('parseBoolVerdict', () => {
+  it('reads the named key out of a fenced reply', () => {
+    expect(parseBoolVerdict('```json\n{"send":true,"reason":"ok"}\n```', 'send')).toEqual({ value: true, reason: 'ok' });
+  });
+  it('is null when the key is missing or not a boolean', () => {
+    expect(parseBoolVerdict('{"resolved":true,"reason":"ok"}', 'send')).toBeNull();
+    expect(parseBoolVerdict('{"send":"yes"}', 'send')).toBeNull();
+    expect(parseBoolVerdict('no json here', 'send')).toBeNull();
   });
 });

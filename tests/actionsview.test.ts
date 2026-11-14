@@ -180,18 +180,33 @@ describe('routes', () => {
     expect(withDb((db) => getStep(db, id)?.ask_first)).toBe(false);
   });
 
-  it('run finishes a none step, and answers 409 for a send_draft step for now', async () => {
+  it('run finishes a none step; on a due send_draft step it only approves, and a wake step is not available yet', async () => {
     withDb((db) => {
       addStep(db, { id: 'a00000000001', session_id: 'sess-3', title: 'Plain', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 1 });
       addStep(db, { id: 'a00000000002', session_id: 'sess-3', title: 'Send', when: 'manual', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
+      addStep(db, { id: 'a00000000007', session_id: 'sess-3', title: 'Wake', when: 'manual', then: 'wake:"go"', ask_first: false, created_by: 'chat', at: 1 });
     });
     expect((await call('POST', '/api/actions/run', { id: 'a00000000001' })).body.ok).toBe(true);
     expect(withDb((db) => getStep(db, 'a00000000001')?.status)).toBe('done');
-    const r = await call('POST', '/api/actions/run', { id: 'a00000000002' });
-    expect(r.code).toBe(409);
-    expect(r.body.detail).toBe('not available yet');
+    // A waiting send step has nothing to run.
+    expect((await call('POST', '/api/actions/run', { id: 'a00000000002' })).code).toBe(409);
     expect((await call('POST', '/api/actions/retry', { id: 'a00000000002' })).code).toBe(409);
-    expect(withDb((db) => getStep(db, 'a00000000002')?.status)).toBe('waiting');
+    withDb((db) => db.prepare(`UPDATE action_items SET status = 'due', fired_at = 5 WHERE id = 'a00000000002'`).run());
+    expect((await call('POST', '/api/actions/run', { id: 'a00000000002' })).body.ok).toBe(true);
+    expect(withDb((db) => getStep(db, 'a00000000002'))).toMatchObject({ status: 'waiting', status_why: 'checking the thread before sending' });
+    expect(withDb((db) => getStep(db, 'a00000000002')?.fired_at)).toBeGreaterThan(0);
+    const w = await call('POST', '/api/actions/run', { id: 'a00000000007' });
+    expect(w.code).toBe(409);
+    expect(w.body.detail).toBe('not available yet');
+  });
+
+  it('retry on a held send_draft step goes back to waiting and drops its Run approval', async () => {
+    withDb((db) => {
+      addStep(db, { id: 'a00000000006', session_id: 'sess-6', title: 'Send', when: 'now', then: 'send-draft:d0123456789ab', ask_first: true, created_by: 'chat', at: 1 });
+      db.prepare(`UPDATE action_items SET status='held', status_why='held: wait', held_rev='r1', fired_at=9 WHERE id='a00000000006'`).run();
+    });
+    expect((await call('POST', '/api/actions/retry', { id: 'a00000000006' })).body.ok).toBe(true);
+    expect(withDb((db) => getStep(db, 'a00000000006'))).toMatchObject({ status: 'waiting', held_rev: '', fired_at: 0, attempts: 1 });
   });
 
   it('retry on a failed step goes back to waiting, clears why and hold, and counts the attempt', async () => {

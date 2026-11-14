@@ -147,11 +147,25 @@ const sameDest = (a: Draft, b: Pick<Draft, 'session_id' | 'channel' | 'thread_ts
  * become superseded (a re-shown draft replaces the one before it). Returns true
  * when anything changed.
  */
+let scheduledDrafts: () => Set<string> = () => new Set();
+
+/** Drafts an open send_draft step will send (src/actionserver.ts): never superseded by a newer draft to the same place. */
+export function setScheduledDrafts(fn: () => Set<string>): void {
+  scheduledDrafts = fn;
+}
+
 function settleKin(drafts: Record<string, Draft>, d: Draft, now: number): boolean {
+  let scheduled: Set<string>;
+  try {
+    scheduled = scheduledDrafts();
+  } catch {
+    scheduled = new Set();
+  }
   const kin = Object.values(drafts).filter((x) => x.status === 'pending' && sameDest(x, d)).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
   let changed = false;
   for (const x of kin.slice(0, -1)) {
     if (inSend(x, now)) continue; // being posted right now: never retire it underneath the send
+    if (scheduled.has(x.id)) continue; // a step will send it later: a newer draft here does not replace it
     x.status = 'superseded';
     x.closed_at = stamp(now);
     changed = true;

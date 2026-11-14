@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   addDraft, burstGapMs, closeDraft, discardDraft, listDrafts, mergeLegacy, pendingDrafts, readOutbox, sendDraft, sendNow, sendProgress, sendPayload,
-  legacyWriteBack, reconcileLive, slackPoster, toMrkdwn, updateDraft, type Draft,
+  legacyWriteBack, reconcileLive, setScheduledDrafts, slackPoster, toMrkdwn, updateDraft, type Draft,
 } from '../src/outbox.ts';
 
 function outboxFile(drafts: Record<string, unknown>): string {
@@ -64,6 +64,21 @@ describe('outbox store', () => {
     expect(fs.readFileSync(f, 'utf-8')).toBe(before);
     expect(addDraft({ id: 'bad id!', session_id: 's1', channel: 'C1', messages: ['x'] }, f).ok).toBe(false);
     expect(addDraft({ id: 'd9', session_id: 's1', channel: 'C1', messages: ['  '] }, f).ok).toBe(false);
+  });
+
+  it('a scheduled draft is not superseded by a newer draft to the same destination; an unscheduled one is', () => {
+    const f = outboxFile({});
+    const scheduled = new Set(['d000000000001']);
+    setScheduledDrafts(() => scheduled);
+    try {
+      addDraft({ id: 'd000000000001', session_id: 's1', channel: 'C1', thread_ts: '1.2', messages: ['later'], at: 1_000 }, f);
+      addDraft({ id: 'd000000000002', session_id: 's1', channel: 'C1', thread_ts: '1.2', messages: ['now'], at: 2_000 }, f);
+      expect([status(f, 'd000000000001'), status(f, 'd000000000002')]).toEqual(['pending', 'pending']);
+      addDraft({ id: 'd000000000003', session_id: 's1', channel: 'C1', thread_ts: '1.2', messages: ['newer'], at: 3_000 }, f);
+      expect([status(f, 'd000000000001'), status(f, 'd000000000002'), status(f, 'd000000000003')]).toEqual(['pending', 'superseded', 'pending']);
+    } finally {
+      setScheduledDrafts(() => new Set());
+    }
   });
 
   it('update revises a pending draft in place and refuses a closed one', () => {

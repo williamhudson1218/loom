@@ -7,7 +7,8 @@ import type { RouteCtx, RouteDef } from './index.ts';
 // The Actions panel's routes. The panel reads one chat's steps and makes small
 // edits to them (add, check off, remove and undo, ask-first, run, retry). The
 // evaluator in src/actionserver.ts owns everything that fires on a trigger;
-// nothing here sends or wakes anything.
+// nothing here sends or wakes anything. Run on a send_draft step only approves
+// it: the next tick runs the pre-send check and sends or holds.
 
 interface ActionsDeps {
   openDb(): Database.Database;
@@ -110,7 +111,9 @@ async function postUndo(ctx: RouteCtx): Promise<void> {
     const s = target(ctx, b, db);
     if (!s) return;
     if (s.status !== 'removed') return ctx.json(409, { ok: false, detail: 'not removed' });
-    setStep(db, s.id, { status: s.removed_from || 'waiting', removed_from: '' });
+    const to = s.removed_from || 'waiting';
+    // A send_draft step's Run approval does not survive a remove: back in the chain, it asks again.
+    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' && s.action_type === 'send_draft' ? { fired_at: 0 } : {}) });
     ctx.json(200, { ok: true });
   });
 }
@@ -132,9 +135,16 @@ async function postRun(ctx: RouteCtx): Promise<void> {
   withDb((db) => {
     const s = target(ctx, b, db);
     if (!s) return;
-    if (s.action_type !== 'none') return ctx.json(409, NOT_YET);
+    if (s.action_type === 'wake_chat') return ctx.json(409, NOT_YET);
     if (isFinal(s.status)) return ctx.json(409, { ok: false, detail: `already ${s.status}` });
     const now = deps.now();
+    if (s.action_type === 'send_draft') {
+      // Approve only: the tick checks the thread first, then sends or holds. fired_at on a waiting step is the approval.
+      if (s.status !== 'due') return ctx.json(409, { ok: false, detail: `nothing to run: the step is ${s.status}` });
+      setStep(db, s.id, { status: 'waiting', status_why: 'checking the thread before sending', fired_at: now });
+      logAction(db, s.session_id, `Run: ${s.title}`, now);
+      return ctx.json(200, { ok: true });
+    }
     setStep(db, s.id, { status: 'done', status_why: '', fired_at: now, done_at: now });
     logAction(db, s.session_id, `Done: ${s.title}`, now);
     ctx.json(200, { ok: true });
@@ -146,9 +156,10 @@ async function postRetry(ctx: RouteCtx): Promise<void> {
   withDb((db) => {
     const s = target(ctx, b, db);
     if (!s) return;
-    if (s.action_type !== 'none') return ctx.json(409, NOT_YET);
+    if (s.action_type === 'wake_chat') return ctx.json(409, NOT_YET);
     if (s.status !== 'failed' && s.status !== 'held') return ctx.json(409, { ok: false, detail: 'nothing to retry' });
-    setStep(db, s.id, { status: 'waiting', status_why: '', held_rev: '', attempts: s.attempts + 1 });
+    // fired_at back to 0: a retried step fires on its trigger again, and an ask-first step asks for Run again.
+    setStep(db, s.id, { status: 'waiting', status_why: '', held_rev: '', fired_at: 0, attempts: s.attempts + 1 });
     ctx.json(200, { ok: true });
   });
 }

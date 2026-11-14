@@ -55,17 +55,23 @@ export function buildJudgeAsk(item: Pick<OrchItem, 'kind' | 'title' | 'why' | 'w
   );
 }
 
-/** The model may wrap the JSON in prose or a fence. Anything that is not a clear verdict is null. */
-export function parseVerdict(out: string): { resolved: boolean; reason: string } | null {
+/** A `{"<key>": bool, "reason": "..."}` reply. The model may wrap the JSON in prose or a fence; anything that is not a clear verdict is null. */
+export function parseBoolVerdict(out: string, key: string): { value: boolean; reason: string } | null {
   const m = out.match(/\{[\s\S]*\}/);
   if (!m) return null;
   try {
     const o = JSON.parse(m[0]) as Record<string, unknown>;
-    if (typeof o.resolved !== 'boolean') return null;
-    return { resolved: o.resolved, reason: flat(typeof o.reason === 'string' ? o.reason : '').slice(0, 120) || (o.resolved ? 'settled' : 'still open') };
+    if (typeof o[key] !== 'boolean') return null;
+    return { value: o[key] as boolean, reason: flat(typeof o.reason === 'string' ? o.reason : '').slice(0, 120) };
   } catch {
     return null;
   }
+}
+
+/** The judge's reply. Anything that is not a clear verdict is null. */
+export function parseVerdict(out: string): { resolved: boolean; reason: string } | null {
+  const v = parseBoolVerdict(out, 'resolved');
+  return v ? { resolved: v.value, reason: v.reason || (v.value ? 'settled' : 'still open') } : null;
 }
 
 /* ------------------------------------------------------------ the store */
@@ -183,14 +189,14 @@ export class ChatJudge {
   }
 }
 
-/** The real ask: the pane topics' headless call, with this file's system prompt. */
-export function askModel(model: string, timeoutMs = JUDGE.timeoutMs): (prompt: string) => Promise<string> {
+/** The real ask: the pane topics' headless call, with this file's system prompt unless another is given. */
+export function askModel(model: string, timeoutMs = JUDGE.timeoutMs, system: string = JUDGE_SYSTEM): (prompt: string) => Promise<string> {
   return (prompt) =>
     new Promise((resolve, reject) => {
       const bin = claudePath();
       // --safe-mode keeps the user's hooks from firing, --no-session-persistence keeps
       // the call from being indexed as a chat. Run from $HOME, outside any repo.
-      execFile(bin, ['-p', '--safe-mode', '--no-session-persistence', '--model', model || 'haiku', '--system-prompt', JUDGE_SYSTEM, prompt],
+      execFile(bin, ['-p', '--safe-mode', '--no-session-persistence', '--model', model || 'haiku', '--system-prompt', system, prompt],
         { cwd: os.homedir(), timeout: timeoutMs, maxBuffer: 1024 * 1024, env: toolEnv(bin) },
         (err, stdout) => (err ? reject(err) : resolve(stdout)));
     });

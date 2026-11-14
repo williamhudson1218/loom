@@ -9,7 +9,9 @@ const step = (over: Partial<ActionItem> = {}): ActionItem => ({
   action_type: 'none', action_params: {}, ask_first: false, status: 'waiting', status_why: '', created_by: 'chat',
   created_at: 1, current_at: 1, fired_at: 0, done_at: 0, attempts: 0, held_rev: '', removed_from: '', ...over,
 });
-const facts = (over: Partial<ActionFacts> = {}): ActionFacts => ({ pr: () => null, draft: () => null, ...over });
+const facts = (over: Partial<ActionFacts> = {}): ActionFacts => ({
+  pr: () => null, draft: () => null, preSend: () => ({ decision: 'pending' }), redraftMark: () => undefined, sendInFlight: () => false, slackOff: () => '', ...over,
+});
 const pr = { repo: 'acme/app', number: 123 };
 
 describe('currentStep', () => {
@@ -65,14 +67,13 @@ describe('evaluateChain', () => {
     expect(d[0].patch).toEqual({ status: 'due', fired_at: NOW, status_why: 'now; waiting for Run' });
   });
 
-  it('a fired send_draft step is due, waiting for Run', () => {
+  it('a fired send_draft step whose draft is unknown stays waiting and never sends', () => {
     const a = step({ action_type: 'send_draft', action_params: { draft_id: 'd0123456789ab' } });
     const d = evaluateChain([a], facts(), NOW);
-    expect(d[0].patch).toMatchObject({ status: 'due', status_why: 'now; waiting for Run' });
-    expect(d[0].effect).toBeUndefined();
+    expect(d).toEqual([{ id: a.id, patch: { status_why: 'draft d0123456789ab not found' } }]);
   });
 
-  it('does nothing for due, held, failed and running steps', () => {
+  it('does nothing for due, held, failed and running none steps', () => {
     for (const status of ['due', 'held', 'failed', 'running'] as const) {
       expect(evaluateChain([step({ status })], facts(), NOW)).toEqual([]);
     }
@@ -110,5 +111,141 @@ describe('triggerState', () => {
     expect(t('draft_sent', p, { draft: d('discarded') })).toEqual({ fired: false, why: 'draft d0123456789ab was discarded' });
     expect(t('draft_sent', p, { draft: d('superseded') }).why).toBe('draft d0123456789ab was discarded');
     expect(t('draft_sent', p, {})).toEqual({ fired: false, why: 'draft d0123456789ab not found' });
+  });
+});
+
+describe('send_draft steps', () => {
+  const DID = 'd0123456789ab';
+  const sd = (over: Partial<ActionItem> = {}) => step({ action_type: 'send_draft', action_params: { draft_id: DID }, ...over });
+  const dr = (status: string, over: Partial<{ kind: 'slack' | 'email' | 'review'; revised_at: string }> = {}) =>
+    () => ({ status, kind: 'slack' as const, revised_at: '', ...over });
+  const pending = dr('pending');
+  const only = (d: ReturnType<typeof evaluateChain>) => d.filter((x) => x.patch.status !== undefined || x.effect);
+
+  it('a sent draft marks the step done in every non-final state, whoever sent it', () => {
+    for (const status of ['waiting', 'due', 'running', 'held', 'failed'] as const) {
+      const a = sd({ status });
+      const d = only(evaluateChain([a], facts({ draft: dr('sent') }), NOW));
+      expect(d).toHaveLength(1);
+      expect(d[0].patch).toMatchObject({ status: 'done', status_why: 'sent', done_at: NOW });
+      expect(d[0].effect).toBeUndefined();
+    }
+  });
+
+  it('a sent draft marks a later step done too (Send now on a scheduled card), without firing anything', () => {
+    const first = step({ trigger_type: 'manual' });
+    const later = sd({ trigger_type: 'pr_merged', trigger_params: pr });
+    const d = evaluateChain([first, later], facts({ draft: dr('sent') }), NOW);
+    expect(d.find((x) => x.id === later.id)?.patch).toMatchObject({ status: 'done', status_why: 'sent' });
+    expect(d.some((x) => x.effect)).toBe(false);
+  });
+
+  it('a discarded or superseded draft removes the step', () => {
+    for (const ds of ['discarded', 'superseded']) {
+      for (const status of ['waiting', 'due', 'held', 'failed'] as const) {
+        const d = only(evaluateChain([sd({ status })], facts({ draft: dr(ds) }), NOW));
+        expect(d[0].patch).toMatchObject({ status: 'removed', status_why: 'draft discarded', removed_from: status });
+        expect(d[0].effect).toBeUndefined();
+      }
+    }
+  });
+
+  it('email and review drafts go due and wait for Run', () => {
+    for (const kind of ['email', 'review'] as const) {
+      const d = only(evaluateChain([sd()], facts({ draft: dr('pending', { kind }), preSend: () => ({ decision: 'send', ack: [] }) }), NOW));
+      expect(d).toEqual([{ id: d[0].id, patch: { status: 'due', fired_at: NOW, status_why: 'now; emails and reviews wait for Run' } }]);
+    }
+  });
+
+  it('ask_first on a Slack draft goes due, never sends', () => {
+    const d = only(evaluateChain([sd({ ask_first: true })], facts({ draft: pending, preSend: () => ({ decision: 'send', ack: [] }) }), NOW));
+    expect(d[0].patch).toEqual({ status: 'due', fired_at: NOW, status_why: 'now; waiting for Run' });
+    expect(d[0].effect).toBeUndefined();
+  });
+
+  it('Slack send off holds with the slack-off detail', () => {
+    const d = only(evaluateChain([sd()], facts({ draft: pending, slackOff: () => 'Slack direct mode is off', preSend: () => ({ decision: 'send', ack: [] }) }), NOW));
+    expect(d[0].patch).toMatchObject({ status: 'held', status_why: 'Slack direct mode is off' });
+    expect(d[0].effect).toBeUndefined();
+  });
+
+  it('pre-send pending: stays waiting, checking the thread', () => {
+    const d = evaluateChain([sd()], facts({ draft: pending }), NOW);
+    expect(d).toEqual([{ id: d[0].id, patch: { status_why: 'checking the thread before sending' } }]);
+  });
+
+  it('pre-send send: running with the send effect and its ack', () => {
+    const d = only(evaluateChain([sd()], facts({ draft: pending, preSend: () => ({ decision: 'send', ack: ['slack:1.2'] }) }), NOW));
+    expect(d).toHaveLength(1);
+    expect(d[0].patch).toMatchObject({ status: 'running', fired_at: NOW });
+    expect(d[0].effect).toBe('send');
+    expect(d[0].ack).toEqual(['slack:1.2']);
+  });
+
+  it('a trigger that has not fired never sends, even with a send verdict', () => {
+    const a = sd({ trigger_type: 'pr_merged', trigger_params: pr });
+    const d = evaluateChain([a], facts({ draft: pending, pr: () => ({ state: 'open', deploy: '' }), preSend: () => ({ decision: 'send', ack: [] }) }), NOW);
+    expect(d.some((x) => x.effect || x.patch.status)).toBe(false);
+  });
+
+  it('pre-send hold: held with the reason, held_rev pinned, and a redraft', () => {
+    const d = only(evaluateChain([sd()], facts({ draft: dr('pending', { revised_at: 'R1' }), preSend: () => ({ decision: 'hold', why: 'the reviewer asked to wait for #130' }) }), NOW));
+    expect(d[0].patch).toMatchObject({ status: 'held', status_why: 'held: the reviewer asked to wait for #130', held_rev: 'R1' });
+    expect(d[0].effect).toBe('redraft');
+  });
+
+  it('held: the chat replacing the draft sends the step back to waiting, and an unchanged draft stays held', () => {
+    const replaced = only(evaluateChain([sd({ status: 'held', held_rev: 'R1', fired_at: 9 })], facts({ draft: dr('pending', { revised_at: 'R2' }) }), NOW));
+    expect(replaced[0].patch).toMatchObject({ status: 'waiting', held_rev: '', fired_at: 0 });
+    expect(replaced[0].effect).toBeUndefined();
+    expect(only(evaluateChain([sd({ status: 'held', held_rev: 'R1' })], facts({ draft: dr('pending', { revised_at: 'R1' }) }), NOW))).toEqual([]);
+  });
+
+  it('held: the chat keeping the draft sends it, acking the messages the redraft carried', () => {
+    const mark = { at: 1, n: 1, revised_at: 'R1', ids: ['slack:1.2'], state: 'kept' as const };
+    const d = only(evaluateChain([sd({ status: 'held', held_rev: 'R1' })], facts({ draft: dr('pending', { revised_at: 'R1' }), redraftMark: () => mark }), NOW));
+    expect(d[0].patch).toMatchObject({ status: 'running' });
+    expect(d[0].effect).toBe('send_kept');
+    expect(d[0].ack).toEqual(['slack:1.2']);
+    // A mark not yet kept, or kept for an older revision, sends nothing.
+    expect(only(evaluateChain([sd({ status: 'held', held_rev: 'R1' })], facts({ draft: dr('pending', { revised_at: 'R1' }), redraftMark: () => ({ ...mark, state: undefined }) }), NOW))).toEqual([]);
+    expect(only(evaluateChain([sd({ status: 'held', held_rev: 'R1' })], facts({ draft: dr('pending', { revised_at: 'R1' }), redraftMark: () => ({ ...mark, revised_at: 'R0' }) }), NOW))).toEqual([]);
+  });
+
+  it('held with Slack send off never sends a kept draft', () => {
+    const mark = { at: 1, n: 1, revised_at: 'R1', ids: [], state: 'kept' as const };
+    const d = evaluateChain([sd({ status: 'held', held_rev: 'R1' })], facts({ draft: dr('pending', { revised_at: 'R1' }), redraftMark: () => mark, slackOff: () => 'off' }), NOW);
+    expect(d.some((x) => x.effect)).toBe(false);
+  });
+
+  it('running with no send in flight and the draft still pending: failed, Retry checks Slack first', () => {
+    const d = only(evaluateChain([sd({ status: 'running' })], facts({ draft: pending, sendInFlight: () => false }), NOW));
+    expect(d[0].patch).toMatchObject({ status: 'failed', status_why: 'Loom restarted mid-send; Retry checks Slack first' });
+    expect(d[0].effect).toBeUndefined();
+  });
+
+  it('running with a send in flight, or an unknown draft, is left alone', () => {
+    expect(evaluateChain([sd({ status: 'running' })], facts({ draft: pending, sendInFlight: () => true }), NOW)).toEqual([]);
+    expect(evaluateChain([sd({ status: 'running' })], facts({ sendInFlight: () => false }), NOW)).toEqual([]);
+  });
+
+  it('due and failed steps never send on their own', () => {
+    for (const status of ['due', 'failed'] as const) {
+      const d = evaluateChain([sd({ status, fired_at: 9 })], facts({ draft: pending, preSend: () => ({ decision: 'send', ack: [] }) }), NOW);
+      expect(d.some((x) => x.effect || x.patch.status)).toBe(false);
+    }
+  });
+
+  it('a step Run from the panel (waiting, fired_at set) skips the trigger and ask_first and runs the pre-send check', () => {
+    const a = sd({ ask_first: true, fired_at: 9, trigger_type: 'manual' });
+    const d = only(evaluateChain([a], facts({ draft: dr('pending', { kind: 'email' }), preSend: () => ({ decision: 'send', ack: [] }) }), NOW));
+    expect(d[0].effect).toBe('send');
+    expect(d[0].patch.status).toBe('running');
+  });
+
+  it('the Run path still holds on a hold verdict', () => {
+    const d = only(evaluateChain([sd({ ask_first: true, fired_at: 9 })], facts({ draft: pending, preSend: () => ({ decision: 'hold', why: 'wait' }) }), NOW));
+    expect(d[0].patch.status).toBe('held');
+    expect(d[0].effect).toBe('redraft');
   });
 });

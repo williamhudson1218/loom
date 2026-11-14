@@ -189,6 +189,29 @@ describe('burst send progress rendering', () => {
   });
 });
 
+describe('a scheduled draft card', () => {
+  const card = (d: object) =>
+    new Function(
+      'DATA', 'esc', 'rel', 'hhmm', 'NL',
+      `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
+       var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};var slkBubbles=function(){return '';};
+       ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+       return draftCardHtml(DATA.drafts[0],{});`,
+    )({ drafts: [{ id: 'd1', session_id: 's', created_at: '2026-11-09T10:00:00Z', messages: ['one'], channel: 'C1', ...d }] }, (x: string) => x, () => '', () => '10:00', '\n') as string;
+  it('shows the Scheduled line, Send now and Unschedule', () => {
+    const html = card({ scheduled: { step_id: 'a000000000001', label: 'Scheduled: sends when PR #123 merges' } });
+    expect(html).toContain('<div class="dsub dsched">Scheduled: sends when PR #123 merges</div>');
+    expect(html).toMatch(/data-dact="send"[^>]*>Send now</);
+    expect(html).toContain('data-dact="unschedule"');
+  });
+  it('an unscheduled card is unchanged', () => {
+    const html = card({});
+    expect(html).not.toContain('dsched');
+    expect(html).not.toContain('unschedule');
+    expect(html).toMatch(/data-dact="send">Send</);
+  });
+});
+
 describe('rail keeps the reader\'s place across a re-render', () => {
   const { railPatch } = new Function(`${OUTBOX_PURE_JS}; return { railPatch };`)() as { railPatch: (rail: any, html: string) => boolean };
   const H = 100;

@@ -21,7 +21,7 @@ import { searchArchive, isValidProjectDir, isValidTranscriptPath, findChatFromSe
 import { startPluginStateSync } from './pluginmgr.ts';
 import { SESSION_PREFIX, TOOL_DIR } from './paths.ts';
 import { paneNameMap, rememberPaneNames } from './panenames.ts';
-import { realTopicDeps } from './panetopics.ts';
+import { paneLabelConfig, realTopicDeps } from './panetopics.ts';
 import { panesMidTurn } from './midturn.ts';
 import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
 import { agentSessionKey } from './placements.ts';
@@ -32,7 +32,7 @@ import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, readAllThreads, threadOwners } from './slack.ts';
 import { slackCounts } from './slackthreads.ts';
 import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
-import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress } from './outbox.ts';
+import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress, setScheduledDrafts, type SendResult } from './outbox.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps, tickPendingLinks } from './routes/cli.ts';
@@ -49,7 +49,7 @@ import { cachedHead, ghRun, githubPoster, headMoved } from './outboxreview.ts';
 import { cliAdapter, cliRunner, EMAIL_OFF_DETAIL, resolveEmailCli, type EmailAdapter } from './outboxemail.ts';
 import { chooseEmailRoute, gmailAdapter } from './gmailapi.ts';
 import { googleAccessToken, listGoogleAccounts, markGoogleReconnect, type GoogleAccount } from './googleoauth.ts';
-import { cachedFresh, clearFreshCache, currentSeen, ghActivityVia, ghMeVia, type FreshDeps } from './outboxfresh.ts';
+import { cachedFresh, checkFresh, clearFreshCache, currentSeen, ghActivityVia, ghMeVia, type FreshDeps } from './outboxfresh.ts';
 import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
@@ -69,7 +69,9 @@ import { trustedFolders } from './orchstart.ts';
 import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
 import { handleOrchRoute, orchSummary, orchTick } from './orchserver.ts';
-import { actionTick } from './actionserver.ts';
+import { actionTick, scheduledDraftIds, scheduledDrafts, type ActionIo } from './actionserver.ts';
+import { PRESEND_SYSTEM, PreSendWork, dbPreSendStore } from './actionsend.ts';
+import { JUDGE, askModel } from './orchjudge.ts';
 import { actionSummary } from './routes/actions.ts';
 import { ensureCliToken, gate, legacyGetPaths, requireWrite, runRoute } from './routes/index.ts';
 import { clientFetchJs } from './clientfetch.ts';
@@ -400,14 +402,103 @@ function pendingDrafts(): ReturnType<typeof pendingDraftsRaw> {
     return () => (off ??= !emailAdapter());
   })();
   const redrafts = readMarks();
+  const scheduled = scheduledForCards();
   const now = Date.now();
   return pendingDraftsRaw(undefined, undefined, { liveSessions, marks: readStaleMarks() }).map((d) => {
     const s = outboxWatch.stateOf(d.id);
     const x0 = d.email && mailOff() ? { ...d, email_off: EMAIL_OFF_DETAIL } : d;
     const rv = redraftView(redrafts[d.id], d, now);
-    const x = rv ? { ...x0, redraft: rv } : x0;
+    const x1 = rv ? { ...x0, redraft: rv } : x0;
+    const sch = scheduled.get(d.id);
+    const x = sch ? { ...x1, scheduled: sch } : x1;
     return s ? { ...x, send_state: s.state, send_note: s.note ?? '' } : x;
   });
+}
+
+/**
+ * Redraft: tell the chat that owns a draft its thread moved on, and hold Send
+ * until it answers. The outbox card's Redraft button and a held send_draft step
+ * both come here. `code` is the HTTP status the route answers with.
+ */
+async function startRedraft(id: string): Promise<{ ok: boolean; detail: string; how?: 'sent' | 'resumed'; code?: number }> {
+  const d = readOutbox()[id];
+  if (!d || d.status !== 'pending') return { ok: false, detail: 'no such pending draft', code: 404 };
+  if (chatIsSending(id)) return { ok: false, detail: 'the chat is posting this draft now', code: 409 };
+  const deps = freshDeps();
+  if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined });
+  try {
+    const r = await cachedFresh(id, d, deps);
+    if (!r.items.length) return { ok: false, detail: r.ok ? 'no new messages since this was drafted' : 'could not read the thread: ' + r.error, code: 409 };
+    const url0 = d.thread_url || r.items.find((i) => /^https:[/][/]/.test(i.url ?? ''))?.url || '';
+    const prompt = buildRedraftPrompt({ id, url: url0, items: r.items });
+    const out = await deliverToChat(d.session_id, prompt);
+    if (!out.ok) return { ok: false, detail: out.detail, code: 409 };
+    setMark(id, newMark(d, r.items, Date.now()), undefined, new Set(Object.values(readOutbox()).filter((x) => x.status === 'pending').map((x) => x.id)));
+    return { ok: true, detail: out.detail, how: out.how };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message, code: 500 };
+  }
+}
+
+/** Run a callback against a fresh DB handle. */
+function withDbHandle<T>(fn: (db: ReturnType<typeof openDb>) => T): T {
+  const db = openDb();
+  try {
+    return fn(db);
+  } finally {
+    db.close();
+  }
+}
+
+let preSendWork: PreSendWork | null = null;
+/** The one pre-send checker this process uses: the pane-topic model and its on/off setting, verdicts in action_verdicts. */
+function preSend(): PreSendWork {
+  preSendWork ??= new PreSendWork({
+    // Uncached: the check that decides a send reads the thread as it is now.
+    fresh: (d) => {
+      const deps = freshDeps();
+      if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined, slackReplies: undefined, slackHistory: undefined });
+      return checkFresh(d, deps);
+    },
+    ask: (prompt) => askModel(withDbHandle((db) => paneLabelConfig(db).model) || 'haiku', JUDGE.timeoutMs, PRESEND_SYSTEM)(prompt),
+    enabled: () => withDbHandle((db) => paneLabelConfig(db).enabled),
+    store: dbPreSendStore(withDbHandle),
+    now: () => Date.now(),
+  });
+  return preSendWork;
+}
+
+/**
+ * A send_draft step posting its draft: the outbox's own send path, with every
+ * gate the card's Send has (Slack direct mode, a chat posting it itself, a
+ * redraft still out, the freshness check, the send lock). Posts only the
+ * revision the pre-send check read.
+ */
+async function actionSend(id: string, ack: string[], rev: string): Promise<SendResult> {
+  const d = readOutbox()[id];
+  if (!d) return { ok: false, detail: 'no such draft' };
+  if (d.status !== 'pending') return { ok: false, detail: `already ${d.status}` };
+  if ((d.revised_at ?? '') !== rev) return { ok: false, detail: 'the draft changed after it was checked; checking again' };
+  const slackFree = (!!d.review || !!d.email) && !d.messages?.length && !d.reactions?.length;
+  if (!slackFree && !slackFeatureOn('send')) return { ok: false, detail: slackOffDetail() };
+  if (chatIsSending(id)) return { ok: false, detail: 'the chat is posting this draft now' };
+  if (redraftView(readMarks()[id], d, Date.now())?.active) return { ok: false, detail: 'a redraft is out to the chat; waiting for its answer' };
+  const r = await sendDraft(id, d.messages, sendOpts(false, false, ack));
+  if (!r.ok && (r.stale_thread || r.fresh_error)) clearFreshCache(id);
+  return r;
+}
+
+function actionIo(): ActionIo {
+  return { preSend: preSend(), send: actionSend, redraft: startRedraft };
+}
+
+/** Pending drafts an open send_draft step will send, with the card's Scheduled line. Empty when the DB can't be read. */
+function scheduledForCards(): Map<string, { step_id: string; label: string }> {
+  try {
+    return withDbHandle((db) => scheduledDrafts(db));
+  } catch {
+    return new Map();
+  }
 }
 
 /** Names Slack ids resolve to for a parked chat's "waiting on": users, plus a DM channel's other party. */
@@ -1458,22 +1549,7 @@ export function createServer(): http.Server {
     if (url.pathname === '/api/outbox/redraft' && req.method === 'POST') {
       return readBody(req, res, (b) => {
         const id = typeof b.id === 'string' ? b.id : '';
-        const d = readOutbox()[id];
-        if (!d || d.status !== 'pending') return json(res, 404, { ok: false, detail: 'no such pending draft' });
-        if (chatIsSending(id)) return json(res, 409, { ok: false, detail: 'the chat is posting this draft now' });
-        const deps = freshDeps();
-        if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined });
-        cachedFresh(id, d, deps)
-          .then(async (r) => {
-            if (!r.items.length) return json(res, 409, { ok: false, detail: r.ok ? 'no new messages since this was drafted' : 'could not read the thread: ' + r.error });
-            const url0 = d.thread_url || r.items.find((i) => /^https:[/][/]/.test(i.url ?? ''))?.url || '';
-            const prompt = buildRedraftPrompt({ id, url: url0, items: r.items });
-            const out = await deliverToChat(d.session_id, prompt);
-            if (!out.ok) return json(res, 409, { ok: false, detail: out.detail });
-            setMark(id, newMark(d, r.items, Date.now()), undefined, new Set(Object.values(readOutbox()).filter((x) => x.status === 'pending').map((x) => x.id)));
-            return json(res, 200, { ok: true, detail: out.detail, how: out.how });
-          })
-          .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
+        startRedraft(id).then((r) => json(res, r.ok ? 200 : (r.code ?? 409), { ok: r.ok, detail: r.detail, ...(r.how ? { how: r.how } : {}) }));
       });
     }
 
@@ -2151,11 +2227,13 @@ export function startGhTicks(): void {
   // attributed to chats by their transcripts' edits. Off the request path.
   // The orchestrator rides the same snapshot: supervise its session, detect
   // transitions, deliver events and queued relays (src/orchserver.ts).
+  // A draft an open send_draft step will send is never superseded by a newer draft to the same place.
+  setScheduledDrafts(() => withDbHandle((db) => scheduledDraftIds(db)));
   const ships = () => {
     const snap = snapshot();
     refreshShipBoards(snap.views, snap.live).then(onShipBoards).catch((e) => console.error('[loom] ship boards failed:', (e as Error).message));
     orchTick(snap);
-    void actionTick(snap);
+    void actionTick(snap, Date.now(), actionIo());
   };
   setTimeout(ships, 2_000);
   setInterval(ships, 15_000);
