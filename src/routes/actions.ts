@@ -9,7 +9,9 @@ import type { RouteCtx, RouteDef } from './index.ts';
 // edits to them (add, check off, remove and undo, ask-first, run, retry). The
 // evaluator in src/actionserver.ts owns everything that fires on a trigger;
 // nothing here sends or wakes anything. Run on a send_draft step only approves
-// it: the next tick runs the pre-send check and sends or holds.
+// it: the next tick runs the pre-send check and sends or holds. Run on a due
+// wake_chat step likewise only approves it: the next tick claims it and wakes
+// the chat, once.
 
 interface ActionsDeps {
   openDb(): Database.Database;
@@ -122,9 +124,9 @@ async function postUndo(ctx: RouteCtx): Promise<void> {
     if (!s) return;
     if (s.status !== 'removed') return ctx.json(409, { ok: false, detail: 'not removed' });
     const to = s.removed_from || 'waiting';
-    // A send_draft step's Run approval does not survive a remove: back in the chain, it asks again.
+    // A send_draft or wake_chat step's Run approval does not survive a remove: back in the chain, it asks again.
     // Back to waiting, a step starts over: no old baseline, so a slack_reply counts only replies after it is current again.
-    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' ? { current_at: 0 } : {}), ...(to === 'waiting' && s.action_type === 'send_draft' ? { fired_at: 0, approved_rev: '' } : {}) });
+    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' ? { current_at: 0 } : {}), ...(to === 'waiting' && (s.action_type === 'send_draft' || s.action_type === 'wake_chat') ? { fired_at: 0, approved_rev: '' } : {}) });
     ctx.json(200, { ok: true });
   });
 }
@@ -146,9 +148,16 @@ async function postRun(ctx: RouteCtx): Promise<void> {
   withDb((db) => {
     const s = target(ctx, b, db);
     if (!s) return;
-    if (s.action_type === 'wake_chat') return ctx.json(409, NOT_YET);
     if (isFinal(s.status)) return ctx.json(409, { ok: false, detail: `already ${s.status}` });
     const now = deps.now();
+    if (s.action_type === 'wake_chat') {
+      // Only a due step: a running one has been woken already, and a waiting one wakes on its trigger.
+      if (s.status !== 'due') return ctx.json(409, { ok: false, detail: `nothing to run: the step is ${s.status}` });
+      const ok = db.prepare(`UPDATE action_items SET status = 'waiting', status_why = 'waking the chat', fired_at = ? WHERE id = ? AND status = 'due'`).run(now, s.id).changes === 1;
+      if (!ok) return ctx.json(409, { ok: false, detail: 'the step changed; try again' });
+      logAction(db, s.session_id, `Run: ${s.title}`, now);
+      return ctx.json(200, { ok: true });
+    }
     if (s.action_type === 'send_draft') {
       // Approve only: the tick checks the thread first, then sends or holds. fired_at on a waiting step is the approval.
       if (s.status !== 'due') return ctx.json(409, { ok: false, detail: `nothing to run: the step is ${s.status}` });

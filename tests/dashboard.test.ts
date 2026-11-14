@@ -512,7 +512,9 @@ describe('orchestrator view', () => {
     expect(v.orchSchedRun(row('send_draft', 'due'))).toBe('Send now');
     expect(v.orchSchedRun(row('send_draft', 'waiting'))).toBe('');
     expect(v.orchSchedRun(row('none', 'waiting'))).toBe('Run');
-    expect(v.orchSchedRun(row('wake_chat', 'due'))).toBe('');
+    expect(v.orchSchedRun(row('wake_chat', 'due'))).toBe('Run');
+    expect(v.orchSchedRun(row('wake_chat', 'waiting'))).toBe('');
+    expect(v.orchSchedRun(row('wake_chat', 'failed'))).toBe('');
     expect(v.orchSchedRun(row('none', 'running'))).toBe('');
     expect(v.orchSchedRun({ action_type: 'none', status: 'waiting', summary: 'When x → send draft' })).toBe('Run');
   });

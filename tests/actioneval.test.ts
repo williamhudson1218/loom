@@ -352,3 +352,50 @@ describe('closeDecision', () => {
     expect(closeDecision([step({ status: 'removed' })], on, idle)).toEqual({ close: false, why: 'no steps' });
   });
 });
+
+describe('evaluateChain: wake_chat', () => {
+  const wake = (over: Partial<ActionItem> = {}) => step({ action_type: 'wake_chat', action_params: { instruction: 'merge it' }, ...over });
+
+  it('a fired trigger with ask_first off goes running with fired_at and the wake effect', () => {
+    const s = wake({ trigger_type: 'pr_merged', trigger_params: pr });
+    const d = evaluateChain([s], facts({ pr: () => ({ state: 'merged', deploy: '' }) }), NOW);
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatchObject({ id: s.id, effect: 'wake', why: 'PR #123 merged', patch: { status: 'running', fired_at: NOW } });
+  });
+
+  it('ask_first still goes due, with no effect', () => {
+    const d = evaluateChain([wake({ ask_first: true })], facts(), NOW);
+    expect(d[0].patch).toMatchObject({ status: 'due', fired_at: NOW });
+    expect(d[0].effect).toBeUndefined();
+  });
+
+  it('a Run (waiting with fired_at) wakes without asking the trigger again', () => {
+    const d = evaluateChain([wake({ trigger_type: 'manual', ask_first: true, fired_at: 4_000 })], facts(), NOW);
+    expect(d[0]).toMatchObject({ effect: 'wake', why: 'started with Run', patch: { status: 'running', fired_at: NOW } });
+  });
+
+  it('an unfired or unknown trigger never wakes', () => {
+    expect(evaluateChain([wake({ trigger_type: 'pr_merged', trigger_params: pr })], facts(), NOW).some((d) => d.effect)).toBe(false);
+  });
+
+  it('a running wake never wakes again; past the timeout it fails', () => {
+    const s = wake({ status: 'running', fired_at: NOW - 1000 });
+    expect(evaluateChain([s], facts(), NOW)).toEqual([]);
+    expect(evaluateChain([s], facts(), NOW - 1000 + 2 * 3_600_000)).toEqual([]);
+    const d = evaluateChain([s], facts(), NOW - 1000 + 2 * 3_600_000 + 1);
+    expect(d).toHaveLength(1);
+    expect(d[0].patch).toEqual({ status: 'failed', status_why: 'no report from the chat in 2 h' });
+    expect(d[0].effect).toBeUndefined();
+  });
+
+  it('due and failed wake steps wait for a person', () => {
+    expect(evaluateChain([wake({ status: 'due', fired_at: 1 })], facts(), NOW)).toEqual([]);
+    expect(evaluateChain([wake({ status: 'failed' })], facts(), NOW)).toEqual([]);
+  });
+
+  it('a wake the chat reported done lets the next step go', () => {
+    const b = step();
+    const d = evaluateChain([wake({ status: 'done' }), b], facts(), NOW);
+    expect(d[0]).toMatchObject({ id: b.id, patch: { status: 'done' } });
+  });
+});

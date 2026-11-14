@@ -1,5 +1,5 @@
 import type { ActionItem } from './actions.ts';
-import type { PreSend } from './actionsend.ts';
+import { WAKE_TIMEOUT_MS, type PreSend } from './actionsend.ts';
 import type { RedraftMark } from './redraft.ts';
 import type { FreshItem } from './outboxfresh.ts';
 
@@ -32,6 +32,8 @@ export interface Decision {
   effect?: Effect;
   /** The new-message ids a send acknowledges (send, send_kept). */
   ack?: string[];
+  /** What fired a wake (the trigger's why, or the Run): the leash prompt names it. */
+  why?: string;
   log?: string;
 }
 
@@ -150,27 +152,39 @@ export function evaluateChain(chain: ActionItem[], facts: ActionFacts, now: numb
   // moved to becoming current) so its baseline is taken when it really starts.
   for (const x of chain) if (x !== s && x.status === 'waiting' && x.current_at !== 0) out.push({ id: x.id, patch: { current_at: 0 } });
   if (s.action_type === 'send_draft' && s.status !== 'waiting') return sendDraftAfterFire(s, facts, now);
+  if (s.action_type === 'wake_chat' && s.status !== 'waiting') return [...out, ...wakeAfterFire(s, now)];
   if (s.status !== 'waiting') return out;
   // The step starts now: stamp it, and judge this tick against that stamp, not the empty one.
   if (s.current_at === 0) {
     out.push({ id: s.id, patch: { current_at: now } });
     s = { ...s, current_at: now };
   }
-  // fired_at on a waiting send_draft step means a person clicked Run on it: the trigger and ask_first are passed.
-  const approved = s.action_type === 'send_draft' && s.fired_at > 0;
-  const t: TriggerState = approved ? { fired: true, why: 'Run' } : triggerState(s, facts, now);
+  // fired_at on a waiting send_draft or wake_chat step means a person clicked Run on it: the trigger and ask_first are passed.
+  const approved = (s.action_type === 'send_draft' || s.action_type === 'wake_chat') && s.fired_at > 0;
+  const t: TriggerState = approved ? { fired: true, why: s.action_type === 'wake_chat' ? 'started with Run' : 'Run' } : triggerState(s, facts, now);
   if (!t.fired) {
     if (t.why !== s.status_why) out.push({ id: s.id, patch: { status_why: t.why } });
     return out;
   }
   if (s.action_type === 'send_draft') return [...out, ...sendDraftFired(s, t.why, approved, facts, now)];
-  // Only `none` executes so far; any other action waits for Run, like ask_first.
+  if (s.action_type === 'wake_chat' && (approved || !s.ask_first)) {
+    // The one place a wake starts: the step goes running here, and a running step is never woken again.
+    out.push({ id: s.id, patch: { status: 'running', fired_at: now, status_why: `${t.why}; waiting for the chat to report` }, effect: 'wake', why: t.why, log: `${s.title}: ${t.why}; waking the chat` });
+    return out;
+  }
+  // `none` finishes here; anything left (ask_first) waits for Run.
   if (s.action_type === 'none' && !s.ask_first) {
     out.push({ id: s.id, patch: { status: 'done', status_why: '', done_at: now }, log: `${s.title}: ${t.why}; done` });
   } else {
     out.push({ id: s.id, patch: { status: 'due', fired_at: now, status_why: `${t.why}; waiting for Run` } });
   }
   return out;
+}
+
+/** A current wake_chat step past its firing: running fails once the chat has been silent too long; due and failed wait for a person. */
+function wakeAfterFire(s: ActionItem, now: number): Decision[] {
+  if (s.status !== 'running' || now - s.fired_at <= WAKE_TIMEOUT_MS) return [];
+  return [{ id: s.id, patch: { status: 'failed', status_why: 'no report from the chat in 2 h' }, log: `${s.title}: no report from the chat in 2 h; failed` }];
 }
 
 /** A waiting send_draft step whose trigger fired (or that a person Ran). Every path that is not a clear yes holds or waits. */

@@ -199,7 +199,7 @@ describe('routes', () => {
     expect(withDb((db) => getStep(db, id)?.ask_first)).toBe(false);
   });
 
-  it('run finishes a none step; on a due send_draft step it only approves, and a wake step is not available yet', async () => {
+  it('run finishes a none step; on a due send_draft or wake_chat step it only approves', async () => {
     withDb((db) => {
       addStep(db, { id: 'a00000000001', session_id: 'sess-3', title: 'Plain', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 1 });
       addStep(db, { id: 'a00000000002', session_id: 'sess-3', title: 'Send', when: 'manual', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
@@ -214,9 +214,27 @@ describe('routes', () => {
     expect((await call('POST', '/api/actions/run', { id: 'a00000000002' })).body.ok).toBe(true);
     expect(withDb((db) => getStep(db, 'a00000000002'))).toMatchObject({ status: 'waiting', status_why: 'checking the thread before sending', approved_rev: 'R1' });
     expect(withDb((db) => getStep(db, 'a00000000002')?.fired_at)).toBeGreaterThan(0);
-    const w = await call('POST', '/api/actions/run', { id: 'a00000000007' });
-    expect(w.code).toBe(409);
-    expect(w.body.detail).toBe('not available yet');
+    // A waiting wake step wakes on its trigger, not on Run.
+    expect((await call('POST', '/api/actions/run', { id: 'a00000000007' })).code).toBe(409);
+    withDb((db) => db.prepare(`UPDATE action_items SET status = 'due', fired_at = 5 WHERE id = 'a00000000007'`).run());
+    expect((await call('POST', '/api/actions/run', { id: 'a00000000007' })).body.ok).toBe(true);
+    const w = withDb((db) => getStep(db, 'a00000000007'));
+    expect(w).toMatchObject({ status: 'waiting', status_why: 'waking the chat' });
+    expect(w?.fired_at).toBeGreaterThan(5);
+    // A second click finds it waiting (approved), and a running step is never Run again.
+    expect((await call('POST', '/api/actions/run', { id: 'a00000000007' })).code).toBe(409);
+    withDb((db) => db.prepare(`UPDATE action_items SET status = 'running' WHERE id = 'a00000000007'`).run());
+    expect((await call('POST', '/api/actions/run', { id: 'a00000000007' })).code).toBe(409);
+    expect((await call('POST', '/api/actions/retry', { id: 'a00000000007' })).body.detail).toBe('not available yet');
+  });
+
+  it('undo of a removed, Run-approved wake step drops the approval', async () => {
+    withDb((db) => {
+      addStep(db, { id: 'a00000000008', session_id: 'sess-8', title: 'Wake', when: 'manual', then: 'wake:"go"', ask_first: true, created_by: 'chat', at: 1 });
+      db.prepare(`UPDATE action_items SET status = 'removed', removed_from = 'waiting', fired_at = 9 WHERE id = 'a00000000008'`).run();
+    });
+    expect((await call('POST', '/api/actions/undo', { id: 'a00000000008' })).body.ok).toBe(true);
+    expect(withDb((db) => getStep(db, 'a00000000008'))).toMatchObject({ status: 'waiting', fired_at: 0 });
   });
 
   it('retry on a held send_draft step goes back to waiting and drops its Run approval', async () => {

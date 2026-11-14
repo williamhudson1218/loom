@@ -493,6 +493,8 @@ function actionIo(): ActionIo {
     preSend: preSend(),
     send: actionSend,
     redraft: startRedraft,
+    // A wake_chat step: typed into its live pane, or the ended chat resumed with the prompt.
+    deliver: deliverToChat,
     // Close when done: the Send & close pane closer. Pending drafts come from the outbox itself (actionserver's default).
     closePane: closeChatPane,
     // The board rebuilt now, not the memoized snapshot: the close re-checks working on it first. Only runs when a close is due.

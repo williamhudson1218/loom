@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applySchema } from '../src/schema.ts';
 import { addStep, chatFlags, getStep, setCloseWhenDone } from '../src/actions.ts';
 import { markChatDone } from '../src/parked.ts';
+import { applyEvent } from '../src/events.ts';
 import { _resetPipelineStore, pipelineHealth, tickPipelines } from '../src/pipeline.ts';
 import { _resetReplies, actionFacts, actionTick, scheduledDraftIds, scheduledDrafts, sendInFlight } from '../src/actionserver.ts';
 import type { Snap } from '../src/orchserver.ts';
@@ -446,5 +447,125 @@ describe('close when done (the tick)', () => {
     await actionTick({ views: [view('s1', { done: true })], live: {} }, 1000, io);
     expect(getStep(db, 'a00000000001')?.status).toBe('failed');
     expect(hidden(db)).toEqual([]);
+  });
+});
+
+describe('actionTick: wake_chat', () => {
+  const ID = 'a0000000000a';
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const view = (sid: string, over: object = {}) => ({ agent: 'claude', session_id: sid, title: 'chat ' + sid, last_active_at: 1, ...over }) as unknown as Snap['views'][number];
+  const hidden = (db: Database.Database) => db.prepare(`SELECT agent, session_id FROM chat_hidden`).all();
+  const mk = (when = 'now', ask_first = false) => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: ID, session_id: 's1', title: 'Merge it', when, then: 'wake:"merge acme/app#123"', ask_first, created_by: 'chat', at: 1 });
+    addStep(db, { id: 'a0000000000b', session_id: 's1', title: 'After', when: 'now', then: 'none', ask_first: false, created_by: 'chat', at: 1 });
+    return db;
+  };
+  const ioWith = (db: Database.Database, deliver?: (sid: string, prompt: string) => Promise<{ ok: boolean; detail: string }>, pr: () => unknown = () => null) => ({
+    facts: () => ({ ...rest, pr, draft: () => null }) as never,
+    withDb: <T,>(fn: (d: Database.Database) => T) => fn(db),
+    ...(deliver ? { deliver } : {}),
+  });
+  const snap = { views: [], live: {} };
+
+  it('delivers the leash prompt once; the ticks after it never deliver again while running', async () => {
+    const db = mk();
+    const calls: [string, string][] = [];
+    let release!: (r: { ok: boolean; detail: string }) => void;
+    const io = ioWith(db, (sid, prompt) => (calls.push([sid, prompt]), new Promise((r) => { release = r; })));
+    await actionTick(snap, 1000, io);
+    expect(getStep(db, ID)).toMatchObject({ status: 'running', fired_at: 1000 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('s1');
+    expect(calls[0][1]).toContain(`[Loom action ${ID}] A step you set up has fired: "Merge it" (now).`);
+    expect(calls[0][1]).toContain('Instruction: merge acme/app#123');
+    await actionTick(snap, 2000, io); // delivery still out
+    release({ ok: true, detail: 'sent to the chat' });
+    await flush();
+    await actionTick(snap, 3000, io); // delivered, the chat has not reported
+    expect(getStep(db, ID)?.status).toBe('running');
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a rejected delivery fails the step with the reason and puts a closed chat back on the board", async () => {
+    const db = mk();
+    markChatDone(db, 'claude', 's1', 1);
+    await actionTick({ views: [view('s1', { done: true })], live: {} }, 1000, ioWith(db, async () => ({ ok: false, detail: 'the chat has ended and cannot be resumed: gone' })));
+    await flush();
+    expect(getStep(db, ID)).toMatchObject({ status: 'failed', status_why: "couldn't reach the chat: the chat has ended and cannot be resumed: gone" });
+    expect(hidden(db)).toEqual([]);
+  });
+
+  it('a delivery that throws, or no deliver wired, fails; nothing delivers on the next tick', async () => {
+    const db = mk();
+    let n = 0;
+    const io = ioWith(db, async () => { n++; throw new Error('tmux went away'); });
+    await actionTick(snap, 1000, io);
+    await flush();
+    expect(getStep(db, ID)).toMatchObject({ status: 'failed', status_why: "couldn't reach the chat: tmux went away" });
+    await actionTick(snap, 2000, io);
+    expect(n).toBe(1);
+    const db2 = mk();
+    await actionTick(snap, 1000, ioWith(db2));
+    await flush();
+    expect(getStep(db2, ID)).toMatchObject({ status: 'failed', status_why: "couldn't reach the chat: waking is not available" });
+  });
+
+  it('no report within 2 h fails the step (restoring a closed chat), and it is never woken again', async () => {
+    const db = mk();
+    let n = 0;
+    const io = ioWith(db, async () => (n++, { ok: true, detail: 'sent to the chat' }));
+    await actionTick(snap, 1000, io);
+    await flush();
+    markChatDone(db, 'claude', 's1', 2);
+    const closed = { views: [view('s1', { done: true })], live: {} };
+    await actionTick(closed, 1000 + 2 * 3_600_000, io);
+    expect(getStep(db, ID)?.status).toBe('running');
+    await actionTick(closed, 1001 + 2 * 3_600_000, io);
+    expect(getStep(db, ID)).toMatchObject({ status: 'failed', status_why: 'no report from the chat in 2 h' });
+    expect(hidden(db)).toEqual([]);
+    await actionTick(closed, 9e9, io);
+    expect(n).toBe(1);
+    // A late report still settles it.
+    expect(applyEvent(db, { kind: 'action.done', id: ID, session: 's1', at: 9e9 }).detail).toBe('done');
+  });
+
+  it("the chat's action.done settles it, and the chain moves on next tick", async () => {
+    const db = mk();
+    const io = ioWith(db, async () => ({ ok: true, detail: 'sent to the chat' }));
+    await actionTick(snap, 1000, io);
+    await flush();
+    expect(applyEvent(db, { kind: 'action.done', id: ID, session: 's1', at: 1500 }).detail).toBe('done');
+    await actionTick(snap, 2000, io);
+    expect(getStep(db, 'a0000000000b')?.status).toBe('done');
+  });
+
+  it('a step removed while the tick was evaluating it is not woken', async () => {
+    const db = mk('pr-merged:acme/app#123');
+    let n = 0;
+    const io = ioWith(db, async () => (n++, { ok: true, detail: 'sent' }), () => {
+      db.prepare(`UPDATE action_items SET status = 'removed', removed_from = 'waiting' WHERE id = ?`).run(ID);
+      return { state: 'merged', deploy: '' };
+    });
+    await actionTick(snap, 1000, io);
+    await flush();
+    expect(n).toBe(0);
+    expect(getStep(db, ID)?.status).toBe('removed');
+  });
+
+  it('ask_first goes due without delivering; Run (waiting + fired_at) then delivers once', async () => {
+    const db = mk('now', true);
+    let n = 0;
+    const io = ioWith(db, async () => (n++, { ok: true, detail: 'sent' }));
+    await actionTick(snap, 1000, io);
+    expect(getStep(db, ID)?.status).toBe('due');
+    expect(n).toBe(0);
+    db.prepare(`UPDATE action_items SET status = 'waiting', fired_at = 1500 WHERE id = ?`).run(ID); // what Run writes
+    await actionTick(snap, 2000, io);
+    await actionTick(snap, 3000, io);
+    await flush();
+    expect(n).toBe(1);
+    expect(getStep(db, ID)).toMatchObject({ status: 'running', fired_at: 2000 });
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ANSWERS_SYSTEM, PRESEND_SYSTEM, PreSendWork, buildAnswersAsk, buildPreSendAsk, verdictKey, type PreSendRec } from '../src/actionsend.ts';
+import { ANSWERS_SYSTEM, PRESEND_SYSTEM, PreSendWork, WAKE_TIMEOUT_MS, buildAnswersAsk, buildPreSendAsk, buildWakePrompt, verdictKey, type PreSendRec } from '../src/actionsend.ts';
+import type { ActionItem } from '../src/actions.ts';
 import type { Draft } from '../src/outbox.ts';
 import type { FreshItem, FreshResult } from '../src/outboxfresh.ts';
 
@@ -200,5 +201,32 @@ describe('the answers verdict', () => {
     w.answers(SID, 'q', it0);
     await w.idle();
     expect(systems).toEqual([ANSWERS_SYSTEM]);
+  });
+});
+
+describe('buildWakePrompt (the leash)', () => {
+  const s = {
+    id: 'a0123456789ab', session_id: 's1', position: 1, title: 'Merge the PR', trigger_type: 'pr_shipped', trigger_params: { repo: 'acme/app', number: 123 },
+    action_type: 'wake_chat', action_params: { instruction: 'merge acme/app#124 and watch the deploy' }, ask_first: false, status: 'running',
+    status_why: 'PR #123 shipped', created_by: 'chat', created_at: 1, current_at: 1, fired_at: 2, done_at: 0, attempts: 0, held_rev: '', held_at: 0, approved_rev: '', removed_from: '',
+  } as ActionItem;
+
+  it('is the fixed copy: id in the header, the fail and the done lines, the instruction verbatim', () => {
+    expect(buildWakePrompt(s, 'PR #123 shipped')).toBe(
+      '[Loom action a0123456789ab] A step you set up has fired: "Merge the PR" (PR #123 shipped).\n' +
+        'Instruction: merge acme/app#124 and watch the deploy\n' +
+        "No one is watching this run. Act only if things look the way this step expected. If they don't (a reply asking for changes, a red check, a merge conflict, anything you'd want a person to see first), do not act: run\n" +
+        '  loom action fail a0123456789ab --why "<one line>"\n' +
+        'and stop. When the instruction is done, run\n' +
+        '  loom action done a0123456789ab',
+    );
+    const p = buildWakePrompt(s, 'x');
+    expect(p.split('a0123456789ab')).toHaveLength(4);
+    expect(p).toContain('merge acme/app#124 and watch the deploy');
+  });
+
+  it('defaults the trigger why to the step status_why; the timeout is 2 h', () => {
+    expect(buildWakePrompt(s)).toContain('"Merge the PR" (PR #123 shipped).');
+    expect(WAKE_TIMEOUT_MS).toBe(7_200_000);
   });
 });

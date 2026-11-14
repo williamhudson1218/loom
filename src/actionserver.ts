@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3';
 import { openDb } from './db.ts';
-import { chatFlags, getStep, listSteps, openChains, setStep, stepSummary } from './actions.ts';
+import { chatFlags, getStep, listSteps, openChains, setStep, stepSummary, type ActionItem } from './actions.ts';
 import { closeDecision, evaluateChain, type ActionFacts, type Decision } from './actioneval.ts';
-import type { PreSendWork } from './actionsend.ts';
+import { buildWakePrompt, type PreSendWork } from './actionsend.ts';
 import { logOrch } from './orchestrator.ts';
 import type { Snap } from './orchserver.ts';
 import { pendingDrafts, readOutbox, type Draft, type SendResult } from './outbox.ts';
@@ -44,6 +44,11 @@ export interface ActionIo {
    * chat on it just before closing, since the tick's snapshot can be seconds old. Absent: the tick's snapshot.
    */
   liveSnap?: () => Snap;
+  /**
+   * Put a wake_chat step's prompt in front of its chat (server.ts: deliverToChat, typed into a live pane or
+   * resuming an ended chat). Called at most once per firing. Absent: the step fails, nothing is woken.
+   */
+  deliver?: (sid: string, prompt: string) => Promise<{ ok: boolean; detail: string }>;
 }
 
 function realWithDb<T>(fn: (db: Database.Database) => T): T {
@@ -271,7 +276,13 @@ function stillIdle(sid: string, tickSnap: Snap, io: ActionIo): boolean {
   return !!c && !c.working && c.pendingDrafts === 0;
 }
 
-type Job = { kind: 'send'; stepId: string; sid: string; agent: string; title: string; draftId: string; ack: string[]; rev: string } | { kind: 'redraft'; stepId: string; sid: string; title: string; draftId: string };
+type Job =
+  | { kind: 'send'; stepId: string; sid: string; agent: string; title: string; draftId: string; ack: string[]; rev: string }
+  | { kind: 'redraft'; stepId: string; sid: string; title: string; draftId: string }
+  | { kind: 'wake'; stepId: string; sid: string; agent: string; title: string; prompt: string; firedAt: number };
+
+/** Wakes this process is delivering right now. */
+const waking = new Set<string>();
 
 function jobOf(d: Decision, sid: string, agent: string, title: string, draftId: string, rev: string): Job | null {
   if (d.effect === 'send' || d.effect === 'send_kept') return { kind: 'send', stepId: d.id, sid, agent, title, draftId, ack: d.ack ?? [], rev };
@@ -321,6 +332,34 @@ async function runSend(job: Extract<Job, { kind: 'send' }>, io: ActionIo, withDb
   }
 }
 
+async function runWake(job: Extract<Job, { kind: 'wake' }>, io: ActionIo, withDb: NonNullable<ActionIo['withDb']>): Promise<void> {
+  try {
+    let r: { ok: boolean; detail: string };
+    try {
+      r = io.deliver ? await io.deliver(job.sid, job.prompt) : { ok: false, detail: 'waking is not available' };
+    } catch (e) {
+      r = { ok: false, detail: (e as Error).message };
+    }
+    const now = Date.now();
+    withDb((db) => {
+      if (r.ok) return logAction(db, job.sid, `${job.title}: woke the chat (${r.detail})`, now);
+      // Only this firing's row fails: a step settled or removed meanwhile keeps what it says now.
+      const cur = getStep(db, job.stepId);
+      if (!cur || cur.status !== 'running' || cur.fired_at !== job.firedAt) {
+        logAction(db, job.sid, `${job.title}: couldn't reach the chat after the step left running: ${r.detail}`, now);
+        return;
+      }
+      setStep(db, job.stepId, { status: 'failed', status_why: `couldn't reach the chat: ${r.detail}` });
+      logAction(db, job.sid, `${job.title}: couldn't reach the chat: ${r.detail}`, now);
+      restoreOnAttention(db, job.agent, job.sid, job.title, 'failed', now);
+    });
+  } catch (e) {
+    console.error('[loom] action wake bookkeeping failed:', (e as Error).message);
+  } finally {
+    waking.delete(job.stepId);
+  }
+}
+
 async function runRedraft(job: Extract<Job, { kind: 'redraft' }>, io: ActionIo, withDb: NonNullable<ActionIo['withDb']>): Promise<void> {
   let r: { ok: boolean; detail: string };
   try {
@@ -339,6 +378,23 @@ async function runRedraft(job: Extract<Job, { kind: 'redraft' }>, io: ActionIo, 
   } catch (e) {
     console.error('[loom] action redraft bookkeeping failed:', (e as Error).message);
   }
+}
+
+/**
+ * Start one wake. The row is claimed from the status the evaluator read (waiting) to running in one conditional
+ * write, so a step removed, Run or settled between the read and here is not woken, and a step already running
+ * never is: whatever happens after this (a restart mid-delivery, a lost reply), it is delivered at most once.
+ */
+function wakeStep(db: Database.Database, s: ActionItem, d: Decision, sid: string, agent: string, now: number, jobs: Job[]): void {
+  if (waking.has(s.id)) return;
+  const p = d.patch;
+  const claimed = db
+    .prepare(`UPDATE action_items SET status = 'running', fired_at = ?, status_why = ? WHERE id = ? AND status = 'waiting' AND fired_at = ?`)
+    .run(p.fired_at ?? now, p.status_why ?? '', s.id, s.fired_at).changes === 1;
+  if (!claimed) return;
+  waking.add(s.id);
+  if (d.log) logAction(db, sid, d.log, now);
+  jobs.push({ kind: 'wake', stepId: s.id, sid, agent, title: s.title, prompt: buildWakePrompt(s, d.why ?? ''), firedAt: p.fired_at ?? now });
 }
 
 let busy = false;
@@ -361,6 +417,12 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
             const draftId = String(s?.action_params.draft_id ?? '');
             // A send claims its step in memory before the row says running, so no tick can read it as interrupted.
             const job = s ? jobOf(d, sid, agentOf(snap, sid), s.title, draftId, draftId ? facts.draft(draftId)?.revised_at ?? '' : '') : null;
+            if (d.effect === 'wake') {
+              if (s) wakeStep(db, s, d, sid, agentOf(snap, sid), now, jobs);
+              continue;
+            }
+            // The 2 h timeout never lands on a wake still being delivered.
+            if (waking.has(d.id) && d.patch.status === 'failed') continue;
             if (job?.kind === 'send') {
               if (sending.has(job.stepId)) continue; // never two sends for one step
               sending.add(job.stepId);
@@ -384,11 +446,13 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
     });
   } catch (e) {
     console.error('[loom] action tick failed:', (e as Error).message);
-    // The rows may not say running: drop the claims and start nothing.
+    // The rows may not say running: drop the claims and start nothing. A claimed wake row stays running and
+    // times out rather than being woken twice.
     for (const j of jobs) if (j.kind === 'send') sending.delete(j.stepId);
+    for (const j of jobs) if (j.kind === 'wake') waking.delete(j.stepId);
     jobs.length = 0;
   } finally {
     busy = false;
   }
-  for (const j of jobs) void (j.kind === 'send' ? runSend(j, io, withDb) : runRedraft(j, io, withDb));
+  for (const j of jobs) void (j.kind === 'send' ? runSend(j, io, withDb) : j.kind === 'wake' ? runWake(j, io, withDb) : runRedraft(j, io, withDb));
 }
