@@ -134,6 +134,8 @@ export const HOME_VIEW_CSS = String.raw`
   #homeview .hm-orbit { position:relative; }
   #homeview .hm-orbit svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #homeview .hm-core { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:var(--core,140px); height:var(--core,140px); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:radial-gradient(circle at 35% 30%,#2a3560,#0f1424 70%); border:1px solid #3a4a7a; box-shadow:0 0 50px rgba(232,169,74,.18),0 0 90px rgba(59,130,246,.12); }
+  #homeview button.hm-core { padding:0; font:inherit; color:inherit; cursor:pointer; transition:box-shadow .2s, border-color .2s; }
+  #homeview button.hm-core:hover, #homeview button.hm-core:focus-visible { border-color:#5c6fae; box-shadow:0 0 60px rgba(232,169,74,.3); outline:none; }
   #homeview .hm-core b { font-size:calc(var(--core,140px) * .23); line-height:1; font-weight:600; color:#eef1fb; }
   #homeview .hm-core span { font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.1em; color:#8b93a7; text-transform:uppercase; margin-top:4px; }
   #homeview .hm-body { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; background:none; border:0; color:inherit; padding:0; font:inherit; }
@@ -242,7 +244,7 @@ function homeOrbitHtml(cl,total,now){const box=$('#hm-orbit');const W=box.client
   const pl=lay.planets.map(p=>{const r=byKey[p.key],c=r.c,col=HOME_COL[p.k];
     return '<button type="button" class="hm-body '+p.k+(p.alt?' alt':'')+(p.dense?' dense':'')+(p.bare?' bare':'')+'" style="left:'+p.x.toFixed(1)+'px;top:'+p.y.toFixed(1)+'px;--s:'+p.size+'px;--c1:'+col[0]+';--c2:'+col[1]+'" data-hchat="'+esc(p.key)+'" data-hk="p'+esc(p.key)+'" aria-label="'+esc(homeChatName(c)+', '+HOME_LBL[p.k]+', '+disp(c))+'"><span class="pl"></span><span class="lb">'+esc(homeChatName(c))+'</span><span class="tp">'+esc(disp(c)+' · '+homeAge(r.at,now))+'</span></button>';}).join('');
   box.style.setProperty('--core',lay.core.toFixed(0)+'px');
-  homeSet('hm-orbit',svg+'<div class="hm-core"><b>'+total+'</b><span>'+(total===1?'chat':'chats')+' in orbit</span></div>'+pl);
+  homeSet('hm-orbit',svg+'<button type="button" class="hm-core" data-hact="board" title="All chats" aria-label="'+total+' '+(total===1?'chat':'chats')+' in orbit, open all chats"><b>'+total+'</b><span>'+(total===1?'chat':'chats')+' in orbit</span></button>'+pl);
   homeSet('hm-legend','<span><i class="hdot d-turn"></i>Your turn, inner ring</span><span><i class="hdot d-working"></i>Working, middle ring</span><span><i class="hdot d-stale"></i>Stale, outer ring</span><span>Hover for the topic, click to open.</span>');}
 // Measure the cards the lists must fit in. Card heights come from the layout (overflow hidden, rows do not size them), so one re-render settles it.
 function homeMeasure(){const v=$('#homeview');if(!v||v.offsetParent===null)return;

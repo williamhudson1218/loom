@@ -48,3 +48,11 @@ describe('keymap registry', () => {
     expect(keymapForPage({}).find((k) => k.keys === '⌘1–⌘9')).toBeTruthy();
   });
 });
+
+describe('ctrl release after list steps', () => {
+  it('focuses the chat when Ctrl is let go after stepping the list with Ctrl+J/K', () => {
+    const html = renderDashboard([], Date.now(), {}, 'claude');
+    expect(html).toContain("if(e.key!=='Control'||!navCtrlStepped)return;");
+    expect(html).toContain('if(col===0)navCtrlStepped=true;');
+  });
+});

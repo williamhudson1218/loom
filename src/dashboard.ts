@@ -1872,6 +1872,9 @@ var navStayUntil=0;
 function navBlocked(){return composerOpen||(typeof JUMP!=='undefined'&&JUMP.open)||!$('#renamebox').hidden||!$('#termbox').hidden;}
 function navRows(){const vis=r=>r.offsetParent!==null;const side=[...document.querySelectorAll('#sidelist .srow[data-sid]:not(.ghost)')].filter(vis);return side.length?side:[...document.querySelectorAll('#kanban .tk[data-sid]')].filter(vis);}
 function navCol(){const a=document.activeElement;if(a&&a.closest){if(a.closest('#outrail'))return 2;if(a.closest('#side'))return 0;if(a.closest('#chatmain'))return 1;}return sel?1:0;}
+// Stepping the list with Ctrl held, then letting go of Ctrl, lands in the chat you stopped on.
+var navCtrlStepped=false;
+document.addEventListener('keyup',e=>{if(e.key!=='Control'||!navCtrlStepped)return;navCtrlStepped=false;if(navCol()===0&&!navBlocked())navFocusMain();});
 function navOpenRow(r,stay){const c=r&&rowChat(r);if(!c)return false;navStayUntil=stay?Date.now()+2000:0;selectChat(c.session_id,c.agent,c.arch||null);r.scrollIntoView({block:'nearest'});setTimeout(stay?navFocusList:navFocusMain,0);return true;}
 function navFocusList(){const rows=navRows();const r=rows.find(x=>x.classList.contains('sel'))||rows[0];if(!r)return false;r.focus();r.scrollIntoView({block:'nearest'});return true;}
 function navFocusMain(){if(!sel){const a=document.activeElement;const r=a&&a.closest&&a.closest('.srow[data-sid],.tk[data-sid]');return navOpenRow(r||navRows()[0],false);}
@@ -1882,7 +1885,7 @@ function navFocusOutbox(){const rail=$('#outrail');if(!rail||rail.hidden)return 
 function navMove(dx){const to=navCol()+dx;if(to===0)navFocusList();else if(to===1)navFocusMain();else if(to===2)navFocusOutbox();}
 function navStep(dy){const col=navCol();
   if(col===2){const cards=navCards();if(!cards.length)return;const a=document.activeElement;const i=cards.findIndex(x=>x.contains(a));navFocusCard(cards[i<0?0:Math.min(Math.max(i+dy,0),cards.length-1)]);return;}
-  const rows=navRows();if(!rows.length)return;const i=rows.findIndex(r=>r.classList.contains('sel'));const j=i<0?(dy>0?0:rows.length-1):i+dy;if(j<0||j>=rows.length||j===i)return;navOpenRow(rows[j],col===0);}
+  const rows=navRows();if(!rows.length)return;const i=rows.findIndex(r=>r.classList.contains('sel'));const j=i<0?(dy>0?0:rows.length-1):i+dy;if(col===0)navCtrlStepped=true;if(j<0||j>=rows.length||j===i)return;navOpenRow(rows[j],col===0);}
 function navJumpN(n){const rows=navRows();if(!rows.length)return;navOpenRow(n===9?rows[rows.length-1]:rows[n-1],false);}
 document.addEventListener('keydown',e=>{for(const k of KEYMAP){if(!keyMatches(e,k.match))continue;const fn=KEY_ACTIONS[k.action];if(fn&&fn(e)){e.preventDefault();}return;}});
 // Embedded terminal. openTerm(paneId, el) attaches a live pane's terminal into el;

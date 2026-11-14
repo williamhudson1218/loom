@@ -151,3 +151,9 @@ describe('home view wiring', () => {
     expect(html).toContain('var homeSel=true;');
   });
 });
+
+describe('orbit core', () => {
+  it('is a button that opens all chats, through the same action as the Recent chats link', () => {
+    expect(HOME_VIEW_JS).toContain('<button type="button" class="hm-core" data-hact="board"');
+  });
+});
