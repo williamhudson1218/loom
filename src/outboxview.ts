@@ -360,22 +360,25 @@ function railDrafts(){if(homeSel||orchSel||tsel||!sel||sel.arch)return [];const 
 function railLoad(k){try{return Number(localStorage.getItem(railStoreKey(k)))||0;}catch(e){return 0;}}
 function railCollapsed(k,ds){return railShut(railLoad(k),ds);}
 function railSave(k,collapsed){try{if(collapsed)localStorage.setItem(railStoreKey(k),String(newestDraftAt(railDrafts())||Date.now()));else localStorage.removeItem(railStoreKey(k));}catch(e){}}
-function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wrap)return;const ds=railDrafts();
-  const key=ds.length?selKey():'';if(key!==outRailKey){outRailKey=key;outCollapsed=key?railCollapsed(key,ds):true;}
+function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wrap)return;actSync();const ds=railDrafts(),as=railSteps();const n=ds.length+as.length;
+  const key=n?selKey():'';if(key!==outRailKey){outRailKey=key;outCollapsed=key?railCollapsed(key,ds):true;}
   else if(outCollapsed&&key&&!railCollapsed(key,ds))outCollapsed=false; // a newer draft arrived: open
   if(wrap.dataset.closing){return;}
-  const mode=railMode(ds.length,outCollapsed);const was=wrap.dataset.rail;
-  // Last draft gone: slide the rail shut (width transition), refit the terminal once at the end.
+  const mode=railMode(n,outCollapsed);const was=wrap.dataset.rail;
+  // Last draft and step gone: slide the rail shut (width transition), refit the terminal once at the end.
   if(mode==='hidden'&&was&&was!=='hidden'&&!reduceMotion()){wrap.dataset.closing='1';rail.classList.add('closing');setTimeout(()=>{delete wrap.dataset.closing;rail.classList.remove('closing');wrap.dataset.rail='hidden';rail.hidden=true;rail.innerHTML='';rail._sig=null;refitTerm();},280);outPollSync();return;}
   wrap.dataset.rail=mode;rail.hidden=mode==='hidden';
   if(was!==mode)setTimeout(refitTerm,60);outPollSync();
   if(mode==='hidden'){rail.innerHTML='';rail._sig=null;return;}
-  if(draftsBusy(rail))return;
+  if(draftsBusy(rail)||actBusy(rail))return;
   loadSlkData();
-  if(mode==='collapsed'){const dest=draftDestLabel(ds[ds.length-1]);
+  if(mode==='collapsed'){
+    if(!ds.length){const o=actOpen(as);rail._sig=null;rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the actions ('+o+' open)" aria-label="Open the actions, '+o+' open"><span class="oglyph" aria-hidden="true">\u2611</span><span class="obadge">'+o+'</span></button>';return;}
+    const dest=draftDestLabel(ds[ds.length-1]);
     rail._sig=null;rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the outbox ('+ds.length+' pending, '+esc(dest)+')" aria-label="Open the outbox, '+ds.length+' pending"><span class="oglyph" aria-hidden="true">\u2709</span><span class="obadge">'+ds.length+'</span><span class="odest">'+esc(destInitial(dest))+'</span></button>';return;}
-  const now=Date.now();
-  railPatch(rail,'<div class="orh2"><span>Outbox</span><span class="obadge">'+ds.length+'</span><span class="sp"></span><button type="button" data-rail="close" title="collapse" aria-label="Collapse the outbox">\u203a</button></div><div id="outcards">'+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join('')+'</div>');focusConfirm();}
+  const now=Date.now();const tab=actTab(ds,as);
+  const body=tab==='actions'?actionsBodyHtml(as):'<div id="outcards">'+(ds.length?ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join(''):'<div class="act-empty">No drafts waiting.</div>')+'</div>';
+  railPatch(rail,railHeadHtml(tab,ds,as)+body);focusConfirm();}
 // Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
 function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
 function reduceMotion(){return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);}
@@ -388,7 +391,7 @@ function setDrafts(nl){const old=DATA.drafts||[];const keep=new Set(nl.map(d=>d.
   gone.forEach(d=>{LEAVING[d.id]=1;const el=document.querySelector('#outcards .draft[data-id="'+d.id+'"]');if(el){el.style.maxHeight=el.offsetHeight+'px';void el.offsetHeight;el.classList.add('leaving');}});
   setTimeout(()=>{gone.forEach(d=>{delete LEAVING[d.id];delete DRAFT_EDITS[d.id];});DATA.drafts=(DATA.drafts||[]).filter(d=>!LEAVING[d.id]&&keep.has(d.id));renderOutbox();},300);}
 // While the open chat has pending drafts, ask for their state every 1.5 s so a chat posting one itself shows as Sending\u2026 within a second or two.
-function outPollSync(){const want=!document.hidden&&railDrafts().length>0;if(want&&!outPoll)outPoll=setInterval(pollOutbox,1500);else if(!want&&outPoll){clearInterval(outPoll);outPoll=null;}
+function outPollSync(){actPollSync();const want=!document.hidden&&railDrafts().length>0;if(want&&!outPoll)outPoll=setInterval(pollOutbox,1500);else if(!want&&outPoll){clearInterval(outPoll);outPoll=null;}
   if(want&&!outTick)outTick=setInterval(function(){document.querySelectorAll('#outrail [data-eta]').forEach(function(el){el.textContent=sendEtaText(+el.dataset.eta);});},1000);else if(!want&&outTick){clearInterval(outTick);outTick=null;}}
 function pollOutbox(){if(document.hidden)return;fetch('/api/outbox/state').then(r=>r.json()).then(j=>{if(!j||!j.ok)return;const sig=x=>JSON.stringify((x||[]).map(d=>[d.id,d.send_state||'',d.send_note||'',d.redraft?(d.redraft.active?'a':'k')+d.redraft.ids.length:'']));const psig=x=>JSON.stringify(x||{});const before=sig((DATA.drafts||[]).filter(d=>!LEAVING[d.id]))+psig(SENDING);SENDING=j.sending||{};setDrafts(j.drafts||[]);if(sig(j.drafts)+psig(SENDING)!==before)renderOutbox();}).catch(()=>{});}
 function refitTerm(){try{if(termFit)termFit.fit();}catch(e){}}

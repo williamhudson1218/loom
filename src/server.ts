@@ -70,6 +70,7 @@ import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
 import { handleOrchRoute, orchSummary, orchTick } from './orchserver.ts';
 import { actionTick } from './actionserver.ts';
+import { actionSummary } from './routes/actions.ts';
 import { ensureCliToken, gate, legacyGetPaths, requireWrite, runRoute } from './routes/index.ts';
 import { clientFetchJs } from './clientfetch.ts';
 import { codexVisible, currentTerminal, insideFocusState, terminalLabel } from './terminal.ts';
@@ -422,6 +423,17 @@ function closeChatPane(agent: string, sid: string): { found: boolean; ok: boolea
   const info = snapshot().live[agentSessionKey(agent as Agent, sid)];
   if (!info) return { found: false, ok: false };
   return { found: true, ok: closeSession(info.pane_id, agent as Agent).ok };
+}
+
+function actionsForBoard(): ReturnType<typeof actionSummary> {
+  const db = openDb();
+  try {
+    return actionSummary(db);
+  } catch {
+    return {};
+  } finally {
+    db.close();
+  }
 }
 
 function testLinksForBoard(): ReturnType<typeof allTestLinks> {
@@ -1115,7 +1127,7 @@ export function createServer(): http.Server {
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
       const chats = [...views, ...provisionalForLive(views, live)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately

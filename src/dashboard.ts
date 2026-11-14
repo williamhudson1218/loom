@@ -31,6 +31,7 @@ import { PRUNE_HIST_HTML, PRUNE_VIEW_CSS, PRUNE_VIEW_HTML, PRUNE_VIEW_JS } from 
 import { SLACK_MENU_CSS, SLACK_MENU_PURE_JS, SLACK_MENU_VIEW_JS } from './slackmenu.ts';
 import { PRCI_CSS, PRCI_PURE_JS, PRCI_VIEW_JS } from './prci.ts';
 import { OUTBOX_PURE_JS, OUTBOX_VIEW_CSS, OUTBOX_VIEW_JS } from './outboxview.ts';
+import { ACTIONS_PURE_JS, ACTIONS_VIEW_CSS, ACTIONS_VIEW_JS } from './actionsview.ts';
 import { UPDATE_HEADER_HTML, UPDATE_VIEW_CSS, UPDATE_VIEW_JS } from './updateview.ts';
 import { SLACKMD_JS } from './slackmd.ts';
 import { SHIPMODAL_CSS, SHIPMODAL_HTML, SHIPMODAL_JS } from './shipmodal.ts';
@@ -1038,6 +1039,7 @@ ${TOUR_VIEW_CSS}
 ${WATCHER_VIEW_CSS}
 ${SHIPMODAL_CSS}
 ${OUTBOX_VIEW_CSS}
+${ACTIONS_VIEW_CSS}
 ${UPDATE_VIEW_CSS}
 ${ERROR_VIEW_CSS}
 </style></head>
@@ -1221,8 +1223,10 @@ ${WATCHER_VIEW_JS}
 ${SHIPMODAL_JS}
 ${SLACKMD_JS}
 ${OUTBOX_PURE_JS}
+${ACTIONS_PURE_JS}
 ${SLACK_MENU_PURE_JS}
 ${OUTBOX_VIEW_JS}
+${ACTIONS_VIEW_JS}
 ${SLACK_MENU_VIEW_JS}
 ${PRCI_PURE_JS}
 ${PRCI_VIEW_JS}
@@ -1407,7 +1411,7 @@ function subLine(c){const st=(flatList()&&!c.arch?'<span class="sstate '+dotCls(
   if(!nm)return '<span class="ssub">'+st+rowSub(c)+'</span>';
   return '<span class="ssub named"">'+(st?'<span class="ssl">'+st.trim()+'&nbsp;</span>':'')+nm.html+'</span>';}
 function srow(c){const prn=chatPrNum(c);const a=c.arch?' data-jsonl="'+esc(c.arch.jsonl)+'"':'';
-const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(c.arch?'':homeChipHtml(c))+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
+const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(c.arch?'':homeChipHtml(c))+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':actChip(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
 return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+'>'+
 '<span class="sdot '+dotCls(c)+'" title="'+esc(DOT_LABEL[dotCls(c)])+'"></span>'+
 '<span class="sbody"><span class="shead"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span></span>'+'<span class="sline">'+subLine(c)+(chips?'<span class="schips">'+chips+'</span>':'')+'</span></span></div>';}
@@ -1823,7 +1827,7 @@ function wireMain(){
   $('#colsbtn').addEventListener('click',()=>{const b=$('#colsbtn');if(!b.disabled)setBoardView(boardView==='columns'?'list':'columns');});
   // The session list used to be collapsible; drop any saved collapsed state so nobody keeps a hidden list.
   try{localStorage.removeItem('loom.sidehide');}catch(e){}
-  wireSidebar();wireSideGrip();wireHoverPrefetch();wireSideTop();wireRename();wireOrch();wireHome();wireOutbox();
+  wireSidebar();wireSideGrip();wireHoverPrefetch();wireSideTop();wireRename();wireOrch();wireHome();wireOutbox();wireActions();
   setInterval(()=>{if(!document.hidden&&sel&&mtab==='transcript'&&!sel.arch&&selChat()&&DATA.live[selKey()])loadTranscript(false);},1500);}
 // ---- Rename ---------------------------------------------------------------------
 var renameFor=null;
@@ -1968,9 +1972,9 @@ $('#tbcancel').onclick=closeTermBox;$('#tbgo').onclick=createTermSession;
 $('#termbox').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeTermBox();}else if(e.key==='Enter'){e.preventDefault();createTermSession();}});
 loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{});}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{});}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMenuSync();}
-function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();}).catch(()=>{pollFailed=true;renderStale();if(homeSel)homeClock();});}
