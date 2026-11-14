@@ -11,6 +11,7 @@ import {
   detectEvents,
   formatEventBatch,
   listItems,
+  logOrch,
   needsYouCount,
   newObsState,
   notifyNeedsYou,
@@ -265,5 +266,15 @@ describe('event batching', () => {
     expect(text.startsWith(EVENTS_PREFIX)).toBe(true);
     expect(text).toContain('2 changes: (1) one (2) two');
     expect(text).not.toContain('\n');
+  });
+});
+
+describe('recentLog', () => {
+  it('leaves action-step rows out of the orchestrator feed', () => {
+    const db = openDb(':memory:');
+    logOrch(db, 'relay', 'cozy-donut', 'per company', T0);
+    logOrch(db, 'action', 's1', 'Send the reply: sent', T0 + 1);
+    expect(recentLog(db, 0).map((l) => l.kind)).toEqual(['relay']);
+    db.close();
   });
 });

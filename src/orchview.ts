@@ -120,7 +120,8 @@ var OLOG_TXT={relay:'Sent to',queued:'Queued for',delivered:'Delivered to',faile
 // tail that slides forward never leaves a gap behind an earlier page.
 function orchMerge(store,keys,msgs){let n=0;(msgs||[]).forEach(m=>{const k=(m.at||0)+'|'+m.role+'|'+(m.text||'').length+'|'+(m.text||'').slice(0,40);if(keys[k])return;keys[k]=1;store.push(m);n++;});if(n)store.sort((a,b)=>(a.at||0)-(b.at||0));return n;}
 function orchTimeline(o,store){const out=[];(store||o.messages||[]).forEach((m,i)=>out.push({t:m.at||0,i:i,m:m}));
-  (o.log||[]).forEach(l=>{if(l.kind==='events'||l.kind==='ask')return;out.push({t:l.at,i:1e6+l.id,l:l});});
+  // Action-step rows (kind 'action') are the steps' audit trail, not something Loom said to the orchestrator: never in the feed.
+  (o.log||[]).forEach(l=>{if(l.kind==='events'||l.kind==='ask'||l.kind==='action'||!(l.kind in OLOG_TXT))return;out.push({t:l.at,i:1e6+l.id,l:l});});
   out.sort((a,b)=>(a.t-b.t)||(a.i-b.i));return out;}
 function orchMsgHtml(x){if(x.l){const l=x.l;
     if(l.kind==='started')return '<div class="olog">'+hhmm(l.at)+' · '+esc(l.text)+'</div>';

@@ -157,8 +157,9 @@ export function logOrch(db: Database.Database, kind: LogKind, target: string, te
   db.prepare(`DELETE FROM orchestrator_log WHERE id <= (SELECT MAX(id) FROM orchestrator_log) - 500`).run();
 }
 
+/** The orchestrator feed's log: action-step rows are the steps' audit trail and stay out of it. */
 export function recentLog(db: Database.Database, since: number): LogRow[] {
-  return db.prepare(`SELECT * FROM orchestrator_log WHERE at >= ? ORDER BY id`).all(since) as LogRow[];
+  return db.prepare(`SELECT * FROM orchestrator_log WHERE at >= ? AND kind != 'action' ORDER BY id`).all(since) as LogRow[];
 }
 
 /* ------------------------------------------------------------ notifications */

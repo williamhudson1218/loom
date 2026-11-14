@@ -582,6 +582,22 @@ describe('orchestrator view', () => {
     expect(html).not.toContain('dup');
   });
 
+  it('keeps action-step log rows out of the conversation and the Relays count', async () => {
+    const v = await load();
+    const tl = v.orchTimeline({
+      messages: [{ role: 'user', text: 'where are we', at: 10 }],
+      log: [
+        { id: 1, at: 20, kind: 'action', target: '00000000-0000-4000-8000-000000000000', text: 'Send the reply: sent' },
+        { id: 2, at: 30, kind: 'relay', target: 'cozy-donut', text: 'per company' },
+      ],
+    });
+    const html = tl.map(v.orchMsgHtml).join('');
+    expect(html).not.toContain('undefined');
+    expect(html).not.toContain('Send the reply');
+    expect(html).toContain('Sent to <b>cozy-donut</b>');
+    expect(v.orchCounts(tl).relay).toBe(1);
+  });
+
   it('offers Copy phone link only when the Remote Control link is known', async () => {
     const v = await load();
     expect(v.orchHeadHtml({ live: true, remoteUrl: 'https://claude.ai/code/x', notify: 'needs_you' })).toMatch(/data-oa="phone">Copy phone link/);
