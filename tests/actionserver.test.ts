@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applySchema } from '../src/schema.ts';
 import { addStep, getStep } from '../src/actions.ts';
 import { _resetPipelineStore, pipelineHealth, tickPipelines } from '../src/pipeline.ts';
-import { actionFacts, actionTick, scheduledDraftIds, scheduledDrafts, sendInFlight } from '../src/actionserver.ts';
+import { _resetReplies, actionFacts, actionTick, scheduledDraftIds, scheduledDrafts, sendInFlight } from '../src/actionserver.ts';
 
 const seed = () => {
   const db = new Database(':memory:');
@@ -11,7 +11,7 @@ const seed = () => {
   addStep(db, { id: 'a00000000001', session_id: 's1', title: 'T', when: 'now', then: 'none', ask_first: false, created_by: 'chat', at: 1 });
   return db;
 };
-const rest = { preSend: () => ({ decision: 'pending' as const }), redraftMark: () => undefined, sendInFlight: () => false, slackOff: () => '' };
+const rest = { replies: () => 'pending' as const, answers: () => 'pending' as const, preSend: () => ({ decision: 'pending' as const }), redraftMark: () => undefined, sendInFlight: () => false, slackOff: () => '' };
 const ioFor = (db: Database.Database) => ({ facts: () => ({ ...rest, pr: () => null, draft: () => null }), withDb: <T,>(fn: (d: Database.Database) => T) => fn(db) });
 const logs = (db: Database.Database) => db.prepare(`SELECT kind, target FROM orchestrator_log`).all();
 
@@ -83,6 +83,39 @@ describe('actionFacts', () => {
   });
 });
 
+describe('actionFacts: replies', () => {
+  const snap = { views: [], live: {} };
+  const TH = { thread_url: 'https://acme.slack.com/archives/C0123456789/p1700000000000100', channel: 'C0123456789', thread_ts: '1700000000.000100' };
+  const mkStep = (id: string) => ({ id, current_at: 1_700_000_500_000, trigger_params: TH }) as never;
+  const step = mkStep('a00000000077');
+  const reply = { id: 'slack:1700000600.000200', kind: 'slack' as const, author: 'the reviewer', at: 1_700_000_600_000, snippet: 'ok' };
+
+  it('off when Slack is off, and the thread is never read', () => {
+    const targets: unknown[] = [];
+    const f = actionFacts(snap, 1, { slackOff: () => 'off', fresh: async (t) => (targets.push(t), { ok: true, items: [] }) });
+    expect(f.replies(step)).toBe('off');
+    expect(targets).toHaveLength(0);
+  });
+  it('reads pending first, never blocking, then the result; the baseline is the step current_at', async () => {
+    _resetReplies();
+    const targets: Record<string, unknown>[] = [];
+    const fresh = async (t: Record<string, unknown>) => (targets.push(t), { ok: true as const, items: [reply] });
+    const f = actionFacts(snap, 1, { slackOff: () => '', fresh: fresh as never });
+    expect(f.replies(step)).toBe('pending');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(actionFacts(snap, 2, { slackOff: () => '', fresh: fresh as never }).replies(step)).toEqual({ items: [reply] });
+    expect(targets).toHaveLength(1);
+    expect(targets[0]).toMatchObject({ channel: 'C0123456789', thread_ts: '1700000000.000100', seen: { at: 1_700_000_500_000, slack: '1700000500.000000' } });
+  });
+  it('a failing read is an error result, not a fire', async () => {
+    const step = mkStep('a00000000078');
+    const fresh = async () => ({ ok: false as const, error: 'HTTP 500', items: [reply] });
+    actionFacts(snap, 1, { slackOff: () => '', fresh: fresh as never }).replies(step);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(actionFacts(snap, 2, { slackOff: () => '', fresh: fresh as never }).replies(step)).toEqual({ error: 'HTTP 500' });
+  });
+});
+
 describe('actionTick: send_draft effects', () => {
   const DID = 'd0123456789ab';
   const SID = 'a00000000009';
@@ -100,6 +133,8 @@ describe('actionTick: send_draft effects', () => {
     redraftMark: () => undefined,
     sendInFlight,
     slackOff: () => '',
+    replies: () => 'pending' as const,
+    answers: () => 'pending' as const,
     ...over,
   });
   const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -202,6 +237,8 @@ describe('actionTick: a refused send_kept', () => {
         redraftMark: () => ({ at: 200, n: 1, revised_at: 'R1', ids: ['slack:1.2'], state: 'kept' as const }),
         sendInFlight,
         slackOff: () => '',
+        replies: () => 'pending' as const,
+        answers: () => 'pending' as const,
       }),
       send: async () => (sends++, { ok: false, detail: '1 new message since this was drafted. Nothing was sent.' }),
     };

@@ -8,6 +8,8 @@ import type { Snap } from './orchserver.ts';
 import { readOutbox, type Draft, type SendResult } from './outbox.ts';
 import { pipelineHealth, prFactOf, wantPipeline } from './pipeline.ts';
 import { readMarks } from './redraft.ts';
+import { FRESH_TTL_MS, type FreshResult, type FreshTarget } from './outboxfresh.ts';
+import { stamp } from './outbox.ts';
 import { slackFeatureOn, slackOffDetail } from './slackmode.ts';
 
 // The server half of action items: facts from the live world, and the 15s tick
@@ -19,6 +21,8 @@ export interface ActionIo {
   withDb?: <T>(fn: (db: Database.Database) => T) => T;
   /** The pre-send check (server.ts builds the real one). Absent: every check reads pending, so nothing sends. */
   preSend?: PreSendWork;
+  /** Read a slack_reply step's thread (server.ts builds the real one). Absent: replies stay pending. */
+  fresh?: ActionFactsOpts['fresh'];
   /**
    * Post a draft as the person: the outbox's own send path. `rev` is the revision
    * the pre-send check read; a draft changed since is refused. Absent: refused.
@@ -48,7 +52,22 @@ const sending = new Set<string>();
 
 export const sendInFlight = (stepId: string): boolean => sending.has(stepId);
 
-export function actionFacts(_snap: Snap, now: number, opts: { preSend?: PreSendWork; slackOff?: () => string } = {}): ActionFacts {
+type RepliesEntry = { at: number; r: FreshResult | null; p: Promise<void> | null };
+const repliesByStep = new Map<string, RepliesEntry>();
+
+/** Forget every cached thread read (tests). */
+export function _resetReplies(): void {
+  repliesByStep.clear();
+}
+
+export interface ActionFactsOpts {
+  preSend?: PreSendWork;
+  slackOff?: () => string;
+  /** Read a thread's new messages (server.ts: cachedFresh over the live Slack reads). Absent: a step's replies stay pending. */
+  fresh?: (t: FreshTarget, key: string) => Promise<FreshResult>;
+}
+
+export function actionFacts(_snap: Snap, now: number, opts: ActionFactsOpts = {}): ActionFacts {
   let drafts: ReturnType<typeof readOutbox> | null = null;
   let marks: ReturnType<typeof readMarks> | null = null;
   let off: string | null = null;
@@ -60,7 +79,7 @@ export function actionFacts(_snap: Snap, now: number, opts: { preSend?: PreSendW
     }
     return drafts;
   };
-  return {
+  const facts: ActionFacts = {
     pr: (repo, n) => {
       // Register interest so the pipeline tick fetches a PR no chat is showing.
       const p = wantPipeline(repo, n, false, now);
@@ -87,6 +106,41 @@ export function actionFacts(_snap: Snap, now: number, opts: { preSend?: PreSendW
       return marks[id];
     },
     sendInFlight,
+    replies: (s) => {
+      if (facts.slackOff()) return 'off';
+      if (!opts.fresh) return 'pending';
+      // The baseline is the moment the step became current: a reply before it is never seen.
+      const key = `action:${s.id}:${s.current_at}`;
+      let e = repliesByStep.get(key);
+      if (!e) repliesByStep.set(key, (e = { at: 0, r: null, p: null }));
+      if (!e.p && (!e.r || now - e.at >= FRESH_TTL_MS)) {
+        const entry = e;
+        const t: FreshTarget = {
+          channel: String(s.trigger_params.channel ?? ''),
+          thread_ts: String(s.trigger_params.thread_ts ?? ''),
+          thread_url: String(s.trigger_params.thread_url ?? ''),
+          created_at: stamp(s.current_at),
+          seen: { at: s.current_at, slack: (s.current_at / 1000).toFixed(6) },
+        };
+        entry.p = opts
+          .fresh(t, 'action:' + s.id)
+          .catch((x: Error): FreshResult => ({ ok: false, error: x?.message || 'unknown error', items: [] }))
+          .then((r) => {
+            entry.r = r;
+            entry.at = Date.now();
+          })
+          .finally(() => {
+            entry.p = null;
+          });
+      }
+      const r = e.r;
+      if (!r) return 'pending';
+      return r.ok ? { items: r.items } : { error: r.error };
+    },
+    answers: (s, item) => {
+      const q = String(s.trigger_params.answers ?? '');
+      return q && opts.preSend ? opts.preSend.answers(s.id, q, item) : 'unavailable';
+    },
     slackOff: () => {
       if (off !== null) return off;
       try {
@@ -98,6 +152,7 @@ export function actionFacts(_snap: Snap, now: number, opts: { preSend?: PreSendW
       return off;
     },
   };
+  return facts;
 }
 
 /** Every draft an open send_draft step refers to: the outbox never supersedes these. */
@@ -206,7 +261,7 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
   const jobs: Job[] = [];
   try {
     io.preSend?.beginTick();
-    const facts = (io.facts ?? ((s, n) => actionFacts(s, n, { preSend: io.preSend })))(snap, now);
+    const facts = (io.facts ?? ((s, n) => actionFacts(s, n, { preSend: io.preSend, fresh: io.fresh })))(snap, now);
     withDb((db) => {
       for (const [sid, chain] of openChains(db)) {
         // One bad chain must not stop the ones after it.

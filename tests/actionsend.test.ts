@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRESEND_SYSTEM, PreSendWork, buildPreSendAsk, verdictKey, type PreSendRec } from '../src/actionsend.ts';
+import { ANSWERS_SYSTEM, PRESEND_SYSTEM, PreSendWork, buildAnswersAsk, buildPreSendAsk, verdictKey, type PreSendRec } from '../src/actionsend.ts';
 import type { Draft } from '../src/outbox.ts';
 import type { FreshItem, FreshResult } from '../src/outboxfresh.ts';
 
@@ -139,5 +139,66 @@ describe('PreSendWork', () => {
     const s = setup({ fresh: () => new Promise(() => {}) });
     expect(s.work.check(draft('d0123456789ab'))).toEqual({ decision: 'pending' });
     expect(s.work.check(draft('d0123456789ab'))).toEqual({ decision: 'pending' });
+  });
+});
+
+describe('the answers verdict', () => {
+  const it0 = item(1);
+  const SID = 'a00000000001';
+  const run = async (s: ReturnType<typeof setup>, i = it0, q = 'is the filing approved?') => {
+    let r = s.work.answers(SID, q, i);
+    for (let k = 0; k < 4 && r === 'pending'; k++) {
+      await s.work.idle();
+      s.work.beginTick();
+      r = s.work.answers(SID, q, i);
+    }
+    return r;
+  };
+  it('wraps the question and the reply as data and asks for answers true|false', () => {
+    const p = buildAnswersAsk('is it approved?', it0);
+    expect(p).toContain('<question>\nis it approved?\n</question>');
+    expect(p).toMatch(/<reply>[\s\S]*the reviewer: message 1[\s\S]*<\/reply>/);
+    expect(ANSWERS_SYSTEM).toContain('{"answers": true|false, "reason": "..."}');
+  });
+  it('the first call starts the ask and reads pending; the verdict is stored under answers|step|item', async () => {
+    const s = setup({ reply: async () => '{"answers":true,"reason":"it says approved"}' });
+    expect(s.work.answers(SID, 'q', it0)).toBe('pending');
+    await s.work.idle();
+    expect(s.work.answers(SID, 'q', it0)).toBe('yes');
+    expect(s.rows.get(`answers|${SID}|${it0.id}`)?.reason).toBe('it says approved');
+    expect(s.asks).toHaveLength(1);
+  });
+  it('no verdict is no', async () => {
+    const s = setup({ reply: async () => '{"answers":false,"reason":"unrelated"}' });
+    expect(await run(s)).toBe('no');
+  });
+  it('a stored verdict is reused without asking', async () => {
+    const s = setup();
+    s.rows.set(`answers|${SID}|${it0.id}`, { state: 'send', reason: 'r', at: T });
+    expect(s.work.answers(SID, 'q', it0)).toBe('yes');
+    expect(s.asks).toHaveLength(0);
+  });
+  it('model off, a bad reply and a failing model are unavailable, never yes', async () => {
+    expect(await run(setup({ enabled: false }))).toBe('unavailable');
+    expect(await run(setup({ reply: async () => 'no idea' }))).toBe('unavailable');
+    expect(await run(setup({ reply: async () => { throw new Error('boom'); } }))).toBe('unavailable');
+  });
+  it('shares the per-tick budget with the pre-send asks', async () => {
+    const s = setup({ perTick: 1, items: [item(1)] });
+    expect(s.work.check(draft('d0123456789ab'))).toEqual({ decision: 'pending' });
+    await s.work.idle();
+    s.work.beginTick();
+    expect(s.work.check(draft('d0123456789ab'))).toEqual({ decision: 'pending' }); // takes the one ask
+    expect(s.work.answers(SID, 'q', it0)).toBe('pending'); // no budget left: waits, starts nothing
+    expect(s.asks).toHaveLength(1);
+  });
+  it('the ask goes out with the answers system prompt', async () => {
+    const systems: (string | undefined)[] = [];
+    const rows = new Map<string, PreSendRec>();
+    const w = new PreSendWork({ fresh: async () => ({ ok: true, items: [] }), ask: async (_p, sys) => (systems.push(sys), '{"answers":true,"reason":"y"}'), enabled: () => true, store: { get: (k) => rows.get(k) ?? null, put: (k, r) => void rows.set(k, r) }, now: () => T });
+    w.beginTick();
+    w.answers(SID, 'q', it0);
+    await w.idle();
+    expect(systems).toEqual([ANSWERS_SYSTEM]);
   });
 });

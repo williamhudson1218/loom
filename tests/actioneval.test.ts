@@ -10,7 +10,7 @@ const step = (over: Partial<ActionItem> = {}): ActionItem => ({
   created_at: 1, current_at: 1, fired_at: 0, done_at: 0, attempts: 0, held_rev: '', held_at: 0, approved_rev: '', removed_from: '', ...over,
 });
 const facts = (over: Partial<ActionFacts> = {}): ActionFacts => ({
-  pr: () => null, draft: () => null, preSend: () => ({ decision: 'pending' }), redraftMark: () => undefined, sendInFlight: () => false, slackOff: () => '', ...over,
+  pr: () => null, draft: () => null, preSend: () => ({ decision: 'pending' }), redraftMark: () => undefined, sendInFlight: () => false, slackOff: () => '', replies: () => 'pending', answers: () => 'pending', ...over,
 });
 const pr = { repo: 'acme/app', number: 123 };
 
@@ -271,5 +271,52 @@ describe('send_draft steps', () => {
     const d = only(evaluateChain([sd({ ask_first: true, fired_at: 9 })], facts({ draft: pending, preSend: () => ({ decision: 'hold', why: 'wait' }) }), NOW));
     expect(d[0].patch.status).toBe('held');
     expect(d[0].effect).toBe('redraft');
+  });
+});
+
+describe('triggerState: slack_reply', () => {
+  const TH = { thread_url: 'https://acme.slack.com/archives/C0123456789/p1700000000000100', channel: 'C0123456789', thread_ts: '1700000000.000100' };
+  const sr = (params: Record<string, unknown> = {}) => step({ trigger_type: 'slack_reply', trigger_params: { ...TH, ...params } });
+  const it1 = (n: number, author = 'the reviewer') => ({ id: `slack:1700000001.00000${n}`, kind: 'slack' as const, author, at: 1_700_000_001_000 + n, snippet: `m${n}` });
+  const ok = (...items: ReturnType<typeof it1>[]) => ({ items });
+
+  it('off: stays waiting and says why', () => {
+    expect(triggerState(sr(), facts({ replies: () => 'off' }), NOW)).toEqual({ fired: false, why: "Slack direct mode is off, so replies can't be watched" });
+  });
+  it('error: stays waiting and says why', () => {
+    expect(triggerState(sr(), facts({ replies: () => ({ error: 'HTTP 500' }) }), NOW)).toEqual({ fired: false, why: "can't read the thread: HTTP 500" });
+  });
+  it('pending and an empty thread never fire', () => {
+    expect(triggerState(sr(), facts({ replies: () => 'pending' }), NOW).fired).toBe(false);
+    expect(triggerState(sr(), facts({ replies: () => ok() }), NOW).fired).toBe(false);
+  });
+  it('fires on the first reply with no answers, naming the author', () => {
+    expect(triggerState(sr(), facts({ replies: () => ok(it1(1, 'Pat'), it1(2)) }), NOW)).toEqual({ fired: true, why: 'Pat replied' });
+  });
+  it('from: only that person counts, case-insensitively and by substring', () => {
+    const f = facts({ replies: () => ok(it1(1, 'Someone Else')) });
+    expect(triggerState(sr({ from: 'pat' }), f, NOW).fired).toBe(false);
+    const g = facts({ replies: () => ok(it1(1, 'Someone Else'), it1(2, 'Pat Reviewer')) });
+    expect(triggerState(sr({ from: 'pat' }), g, NOW)).toEqual({ fired: true, why: 'Pat Reviewer replied' });
+  });
+  it('answers: no moves on to the next item, yes fires with that author', () => {
+    const asked: string[] = [];
+    const f = facts({
+      replies: () => ok(it1(1, 'Pat'), it1(2, 'Sam')),
+      answers: (_s, i) => (asked.push(i.id), i.author === 'Sam' ? 'yes' : 'no'),
+    });
+    expect(triggerState(sr({ answers: 'is it approved?' }), f, NOW)).toEqual({ fired: true, why: 'Sam replied' });
+    expect(asked).toHaveLength(2);
+  });
+  it('answers: pending or unavailable keeps waiting and does not look past it', () => {
+    const asked: string[] = [];
+    const base = { replies: () => ok(it1(1, 'Pat'), it1(2, 'Sam')) };
+    const p = triggerState(sr({ answers: 'q' }), facts({ ...base, answers: (_s, i) => (asked.push(i.id), 'pending') }), NOW);
+    expect(p.fired).toBe(false);
+    expect(asked).toHaveLength(1);
+    expect(triggerState(sr({ answers: 'q' }), facts({ ...base, answers: () => 'unavailable' }), NOW)).toEqual({ fired: false, why: "Pat replied; couldn't check it answers the question" });
+  });
+  it('a step with a deleted reader never fires on a throwing fact', () => {
+    expect(() => triggerState(sr(), facts({ replies: () => { throw new Error('x'); } }), NOW)).toThrow();
   });
 });

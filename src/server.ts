@@ -460,7 +460,7 @@ function preSend(): PreSendWork {
       if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined, slackReplies: undefined, slackHistory: undefined });
       return checkFresh(d, deps);
     },
-    ask: (prompt) => askModel(withDbHandle((db) => paneLabelConfig(db).model) || 'haiku', JUDGE.timeoutMs, PRESEND_SYSTEM)(prompt),
+    ask: (prompt, system) => askModel(withDbHandle((db) => paneLabelConfig(db).model) || 'haiku', JUDGE.timeoutMs, system ?? PRESEND_SYSTEM)(prompt),
     enabled: () => withDbHandle((db) => paneLabelConfig(db).enabled),
     store: dbPreSendStore(withDbHandle),
     now: () => Date.now(),
@@ -489,7 +489,17 @@ async function actionSend(id: string, ack: string[], rev: string): Promise<SendR
 }
 
 function actionIo(): ActionIo {
-  return { preSend: preSend(), send: actionSend, redraft: startRedraft };
+  return {
+    preSend: preSend(),
+    send: actionSend,
+    redraft: startRedraft,
+    // A slack_reply step's thread read: cached a minute, Slack reads only while direct mode is on.
+    fresh: (t, key) => {
+      const deps = freshDeps();
+      if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined, slackReplies: undefined, slackHistory: undefined });
+      return cachedFresh(key, t, deps);
+    },
+  };
 }
 
 /** Pending drafts an open send_draft step will send, with the card's Scheduled line. Empty when the DB can't be read. */

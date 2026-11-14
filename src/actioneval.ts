@@ -1,6 +1,7 @@
 import type { ActionItem } from './actions.ts';
 import type { PreSend } from './actionsend.ts';
 import type { RedraftMark } from './redraft.ts';
+import type { FreshItem } from './outboxfresh.ts';
 
 // The pure half of the action tick: given a chain and what is known right now,
 // decide what changes. Only the current step is evaluated, so steps fire one
@@ -17,6 +18,10 @@ export interface ActionFacts {
   sendInFlight(stepId: string): boolean;
   /** Why Loom cannot post to Slack right now ('' when it can). */
   slackOff(): string;
+  /** Replies in a slack_reply step's thread since the step became current. Never blocks: 'pending' until the first read lands. */
+  replies(s: ActionItem): { items: FreshItem[] } | { error: string } | 'pending' | 'off';
+  /** Does this reply answer the step's question? Asked of the cheap model, never awaited. */
+  answers(s: ActionItem, item: FreshItem): 'yes' | 'no' | 'pending' | 'unavailable';
 }
 
 export type Effect = 'send' | 'send_kept' | 'redraft' | 'wake';
@@ -63,10 +68,31 @@ export function triggerState(s: ActionItem, facts: ActionFacts, _now: number): T
       if (d.status === 'discarded' || d.status === 'superseded') return { fired: false, why: `draft ${id} was discarded` };
       return { fired: false, why: `waiting for draft ${id} to be sent` };
     }
+    case 'slack_reply':
+      return slackReplyState(s, facts);
     default:
-      // slack_reply arrives with a later task; until then it never fires.
       return { fired: false, why: 'waiting' };
   }
+}
+
+/** A reply in the thread, optionally from a named person, optionally one the model judges to answer a question. Anything not a clear yes keeps waiting. */
+function slackReplyState(s: ActionItem, facts: ActionFacts): TriggerState {
+  const r = facts.replies(s);
+  if (r === 'off') return { fired: false, why: "Slack direct mode is off, so replies can't be watched" };
+  if (r === 'pending') return { fired: false, why: 'checking the thread for replies' };
+  if ('error' in r) return { fired: false, why: `can't read the thread: ${r.error}` };
+  const from = String(s.trigger_params.from ?? '').trim().toLowerCase();
+  const question = String(s.trigger_params.answers ?? '').trim();
+  const mine = r.items.filter((i) => !from || i.author.toLowerCase().includes(from));
+  if (!mine.length) return { fired: false, why: from ? `waiting for a reply from ${s.trigger_params.from}` : 'waiting for a reply' };
+  if (!question) return { fired: true, why: `${mine[0].author} replied` };
+  for (const i of mine) {
+    const v = facts.answers(s, i);
+    if (v === 'yes') return { fired: true, why: `${i.author} replied` };
+    if (v === 'no') continue;
+    return { fired: false, why: v === 'unavailable' ? `${i.author} replied; couldn't check it answers the question` : `checking whether ${i.author}'s reply answers the question` };
+  }
+  return { fired: false, why: 'waiting for a reply that answers the question' };
 }
 
 const draftIdOf = (s: ActionItem): string => String(s.action_params.draft_id ?? '');
