@@ -144,11 +144,18 @@ export function evaluateChain(chain: ActionItem[], facts: ActionFacts, now: numb
     if (d) out.push(d);
   }
   if (out.length) return out; // the chain moved; the next step is evaluated next tick
-  const s = currentStep(chain);
+  let s = currentStep(chain);
   if (!s) return out;
+  // A waiting step behind the current one is not current yet: clear any stamp (rows from before the stamp
+  // moved to becoming current) so its baseline is taken when it really starts.
+  for (const x of chain) if (x !== s && x.status === 'waiting' && x.current_at !== 0) out.push({ id: x.id, patch: { current_at: 0 } });
   if (s.action_type === 'send_draft' && s.status !== 'waiting') return sendDraftAfterFire(s, facts, now);
   if (s.status !== 'waiting') return out;
-  if (s.current_at === 0) out.push({ id: s.id, patch: { current_at: now } });
+  // The step starts now: stamp it, and judge this tick against that stamp, not the empty one.
+  if (s.current_at === 0) {
+    out.push({ id: s.id, patch: { current_at: now } });
+    s = { ...s, current_at: now };
+  }
   // fired_at on a waiting send_draft step means a person clicked Run on it: the trigger and ask_first are passed.
   const approved = s.action_type === 'send_draft' && s.fired_at > 0;
   const t: TriggerState = approved ? { fired: true, why: 'Run' } : triggerState(s, facts, now);

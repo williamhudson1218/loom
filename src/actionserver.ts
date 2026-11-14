@@ -123,11 +123,11 @@ export function actionFacts(_snap: Snap, now: number, opts: ActionFactsOpts = {}
           seen: { at: s.current_at, slack: (s.current_at / 1000).toFixed(6) },
         };
         entry.p = opts
-          .fresh(t, 'action:' + s.id)
+          .fresh(t, key)
           .catch((x: Error): FreshResult => ({ ok: false, error: x?.message || 'unknown error', items: [] }))
           .then((r) => {
             entry.r = r;
-            entry.at = Date.now();
+            entry.at = now;
           })
           .finally(() => {
             entry.p = null;

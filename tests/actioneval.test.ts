@@ -24,7 +24,7 @@ describe('currentStep', () => {
 
 describe('evaluateChain', () => {
   it('finishes a now/none step, and leaves the next step for a later tick', () => {
-    const a = step(), b = step();
+    const a = step(), b = step({ current_at: 0 });
     const d = evaluateChain([a, b], facts(), NOW);
     expect(d).toHaveLength(1);
     expect(d[0].id).toBe(a.id);

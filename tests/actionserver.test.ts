@@ -4,6 +4,7 @@ import { applySchema } from '../src/schema.ts';
 import { addStep, getStep } from '../src/actions.ts';
 import { _resetPipelineStore, pipelineHealth, tickPipelines } from '../src/pipeline.ts';
 import { _resetReplies, actionFacts, actionTick, scheduledDraftIds, scheduledDrafts, sendInFlight } from '../src/actionserver.ts';
+import type { Snap } from '../src/orchserver.ts';
 
 const seed = () => {
   const db = new Database(':memory:');
@@ -113,6 +114,51 @@ describe('actionFacts: replies', () => {
     actionFacts(snap, 1, { slackOff: () => '', fresh: fresh as never }).replies(step);
     await new Promise((r) => setTimeout(r, 0));
     expect(actionFacts(snap, 2, { slackOff: () => '', fresh: fresh as never }).replies(step)).toEqual({ error: 'HTTP 500' });
+  });
+});
+
+describe('actionTick: slack_reply behind another step', () => {
+  const TH = 'https://acme.slack.com/archives/C0123456789/p1700000000000100';
+  it('does not count a reply posted before the step became current, and fires on one after', async () => {
+    _resetReplies();
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a0000000000a', session_id: 's1', title: 'A', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 100 });
+    addStep(db, { id: 'a0000000000b', session_id: 's1', title: 'B', when: `slack-reply:${TH}`, then: 'none', ask_first: false, created_by: 'chat', at: 100 });
+    expect(getStep(db, 'a0000000000b')?.current_at).toBe(0);
+    const msgs = [{ id: 'slack:1.500000', ts: 1.5 }];
+    const fresh = async (t: { seen?: { slack?: string } }) => ({
+      ok: true as const,
+      items: msgs.filter((m) => m.ts > Number(t.seen?.slack)).map((m) => ({ id: m.id, kind: 'slack' as const, author: 'the reviewer', at: m.ts * 1000, snippet: 'ok' })),
+    });
+    const io = { withDb: <T,>(fn: (d: Database.Database) => T) => fn(db), facts: (s: Snap, n: number) => actionFacts(s, n, { fresh: fresh as never, slackOff: () => '' }) };
+    const snap = { views: [], live: {} };
+    const tick = async (at: number) => {
+      await actionTick(snap, at, io);
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    await tick(1000); // A is current; the reply at 1.5 s lands while A is open
+    expect(getStep(db, 'a0000000000b')?.current_at).toBe(0);
+    db.prepare(`UPDATE action_items SET status = 'done' WHERE id = 'a0000000000a'`).run();
+    await tick(2000); // B becomes current at 2 s
+    await tick(2000 + 61_000);
+    await tick(2000 + 122_000);
+    expect(getStep(db, 'a0000000000b')?.current_at).toBe(2000);
+    expect(getStep(db, 'a0000000000b')?.status).toBe('waiting');
+    expect(getStep(db, 'a0000000000b')?.status_why).toBe('waiting for a reply');
+    msgs.push({ id: 'slack:3.000000', ts: 3 });
+    await tick(2000 + 183_000);
+    await tick(2000 + 184_000);
+    expect(getStep(db, 'a0000000000b')?.status).toBe('done');
+  });
+  it('clears the stamp an older row carries on a step that is not current', async () => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a0000000000a', session_id: 's1', title: 'A', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 100 });
+    addStep(db, { id: 'a0000000000b', session_id: 's1', title: 'B', when: `slack-reply:${TH}`, then: 'none', ask_first: false, created_by: 'chat', at: 100 });
+    db.prepare(`UPDATE action_items SET current_at = 100 WHERE id = 'a0000000000b'`).run();
+    await actionTick({ views: [], live: {} }, 1000, { withDb: <T,>(fn: (d: Database.Database) => T) => fn(db) });
+    expect(getStep(db, 'a0000000000b')?.current_at).toBe(0);
   });
 });
 

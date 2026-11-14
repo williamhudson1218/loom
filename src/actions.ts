@@ -200,7 +200,7 @@ export function addStep(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id, input.session_id, pos, input.title, when.type, JSON.stringify(when.params), then.type, JSON.stringify(then.params),
-    input.ask_first ? 1 : 0, why.length ? 'failed' : 'waiting', why.join('; '), input.created_by, input.at, input.at,
+    input.ask_first ? 1 : 0, why.length ? 'failed' : 'waiting', why.join('; '), input.created_by, input.at, 0,
   );
   return { ok: true, detail: 'added' };
 }
