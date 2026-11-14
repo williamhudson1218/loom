@@ -15,6 +15,7 @@ import { currentTerminal, insideLoading, type InsideLoading } from '../terminal.
 import { attachGhosttyTabs } from '../ghostty.ts';
 import { pretrustFolder } from '../orchstart.ts';
 import { nameNewPanes } from '../panenames.ts';
+import { chatFlags, listSteps, stepSummary } from '../actions.ts';
 import { addTestLink, listTestLinks } from '../testlinks.ts';
 import { heldCount, holdLinks, parseLinksInput, resolveHeldLinks } from '../pendinglinks.ts';
 import type { RouteCtx, RouteDef, Verdict } from './index.ts';
@@ -242,6 +243,13 @@ function getTestLinks(ctx: RouteCtx): void {
   const session = ctx.url.searchParams.get('session') ?? '';
   if (!session) return ctx.json(400, { ok: false, detail: 'session is required' });
   ctx.json(200, { ok: true, links: withDb((db) => listTestLinks(db, session)) });
+}
+
+function getActions(ctx: RouteCtx): void {
+  const session = ctx.url.searchParams.get('session') ?? '';
+  if (!session) return ctx.json(400, { ok: false, detail: 'session is required' });
+  const all = ctx.url.searchParams.get('all') === '1';
+  ctx.json(200, { ok: true, steps: withDb((db) => listSteps(db, session, { all })).map((st) => ({ ...st, summary: stepSummary(st) })), close_when_done: withDb((db) => chatFlags(db, session)).close_when_done });
 }
 
 function getRoute(ctx: RouteCtx): void {
@@ -494,6 +502,7 @@ export const routes: RouteDef[] = [
   { method: 'GET', path: '/api/cli/outbox', kind: 'cli', handler: getOutbox },
   { method: 'GET', path: '/api/cli/ship-labels', kind: 'cli', handler: getShipLabels },
   { method: 'GET', path: '/api/cli/test-links', kind: 'cli', handler: getTestLinks },
+  { method: 'GET', path: '/api/cli/actions', kind: 'cli', handler: getActions },
   { method: 'GET', path: '/api/cli/route', kind: 'cli', handler: getRoute },
   { method: 'POST', path: '/api/cli/route/send', kind: 'cli', handler: postRouteSend },
   { method: 'GET', path: '/api/cli/whoami', kind: 'cli', handler: getWhoami },

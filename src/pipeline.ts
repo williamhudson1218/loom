@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { defaultGh, type GhRunner } from './detail.ts';
+import { parsePrRef } from './prref.ts';
 
 // A PR's whole road to prod, as steps: checks → review → merged → deploy (per
 // job) → done. Built from three gh calls — the PR, the Deploy Production run
@@ -328,10 +329,7 @@ const jobsCache = new Map<number, any[]>(); // completed runs only: their jobs n
 
 export const pipelineKey = (repo: string, number: number) => `${repo}#${number}`;
 
-export function parsePrRef(url: string): { repo: string; number: number } | null {
-  const m = url.match(/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/);
-  return m ? { repo: m[1], number: Number(m[2]) } : null;
-}
+export { parsePrRef };
 
 /** Register interest, and answer from cache. Never fetches; the tick does. */
 export function wantPipeline(repo: string, number: number, live: boolean, now: number = Date.now()): Pipeline | null {

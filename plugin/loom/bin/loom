@@ -27,6 +27,11 @@
   loom ship-lock acquire | release | status | wait [repo]   (<repo>'s git common dir, default the cwd's; no Loom needed)
   loom route list | send <name> <text...>
   loom test-links add <url> [--label "<what to check>"] | list [--json] | clear [<url>]
+  loom action add --title "<step>" --when <trigger> --then <action> [--ask-first]   append a step to this chat's chain
+  loom action done <id> | fail <id> --why "<reason>" | remove <id> | close-when-done on|off | list [--json]
+      <trigger>: now | manual | pr-merged:<owner/repo#n|PR url> | pr-shipped:<same> |
+                 slack-reply:<thread url>[,from=<who>][,answers=<question, last>] | draft-sent:<draft id>
+      <action>:  send-draft:<draft id> | wake:"<instruction>" | none
   loom trees prune [--repo <dir>] [--dry-run] [--json]   remove worktrees that are merged, clean and unused
   loom whoami
 
@@ -801,6 +806,71 @@ def cmd_test_links(args):
         die("usage: loom test-links add <url> [--label ...] | list | clear [<url>]", 2)
 
 
+# ---------- action items ----------
+
+WHEN_PREFIXES = ("pr-merged:", "pr-shipped:", "slack-reply:", "draft-sent:")
+THEN_PREFIXES = ("send-draft:", "wake:")
+ACTION_USAGE = (
+    'usage: loom action add --title "<step>" --when <trigger> --then <action> [--ask-first]'
+    ' | done <id> | fail <id> --why "<reason>" | remove <id> | close-when-done on|off | list [--json]'
+)
+
+
+def cmd_action(args):
+    sub = args[0] if args else ""
+    o, rest = opts(args[1:], flags=("json", "ask_first"))
+    if sub == "add":
+        title = o.get("title")
+        when, then = o.get("when"), o.get("then")
+        if rest or not isinstance(title, str) or not title.strip():
+            die(ACTION_USAGE, 2)
+        if not isinstance(when, str) or not (when in ("now", "manual") or when.startswith(WHEN_PREFIXES)):
+            die("action add: --when must be now, manual, pr-merged:, pr-shipped:, slack-reply: or draft-sent:", 2)
+        if not isinstance(then, str) or not (then == "none" or then.startswith(THEN_PREFIXES)):
+            die("action add: --then must be send-draft:<id>, wake:<instruction> or none", 2)
+        sid = need_session(o)
+        step_id = "a" + "".join(random.choice("0123456789abcdef") for _ in range(12))
+        c.write_event("action.add", id=step_id, session=sid, title=title.strip(), when=when, then=then,
+                      ask_first=o.get("ask_first") is True)
+        print(step_id)
+    elif sub in ("done", "remove", "fail"):
+        if len(rest) != 1:
+            die(ACTION_USAGE, 2)
+        extra = {}
+        if sub == "fail":
+            why = o.get("why")
+            if not isinstance(why, str) or not why.strip():
+                die("action fail: --why is required", 2)
+            extra["why"] = why.strip()
+        sid = need_session(o)
+        c.write_event("action." + sub, id=rest[0], session=sid, **extra)
+        print("%s %s" % (sub, rest[0]))
+    elif sub == "close-when-done":
+        if len(rest) != 1 or rest[0] not in ("on", "off"):
+            die("usage: loom action close-when-done on|off", 2)
+        sid = need_session(o)
+        c.write_event("action.close_when_done", session=sid, on=rest[0] == "on")
+        print("close-when-done " + rest[0])
+    elif sub == "list":
+        sid = need_session(o)
+        r = get("/api/cli/actions?session=" + sid)
+        steps = r.get("steps") or []
+        if o.get("json"):
+            print(json.dumps(r, indent=2))
+            return
+        for st in steps:
+            line = "%s  %s  %s  \u2014 %s" % (st.get("id"), st.get("status"), st.get("title"), st.get("summary") or "")
+            if st.get("status_why"):
+                line += "  (%s)" % st["status_why"]
+            print(line)
+        if not steps:
+            print("no steps")
+        if r.get("close_when_done"):
+            print("close when done: on")
+    else:
+        die(ACTION_USAGE, 2)
+
+
 # ---------- trees ----------
 
 PRUNE_TIMEOUT = 600.0
@@ -879,7 +949,7 @@ def cmd_whoami(_args):
 
 COMMANDS = {
     "outbox": cmd_outbox, "thread": cmd_thread, "ship-label": cmd_ship_label, "ship-lock": cmd_ship_lock,
-    "route": cmd_route, "whoami": cmd_whoami, "test-links": cmd_test_links, "trees": cmd_trees,
+    "route": cmd_route, "whoami": cmd_whoami, "test-links": cmd_test_links, "action": cmd_action, "trees": cmd_trees,
 }
 
 

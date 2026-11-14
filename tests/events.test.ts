@@ -151,6 +151,47 @@ describe('thread events', () => {
     expect(db.prepare(`SELECT * FROM ship_labels`).all()).toEqual([]);
   });
 
+  describe('action events', () => {
+    const ev = (kind: string, f: Record<string, unknown>, at = 10) => applyEvent(db, { kind, at, ...f });
+    const add = (id = 'a00000000001') => ev('action.add', { id, session: SID, title: 'Ship it', when: 'manual', then: 'none', ask_first: false });
+
+    it('action.add is idempotent', () => {
+      expect(add().ok).toBe(true);
+      expect(add()).toEqual({ ok: true, detail: 'exists' });
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM action_items`).get()).toEqual({ n: 1 });
+    });
+
+    it('action.done refuses another chat\'s step', () => {
+      add();
+      expect(ev('action.done', { id: 'a00000000001', session: OTHER })).toEqual({ ok: false, detail: "not this chat's step" });
+      expect(ev('action.done', { id: 'a00000000001', session: SID }).ok).toBe(true);
+      expect(db.prepare(`SELECT status, done_at FROM action_items`).get()).toEqual({ status: 'done', done_at: 10 });
+    });
+
+    it('action.fail clips why to 200 chars', () => {
+      add();
+      ev('action.fail', { id: 'a00000000001', session: SID, why: 'x'.repeat(500) });
+      const r = db.prepare(`SELECT status, status_why FROM action_items`).get() as { status: string; status_why: string };
+      expect(r.status).toBe('failed');
+      expect(r.status_why).toHaveLength(200);
+    });
+
+    it('action.remove records where the step was, and later done is a no-op', () => {
+      add();
+      ev('action.remove', { id: 'a00000000001', session: SID });
+      expect(db.prepare(`SELECT status, removed_from FROM action_items`).get()).toEqual({ status: 'removed', removed_from: 'waiting' });
+      expect(ev('action.done', { id: 'a00000000001', session: SID })).toEqual({ ok: true, detail: 'already removed' });
+      expect(db.prepare(`SELECT status FROM action_items`).get()).toEqual({ status: 'removed' });
+    });
+
+    it('action.close_when_done toggles the flag', () => {
+      ev('action.close_when_done', { session: SID, on: true });
+      expect(db.prepare(`SELECT close_when_done FROM action_chats`).get()).toEqual({ close_when_done: 1 });
+      ev('action.close_when_done', { session: SID, on: false });
+      expect(db.prepare(`SELECT close_when_done FROM action_chats`).get()).toEqual({ close_when_done: 0 });
+    });
+  });
+
   it('rejects unknown kinds', () => {
     expect(applyEvent(db, { kind: 'outbox.send', id: 'd1' }).ok).toBe(false);
   });

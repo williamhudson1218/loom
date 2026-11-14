@@ -5,6 +5,7 @@ import { TOOL_DIR } from './paths.ts';
 import { addDraft, closeDraft, updateDraft, type StoreOpts } from './outbox.ts';
 import { keepMark } from './redraft.ts';
 import { claimForChat, recordAck, releaseThread, setThreadStage, syncLegacyThreads, type ClaimMode, type LegacyThreadRec } from './slackowner.ts';
+import { addStep, getStep, setStep, setCloseWhenDone } from './actions.ts';
 import { addTestLink, clearTestLinks } from './testlinks.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
 
@@ -144,6 +145,38 @@ export function applyEvent(db: Database.Database, e: LoomEvent, opts: IngestOpts
       return addTestLink(db, str(e.session), e.url, e.label, at);
     case 'testlinks.clear':
       return clearTestLinks(db, str(e.session), e.url);
+    case 'action.add': {
+      const title = str(e.title).replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!str(e.id) || !str(e.session) || !title) return { ok: false, detail: 'id, session and title are required' };
+      return addStep(db, {
+        id: str(e.id), session_id: str(e.session), title, when: str(e.when), then: str(e.then),
+        ask_first: e.ask_first === true, created_by: e.created_by === 'user' ? 'user' : 'chat', at,
+      });
+    }
+    case 'action.done':
+    case 'action.fail':
+    case 'action.remove': {
+      const step = getStep(db, str(e.id));
+      if (!step) return { ok: false, detail: 'no such step' };
+      if (step.session_id !== str(e.session)) return { ok: false, detail: "not this chat's step" };
+      if (step.status === 'removed') return { ok: true, detail: 'already removed' };
+      if (e.kind === 'action.remove') {
+        setStep(db, step.id, { status: 'removed', removed_from: step.status, current_at: at });
+        return { ok: true, detail: 'removed' };
+      }
+      if (e.kind === 'action.done') {
+        if (step.status === 'done') return { ok: true, detail: 'already done' };
+        setStep(db, step.id, { status: 'done', status_why: '', done_at: at, current_at: at });
+        return { ok: true, detail: 'done' };
+      }
+      setStep(db, step.id, { status: 'failed', status_why: str(e.why).slice(0, 200), current_at: at });
+      return { ok: true, detail: 'failed' };
+    }
+    case 'action.close_when_done': {
+      if (!str(e.session)) return { ok: false, detail: 'session is required' };
+      setCloseWhenDone(db, str(e.session), e.on === true, at);
+      return { ok: true, detail: e.on === true ? 'on' : 'off' };
+    }
     default:
       return { ok: false, detail: `unknown kind ${JSON.stringify(e.kind)}` };
   }

@@ -135,6 +135,18 @@ describe('/api/cli reads', () => {
     expect((await call('GET', '/api/cli/ship-labels?session=' + SID)).body.labels).toEqual({ [SID]: { label: 'New', repo: '/r2', at: 2 } });
   });
 
+  it('actions: a chat\'s steps and its close-when-done flag; session is required', async () => {
+    const db = new Database(dbFile);
+    applySchema(db);
+    expect((await call('GET', '/api/cli/actions?session=s1')).body).toEqual({ ok: true, steps: [], close_when_done: false });
+    applyEvent(db, { kind: 'action.add', id: 'a00000000001', session: 's1', title: 'Ship it', when: 'manual', then: 'none', ask_first: false });
+    applyEvent(db, { kind: 'action.close_when_done', session: 's1', on: true });
+    db.close();
+    const r = await call('GET', '/api/cli/actions?session=s1');
+    expect(r.body).toMatchObject({ ok: true, close_when_done: true, steps: [{ id: 'a00000000001', title: 'Ship it', status: 'waiting' }] });
+    expect((await call('GET', '/api/cli/actions')).status).toBe(400);
+  });
+
   it('route and whoami', async () => {
     const r = await call('GET', '/api/cli/route');
     expect(r.body.panes[0]).toEqual({ pane_id: '%1', name: 'blue-vanilla', target: 'loom-a:1.0', command: '2.1.319', topic: 'Fix ACH' });
