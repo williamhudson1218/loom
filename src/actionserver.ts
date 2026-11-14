@@ -62,9 +62,14 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
     const facts = (io.facts ?? actionFacts)(snap, now);
     (io.withDb ?? realWithDb)((db) => {
       for (const [sid, chain] of openChains(db)) {
-        for (const d of evaluateChain(chain, facts, now)) {
-          setStep(db, d.id, d.patch);
-          if (d.log) logAction(db, sid, d.log, now);
+        // One bad chain must not stop the ones after it.
+        try {
+          for (const d of evaluateChain(chain, facts, now)) {
+            setStep(db, d.id, d.patch);
+            if (d.log) logAction(db, sid, d.log, now);
+          }
+        } catch (e) {
+          console.error(`[loom] action chain ${sid} failed:`, (e as Error).message);
         }
       }
     });
