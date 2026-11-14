@@ -568,4 +568,46 @@ describe('actionTick: wake_chat', () => {
     expect(n).toBe(1);
     expect(getStep(db, ID)).toMatchObject({ status: 'running', fired_at: 2000 });
   });
+
+  it('a log write that throws after the claim still delivers the wake', async () => {
+    const db = mk();
+    let n = 0;
+    const io = ioWith(db, async () => (n++, { ok: true, detail: 'sent' }));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    db.exec(`CREATE TRIGGER no_log BEFORE INSERT ON orchestrator_log WHEN NEW.text LIKE '%waking the chat%' BEGIN SELECT RAISE(ABORT, 'disk full'); END`);
+    await actionTick(snap, 1000, io);
+    await flush();
+    err.mockRestore();
+    expect(n).toBe(1);
+    expect(getStep(db, ID)).toMatchObject({ status: 'running', fired_at: 1000 });
+  });
+
+  it('a tick that throws after a claim still runs the wake, and a claim it cannot check fails saying nothing was delivered', async () => {
+    const db = mk();
+    let n = 0;
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // closeDoneChats runs after the chains: make it throw so the whole tick fails after the claim.
+    const io = { ...ioWith(db, async () => (n++, { ok: true, detail: 'sent' })), closePane: () => ({ found: true, ok: true }), pendingDrafts: () => [] };
+    db.exec(`DROP TABLE action_chats`);
+    await actionTick(snap, 1000, io);
+    await flush();
+    expect(n).toBe(1);
+    expect(getStep(db, ID)?.status).toBe('running');
+    // The row cannot be read when the job checks its claim: fail with the reason, deliver nothing.
+    const db2 = mk();
+    let reads = 0;
+    let m = 0;
+    const io2 = {
+      ...ioWith(db2, async () => (m++, { ok: true, detail: 'sent' })),
+      withDb: <T,>(fn: (d: Database.Database) => T) => {
+        if (++reads === 2) throw new Error('database is locked');
+        return fn(db2);
+      },
+    };
+    await actionTick(snap, 1000, io2);
+    await flush();
+    err.mockRestore();
+    expect(m).toBe(0);
+    expect(getStep(db2, ID)).toMatchObject({ status: 'failed', status_why: "couldn't start the wake: database is locked" });
+  });
 });

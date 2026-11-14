@@ -7,6 +7,7 @@ import { ACTIONS_PURE_JS, ACTIONS_VIEW_CSS, ACTIONS_VIEW_JS } from '../src/actio
 import { routes, setActionsDeps, actionSummary } from '../src/routes/actions.ts';
 import { applySchema } from '../src/schema.ts';
 import { addStep, getStep, listSteps } from '../src/actions.ts';
+import { actionTick } from '../src/actionserver.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 import { ROUTES } from '../src/routes/index.ts';
 import type { RouteCtx } from '../src/routes/index.ts';
@@ -225,7 +226,34 @@ describe('routes', () => {
     expect((await call('POST', '/api/actions/run', { id: 'a00000000007' })).code).toBe(409);
     withDb((db) => db.prepare(`UPDATE action_items SET status = 'running' WHERE id = 'a00000000007'`).run());
     expect((await call('POST', '/api/actions/run', { id: 'a00000000007' })).code).toBe(409);
-    expect((await call('POST', '/api/actions/retry', { id: 'a00000000007' })).body.detail).toBe('not available yet');
+    expect((await call('POST', '/api/actions/retry', { id: 'a00000000007' })).body.detail).toBe('nothing to retry');
+  });
+
+  it('retry on a failed wake step approves one more wake: the next tick delivers once, a second click does not add one', async () => {
+    withDb((db) => {
+      addStep(db, { id: 'a00000000009', session_id: 'sess-9', title: 'Wake', when: 'manual', then: 'wake:"merge it"', ask_first: true, created_by: 'chat', at: 1 });
+      db.prepare(`UPDATE action_items SET status = 'failed', status_why = 'no report from the chat in 2 h', fired_at = 3, attempts = 0 WHERE id = 'a00000000009'`).run();
+    });
+    expect((await call('POST', '/api/actions/retry', { id: 'a00000000009' })).body.ok).toBe(true);
+    const r = withDb((db) => getStep(db, 'a00000000009'));
+    expect(r).toMatchObject({ status: 'waiting', status_why: 'waking the chat', attempts: 1 });
+    expect(r?.fired_at).toBeGreaterThan(3);
+    expect((await call('POST', '/api/actions/retry', { id: 'a00000000009' })).code).toBe(409); // already approved
+    const delivered: string[] = [];
+    let release!: (x: { ok: boolean; detail: string }) => void;
+    const io = {
+      withDb,
+      facts: () => ({ pr: () => null, draft: () => null, preSend: () => ({ decision: 'pending' as const }), redraftMark: () => undefined, sendInFlight: () => false, slackOff: () => '', replies: () => 'pending' as const, answers: () => 'pending' as const }),
+      deliver: (sid: string) => (delivered.push(sid), new Promise<{ ok: boolean; detail: string }>((res) => { release = res; })),
+    };
+    await actionTick({ views: [], live: {} }, 10_000, io);
+    expect((await call('POST', '/api/actions/retry', { id: 'a00000000009' })).code).toBe(409); // running
+    await actionTick({ views: [], live: {} }, 11_000, io);
+    release({ ok: true, detail: 'sent to the chat' });
+    await new Promise((res) => setTimeout(res, 0));
+    await actionTick({ views: [], live: {} }, 12_000, io);
+    expect(delivered).toEqual(['sess-9']);
+    expect(withDb((db) => getStep(db, 'a00000000009'))).toMatchObject({ status: 'running', fired_at: 10_000 });
   });
 
   it('undo of a removed, Run-approved wake step drops the approval', async () => {

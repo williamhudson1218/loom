@@ -332,8 +332,32 @@ async function runSend(job: Extract<Job, { kind: 'send' }>, io: ActionIo, withDb
   }
 }
 
+/** Is this firing's claim still on the row? Throws when the row cannot be read. */
+function stillClaimed(db: Database.Database, job: Extract<Job, { kind: 'wake' }>): boolean {
+  const cur = getStep(db, job.stepId);
+  return !!cur && cur.status === 'running' && cur.fired_at === job.firedAt;
+}
+
 async function runWake(job: Extract<Job, { kind: 'wake' }>, io: ActionIo, withDb: NonNullable<ActionIo['withDb']>): Promise<void> {
   try {
+    // Check the claim before delivering: a tick that failed after claiming still hands its wake here.
+    let held: boolean;
+    try {
+      held = withDb((db) => stillClaimed(db, job));
+    } catch (e) {
+      const why = `couldn't start the wake: ${(e as Error).message}`;
+      try {
+        withDb((db) => {
+          setStep(db, job.stepId, { status: 'failed', status_why: why });
+          logAction(db, job.sid, `${job.title}: ${why}`, Date.now());
+          restoreOnAttention(db, job.agent, job.sid, job.title, 'failed', Date.now());
+        });
+      } catch {
+        console.error(`[loom] action wake ${job.stepId}: ${why}`);
+      }
+      return;
+    }
+    if (!held) return;
     let r: { ok: boolean; detail: string };
     try {
       r = io.deliver ? await io.deliver(job.sid, job.prompt) : { ok: false, detail: 'waking is not available' };
@@ -388,13 +412,19 @@ async function runRedraft(job: Extract<Job, { kind: 'redraft' }>, io: ActionIo, 
 function wakeStep(db: Database.Database, s: ActionItem, d: Decision, sid: string, agent: string, now: number, jobs: Job[]): void {
   if (waking.has(s.id)) return;
   const p = d.patch;
+  const job: Job = { kind: 'wake', stepId: s.id, sid, agent, title: s.title, prompt: buildWakePrompt(s, d.why ?? ''), firedAt: p.fired_at ?? now };
   const claimed = db
     .prepare(`UPDATE action_items SET status = 'running', fired_at = ?, status_why = ? WHERE id = ? AND status = 'waiting' AND fired_at = ?`)
     .run(p.fired_at ?? now, p.status_why ?? '', s.id, s.fired_at).changes === 1;
   if (!claimed) return;
+  // Queue the job before anything else can throw: a claimed row with no job would sit running until the timeout.
   waking.add(s.id);
-  if (d.log) logAction(db, sid, d.log, now);
-  jobs.push({ kind: 'wake', stepId: s.id, sid, agent, title: s.title, prompt: buildWakePrompt(s, d.why ?? ''), firedAt: p.fired_at ?? now });
+  jobs.push(job);
+  try {
+    if (d.log) logAction(db, sid, d.log, now);
+  } catch (e) {
+    console.error('[loom] action wake log failed:', (e as Error).message);
+  }
 }
 
 let busy = false;
@@ -446,11 +476,10 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
     });
   } catch (e) {
     console.error('[loom] action tick failed:', (e as Error).message);
-    // The rows may not say running: drop the claims and start nothing. A claimed wake row stays running and
-    // times out rather than being woken twice.
+    // The rows may not say running: drop the sends and redrafts. A wake's claim is its own committed write, so
+    // its job still runs; runWake re-reads the row and delivers only if this firing still holds it.
     for (const j of jobs) if (j.kind === 'send') sending.delete(j.stepId);
-    for (const j of jobs) if (j.kind === 'wake') waking.delete(j.stepId);
-    jobs.length = 0;
+    for (let i = jobs.length - 1; i >= 0; i--) if (jobs[i].kind !== 'wake') jobs.splice(i, 1);
   } finally {
     busy = false;
   }

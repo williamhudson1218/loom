@@ -141,8 +141,6 @@ async function postAskFirst(ctx: RouteCtx): Promise<void> {
   });
 }
 
-const NOT_YET = { ok: false, detail: 'not available yet' };
-
 async function postRun(ctx: RouteCtx): Promise<void> {
   const b = await ctx.body();
   withDb((db) => {
@@ -178,8 +176,19 @@ async function postRetry(ctx: RouteCtx): Promise<void> {
   withDb((db) => {
     const s = target(ctx, b, db);
     if (!s) return;
-    if (s.action_type === 'wake_chat') return ctx.json(409, NOT_YET);
     if (s.status !== 'failed' && s.status !== 'held') return ctx.json(409, { ok: false, detail: 'nothing to retry' });
+    if (s.action_type === 'wake_chat') {
+      // A Retry is a person asking for one more wake: approved like Run (waiting + fired_at), so a manual or
+      // ask-first step does not bounce back to due, and claimed by the next tick like any other wake.
+      if (s.status !== 'failed') return ctx.json(409, { ok: false, detail: 'nothing to retry' });
+      const now = deps.now();
+      const ok = db
+        .prepare(`UPDATE action_items SET status = 'waiting', status_why = 'waking the chat', fired_at = ?, attempts = attempts + 1 WHERE id = ? AND status = 'failed'`)
+        .run(now, s.id).changes === 1;
+      if (!ok) return ctx.json(409, { ok: false, detail: 'the step changed; try again' });
+      logAction(db, s.session_id, `Retry: ${s.title}`, now);
+      return ctx.json(200, { ok: true });
+    }
     // fired_at back to 0: a retried step fires on its trigger again, and an ask-first step asks for Run again.
     setStep(db, s.id, { status: 'waiting', status_why: '', held_rev: '', held_at: 0, fired_at: 0, approved_rev: '', attempts: s.attempts + 1 });
     ctx.json(200, { ok: true });
