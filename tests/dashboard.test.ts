@@ -501,10 +501,21 @@ describe('orchestrator view', () => {
     const esc = (s: string) => (s || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]!);
     const rel = () => '6m ago';
     const DATA = { chats: [{ agent: 'claude', session_id: 's1' }], live: {} };
-    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${BRAND_ICONS_JS}${ORCH_VIEW_JS}; return { orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml, orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
+    return new Function('esc', 'rel', 'DATA', 'chatKey', `var TERM_TOKEN='tok';${BRAND_ICONS_JS}${ORCH_VIEW_JS}; return { orchSchedRun, orchPinHtml, orchRailHtml, orchTimeline, orchMsgHtml, orchHeadHtml, orchRowKind, orchRowShown, orchCounts, orchMerge };`)(
       esc, rel, DATA, (c: { agent: string; session_id: string }) => c.agent + ':' + c.session_id,
     ) as Record<string, (...a: unknown[]) => any>;
   };
+
+  it('picks the Scheduled row button from the step action type, not its summary text', async () => {
+    const v = await load();
+    const row = (action_type: string, status: string) => ({ action_type, status, summary: 'To do' });
+    expect(v.orchSchedRun(row('send_draft', 'due'))).toBe('Send now');
+    expect(v.orchSchedRun(row('send_draft', 'waiting'))).toBe('');
+    expect(v.orchSchedRun(row('none', 'waiting'))).toBe('Run');
+    expect(v.orchSchedRun(row('wake_chat', 'due'))).toBe('');
+    expect(v.orchSchedRun(row('none', 'running'))).toBe('');
+    expect(v.orchSchedRun({ action_type: 'none', status: 'waiting', summary: 'When x → send draft' })).toBe('Run');
+  });
 
   it('mounts the pinned entry above the list, the view inside the main area, and its wiring', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude', [], [], 'tok', { sessionId: 'o1', needsYou: 2, enabled: true, live: true });

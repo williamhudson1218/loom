@@ -373,6 +373,32 @@ describe('close when done (the tick)', () => {
     expect(closed).toEqual(['claude:s1']);
   });
 
+  it('re-checks the chat on the live board right before closing, and releases the claim when it started working', async () => {
+    const { db, io, closed, setDrafts } = setup();
+    let live: Snap = { views: [view('s1')], live: { 'claude:s1': loc('s1', true) } };
+    const withLive = { ...io, liveSnap: () => live };
+    await actionTick(idleSnap, 1000, withLive);
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    expect(closeLogs(db)).toEqual([]);
+    // A draft written since the tick's snapshot also keeps it open.
+    live = idleSnap;
+    let calls = 0;
+    withLive.pendingDrafts = () => (++calls === 1 ? [] : [{ session_id: 's1' }]);
+    await actionTick(idleSnap, 2000, withLive);
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    withLive.pendingDrafts = () => [];
+    setDrafts([]);
+    await actionTick(idleSnap, 3000, withLive);
+    expect(closed).toEqual(['claude:s1']);
+    // A live board that cannot be read never closes.
+    const b = setup();
+    await actionTick(idleSnap, 1000, { ...b.io, liveSnap: () => { throw new Error('tmux gone'); } });
+    expect(b.closed).toEqual([]);
+    expect(chatFlags(b.db, 's1').closed_at).toBe(0);
+  });
+
   it('never closes without a pane closer, or with the flag off', async () => {
     const { db, io, closed } = setup();
     await actionTick(idleSnap, 1000, { ...io, closePane: undefined });
@@ -405,5 +431,20 @@ describe('close when done (the tick)', () => {
     await actionTick({ views: [view('s1', { done: true })], live: {} }, 1000, io);
     expect(getStep(db, 'a00000000001')?.status).toBe('held');
     expect(hidden(db)).toEqual([{ agent: 'claude', session_id: 's2', via: '' }]);
+  });
+
+  it('a step that fails also puts its closed chat back on the board', async () => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a00000000001', session_id: 's1', title: 'Send', when: 'now', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
+    db.prepare(`UPDATE action_items SET status = 'running' WHERE id = 'a00000000001'`).run(); // Loom restarted mid-send
+    markChatDone(db, 'claude', 's1', 1);
+    const io = {
+      withDb: <T,>(fn: (d: Database.Database) => T) => fn(db),
+      facts: () => ({ ...rest, pr: () => null, draft: () => ({ status: 'pending', kind: 'slack' as const, revised_at: 'R1' }) }),
+    };
+    await actionTick({ views: [view('s1', { done: true })], live: {} }, 1000, io);
+    expect(getStep(db, 'a00000000001')?.status).toBe('failed');
+    expect(hidden(db)).toEqual([]);
   });
 });

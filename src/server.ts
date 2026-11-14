@@ -495,6 +495,8 @@ function actionIo(): ActionIo {
     redraft: startRedraft,
     // Close when done: the Send & close pane closer. Pending drafts come from the outbox itself (actionserver's default).
     closePane: closeChatPane,
+    // The board rebuilt now, not the memoized snapshot: the close re-checks working on it first. Only runs when a close is due.
+    liveSnap: buildSnapshot,
     // A slack_reply step's thread read: cached a minute, Slack reads only while direct mode is on.
     fresh: (t, key) => {
       const deps = freshDeps();

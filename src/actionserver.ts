@@ -39,6 +39,11 @@ export interface ActionIo {
   closePane?: (agent: string, sid: string) => { found: boolean; ok: boolean };
   /** The outbox's pending drafts. Absent: the real outbox. A throw reads as unknown, which never closes. */
   pendingDrafts?: () => { session_id: string }[];
+  /**
+   * The board as it is right now (server.ts: snapshot(), what closeChatPane reads). The close path re-checks the
+   * chat on it just before closing, since the tick's snapshot can be seconds old. Absent: the tick's snapshot.
+   */
+  liveSnap?: () => Snap;
 }
 
 function realWithDb<T>(fn: (db: Database.Database) => T): T {
@@ -235,12 +240,35 @@ function closeDoneChats(db: Database.Database, snap: Snap, now: number, io: Acti
       if (!d.close) continue;
       // Claim the close first: only the write that flips closed_at from 0 closes the chat.
       if (db.prepare(`UPDATE action_chats SET closed_at = ? WHERE session_id = ? AND closed_at = 0`).run(now, sid).changes !== 1) continue;
+      // Re-check on the board as it is now, right before closing: a chat that started a turn or wrote a draft
+      // since the tick's snapshot keeps its pane, and the claim is released so the next tick checks again.
+      if (!stillIdle(sid, snap, io)) {
+        db.prepare(`UPDATE action_chats SET closed_at = 0 WHERE session_id = ? AND closed_at = ?`).run(sid, now);
+        continue;
+      }
       closeChatDone(db, agentOf(snap, sid), sid, closePane, now);
       logAction(db, sid, 'closed: every step done', now);
     } catch (e) {
       console.error(`[loom] close when done ${sid} failed:`, (e as Error).message);
     }
   }
+}
+
+function stillIdle(sid: string, tickSnap: Snap, io: ActionIo): boolean {
+  let fresh: Snap;
+  let drafts: { session_id: string }[] | null;
+  try {
+    fresh = io.liveSnap ? io.liveSnap() : tickSnap;
+  } catch {
+    return false;
+  }
+  try {
+    drafts = (io.pendingDrafts ?? pendingDrafts)();
+  } catch {
+    drafts = null;
+  }
+  const c = closeChatFact(fresh, sid, drafts);
+  return !!c && !c.working && c.pendingDrafts === 0;
 }
 
 type Job = { kind: 'send'; stepId: string; sid: string; agent: string; title: string; draftId: string; ack: string[]; rev: string } | { kind: 'redraft'; stepId: string; sid: string; title: string; draftId: string };

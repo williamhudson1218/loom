@@ -147,8 +147,8 @@ function orchItemChat(i){if(i.ref_type!=='chat')return null;const k=i.ref_id;con
 // Steps the orchestrator holds for chats that are over (closed, archived, ended): the step, where it came from,
 // and for a send_draft step the text it will send, so a scheduled message never goes out unseen.
 function orchSchedRun(s){if(s.status==='running'||s.status==='done'||s.status==='removed')return '';
-  if(s.summary.indexOf('send draft')>=0)return s.status==='due'?'Send now':'';
-  if(s.summary.indexOf('wake the chat')>=0)return '';return 'Run';}
+  if(s.action_type==='send_draft')return s.status==='due'?'Send now':'';
+  if(s.action_type==='none')return 'Run';return '';}
 function orchSchedHtml(list){return (list||[]).map(s=>{const run=orchSchedRun(s);
   return '<div class="osch"><div class="oct"><b>'+esc(s.title)+'</b><span>'+esc(s.status)+'</span></div><div class="ocw">'+esc(s.summary)+(s.chat_title?' · from '+esc(s.chat_title):'')+'</div>'+
     (s.status_why?'<div class="osw">'+esc(s.status_why)+'</div>':'')+(s.draft_text!=null?'<pre class="odr">'+esc(s.draft_text)+'</pre>':'')+

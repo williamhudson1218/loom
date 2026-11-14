@@ -416,6 +416,7 @@ export interface ScheduledRow {
   summary: string;
   status: string;
   status_why: string;
+  action_type: string;
   session_id: string;
   chat_title: string;
   /** A send_draft step's draft, its messages joined, so a scheduled message is never sent unseen. */
@@ -445,7 +446,7 @@ export function scheduledSteps(db: Database.Database, snap: Snap, now: number, r
     if (!c || !chatOver(c, now)) continue;
     for (const s of chain) {
       if (s.status === 'done' || s.status === 'removed') continue;
-      const row: ScheduledRow = { id: s.id, title: s.title, summary: stepSummary(s), status: s.status, status_why: s.status_why, session_id: sid, chat_title: v?.title || v?.claude_auto_title || '' };
+      const row: ScheduledRow = { id: s.id, title: s.title, summary: stepSummary(s), status: s.status, status_why: s.status_why, action_type: s.action_type, session_id: sid, chat_title: v?.title || v?.claude_auto_title || '' };
       if (s.action_type === 'send_draft') {
         const t = draftText(String(s.action_params.draft_id ?? ''));
         if (t !== undefined) row.draft_text = t;

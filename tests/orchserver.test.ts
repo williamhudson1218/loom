@@ -258,7 +258,7 @@ describe('orchView scheduled', () => {
     const o = orchView(snap, T0 + 1000, () => '', drafts) as { scheduled: Record<string, unknown>[] };
     expect(o.scheduled).toEqual([
       {
-        id: 'a0000000c001', title: 'Tell the reviewer', summary: 'When PR #123 merges → send draft', status: 'waiting', status_why: '',
+        id: 'a0000000c001', title: 'Tell the reviewer', summary: 'When PR #123 merges → send draft', status: 'waiting', status_why: '', action_type: 'send_draft',
         session_id: 'sch-closed', chat_title: 'The closed chat', draft_text: 'Merged.\n\nThanks',
       },
     ]);
