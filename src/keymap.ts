@@ -12,12 +12,15 @@ export type KeyScope = 'global' | 'page' | 'dialog';
 export type KeyBound = 'page' | 'native' | 'dialog';
 
 export interface KeyMatch {
-  key: string; // KeyboardEvent.key, lower-cased for letters
+  key: string; // KeyboardEvent.key, lower-cased for letters; 'digit' matches 1-9
   meta?: boolean;
+  ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
   /** true: fires only with no modifier held and not while typing in a field */
   plain?: boolean;
+  /** true: also fires while the embedded terminal has focus (xterm is told to let the key go) */
+  term?: boolean;
 }
 
 export interface KeyBinding {
@@ -42,6 +45,16 @@ export const KEYMAP: KeyBinding[] = [
     match: { key: 'n', meta: true }, accelerator: 'Command+N' },
   { action: 'jump', keys: '⌘K', scope: 'global', label: 'Jump to a chat, ticket or command', bound: 'page',
     match: { key: 'k', meta: true } },
+  { action: 'jumpN', keys: '⌘1–⌘9', scope: 'global', label: 'Open the Nth chat in the list (⌘9 opens the last)', bound: 'page',
+    match: { key: 'digit', meta: true, term: true } },
+  { action: 'paneLeft', keys: '⌃H', scope: 'global', label: 'Move one column left: outbox, terminal, chat list', bound: 'page',
+    match: { key: 'h', ctrl: true, term: true } },
+  { action: 'paneRight', keys: '⌃L', scope: 'global', label: 'Move one column right: chat list, terminal, outbox', bound: 'page',
+    match: { key: 'l', ctrl: true, term: true } },
+  { action: 'navDown', keys: '⌃J', scope: 'global', label: 'Next chat, or the next draft in the outbox', bound: 'page',
+    match: { key: 'j', ctrl: true, term: true } },
+  { action: 'navUp', keys: '⌃K', scope: 'global', label: 'Previous chat, or the previous draft in the outbox', bound: 'page',
+    match: { key: 'k', ctrl: true, term: true } },
   { action: 'dismiss', keys: 'Esc', scope: 'page', label: 'Close the open menu or deselect the chat', bound: 'page',
     match: { key: 'Escape' } },
   { action: 'slackPick', keys: '⌘⇧L', scope: 'global', label: 'Pick a Slack message to open its chat', bound: 'native',

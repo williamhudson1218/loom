@@ -38,4 +38,13 @@ describe('keymap registry', () => {
     expect(keymapForPage({}).some((k) => k.label.startsWith('Pick a Slack'))).toBe(false);
     expect(keymapForPage({ slack_goto_hotkey: 'Command+Shift+L' }).find((k) => k.label.startsWith('Pick a Slack'))!.keys).toBe('⌘⇧L');
   });
+  it('chat and column navigation fire from inside the terminal, which releases them', () => {
+    const nav = KEYMAP.filter((k) => ['jumpN', 'paneLeft', 'paneRight', 'navDown', 'navUp'].includes(k.action));
+    expect(nav.map((k) => k.keys)).toEqual(['⌘1–⌘9', '⌃H', '⌃L', '⌃J', '⌃K']);
+    for (const k of nav) expect(k.match!.term).toBe(true);
+    expect(nav[0].match).toMatchObject({ key: 'digit', meta: true });
+    for (const k of nav.slice(1)) expect(k.match).toMatchObject({ ctrl: true });
+    expect(html).toContain('term.attachCustomKeyEventHandler(e=>!termReleases(e))');
+    expect(keymapForPage({}).find((k) => k.keys === '⌘1–⌘9')).toBeTruthy();
+  });
 });

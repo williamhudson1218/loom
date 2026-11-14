@@ -796,6 +796,7 @@ ${PRUNE_VIEW_CSS}
   .lacts button { background:#3a1a1e; color:#ffd0d2; border:1px solid #7a3236; border-radius:6px; padding:3px 9px; font-size:12px; cursor:pointer; }
   .lacts button:hover { background:#4a2227; }
   .srow:focus-visible { outline:1px solid #5c6b93; }
+  #outcards .draft:focus { outline:1px solid #5c6b93; outline-offset:-1px; }
   .sdot { flex:0 0 8px; height:8px; border-radius:4px; margin-top:6px; background:var(--pending); display:inline-block; }
   .sdot.d-working { background:#e8b04a; animation:pulse 1s ease-in-out infinite; }
   .sdot.d-turn { background:#6ea2ff; }
@@ -1850,11 +1851,39 @@ const KEY_ACTIONS={
   settings:function(e){openSettings();return true;},
   newThread:function(e){if(!composerOpen)openComposer();return true;},
   jump:function(e){jumpToggle();return true;},
+  jumpN:function(e){if(navBlocked())return false;navJumpN(+e.key);return true;},
+  paneLeft:function(e){if(navBlocked())return false;navMove(-1);return true;},
+  paneRight:function(e){if(navBlocked())return false;navMove(1);return true;},
+  navDown:function(e){if(navBlocked())return false;navStep(1);return true;},
+  navUp:function(e){if(navBlocked())return false;navStep(-1);return true;},
   dismiss:function(e){if(hmenuClose())return false;if(e.target&&e.target.closest&&e.target.closest('#mterm,#oterm,.xterm'))return false;if(ctxState){closeCtx();return false;}if(sel)deselect();return false;}
 };
-function keyMatches(e,m){if(String(e.key).toLowerCase()!==m.key.toLowerCase())return false;
+function keyMatches(e,m){const k=String(e.key).toLowerCase();if(m.key==='digit'?!/^[1-9]$/.test(k):k!==m.key.toLowerCase())return false;
   if(m.plain)return !e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.shiftKey;
-  return !!m.meta===e.metaKey&&!e.ctrlKey&&!!m.alt===e.altKey&&!!m.shift===e.shiftKey;}
+  return !!m.meta===e.metaKey&&!!m.ctrl===e.ctrlKey&&!!m.alt===e.altKey&&!!m.shift===e.shiftKey;}
+// Keys the embedded terminal hands back to the page (match.term), so they navigate instead of reaching the pane.
+function termReleases(e){return KEYMAP.some(k=>k.match.term&&keyMatches(e,k.match));}
+// ---- Column navigation (Cmd+1-9, Ctrl+H/J/K/L) -------------------------------------
+// Three columns, left to right: the chat list (0), the open chat and its terminal (1), the
+// outbox rail (2). H/L move focus between them; J/K step chats (or drafts, in the outbox).
+// A step taken from the list keeps focus in the list: navStayUntil stops the terminal that
+// opens for the new chat from taking focus.
+var navStayUntil=0;
+function navBlocked(){return composerOpen||(typeof JUMP!=='undefined'&&JUMP.open)||!$('#renamebox').hidden||!$('#termbox').hidden;}
+function navRows(){const vis=r=>r.offsetParent!==null;const side=[...document.querySelectorAll('#sidelist .srow[data-sid]:not(.ghost)')].filter(vis);return side.length?side:[...document.querySelectorAll('#kanban .tk[data-sid]')].filter(vis);}
+function navCol(){const a=document.activeElement;if(a&&a.closest){if(a.closest('#outrail'))return 2;if(a.closest('#side'))return 0;if(a.closest('#chatmain'))return 1;}return sel?1:0;}
+function navOpenRow(r,stay){const c=r&&rowChat(r);if(!c)return false;navStayUntil=stay?Date.now()+2000:0;selectChat(c.session_id,c.agent,c.arch||null);r.scrollIntoView({block:'nearest'});setTimeout(stay?navFocusList:navFocusMain,0);return true;}
+function navFocusList(){const rows=navRows();const r=rows.find(x=>x.classList.contains('sel'))||rows[0];if(!r)return false;r.focus();r.scrollIntoView({block:'nearest'});return true;}
+function navFocusMain(){if(!sel){const a=document.activeElement;const r=a&&a.closest&&a.closest('.srow[data-sid],.tk[data-sid]');return navOpenRow(r||navRows()[0],false);}
+  navStayUntil=0;if(term){term.focus();return true;}const p=$('#pinput');if(p){p.focus();return true;}const m=$('#chatmain');m.tabIndex=-1;m.focus();return true;}
+function navCards(){return [...document.querySelectorAll('#outcards .draft[data-id]')];}
+function navFocusCard(el){if(!el)return false;el.tabIndex=-1;el.focus();el.scrollIntoView({block:'nearest'});return true;}
+function navFocusOutbox(){const rail=$('#outrail');if(!rail||rail.hidden)return false;const open=rail.querySelector('[data-rail="open"]');if(open)open.click();return navFocusCard(navCards()[0]);}
+function navMove(dx){const to=navCol()+dx;if(to===0)navFocusList();else if(to===1)navFocusMain();else if(to===2)navFocusOutbox();}
+function navStep(dy){const col=navCol();
+  if(col===2){const cards=navCards();if(!cards.length)return;const a=document.activeElement;const i=cards.findIndex(x=>x.contains(a));navFocusCard(cards[i<0?0:Math.min(Math.max(i+dy,0),cards.length-1)]);return;}
+  const rows=navRows();if(!rows.length)return;const i=rows.findIndex(r=>r.classList.contains('sel'));const j=i<0?(dy>0?0:rows.length-1):i+dy;if(j<0||j>=rows.length||j===i)return;navOpenRow(rows[j],col===0);}
+function navJumpN(n){const rows=navRows();if(!rows.length)return;navOpenRow(n===9?rows[rows.length-1]:rows[n-1],false);}
 document.addEventListener('keydown',e=>{for(const k of KEYMAP){if(!keyMatches(e,k.match))continue;const fn=KEY_ACTIONS[k.action];if(fn&&fn(e)){e.preventDefault();}return;}});
 // Embedded terminal. openTerm(paneId, el) attaches a live pane's terminal into el;
 // closeTerm() detaches. The chat keeps running either way: only Loom's view of it
@@ -1868,7 +1897,7 @@ function livePaneFor(sid,agent){const l=DATA.live[agent+':'+sid];return l&&l.pan
 function openTerm(paneId,el){closeTerm();if(!TERM_TOKEN||!paneId)return Promise.resolve();const my=termSeq;const pk=typeof paneId==='string'?paneId:'';const warm=pk?termPool.take(pk):null;if(warm&&!warm.dead&&warm.ws&&warm.ws.readyState===1){showWarm(warm,el);return Promise.resolve();}if(warm)destroyEnt(warm);const snapP=pk?snapCache.get(pk):null;return loadXterm().then(()=>{if(my!==termSeq)return;termEl=el;
 // paneId is a chat pane id, or {session,window} for a whole terminal window.
 const col=document.createElement('div');col.className='tcol';const bar=document.createElement('div');bar.className='ttools';bar.innerHTML=toolbarHtml('window',false);const wrap=document.createElement('div');wrap.className='termwrap';col.appendChild(bar);col.appendChild(wrap);el.appendChild(col);
-term=new Terminal({fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace',fontSize:12,cursorBlink:true,scrollback:1000,linkHandler:{activate:(ev,uri)=>{if(/^https?:/i.test(uri))window.open(uri,'_blank','noopener');},allowNonHttpProtocols:false},theme:{background:'#07080c',foreground:'#e6e6e6'}});termFit=new FitAddon.FitAddon();term.loadAddon(termFit);term.open(wrap);try{if(window.WebglAddon){const gl=new WebglAddon.WebglAddon();gl.onContextLoss(()=>{try{gl.dispose();}catch(e){}});term.loadAddon(gl);}}catch(e){}try{if(window.WebLinksAddon)term.loadAddon(new WebLinksAddon.WebLinksAddon((ev,u)=>{if(/^https?:/i.test(u))window.open(u,'_blank','noopener');}));}catch(e){}try{termFit.fit();}catch(e){}
+term=new Terminal({fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace',fontSize:12,cursorBlink:true,scrollback:1000,linkHandler:{activate:(ev,uri)=>{if(/^https?:/i.test(uri))window.open(uri,'_blank','noopener');},allowNonHttpProtocols:false},theme:{background:'#07080c',foreground:'#e6e6e6'}});termFit=new FitAddon.FitAddon();term.loadAddon(termFit);term.attachCustomKeyEventHandler(e=>!termReleases(e));term.open(wrap);try{if(window.WebglAddon){const gl=new WebglAddon.WebglAddon();gl.onContextLoss(()=>{try{gl.dispose();}catch(e){}});term.loadAddon(gl);}}catch(e){}try{if(window.WebLinksAddon)term.loadAddon(new WebLinksAddon.WebLinksAddon((ev,u)=>{if(/^https?:/i.test(u))window.open(u,'_blank','noopener');}));}catch(e){}try{termFit.fit();}catch(e){}
 const ent={key:pk,col,wrap,bar,term,ws:null,fit:termFit,ro:null,view:'',mode:'',dead:false,h:createHandoff(),parked:false,destroyed:false};cur=ent;
 const tgt=typeof paneId==='string'?'pane='+encodeURIComponent(paneId):'session='+encodeURIComponent(paneId.session)+'&window='+encodeURIComponent(paneId.window);
 const q=tgt+'&token='+encodeURIComponent(TERM_TOKEN)+'&cols='+term.cols+'&rows='+term.rows;const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/term?'+q);ws.binaryType='arraybuffer';termWs=ws;ent.ws=ws;const t=term;let mode='attach';termView='';bar.classList.add('off');
@@ -1888,7 +1917,7 @@ bar.addEventListener('mousedown',e=>e.preventDefault());// keep keyboard focus i
 bar.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const mn=bar.querySelector('.tmenu');if(b.dataset.more!==undefined){if(mn)mn.hidden=!mn.hidden;return;}if(mn)mn.hidden=true;if(b.dataset.act)termCmd(b.dataset.act,bar);t.focus();});
 ent.ro=termRO=new ResizeObserver(layout);termRO.observe(el);
 if(snapP)snapP.then(r=>{if(ent.destroyed||!r)return;const w=snapPaint(ent.h,fitSnap(r,t.rows));if(w!==null)t.write(w);});
-t.focus();});}
+if(Date.now()>navStayUntil)t.focus();});}
 // The toolbar acts on the view's current pane through POST /api/term/cmd (whitelisted verbs, same token as the socket).
 // A chat view only toggles the chat's zoom (its window is the user's real workspace; the server refuses the rest). A terminal window gets the full set.
 function toolbarHtml(kind,zoomed){if(kind==='chat')return '<button data-act="zoom" class="tzoom" title="Toggle between the chat alone and its whole tmux window">'+(zoomed?'Show window':'Show chat')+'</button><span class="tmsg"></span>';return '<button data-act="split-right" title="Split right">Split right</button><button data-act="split-down" title="Split down">Split down</button><button data-act="zoom" title="Zoom or unzoom the current pane">Zoom</button><button data-act="next-pane" title="Move to the next pane">Next pane</button><span class="tmsg"></span><span class="spacer"></span><span class="tmore"><button data-more title="More">⋯</button><div class="tmenu" hidden><button data-act="close-pane" class="danger">Close pane</button></div></span>';}
@@ -1898,7 +1927,7 @@ function termCmd(action,bar){if(!termView)return;const msg=bar.querySelector('.t
 function closeTerm(){termSeq++;const e=cur;termKey='';termView='';cur=null;termRO=null;termWs=null;term=null;termFit=null;termEl=null;if(!e)return;
   if(e.key&&e.mode==='attach'&&!e.dead&&e.ws&&e.ws.readyState===1){e.parked=true;e.col.style.display='none';for(const x of termPool.park(e.key,e))destroyEnt(x.v);}else destroyEnt(e);}
 function destroyEnt(e){if(e.destroyed)return;e.destroyed=true;if(e.ro)e.ro.disconnect();try{if(e.ws)e.ws.close();}catch(x){}try{e.term.dispose();}catch(x){}if(e.col.parentNode)e.col.remove();}
-function showWarm(e,el){e.parked=false;termEl=el;cur=e;term=e.term;termWs=e.ws;termFit=e.fit;termRO=e.ro;termView=e.view;e.col.style.display='';try{e.fit.fit();}catch(x){}alignTerm();e.term.focus();}
+function showWarm(e,el){e.parked=false;termEl=el;cur=e;term=e.term;termWs=e.ws;termFit=e.fit;termRO=e.ro;termView=e.view;e.col.style.display='';try{e.fit.fit();}catch(x){}alignTerm();if(Date.now()>navStayUntil)e.term.focus();}
 // Hover a sidebar row for 150ms and its screen is fetched, so the click paints at once.
 var hoverT=0;function wireHoverPrefetch(){const sl=$('#sidelist');if(!sl)return;sl.addEventListener('mouseover',e=>{const r=e.target.closest&&e.target.closest('.srow[data-sid]');clearTimeout(hoverT);if(!r||!TERM_TOKEN)return;hoverT=setTimeout(()=>{const c=rowChat(r);const p=c&&!c.arch&&livePaneFor(c.session_id,c.agent);if(p&&!termPool.has(p))snapCache.get(p);},150);});sl.addEventListener('mouseleave',()=>clearTimeout(hoverT));}
 // ---- Terminals --------------------------------------------------------------------
