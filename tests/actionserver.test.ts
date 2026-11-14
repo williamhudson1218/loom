@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applySchema } from '../src/schema.ts';
-import { addStep, getStep } from '../src/actions.ts';
+import { addStep, chatFlags, getStep, setCloseWhenDone } from '../src/actions.ts';
+import { markChatDone } from '../src/parked.ts';
 import { _resetPipelineStore, pipelineHealth, tickPipelines } from '../src/pipeline.ts';
 import { _resetReplies, actionFacts, actionTick, scheduledDraftIds, scheduledDrafts, sendInFlight } from '../src/actionserver.ts';
 import type { Snap } from '../src/orchserver.ts';
@@ -316,5 +317,93 @@ describe('action_items columns', () => {
     applySchema(db);
     const cols = (db.prepare(`PRAGMA table_info(action_items)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(expect.arrayContaining(['held_at', 'approved_rev']));
+  });
+});
+
+describe('close when done (the tick)', () => {
+  const view = (sid: string, over: object = {}) => ({ agent: 'claude', session_id: sid, title: 'chat ' + sid, last_active_at: 1, ...over }) as unknown as Snap['views'][number];
+  const loc = (sid: string, working: boolean) => ({ agent: 'claude', session_id: sid, pane_id: '%1', tmux_session: 'loom-x', window_index: '1', pane_index: '0', running: true, working }) as Snap['live'][string];
+  const idleSnap: Snap = { views: [view('s1')], live: { 'claude:s1': loc('s1', false) } };
+  const setup = (when = 'now') => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a00000000001', session_id: 's1', title: 'T', when, then: 'none', ask_first: false, created_by: 'chat', at: 1 });
+    setCloseWhenDone(db, 's1', true, 1);
+    const closed: string[] = [];
+    let drafts: { session_id: string }[] = [];
+    const io = {
+      ...ioFor(db),
+      closePane: (a: string, s: string) => { closed.push(a + ':' + s); return { found: true, ok: true }; },
+      pendingDrafts: () => drafts,
+    };
+    return { db, io, closed, setDrafts: (d: { session_id: string }[]) => (drafts = d) };
+  };
+  const hidden = (db: Database.Database) => db.prepare(`SELECT agent, session_id, via FROM chat_hidden`).all();
+  const closeLogs = (db: Database.Database) => db.prepare(`SELECT text FROM orchestrator_log WHERE text LIKE 'closed:%'`).all();
+
+  it('closes the chat once every step is done, logs it, and never closes it twice', async () => {
+    const { db, io, closed } = setup();
+    await actionTick(idleSnap, 1000, io);
+    expect(closed).toEqual(['claude:s1']);
+    expect(chatFlags(db, 's1')).toEqual({ close_when_done: true, closed_at: 1000 });
+    expect(hidden(db)).toEqual([{ agent: 'claude', session_id: 's1', via: 'close' }]);
+    expect(closeLogs(db)).toEqual([{ text: 'closed: every step done' }]);
+    await actionTick(idleSnap, 2000, io);
+    expect(closed).toHaveLength(1);
+  });
+
+  it('waits while the chat is working, has a pending draft, or its state is unknown', async () => {
+    const { db, io, closed, setDrafts } = setup();
+    await actionTick({ views: [view('s1')], live: { 'claude:s1': loc('s1', true) } }, 1000, io);
+    expect(closed).toEqual([]);
+    setDrafts([{ session_id: 'other' }, { session_id: 's1' }]);
+    await actionTick(idleSnap, 2000, io);
+    expect(closed).toEqual([]);
+    setDrafts([]);
+    await actionTick({ views: [], live: {} }, 3000, io); // the board has not indexed yet
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    await actionTick({ views: [view('someone-else')], live: {} }, 3500, io); // this chat is not on the board
+    expect(closed).toEqual([]);
+    io.pendingDrafts = () => { throw new Error('outbox unreadable'); };
+    await actionTick(idleSnap, 4000, io);
+    expect(closed).toEqual([]);
+    io.pendingDrafts = () => [];
+    await actionTick(idleSnap, 5000, io);
+    expect(closed).toEqual(['claude:s1']);
+  });
+
+  it('never closes without a pane closer, or with the flag off', async () => {
+    const { db, io, closed } = setup();
+    await actionTick(idleSnap, 1000, { ...io, closePane: undefined });
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    setCloseWhenDone(db, 's1', false, 1);
+    await actionTick(idleSnap, 2000, io);
+    expect(closed).toEqual([]);
+  });
+
+  it('adding a step reopens a closed chain', async () => {
+    const { db, io, closed } = setup();
+    await actionTick(idleSnap, 1000, io);
+    addStep(db, { id: 'a00000000002', session_id: 's1', title: 'More', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 2 });
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    db.prepare(`UPDATE action_items SET status = 'done' WHERE id = 'a00000000002'`).run();
+    await actionTick(idleSnap, 3000, io);
+    expect(closed).toHaveLength(2);
+  });
+
+  it('a step that holds or fails puts its closed chat back on the board', async () => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a00000000001', session_id: 's1', title: 'Send', when: 'now', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
+    markChatDone(db, 'claude', 's1', 1);
+    db.prepare(`INSERT INTO chat_hidden (agent, session_id, hidden_at) VALUES ('claude', 's2', 1)`).run(); // a plain Remove stays
+    const io = {
+      withDb: <T,>(fn: (d: Database.Database) => T) => fn(db),
+      facts: () => ({ ...rest, pr: () => null, draft: () => ({ status: 'pending', kind: 'slack' as const, revised_at: 'R1' }), slackOff: () => 'Slack direct mode is off' }),
+    };
+    await actionTick({ views: [view('s1', { done: true })], live: {} }, 1000, io);
+    expect(getStep(db, 'a00000000001')?.status).toBe('held');
+    expect(hidden(db)).toEqual([{ agent: 'claude', session_id: 's2', via: '' }]);
   });
 });

@@ -12,9 +12,10 @@ import { readTranscript, type Msg } from './transcript.ts';
 import { readAllThreads, type ThreadRec } from './slack.ts';
 import { parseSlackThread } from './slackref.ts';
 import { cachedPipeline, parsePrRef, prFactOf, wantPipeline } from './pipeline.ts';
-import { readOutbox } from './outbox.ts';
+import { readOutbox, type Draft } from './outbox.ts';
+import { openChains, stepSummary } from './actions.ts';
 import { threadState } from './slackowner.ts';
-import { sweepItems, type ChatFact, type PrFact, type SweepFacts } from './orchsweep.ts';
+import { chatOver, sweepItems, type ChatFact, type PrFact, type SweepFacts } from './orchsweep.ts';
 import { ChatJudge, askModel, dbVerdictStore } from './orchjudge.ts';
 import { paneLabelConfig } from './panetopics.ts';
 import { detectFirstRunPrompt, type OrchStartState } from './orchstart.ts';
@@ -408,7 +409,69 @@ export function orchTokenOk(req: http.IncomingMessage): boolean {
 }
 
 /** The orchestrator view's whole payload. */
-export function orchView(snap: Snap, now: number = Date.now(), run: TmuxRunner = defaultRun): Record<string, unknown> {
+/** One open step whose chat is over: the orchestrator rail's Scheduled group owns it now. */
+export interface ScheduledRow {
+  id: string;
+  title: string;
+  summary: string;
+  status: string;
+  status_why: string;
+  session_id: string;
+  chat_title: string;
+  /** A send_draft step's draft, its messages joined, so a scheduled message is never sent unseen. */
+  draft_text?: string;
+}
+
+/**
+ * Open steps whose chat is over by chatOver (archived, closed, or ended 2 h ago).
+ * A chat Loom knows nothing about yet (board not indexed) is not listed.
+ */
+export function scheduledSteps(db: Database.Database, snap: Snap, now: number, readDrafts: () => Record<string, Pick<Draft, 'messages'>> = readOutbox): ScheduledRow[] {
+  const chats = sweepFacts(snap, db, () => ({}), now);
+  let drafts: Record<string, Pick<Draft, 'messages'>> | null = null;
+  const draftText = (id: string): string | undefined => {
+    try {
+      drafts ??= readDrafts();
+    } catch {
+      drafts = {};
+    }
+    const m = drafts[id]?.messages;
+    return Array.isArray(m) ? m.join('\n\n') : undefined;
+  };
+  const out: ScheduledRow[] = [];
+  for (const [sid, chain] of openChains(db)) {
+    const v = snap.views.find((x) => x.session_id === sid);
+    const c = chats.chat(agentSessionKey(v?.agent ?? 'claude', sid));
+    if (!c || !chatOver(c, now)) continue;
+    for (const s of chain) {
+      if (s.status === 'done' || s.status === 'removed') continue;
+      const row: ScheduledRow = { id: s.id, title: s.title, summary: stepSummary(s), status: s.status, status_why: s.status_why, session_id: sid, chat_title: v?.title || v?.claude_auto_title || '' };
+      if (s.action_type === 'send_draft') {
+        const t = draftText(String(s.action_params.draft_id ?? ''));
+        if (t !== undefined) row.draft_text = t;
+      }
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+/** The Scheduled group never takes the orchestrator page down with it. */
+function safeScheduled(db: Database.Database, snap: Snap, now: number, readDrafts: () => Record<string, Pick<Draft, 'messages'>>): ScheduledRow[] {
+  try {
+    return scheduledSteps(db, snap, now, readDrafts);
+  } catch (e) {
+    console.error('[loom] scheduled steps failed:', (e as Error).message);
+    return [];
+  }
+}
+
+export function orchView(
+  snap: Snap,
+  now: number = Date.now(),
+  run: TmuxRunner = defaultRun,
+  readDrafts: () => Record<string, Pick<Draft, 'messages'>> = readOutbox,
+): Record<string, unknown> {
   return withDb((db) => {
     const sid = orchSettings.sessionId(db);
     const me = orchLive(snap, sid);
@@ -464,6 +527,7 @@ export function orchView(snap: Snap, now: number = Date.now(), run: TmuxRunner =
       moving,
       log: recentLog(db, now - 24 * 3_600_000),
       queued: queuedRelays(db),
+      scheduled: safeScheduled(db, snap, now, readDrafts),
       messages,
     };
   });

@@ -3,7 +3,8 @@ import type http from 'node:http';
 import { openDb } from '../src/db.ts';
 import type { ChatView, LiveLoc } from '../src/dashboard.ts';
 import { RELAY_PREFIX, orchSettings, queuedRelays, recentLog, relayToChat } from '../src/orchestrator.ts';
-import { askAboutText, chatInfos, observations, orchHistory, orchTick, type Snap } from '../src/orchserver.ts';
+import { askAboutText, chatInfos, observations, orchHistory, orchTick, orchView, type Snap } from '../src/orchserver.ts';
+import { addStep } from '../src/actions.ts';
 import { termToken } from '../src/ptybridge.ts';
 import { ensureOrchToken, orchDir, orchTranscriptPath } from '../src/orchsession.ts';
 import fs from 'node:fs';
@@ -233,5 +234,33 @@ describe('orchestrator history paging', () => {
     expect(c.messages.map((m) => m.text)).toEqual(['turn 0', 'turn 1', 'turn 2']);
     expect(c.more).toBe(false);
     expect(orchHistory(T0, 5)).toEqual({ ok: true, messages: [], more: false });
+  });
+});
+
+describe('orchView scheduled', () => {
+  afterAll(() => {
+    const db = openDb();
+    db.prepare(`DELETE FROM action_items WHERE session_id LIKE 'sch-%'`).run();
+    db.close();
+  });
+  it('lists the open steps of a closed chat with the draft text, and leaves a live chat out', () => {
+    const db = openDb();
+    addStep(db, { id: 'a0000000c001', session_id: 'sch-closed', title: 'Tell the reviewer', when: 'pr-merged:acme/app#123', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
+    addStep(db, { id: 'a0000000c002', session_id: 'sch-closed', title: 'Already done', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 1 });
+    db.prepare(`UPDATE action_items SET status = 'done' WHERE id = 'a0000000c002'`).run();
+    addStep(db, { id: 'a0000000c003', session_id: 'sch-live', title: 'Live step', when: 'manual', then: 'none', ask_first: false, created_by: 'chat', at: 1 });
+    db.close();
+    const snap: Snap = {
+      views: [view('sch-closed', { done: true, title: 'The closed chat' }), view('sch-live', { last_active_at: T0 })],
+      live: { 'claude:sch-live': loc('sch-live', '%4') },
+    };
+    const drafts = () => ({ d0123456789ab: { status: 'pending', messages: ['Merged.', 'Thanks'] } }) as never;
+    const o = orchView(snap, T0 + 1000, () => '', drafts) as { scheduled: Record<string, unknown>[] };
+    expect(o.scheduled).toEqual([
+      {
+        id: 'a0000000c001', title: 'Tell the reviewer', summary: 'When PR #123 merges → send draft', status: 'waiting', status_why: '',
+        session_id: 'sch-closed', chat_title: 'The closed chat', draft_text: 'Merged.\n\nThanks',
+      },
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { openDb as realOpenDb } from '../db.ts';
-import { addStep, chatFlags, getStep, listSteps, newStepId, setStep } from '../actions.ts';
+import { addStep, chatFlags, getStep, listSteps, newStepId, setCloseWhenDone, setStep } from '../actions.ts';
 import { logAction } from '../actionserver.ts';
 import { readOutbox } from '../outbox.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
@@ -177,6 +177,16 @@ async function postRetry(ctx: RouteCtx): Promise<void> {
   });
 }
 
+/** The panel's Close when all done switch. Turning it on clears closed_at, so a chain already done may close on the next tick. */
+async function postCloseWhenDone(ctx: RouteCtx): Promise<void> {
+  const b = await ctx.body();
+  const session = str(b?.session, 200);
+  if (!session) return ctx.json(400, { ok: false, detail: 'session is required' });
+  const on = b?.on === true;
+  withDb((db) => setCloseWhenDone(db, session, on, deps.now()));
+  ctx.json(200, { ok: true, close_when_done: on });
+}
+
 const post = (p: string, handler: RouteDef['handler']): RouteDef => ({ method: 'POST', path: `/api/actions/${p}`, kind: 'browser', handler });
 
 export const routes: RouteDef[] = [
@@ -188,4 +198,5 @@ export const routes: RouteDef[] = [
   post('ask-first', postAskFirst),
   post('run', postRun),
   post('retry', postRetry),
+  post('close-when-done', postCloseWhenDone),
 ];

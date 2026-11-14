@@ -379,7 +379,7 @@ function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wr
     const dest=draftDestLabel(ds[ds.length-1]);
     rail._sig=null;rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the outbox ('+ds.length+' pending, '+esc(dest)+')" aria-label="Open the outbox, '+ds.length+' pending"><span class="oglyph" aria-hidden="true">\u2709</span><span class="obadge">'+ds.length+'</span><span class="odest">'+esc(destInitial(dest))+'</span></button>';return;}
   const now=Date.now();const tab=actTab(ds,as);
-  const body=tab==='actions'?actionsBodyHtml(as):'<div id="outcards">'+(ds.length?ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join(''):'<div class="act-empty">No drafts waiting.</div>')+'</div>';
+  const body=tab==='actions'?actionsBodyHtml(as,ACT_CWD[actSid()]):'<div id="outcards">'+(ds.length?ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join(''):'<div class="act-empty">No drafts waiting.</div>')+'</div>';
   railPatch(rail,railHeadHtml(tab,ds,as)+body);focusConfirm();}
 // Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
 function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}

@@ -1,11 +1,14 @@
 import type Database from 'better-sqlite3';
 import { openDb } from './db.ts';
-import { getStep, openChains, setStep, stepSummary } from './actions.ts';
-import { evaluateChain, type ActionFacts, type Decision } from './actioneval.ts';
+import { chatFlags, getStep, listSteps, openChains, setStep, stepSummary } from './actions.ts';
+import { closeDecision, evaluateChain, type ActionFacts, type Decision } from './actioneval.ts';
 import type { PreSendWork } from './actionsend.ts';
 import { logOrch } from './orchestrator.ts';
 import type { Snap } from './orchserver.ts';
-import { readOutbox, type Draft, type SendResult } from './outbox.ts';
+import { pendingDrafts, readOutbox, type Draft, type SendResult } from './outbox.ts';
+import { closeChatDone, restoreChat } from './parked.ts';
+import { agentSessionKey } from './placements.ts';
+import type { Agent } from './types.ts';
 import { pipelineHealth, prFactOf, wantPipeline } from './pipeline.ts';
 import { readMarks } from './redraft.ts';
 import { FRESH_TTL_MS, type FreshResult, type FreshTarget } from './outboxfresh.ts';
@@ -32,6 +35,10 @@ export interface ActionIo {
   redraft?: (draftId: string) => Promise<{ ok: boolean; detail: string }>;
   /** The draft as it is now, for the hold after a failed send. */
   readDraft?: (draftId: string) => Draft | undefined;
+  /** Close a chat's pane the Save-for-later way (server.ts: closeChatPane). Absent: close-when-done never closes. */
+  closePane?: (agent: string, sid: string) => { found: boolean; ok: boolean };
+  /** The outbox's pending drafts. Absent: the real outbox. A throw reads as unknown, which never closes. */
+  pendingDrafts?: () => { session_id: string }[];
 }
 
 function realWithDb<T>(fn: (db: Database.Database) => T): T {
@@ -182,10 +189,64 @@ export function scheduledDrafts(db: Database.Database): Map<string, { step_id: s
   return out;
 }
 
-type Job = { kind: 'send'; stepId: string; sid: string; title: string; draftId: string; ack: string[]; rev: string } | { kind: 'redraft'; stepId: string; sid: string; title: string; draftId: string };
+/** The agent a session runs under, from the board ('claude' when the board does not know it). */
+export function agentOf(snap: Snap, sid: string): string {
+  return snap.views.find((v) => v.session_id === sid)?.agent ?? Object.values(snap.live).find((l) => l.session_id === sid)?.agent ?? 'claude';
+}
 
-function jobOf(d: Decision, sid: string, title: string, draftId: string, rev: string): Job | null {
-  if (d.effect === 'send' || d.effect === 'send_kept') return { kind: 'send', stepId: d.id, sid, title, draftId, ack: d.ack ?? [], rev };
+/**
+ * What close-when-done needs to know about a chat, or null when Loom cannot tell:
+ * a board that has not indexed yet, a pane whose working state was not read, an
+ * outbox that could not be read. Null never closes.
+ */
+export function closeChatFact(snap: Snap, sid: string, drafts: { session_id: string }[] | null): { working: boolean; pendingDrafts: number } | null {
+  if (!snap.views.length || !drafts) return null;
+  const L = snap.live[agentSessionKey(agentOf(snap, sid) as Agent, sid)];
+  // Neither on the board nor in a pane: Loom cannot see this chat, so it cannot say it is idle.
+  if (!L && !snap.views.some((v) => v.session_id === sid)) return null;
+  if (L && typeof L.working !== 'boolean') return null;
+  return { working: !!L?.working, pendingDrafts: drafts.filter((d) => d.session_id === sid).length };
+}
+
+/** A step that holds or fails puts its chat back on the board (only a close mark: a plain Remove stays). */
+function restoreOnAttention(db: Database.Database, agent: string, sid: string, title: string, status: string | undefined, now: number): void {
+  if (status !== 'held' && status !== 'failed') return;
+  if (restoreChat(db, agent, sid)) logAction(db, sid, `${title}: ${status}; the chat is back on the board`, now);
+}
+
+/** Close when done: every chat with the flag on and not yet closed, closed once its chain is done and it is idle. */
+function closeDoneChats(db: Database.Database, snap: Snap, now: number, io: ActionIo): void {
+  const closePane = io.closePane;
+  if (!closePane) return;
+  const sids = (db.prepare(`SELECT session_id FROM action_chats WHERE close_when_done = 1 AND closed_at = 0`).all() as { session_id: string }[]).map((r) => r.session_id);
+  if (!sids.length) return;
+  let drafts: { session_id: string }[] | null;
+  try {
+    drafts = (io.pendingDrafts ?? pendingDrafts)();
+  } catch {
+    drafts = null;
+  }
+  for (const sid of sids) {
+    try {
+      const chain = listSteps(db, sid);
+      // A send this process started is in flight whatever the row says.
+      if (chain.some((s) => sending.has(s.id))) continue;
+      const d = closeDecision(chain, chatFlags(db, sid), closeChatFact(snap, sid, drafts));
+      if (!d.close) continue;
+      // Claim the close first: only the write that flips closed_at from 0 closes the chat.
+      if (db.prepare(`UPDATE action_chats SET closed_at = ? WHERE session_id = ? AND closed_at = 0`).run(now, sid).changes !== 1) continue;
+      closeChatDone(db, agentOf(snap, sid), sid, closePane, now);
+      logAction(db, sid, 'closed: every step done', now);
+    } catch (e) {
+      console.error(`[loom] close when done ${sid} failed:`, (e as Error).message);
+    }
+  }
+}
+
+type Job = { kind: 'send'; stepId: string; sid: string; agent: string; title: string; draftId: string; ack: string[]; rev: string } | { kind: 'redraft'; stepId: string; sid: string; title: string; draftId: string };
+
+function jobOf(d: Decision, sid: string, agent: string, title: string, draftId: string, rev: string): Job | null {
+  if (d.effect === 'send' || d.effect === 'send_kept') return { kind: 'send', stepId: d.id, sid, agent, title, draftId, ack: d.ack ?? [], rev };
   if (d.effect === 'redraft') return { kind: 'redraft', stepId: d.id, sid, title, draftId };
   return null;
 }
@@ -222,6 +283,7 @@ async function runSend(job: Extract<Job, { kind: 'send' }>, io: ActionIo, withDb
       }
       setStep(db, job.stepId, { status: 'held', status_why: `held: ${r.detail}`, held_rev: rev, held_at: 0 });
       logAction(db, job.sid, `${job.title}: send held: ${r.detail}`, now);
+      restoreOnAttention(db, job.agent, job.sid, job.title, 'held', now);
     });
   } catch (e) {
     console.error('[loom] action send bookkeeping failed:', (e as Error).message);
@@ -270,7 +332,7 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
             const s = chain.find((x) => x.id === d.id);
             const draftId = String(s?.action_params.draft_id ?? '');
             // A send claims its step in memory before the row says running, so no tick can read it as interrupted.
-            const job = s ? jobOf(d, sid, s.title, draftId, draftId ? facts.draft(draftId)?.revised_at ?? '' : '') : null;
+            const job = s ? jobOf(d, sid, agentOf(snap, sid), s.title, draftId, draftId ? facts.draft(draftId)?.revised_at ?? '' : '') : null;
             if (job?.kind === 'send') {
               if (sending.has(job.stepId)) continue; // never two sends for one step
               sending.add(job.stepId);
@@ -282,12 +344,15 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
               throw e;
             }
             if (d.log) logAction(db, sid, d.log, now);
+            restoreOnAttention(db, agentOf(snap, sid), sid, s?.title ?? d.id, d.patch.status, now);
             if (job) jobs.push(job);
           }
         } catch (e) {
           console.error(`[loom] action chain ${sid} failed:`, (e as Error).message);
         }
       }
+      // After the chains, so a step finished this tick is seen done and one that started sending is seen running.
+      closeDoneChats(db, snap, now, io);
     });
   } catch (e) {
     console.error('[loom] action tick failed:', (e as Error).message);

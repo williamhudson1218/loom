@@ -202,6 +202,8 @@ export function addStep(
     input.id, input.session_id, pos, input.title, when.type, JSON.stringify(when.params), then.type, JSON.stringify(then.params),
     input.ask_first ? 1 : 0, why.length ? 'failed' : 'waiting', why.join('; '), input.created_by, input.at, 0,
   );
+  // A new step reopens the chain: close-when-done may close the chat again once it is done too.
+  db.prepare(`UPDATE action_chats SET closed_at = 0 WHERE session_id = ?`).run(input.session_id);
   return { ok: true, detail: 'added' };
 }
 

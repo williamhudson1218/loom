@@ -20,6 +20,7 @@ import {
   markChatDone,
   restoreChat,
   CLOSE_GRACE_MS,
+  closeChatDone,
   unparkChat,
   waitingLabel,
   type ParkedRow,
@@ -380,6 +381,23 @@ describe('Send / Send & park / Send & close (stubbed sender)', () => {
     expect(restoreChat(d, 'claude', SID)).toBe(true);
     expect(board(d)).toEqual([SID]);
     expect(restoreChat(d, 'claude', SID)).toBe(false);
+  });
+
+  it('closeChatDone ends reply watching, closes the pane and marks the chat done, with no send', async () => {
+    const { d, log } = await setup();
+    park(d, { sessionId: SID });
+    const closed: string[] = [];
+    const r = closeChatDone(d, 'claude', SID, (a, s) => { closed.push(a + ':' + s); return { found: true, ok: true }; }, Date.now());
+    expect(r).toEqual({ closed: true });
+    expect(closed).toEqual(['claude:' + SID]);
+    expect(log.sent).toEqual([]);
+    expect(getParked(d, 'claude', SID)).toBeUndefined();
+    expect(board(d)).toEqual([]);
+    expect(history(d)).toEqual([SID]);
+    // No pane: still off the board, and it says nothing was closed.
+    restoreChat(d, 'claude', SID);
+    expect(closeChatDone(d, 'claude', SID, () => ({ found: false, ok: false }), Date.now())).toEqual({ closed: false });
+    expect(board(d)).toEqual([]);
   });
 
   it('a closed chat returns by itself once it is active again (Resume)', async () => {

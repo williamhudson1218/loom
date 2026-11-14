@@ -384,11 +384,26 @@ export async function sendAndClose(db: Database.Database, id: string, messages: 
   if (!d) return { ok: false, detail: 'no such draft' };
   const r = await deps.send(id, messages);
   if (!r.ok || r.dry) return r;
-  const agent = deps.agent ?? 'claude';
-  unparkChat(db, agent, d.session_id);
-  const c = deps.closePane(agent, d.session_id);
-  markChatDone(db, agent, d.session_id, deps.now ?? Date.now());
-  return { ...r, done: true, closed: c.found && c.ok };
+  const c = closeChatDone(db, deps.agent ?? 'claude', d.session_id, deps.closePane, deps.now ?? Date.now());
+  return { ...r, done: true, closed: c.closed };
+}
+
+/**
+ * End a chat without posting anything: drop any reply watching, close its pane the
+ * Save-for-later way, and take it off the board (markChatDone). Send & close runs
+ * this after its post; close-when-done runs it once every step is done.
+ */
+export function closeChatDone(
+  db: Database.Database,
+  agent: string,
+  sid: string,
+  closePane: (agent: string, sid: string) => { found: boolean; ok: boolean },
+  now: number,
+): { closed: boolean } {
+  unparkChat(db, agent, sid);
+  const c = closePane(agent, sid);
+  markChatDone(db, agent, sid, now);
+  return { closed: c.found && c.ok };
 }
 
 /** One entry point for the three outcomes of the confirm step. */

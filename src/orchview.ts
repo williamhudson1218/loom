@@ -73,6 +73,10 @@ export const ORCH_VIEW_CSS = String.raw`
   .ocl .odn { color:#7d8394; }
   .ocl .odn i { color:#7d8394; }
   .oempty { font-size:12px; color:#6f778a; }
+  .osch { padding:10px 12px; border-radius:10px; border:1px solid #232634; background:#121622; display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .osch .ocw { color:#8a90a2; font-size:11.5px; overflow-wrap:anywhere; }
+  .osch .osw { color:#d9b36a; font-size:11.5px; overflow-wrap:anywhere; }
+  .osch .odr { margin:0; padding:7px 9px; border-radius:7px; background:#0c0e15; border:1px solid #1f2330; color:#c4c9d6; font:inherit; font-size:12px; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; max-height:140px; overflow-y:auto; }
   @media (max-width:900px) { #ohead, #omsgs, .oinput { padding-left:14px; padding-right:14px; } .obody { flex-direction:column; overflow:auto; } #oconvo { flex:none; height:70vh; border-right:0; border-bottom:1px solid #232634; } #orail { flex:none; overflow:visible; } }
 `;
 
@@ -140,6 +144,15 @@ function orchLoadEarlier(){if(ORCH_LOADING||!ORCH_STORE.length)return;const firs
   fetch('/api/orch?before='+first.at+'&limit='+ORCH_PAGE).then(r=>r.json()).then(j=>{ORCH_LOADING=false;if(!j.ok)return;orchMerge(ORCH_STORE,ORCH_KEYS,j.messages);ORCH_MORE=!!j.more;const w=$('#omsgs'),h=w.scrollHeight,t=w.scrollTop;OMSG_SIG='';renderOrch(false);w.scrollTop=t+(w.scrollHeight-h);}).catch(()=>{ORCH_LOADING=false;});}
 function orchJumpLabel(i){return i.ref_type==='chat'?'Open chat':i.ref_type==='pr'?'Open PR':i.ref_type==='slack'?'Open Slack thread':'';}
 function orchItemChat(i){if(i.ref_type!=='chat')return null;const k=i.ref_id;const c=DATA.chats.find(x=>chatKey(x)===k||x.session_id===k);return c||null;}
+// Steps the orchestrator holds for chats that are over (closed, archived, ended): the step, where it came from,
+// and for a send_draft step the text it will send, so a scheduled message never goes out unseen.
+function orchSchedRun(s){if(s.status==='running'||s.status==='done'||s.status==='removed')return '';
+  if(s.summary.indexOf('send draft')>=0)return s.status==='due'?'Send now':'';
+  if(s.summary.indexOf('wake the chat')>=0)return '';return 'Run';}
+function orchSchedHtml(list){return (list||[]).map(s=>{const run=orchSchedRun(s);
+  return '<div class="osch"><div class="oct"><b>'+esc(s.title)+'</b><span>'+esc(s.status)+'</span></div><div class="ocw">'+esc(s.summary)+(s.chat_title?' · from '+esc(s.chat_title):'')+'</div>'+
+    (s.status_why?'<div class="osw">'+esc(s.status_why)+'</div>':'')+(s.draft_text!=null?'<pre class="odr">'+esc(s.draft_text)+'</pre>':'')+
+    '<div class="ocbtns">'+(run?'<button type="button" class="ocbtn" data-srun="'+esc(s.id)+'">'+run+'</button>':'')+'<button type="button" class="ocbtn q" data-sunsched="'+esc(s.id)+'" title="remove this step">Unschedule</button><button type="button" class="ocbtn q" data-schat="'+esc(s.session_id)+'">Open chat</button></div></div>';}).join('');}
 function orchRailHtml(o){const items=o.items||[];const open=items.filter(i=>!i.resolved_at);
   const nd=open.filter(i=>i.kind==='needs_you'),bl=open.filter(i=>i.kind==='blocked'),mv=open.filter(i=>i.kind==='moving'),dn=items.filter(i=>i.kind==='done'&&i.resolved_at),cl=items.filter(i=>i.kind!=='done'&&i.resolved_at&&i.resolved_why);
   const sec=(cls,label,n,body,empty)=>'<div class="orsec"><div class="orh'+cls+'">'+label+(n===null?'':' · '+n)+'</div>'+(body||'<div class="oempty">'+empty+'</div>')+'</div>';
@@ -151,7 +164,8 @@ function orchRailHtml(o){const items=o.items||[];const open=items.filter(i=>!i.r
   const moving=all.map(i=>'<div class="omv'+(i.ref_type?' link':'')+'"'+(i.ref_type==='chat'?' data-chat="'+esc(i.ref_id)+'"':'')+'><span class="sdot d-working"></span><span class="omb"><span><b>'+esc(i.who||'agent')+'</b> · '+esc(i.title)+'</span><span>'+esc(i.why||'')+'</span></span><span class="oag">'+(i.updated_at?esc(rel(i.updated_at)):'')+'</span></div>').join('');
   const done=dn.map(i=>'<div class="odn"><i>✓</i><span>'+esc(i.title)+(i.why?' · '+esc(i.why):'')+'</span></div>').join('');
   const cleared=cl.length?'<details class="orsec ocl"><summary class="orh">Cleared today · '+cl.length+'</summary>'+cl.map(i=>'<div class="odn"><i>–</i><span>'+esc(i.title)+' · '+esc(i.resolved_why)+'</span></div>').join('')+'</details>':'';
-  return sec(' nd','Needs you',nd.length,needs,'Nothing needs you.')+sec('','Blocked on others',bl.length,blocked,'Nothing is waiting on anyone else.')+sec('','Moving',all.length,moving,'No agent is working.')+sec('','Done today',null,done,'Nothing finished yet today.')+cleared;}
+  const sch=o.scheduled||[];
+  return sec(' nd','Needs you',nd.length,needs,'Nothing needs you.')+sec('','Blocked on others',bl.length,blocked,'Nothing is waiting on anyone else.')+sec('','Moving',all.length,moving,'No agent is working.')+(sch.length?sec('','Scheduled',sch.length,orchSchedHtml(sch),''):'')+sec('','Done today',null,done,'Nothing finished yet today.')+cleared;}
 function orchHeadHtml(o){const on=!!o.live;
   return '<div class="mh-l"><div class="mh-t"><h1>Orchestrator</h1><span class="mpill rc'+(on?'':' off')+'">'+PHONE_SVG+esc(orchStatusText(o))+'</span></div><div class="mh-sub">Watches every chat, PR and Slack thread Loom knows about. Messages your phone only when something needs you.</div></div>'+
     '<div class="mh-r"><button type="button" class="mbtn" data-oa="notify" title="notify on a new Needs you item">Notify: '+(o.notify==='off'?'Off':'Needs you only')+'</button>'+
@@ -200,5 +214,8 @@ function wireOrch(){
   $('#orail').addEventListener('click',e=>{if(!ORCH)return;const items=ORCH.items||[];
     const j=e.target.closest('[data-jump]');if(j){orchJump(items.find(i=>String(i.id)===j.dataset.jump));return;}
     const r=e.target.closest('[data-resolve]');if(r){postJ('/api/orch/resolve',{id:Number(r.dataset.resolve)}).then(x=>{if(!x.ok)toast(x.detail||'failed','#8a2b2e');loadOrch(false);}).catch(()=>toast('server off','#8a2b2e'));return;}
+    const sr=e.target.closest('[data-srun]'),su=e.target.closest('[data-sunsched]');
+    if(sr||su){const id=(sr||su).dataset[sr?'srun':'sunsched'];postJ('/api/actions/'+(sr?'run':'remove'),{id:id}).then(x=>{if(!x.ok)toast(x.detail||'failed','#8a2b2e');loadOrch(false);}).catch(()=>toast('server off','#8a2b2e'));return;}
+    const sc=e.target.closest('[data-schat]');if(sc){orchJump({ref_type:'chat',ref_id:sc.dataset.schat});return;}
     const m=e.target.closest('[data-chat]');if(m)orchJump({ref_type:'chat',ref_id:m.dataset.chat});});}
 `;

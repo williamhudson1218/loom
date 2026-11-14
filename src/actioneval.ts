@@ -197,3 +197,28 @@ function sendDraftFired(s: ActionItem, why: string, approved: boolean, facts: Ac
   }
   return [{ id: s.id, patch: { status: 'running', status_why: 'sending', fired_at: now }, effect: 'send', ack: [...p.ack], log: `${s.title}: ${why}; sending` }];
 }
+
+/**
+ * Close when done: may Loom close this chat now? Only with the flag on, not closed
+ * since the last step was added, at least one step kept and every kept step done,
+ * nothing running, and a chat Loom can see is idle with no pending drafts. An
+ * unknown chat (null) never closes; the why says what it waits on.
+ */
+export function closeDecision(
+  chain: ActionItem[],
+  flags: { close_when_done: boolean; closed_at: number },
+  chat: { working: boolean; pendingDrafts: number } | null,
+): { close: boolean; why: string } {
+  const no = (why: string) => ({ close: false, why });
+  if (!flags.close_when_done) return no('close when done is off');
+  if (flags.closed_at !== 0) return no('already closed');
+  const kept = chain.filter((s) => s.status !== 'removed');
+  if (!kept.length) return no('no steps');
+  if (kept.some((s) => s.status === 'running')) return no('waiting: a step is running');
+  const open = kept.filter((s) => s.status !== 'done').length;
+  if (open) return no(`waiting: ${open} step${open === 1 ? '' : 's'} not done`);
+  if (!chat) return no("waiting: the chat's state is unknown");
+  if (chat.working) return no('waiting: chat is working');
+  if (chat.pendingDrafts !== 0) return no(`waiting: ${chat.pendingDrafts} draft${chat.pendingDrafts === 1 ? '' : 's'} pending`);
+  return { close: true, why: 'every step done' };
+}

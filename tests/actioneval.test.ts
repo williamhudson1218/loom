@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ActionItem } from '../src/actions.ts';
-import { currentStep, evaluateChain, triggerState, type ActionFacts } from '../src/actioneval.ts';
+import { closeDecision, currentStep, evaluateChain, triggerState, type ActionFacts } from '../src/actioneval.ts';
 
 const NOW = 5_000;
 let n = 0;
@@ -318,5 +318,37 @@ describe('triggerState: slack_reply', () => {
   });
   it('a step with a deleted reader never fires on a throwing fact', () => {
     expect(() => triggerState(sr(), facts({ replies: () => { throw new Error('x'); } }), NOW)).toThrow();
+  });
+});
+
+describe('closeDecision', () => {
+  const on = { close_when_done: true, closed_at: 0 };
+  const idle = { working: false, pendingDrafts: 0 };
+  const done = () => step({ status: 'done' });
+
+  it('closes when the flag is on, every kept step is done and the chat is idle with no drafts', () => {
+    expect(closeDecision([done(), step({ status: 'removed' }), done()], on, idle)).toEqual({ close: true, why: 'every step done' });
+  });
+  it('waits while the chat is working', () => {
+    expect(closeDecision([done()], on, { working: true, pendingDrafts: 0 })).toEqual({ close: false, why: 'waiting: chat is working' });
+  });
+  it('waits on a pending draft', () => {
+    expect(closeDecision([done()], on, { working: false, pendingDrafts: 1 })).toEqual({ close: false, why: 'waiting: 1 draft pending' });
+    expect(closeDecision([done()], on, { working: false, pendingDrafts: 2 }).why).toBe('waiting: 2 drafts pending');
+  });
+  it('waits while a step is running', () => {
+    expect(closeDecision([done(), step({ status: 'running' })], on, idle)).toEqual({ close: false, why: 'waiting: a step is running' });
+  });
+  it('waits on steps that are not done', () => {
+    expect(closeDecision([done(), step({ status: 'held' })], on, idle)).toEqual({ close: false, why: 'waiting: 1 step not done' });
+  });
+  it('never closes on an unknown chat fact', () => {
+    expect(closeDecision([done()], on, null)).toEqual({ close: false, why: "waiting: the chat's state is unknown" });
+  });
+  it('does nothing with the flag off, once closed, or with no steps', () => {
+    expect(closeDecision([done()], { close_when_done: false, closed_at: 0 }, idle).close).toBe(false);
+    expect(closeDecision([done()], { close_when_done: true, closed_at: 9 }, idle)).toEqual({ close: false, why: 'already closed' });
+    expect(closeDecision([], on, idle)).toEqual({ close: false, why: 'no steps' });
+    expect(closeDecision([step({ status: 'removed' })], on, idle)).toEqual({ close: false, why: 'no steps' });
   });
 });

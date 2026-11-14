@@ -39,6 +39,7 @@ export const ACTIONS_VIEW_CSS = String.raw`
   .act-sw[aria-checked="true"] .trk { background:#3b6fe0; }
   .act-sw[aria-checked="true"] .trk::after { left:12px; background:#fff; }
   .act-link { align-self:flex-start; }
+  .act-cwd { padding:2px 2px 0; }
   .act-row.act-removed { flex-direction:row; align-items:center; gap:8px; color:#8a90a2; font-size:12px; }
   .act-add { display:flex; gap:6px; margin-top:2px; }
   .act-add input { flex:1 1 auto; min-width:0; background:#0f1219; border:1px solid #232634; border-radius:6px; color:#e6e6e6; font-size:12px; padding:5px 8px; }
@@ -82,14 +83,14 @@ function actAttention(a){return !!(a&&a.attention);}
 `;
 
 export const ACTIONS_VIEW_JS = String.raw`
-var STEPS={},STEPS_AT={},ACT_PICK={},ACT_UNDO={},ACT_ERR={},ACT_TIMER=null;
+var STEPS={},ACT_CWD={},STEPS_AT={},ACT_PICK={},ACT_UNDO={},ACT_ERR={},ACT_TIMER=null;
 function actSid(){if(homeSel||orchSel||tsel||!sel||sel.arch)return '';return sel.sid||'';}
 // The selected chat's steps that count toward the rail: not removed, or removed within the 10 s undo window.
 function railSteps(){const sid=actSid();if(!sid)return [];const now=Date.now();return (STEPS[sid]||[]).filter(function(s){return s.status!=='removed'||(ACT_UNDO[s.id]||0)>now;});}
 function actOpen(list){return (list||[]).filter(function(s){return !stepFinal(s);}).length;}
 function actLoad(sid){if(!sid)return;const t=Date.now();if(STEPS_AT[sid]&&t-STEPS_AT[sid]<1000)return;STEPS_AT[sid]=t;
   fetch('/api/actions?session='+encodeURIComponent(sid)).then(function(r){return r.json();}).then(function(j){if(!j||!j.ok)return;
-    const changed=JSON.stringify(j.steps)!==JSON.stringify(STEPS[sid]||null);STEPS[sid]=j.steps;if(changed)renderOutbox();}).catch(function(){});}
+    const changed=JSON.stringify(j.steps)!==JSON.stringify(STEPS[sid]||null)||!!j.close_when_done!==!!ACT_CWD[sid];STEPS[sid]=j.steps;ACT_CWD[sid]=!!j.close_when_done;if(changed)renderOutbox();}).catch(function(){});}
 // Load the chat's steps when first selected, and again when the board's count disagrees with what the panel holds.
 function actSync(){const sid=actSid();if(!sid)return;const have=STEPS[sid];const a=(DATA.actions||{})[sid];
   if(!have||actOpen(have)!==(a?a.open:0))actLoad(sid);}
@@ -122,8 +123,10 @@ function stepRowHtml(s){
     '<div class="act-sum">'+esc(stepLine(s))+'</div>'+(s.status_why?'<div class="act-why">'+esc(s.status_why)+'</div>':'')+(ACT_ERR[s.id]?'<div class="act-err" role="alert">'+esc(ACT_ERR[s.id])+'</div>':'')+
     (s.status==='held'&&draft?'<button type="button" class="act-link" data-act="draft" data-draft="'+esc(draft)+'">Open the draft in the outbox</button>':'')+
     '<div class="act-btns">'+stepButtons(s).map(function(a){return stepBtnHtml(a,s);}).join('')+'</div></div>';}
-function actionsBodyHtml(as){const rows=as.length?as.map(stepRowHtml).join(''):'<div class="act-empty">No steps yet.</div>';
-  return '<div id="outcards" class="acts">'+rows+'<form class="act-add" data-actadd><input type="text" maxlength="300" placeholder="Add a step" aria-label="Add a step"><button type="submit">Add</button></form></div>';}
+// The chat-level switch: once every step is done and the chat is idle with no drafts, Loom closes it the Send & close way.
+function cwdSwitchHtml(on){return '<div class="act-btns act-cwd"><button type="button" class="act-sw" role="switch" data-act="cwd" aria-checked="'+(on?'true':'false')+'" title="Close this chat once every step is done, it is idle and no draft is pending"><span class="trk" aria-hidden="true"></span>Close when all done</button></div>';}
+function actionsBodyHtml(as,cwd){const rows=as.length?as.map(stepRowHtml).join(''):'<div class="act-empty">No steps yet.</div>';
+  return '<div id="outcards" class="acts">'+rows+cwdSwitchHtml(!!cwd)+'<form class="act-add" data-actadd><input type="text" maxlength="300" placeholder="Add a step" aria-label="Add a step"><button type="submit">Add</button></form></div>';}
 // The browser's stepSummary: the same trigger -> action line the CLI prints (src/actions.ts), from the fields the panel has.
 function stepLine(s){const p=s.trigger_params||{};let w;
   switch(s.trigger_type){case 'now':w='Now';break;case 'manual':w='To do';break;
@@ -141,6 +144,7 @@ function actClick(e){
   const tb=e.target.closest('button[data-otab]');if(tb){const k=selKey();ACT_PICK[k]=tb.dataset.otab;actTabSave(k,tb.dataset.otab);railRender();return;}
   const b=e.target.closest('[data-act]');if(!b)return;const row=b.closest('[data-step]');const sid=actSid();
   if(b.dataset.act==='draft'){actGoDraft(b.dataset.draft);return;}
+  if(b.dataset.act==='cwd'){if(!sid)return;const on=b.getAttribute('aria-checked')!=='true';ACT_CWD[sid]=on;actPost('close-when-done',{session:sid,on:on},sid);return;}
   if(!row||!sid)return;const id=row.dataset.step;const a=b.dataset.act;
   if(a==='remove'){ACT_UNDO[id]=Date.now()+10000;if(ACT_TIMER)clearTimeout(ACT_TIMER);ACT_TIMER=setTimeout(renderOutbox,10100);}
   if(a==='askfirst'){actPost('ask-first',{id:id,on:b.getAttribute('aria-checked')!=='true'},sid);return;}

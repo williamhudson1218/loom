@@ -5,7 +5,7 @@ import { renderDashboard } from '../src/dashboard.ts';
 
 type Row = { key: string; working: boolean; turn: boolean; at: number };
 const api = new Function(
-  `${SIDESORT_JS};${HOME_PURE_JS}; return {homeClassify,homeOldest,homeAge,homeHeadline,homeShipTotals,homeOrchTotals,homeOrbitLayout};`,
+  `${SIDESORT_JS};${HOME_PURE_JS}; return {homeClassify,homeOldest,homeAge,homeHeadline,homeShipTotals,homeOrchTotals,homeOrchLine,homeOrbitLayout};`,
 )() as {
   homeClassify: (r: Row[], now: number) => Record<'working' | 'turn' | 'stale' | 'rest', Row[]>;
   homeOldest: (r: Row[]) => Row | null;
@@ -13,6 +13,7 @@ const api = new Function(
   homeHeadline: (w: number, f: number) => { t: string; accent: boolean }[];
   homeShipTotals: (b: unknown[], nameOf?: (r: string) => string) => { files: number; chats: number; repos: { repo: string; name: string; staged: number; chats: number }[]; lines: { key: string; staged: number }[] };
   homeOrchTotals: (i: unknown[]) => { needs: { id: number }[]; needsN: number; blocked: number };
+  homeOrchLine: (oc: { needsN: number; blocked: number }, scheduled: number) => string;
   homeOrbitLayout: (W: number, H: number, g: Record<string, string[]>) => { rings: { k: string; rx: number; ry: number }[]; planets: { key: string; k: string; x: number; y: number; size: number }[] };
 };
 
@@ -88,6 +89,13 @@ describe('home ship and orchestrator totals', () => {
     expect(t.needsN).toBe(1);
     expect(t.blocked).toBe(1);
     expect(t.needs[0].id).toBe(1);
+  });
+});
+
+describe('home orchestrator line', () => {
+  it('adds the scheduled count next to need you and blocked, only when there is one', () => {
+    expect(api.homeOrchLine({ needsN: 2, blocked: 1 }, 3)).toBe('2 need you, 1 blocked, 3 scheduled');
+    expect(api.homeOrchLine({ needsN: 0, blocked: 0 }, 0)).toBe('0 need you, 0 blocked');
   });
 });
 

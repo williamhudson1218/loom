@@ -43,6 +43,8 @@ function homeShipTotals(boards,nameOf){var files=0,seen={},repos=[],lines=[];
 // items: orchestrator_items rows. Open means not resolved. The page's own count of what needs you.
 function homeOrchTotals(items){var needs=[],blocked=0;(items||[]).forEach(function(i){if(i.resolved_at)return;if(i.kind==='needs_you')needs.push(i);else if(i.kind==='blocked')blocked++;});
   return {needs:needs,needsN:needs.length,blocked:blocked};}
+// The Orchestrator tile's line: need you and blocked, plus the steps it holds for closed chats (ORCH.scheduled) when there are any.
+function homeOrchLine(oc,scheduled){return oc.needsN+' need you, '+oc.blocked+' blocked'+(scheduled>0?', '+scheduled+' scheduled':'');}
 // Orbit geometry. groups: {turn,working,stale} arrays of keys. Rings are ellipses, wider
 // than tall, clamped inside the box; planets sit evenly round their ring, each ring
 // turned a little so the three do not line up.
@@ -182,7 +184,7 @@ export const HOME_VIEW_JS =
 // ---- Overview rendering (src/homeview.ts) -------------------------------------------
 // homeSel: the Overview is the open view. True at launch; any other selection leaves it.
 var homeSel=true;
-var HOME={sky:null,orch:null,orchAt:0,orchBusy:false,orchSig:'',geo:{},geoSig:'',h:900,mraf:0,view:lsGet('loom.homeView')==='A'?'A':'B',sig:{},ro:null,clockT:null};
+var HOME={sky:null,orch:null,sched:0,orchAt:0,orchBusy:false,orchSig:'',geo:{},geoSig:'',h:900,mraf:0,view:lsGet('loom.homeView')==='A'?'A':'B',sig:{},ro:null,clockT:null};
 var HOME_COL={turn:['#3b82f6','#a9c8ff'],working:['#2ea043','#8ee6a1'],stale:['#6b7280','#b5bcc9']};
 var HOME_LBL={turn:'Your turn',working:'Working',stale:'Stale'};
 function homeOn(){const v=$('#homeview');return homeSel&&!!v&&v.offsetParent!==null;}
@@ -197,7 +199,7 @@ function homeLoadOrch(force){if(HOME.orchBusy||document.hidden)return;
   const n=(DATA.orch&&DATA.orch.needsYou)||0;
   if(!force&&HOME.orch&&Date.now()-HOME.orchAt<20000&&homeOrchTotals(HOME.orch).needsN===n)return;
   HOME.orchBusy=true;
-  fetch('/api/orch').then(r=>r.json()).then(j=>{HOME.orchBusy=false;if(!j||!j.ok)return;HOME.orch=j.items||[];HOME.orchAt=Date.now();if(homeSel)renderHome();}).catch(()=>{HOME.orchBusy=false;});}
+  fetch('/api/orch').then(r=>r.json()).then(j=>{HOME.orchBusy=false;if(!j||!j.ok)return;HOME.orch=j.items||[];HOME.sched=(j.scheduled||[]).length;HOME.orchAt=Date.now();if(homeSel)renderHome();}).catch(()=>{HOME.orchBusy=false;});}
 // Write html into a section only when it changed; keep keyboard focus on the same control across the rewrite.
 function homeSet(id,html){const el=$('#'+id);if(!el||HOME.sig[id]===html)return;HOME.sig[id]=html;
   const a=document.activeElement,hk=(a&&el.contains(a)&&a.dataset)?a.dataset.hk:'';
@@ -224,7 +226,7 @@ function homeTilesHtml(cl,oc,ship,now){
   const old=homeOldest(cl.turn);
   const orchOff=DATA.orch&&DATA.orch.enabled===false;
   const on=orchOff?'Off':(oc?oc.needsN+oc.blocked:((DATA.orch&&DATA.orch.needsYou)||0));
-  const os=orchOff?'orchestrator is off':(oc?oc.needsN+' need you, '+oc.blocked+' blocked':'loading');
+  const os=orchOff?'orchestrator is off':(oc?homeOrchLine(oc,HOME.sched):'loading');
   const wins=TERMS.reduce((a,t)=>a+t.windows.length,0);
   return tile('','d-working',cl.working.length,'Working','chats in flight')+
     tile(' you','d-turn',cl.turn.length,'Your turn',old?'oldest waiting '+homeAge(old.at,now):'none waiting')+

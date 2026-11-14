@@ -493,6 +493,8 @@ function actionIo(): ActionIo {
     preSend: preSend(),
     send: actionSend,
     redraft: startRedraft,
+    // Close when done: the Send & close pane closer. Pending drafts come from the outbox itself (actionserver's default).
+    closePane: closeChatPane,
     // A slack_reply step's thread read: cached a minute, Slack reads only while direct mode is on.
     fresh: (t, key) => {
       const deps = freshDeps();

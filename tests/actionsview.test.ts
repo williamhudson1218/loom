@@ -140,7 +140,7 @@ describe('routes', () => {
     const rows = ROUTES.filter((r) => r.path.startsWith('/api/actions'));
     expect(rows.filter((r) => r.kind === 'read').map((r) => r.path)).toEqual(['/api/actions']);
     expect(rows.filter((r) => r.kind === 'browser').map((r) => r.path).sort()).toEqual(
-      ['add', 'ask-first', 'check', 'remove', 'retry', 'run', 'undo'].map((x) => '/api/actions/' + x),
+      ['add', 'ask-first', 'check', 'close-when-done', 'remove', 'retry', 'run', 'undo'].map((x) => '/api/actions/' + x),
     );
   });
 
@@ -174,6 +174,14 @@ describe('routes', () => {
     await call('POST', '/api/actions/remove', { id });
     expect((await call('POST', '/api/actions/undo', { id })).body.ok).toBe(true);
     expect(withDb((db) => getStep(db, id))).toMatchObject({ status: 'waiting', current_at: 0 });
+  });
+
+  it('close-when-done round-trips through the panel read', async () => {
+    expect((await call('POST', '/api/actions/close-when-done', { session: 'sess-cwd', on: true })).body.ok).toBe(true);
+    expect((await call('GET', '/api/actions', undefined, '?session=sess-cwd')).body.close_when_done).toBe(true);
+    expect((await call('POST', '/api/actions/close-when-done', { session: 'sess-cwd', on: false })).body.ok).toBe(true);
+    expect((await call('GET', '/api/actions', undefined, '?session=sess-cwd')).body.close_when_done).toBe(false);
+    expect((await call('POST', '/api/actions/close-when-done', { on: true })).code).toBe(400);
   });
 
   it('rejects an empty title, a missing session and an unknown step', async () => {
@@ -266,6 +274,11 @@ describe('panel markup', () => {
     view.ACT_ERR[base.id] = 'not available yet';
     expect(view.stepRowHtml({ ...base, status: 'due' })).toContain('<div class="act-err" role="alert">not available yet</div>');
     delete view.ACT_ERR[base.id];
+  });
+  it('carries the Close when all done switch, reflecting the flag', () => {
+    expect(view.actionsBodyHtml([], false)).toContain('data-act="cwd" aria-checked="false"');
+    expect(view.actionsBodyHtml([], true)).toContain('data-act="cwd" aria-checked="true"');
+    expect(view.actionsBodyHtml([], true)).toContain('Close when all done');
   });
   it('the body ends with the add form, and the tabs carry both counts', () => {
     expect(view.actionsBodyHtml([])).toContain('data-actadd');
