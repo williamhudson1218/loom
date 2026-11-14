@@ -432,6 +432,26 @@ describe('close when done (the tick)', () => {
     expect(closed).toEqual(['claude:s1']);
   });
 
+  it("waits while the user is in the chat's pane, on the tick and on the re-check, and closes once focus leaves", async () => {
+    const { db, io, closed } = setup();
+    let focused: string | null = '%1';
+    const withFocus = { ...io, focused: () => focused };
+    await actionTick(idleSnap, 1000, withFocus);
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    // Focus lands on the pane between the tick's read and the live re-check: the claim is released.
+    let n = 0;
+    withFocus.focused = () => (++n > 1 ? '%1' : '%9');
+    await actionTick(idleSnap, 2000, { ...withFocus, liveSnap: () => idleSnap });
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    // Another pane focused, or tmux unable to say: not this chat.
+    withFocus.focused = () => { throw new Error('no clients'); };
+    focused = '%9';
+    await actionTick(idleSnap, 3000, { ...withFocus, focused: () => focused });
+    expect(closed).toEqual(['claude:s1']);
+  });
+
   it('re-checks the chat on the live board right before closing, and releases the claim when it started working', async () => {
     const { db, io, closed, setDrafts } = setup();
     let live: Snap = { views: [view('s1')], live: { 'claude:s1': loc('s1', true) } };

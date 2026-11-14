@@ -228,7 +228,7 @@ function sendDraftFired(s: ActionItem, why: string, approved: boolean, facts: Ac
 export function closeDecision(
   chain: ActionItem[],
   flags: { close_when_done: boolean; closed_at: number },
-  chat: { working: boolean; pendingDrafts: number; atPrompt?: boolean } | null,
+  chat: { working: boolean; pendingDrafts: number; atPrompt?: boolean; focused?: boolean } | null,
 ): { close: boolean; why: string } {
   const no = (why: string) => ({ close: false, why });
   if (!flags.close_when_done) return no('close when done is off');
@@ -241,6 +241,7 @@ export function closeDecision(
   if (!chat) return no("waiting: the chat's state is unknown");
   if (chat.working) return no('waiting: chat is working');
   if (chat.atPrompt) return no('waiting: the chat is at a prompt or has a tool call open');
+  if (chat.focused) return no("waiting: you're in this chat");
   if (chat.pendingDrafts !== 0) return no(`waiting: ${chat.pendingDrafts} draft${chat.pendingDrafts === 1 ? '' : 's'} pending`);
   return { close: true, why: 'every step done' };
 }

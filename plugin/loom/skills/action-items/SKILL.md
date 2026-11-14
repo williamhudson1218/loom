@@ -49,7 +49,7 @@ Ask-first toggles are in the Loom panel.
 
 If the user wants the chat closed at the end ("then close this chat"), run `loom action close-when-done on`
 (`off` to undo). The chat closes once all steps are done, this chat is idle (not mid-turn and not sitting at a
-permission prompt or a question), and it has no pending drafts.
+permission prompt or a question), the user is not in its pane, and it has no pending drafts.
 
 ## Example
 

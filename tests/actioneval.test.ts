@@ -342,6 +342,7 @@ describe('closeDecision', () => {
   it('waits while the chat is working', () => {
     expect(closeDecision([done()], on, { working: true, pendingDrafts: 0 })).toEqual({ close: false, why: 'waiting: chat is working' });
     expect(closeDecision([done()], on, { working: false, pendingDrafts: 0, atPrompt: true })).toEqual({ close: false, why: 'waiting: the chat is at a prompt or has a tool call open' });
+    expect(closeDecision([done()], on, { working: false, pendingDrafts: 0, focused: true })).toEqual({ close: false, why: "waiting: you're in this chat" });
   });
   it('waits on a pending draft', () => {
     expect(closeDecision([done()], on, { working: false, pendingDrafts: 1 })).toEqual({ close: false, why: 'waiting: 1 draft pending' });

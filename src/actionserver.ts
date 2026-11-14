@@ -239,17 +239,21 @@ export function openToolIn(snap: Snap, sid: string, agent: string, read: ActionI
 export function deliveryHold(snap: Snap, sid: string, agent: string, io: Pick<ActionIo, 'focused' | 'openTool'>): string {
   const L = snap.live[agentSessionKey(agent as Agent, sid)];
   if (!L) return '';
-  let f: string | null = null;
-  try {
-    f = io.focused ? io.focused() : null;
-  } catch {
-    f = null;
-  }
+  const f = focusedNow(io);
   if (f && f === L.pane_id) return "you're in this chat";
   const t = openToolIn(snap, sid, agent, io.openTool);
   if (t === null) return "can't tell whether the chat is at a prompt";
   if (t) return 'the chat is at a prompt or has a tool call open';
   return '';
+}
+
+/** The pane the user is looking at, or null (none wired, or tmux could not say). */
+function focusedNow(io: Pick<ActionIo, 'focused'>): string | null {
+  try {
+    return io.focused ? io.focused() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A delivery held off this tick: the step keeps its status and approval, only its why says what it waits on. */
@@ -267,7 +271,8 @@ export function closeChatFact(
   sid: string,
   drafts: { session_id: string }[] | null,
   openTool?: ActionIo['openTool'],
-): { working: boolean; pendingDrafts: number; atPrompt: boolean } | null {
+  focusedPane: string | null = null,
+): { working: boolean; pendingDrafts: number; atPrompt: boolean; focused: boolean } | null {
   if (!snap.views.length || !drafts) return null;
   const agent = agentOf(snap, sid);
   const L = snap.live[agentSessionKey(agent as Agent, sid)];
@@ -277,7 +282,9 @@ export function closeChatFact(
   // `working` reads a pane at a permission prompt or a question as idle: an open tool call says it is not.
   const t = L ? openToolIn(snap, sid, agent, openTool) : false;
   if (t === null) return null;
-  return { working: !!L?.working, pendingDrafts: drafts.filter((d) => d.session_id === sid).length, atPrompt: t };
+  // The user in this chat's pane is typing in it: closing it would throw that away.
+  const focused = !!L && !!focusedPane && focusedPane === L.pane_id;
+  return { working: !!L?.working, pendingDrafts: drafts.filter((d) => d.session_id === sid).length, atPrompt: t, focused };
 }
 
 /** A step that holds or fails puts its chat back on the board (only a close mark: a plain Remove stays). */
@@ -303,7 +310,7 @@ function closeDoneChats(db: Database.Database, snap: Snap, now: number, io: Acti
       const chain = listSteps(db, sid);
       // A send this process started is in flight whatever the row says.
       if (chain.some((s) => sending.has(s.id))) continue;
-      const d = closeDecision(chain, chatFlags(db, sid), closeChatFact(snap, sid, drafts, io.openTool));
+      const d = closeDecision(chain, chatFlags(db, sid), closeChatFact(snap, sid, drafts, io.openTool, focusedNow(io)));
       if (!d.close) continue;
       // Claim the close first: only the write that flips closed_at from 0 closes the chat.
       if (db.prepare(`UPDATE action_chats SET closed_at = ? WHERE session_id = ? AND closed_at = 0`).run(now, sid).changes !== 1) continue;
@@ -334,8 +341,8 @@ function stillIdle(sid: string, tickSnap: Snap, io: ActionIo): boolean {
   } catch {
     drafts = null;
   }
-  const c = closeChatFact(fresh, sid, drafts, io.openTool);
-  return !!c && !c.working && !c.atPrompt && c.pendingDrafts === 0;
+  const c = closeChatFact(fresh, sid, drafts, io.openTool, focusedNow(io));
+  return !!c && !c.working && !c.atPrompt && !c.focused && c.pendingDrafts === 0;
 }
 
 type Job =
