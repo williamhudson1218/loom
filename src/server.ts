@@ -69,6 +69,7 @@ import { trustedFolders } from './orchstart.ts';
 import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
 import { handleOrchRoute, orchSummary, orchTick } from './orchserver.ts';
+import { actionTick } from './actionserver.ts';
 import { ensureCliToken, gate, legacyGetPaths, requireWrite, runRoute } from './routes/index.ts';
 import { clientFetchJs } from './clientfetch.ts';
 import { codexVisible, currentTerminal, insideFocusState, terminalLabel } from './terminal.ts';
@@ -2142,6 +2143,7 @@ export function startGhTicks(): void {
     const snap = snapshot();
     refreshShipBoards(snap.views, snap.live).then(onShipBoards).catch((e) => console.error('[loom] ship boards failed:', (e as Error).message));
     orchTick(snap);
+    void actionTick(snap);
   };
   setTimeout(ships, 2_000);
   setInterval(ships, 15_000);

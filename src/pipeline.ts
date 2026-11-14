@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { defaultGh, type GhRunner } from './detail.ts';
 import { parsePrRef } from './prref.ts';
+import type { PrFact } from './orchsweep.ts';
 
 // A PR's whole road to prod, as steps: checks → review → merged → deploy (per
 // job) → done. Built from three gh calls — the PR, the Deploy Production run
@@ -318,6 +319,7 @@ interface Entry {
   value: Pipeline | null;
   nextAt: number;
   errors: number;
+  lastError: string;
   inflight?: Promise<void>;
   wantedAt: number; // last time anything asked for it
   live: boolean;
@@ -336,7 +338,7 @@ export function wantPipeline(repo: string, number: number, live: boolean, now: n
   const key = pipelineKey(repo, number);
   let e = store.get(key);
   if (!e) {
-    e = { repo, number, value: null, nextAt: 0, errors: 0, wantedAt: now, live };
+    e = { repo, number, value: null, nextAt: 0, errors: 0, lastError: '', wantedAt: now, live };
     store.set(key, e);
   }
   e.wantedAt = now;
@@ -344,6 +346,19 @@ export function wantPipeline(repo: string, number: number, live: boolean, now: n
   if (live && !e.live && e.value?.inFlight) e.nextAt = Math.min(e.nextAt, now);
   e.live = live || e.live;
   return e.value;
+}
+
+/** Why the last fetch failed, for a caller with no cached value to show. Null when nothing asked about this PR. */
+export function pipelineHealth(repo: string, number: number): { errors: number; lastError: string } | null {
+  const e = store.get(pipelineKey(repo, number));
+  return e ? { errors: e.errors, lastError: e.lastError } : null;
+}
+
+/** The orchestrator's and the action tick's shared view of a PR: merged, closed or open, plus the deploy step. */
+export function prFactOf(p: Pipeline): PrFact {
+  const st = (k: string) => p.steps.find((x) => x.key === k)?.state ?? '';
+  const merged = st('merged');
+  return { state: merged === 'pass' ? 'merged' : merged === 'fail' ? 'closed' : 'open', deploy: st('deploy') };
 }
 
 export function cachedPipeline(repo: string, number: number): Pipeline | null {
@@ -437,12 +452,14 @@ export async function tickPipelines(liveKeys: Set<string>, gh: GhRunner = defaul
           p.events = [...(e.value?.events ?? []), ...ev].slice(-MAX_EVENTS);
           e.value = p;
           e.errors = 0;
+          e.lastError = '';
           e.nextAt = now + interval(e);
           done++;
         })
-        .catch(() => {
+        .catch((err) => {
           // Rate limit, network, a deleted PR: back off, and keep serving the last value.
           e.errors++;
+          e.lastError = String((err as Error)?.message ?? err).slice(0, 160);
           e.nextAt = now + Math.min(MAX_BACKOFF_MS, SLOW_MS * 2 ** (e.errors - 1));
         })
         .finally(() => { e.inflight = undefined; });

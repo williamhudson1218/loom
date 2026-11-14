@@ -160,12 +160,12 @@ export function applyEvent(db: Database.Database, e: LoomEvent, opts: IngestOpts
       if (!step) return { ok: false, detail: 'no such step' };
       if (step.session_id !== str(e.session)) return { ok: false, detail: "not this chat's step" };
       if (step.status === 'removed') return { ok: true, detail: 'already removed' };
+      if (step.status === 'done') return { ok: true, detail: 'already done' };
       if (e.kind === 'action.remove') {
         setStep(db, step.id, { status: 'removed', removed_from: step.status, current_at: at });
         return { ok: true, detail: 'removed' };
       }
       if (e.kind === 'action.done') {
-        if (step.status === 'done') return { ok: true, detail: 'already done' };
         setStep(db, step.id, { status: 'done', status_why: '', done_at: at, current_at: at });
         return { ok: true, detail: 'done' };
       }

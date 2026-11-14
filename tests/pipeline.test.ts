@@ -3,6 +3,7 @@ import {
   _resetPipelineStore,
   assemblePipeline,
   cachedPipeline,
+  pipelineHealth,
   latestChecks,
   pickDeployRun,
   rollUp,
@@ -180,5 +181,23 @@ describe('store', () => {
     expect(cachedPipeline('o/r', 7)).not.toBeNull(); // the last good value survives an error
     await tickPipelines(new Set(['o/r#7']), gh, 31_000 + 20_000); // backed off past the fast interval
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe('pipelineHealth', () => {
+  beforeEach(() => _resetPipelineStore());
+  it('records the last error and clears it on success', async () => {
+    let fail = true;
+    const gh = async () => {
+      if (fail) throw new Error('HTTP 404');
+      return JSON.stringify(openPr());
+    };
+    expect(pipelineHealth('acme/app', 1)).toBeNull();
+    wantPipeline('acme/app', 1, true, 0);
+    await tickPipelines(new Set(['acme/app#1']), gh, 0);
+    expect(pipelineHealth('acme/app', 1)).toEqual({ errors: 1, lastError: 'HTTP 404' });
+    fail = false;
+    await tickPipelines(new Set(['acme/app#1']), gh, 10 * 60_000);
+    expect(pipelineHealth('acme/app', 1)).toEqual({ errors: 0, lastError: '' });
   });
 });

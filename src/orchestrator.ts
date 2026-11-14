@@ -141,7 +141,7 @@ export function startOfDay(now: number): number {
 
 /* ------------------------------------------------------------ log */
 
-export type LogKind = 'relay' | 'queued' | 'delivered' | 'failed' | 'events' | 'ask' | 'started' | 'cleared';
+export type LogKind = 'relay' | 'queued' | 'delivered' | 'failed' | 'events' | 'ask' | 'started' | 'cleared' | 'action';
 
 export interface LogRow {
   id: number;

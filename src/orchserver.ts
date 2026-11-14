@@ -11,7 +11,7 @@ import { sendToPane } from './goto.ts';
 import { readTranscript, type Msg } from './transcript.ts';
 import { readAllThreads, type ThreadRec } from './slack.ts';
 import { parseSlackThread } from './slackref.ts';
-import { cachedPipeline, parsePrRef, wantPipeline } from './pipeline.ts';
+import { cachedPipeline, parsePrRef, prFactOf, wantPipeline } from './pipeline.ts';
 import { readOutbox } from './outbox.ts';
 import { threadState } from './slackowner.ts';
 import { sweepItems, type ChatFact, type PrFact, type SweepFacts } from './orchsweep.ts';
@@ -220,9 +220,7 @@ export function sweepFacts(
       // Register interest so the pipeline tick fetches a PR no chat is showing.
       const p = wantPipeline(r.repo, r.number, false, now);
       if (!p) return null;
-      const st = (k: string) => p.steps.find((x) => x.key === k)?.state ?? '';
-      const merged = st('merged');
-      return { state: merged === 'pass' ? 'merged' : merged === 'fail' ? 'closed' : 'open', deploy: st('deploy') };
+      return prFactOf(p);
     },
     draft: (id) => {
       try {

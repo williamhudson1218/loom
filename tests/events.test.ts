@@ -184,6 +184,14 @@ describe('thread events', () => {
       expect(db.prepare(`SELECT status FROM action_items`).get()).toEqual({ status: 'removed' });
     });
 
+    it('fail and remove on a done step are no-ops', () => {
+      add();
+      ev('action.done', { id: 'a00000000001', session: SID });
+      expect(ev('action.fail', { id: 'a00000000001', session: SID, why: 'late' })).toEqual({ ok: true, detail: 'already done' });
+      expect(ev('action.remove', { id: 'a00000000001', session: SID })).toEqual({ ok: true, detail: 'already done' });
+      expect(db.prepare(`SELECT status, status_why FROM action_items`).get()).toEqual({ status: 'done', status_why: '' });
+    });
+
     it('action.close_when_done toggles the flag', () => {
       ev('action.close_when_done', { session: SID, on: true });
       expect(db.prepare(`SELECT close_when_done FROM action_chats`).get()).toEqual({ close_when_done: 1 });
