@@ -167,6 +167,15 @@ describe('routes', () => {
     expect(withDb((db) => getStep(db, s.id))).toMatchObject({ status: 'done', removed_from: '' });
   });
 
+  it('undo back to waiting clears the step stamp, so it is re-stamped when it is current again', async () => {
+    await call('POST', '/api/actions/add', { session: SID, title: 'Wait for the reviewer' });
+    const id = (await call('GET', '/api/actions', undefined, '?session=' + SID)).body.steps.find((x: { title: string }) => x.title === 'Wait for the reviewer').id as string;
+    withDb((db) => db.prepare(`UPDATE action_items SET current_at = 1500 WHERE id = ?`).run(id));
+    await call('POST', '/api/actions/remove', { id });
+    expect((await call('POST', '/api/actions/undo', { id })).body.ok).toBe(true);
+    expect(withDb((db) => getStep(db, id))).toMatchObject({ status: 'waiting', current_at: 0 });
+  });
+
   it('rejects an empty title, a missing session and an unknown step', async () => {
     expect((await call('POST', '/api/actions/add', { session: SID, title: '  ' })).code).toBe(400);
     expect((await call('POST', '/api/actions/add', { title: 'x' })).code).toBe(400);

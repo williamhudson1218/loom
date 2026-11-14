@@ -123,7 +123,8 @@ async function postUndo(ctx: RouteCtx): Promise<void> {
     if (s.status !== 'removed') return ctx.json(409, { ok: false, detail: 'not removed' });
     const to = s.removed_from || 'waiting';
     // A send_draft step's Run approval does not survive a remove: back in the chain, it asks again.
-    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' && s.action_type === 'send_draft' ? { fired_at: 0, approved_rev: '' } : {}) });
+    // Back to waiting, a step starts over: no old baseline, so a slack_reply counts only replies after it is current again.
+    setStep(db, s.id, { status: to, removed_from: '', ...(to === 'waiting' ? { current_at: 0 } : {}), ...(to === 'waiting' && s.action_type === 'send_draft' ? { fired_at: 0, approved_rev: '' } : {}) });
     ctx.json(200, { ok: true });
   });
 }
