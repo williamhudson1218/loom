@@ -36,6 +36,12 @@ describe('stepButtons', () => {
     expect(lib.stepButtons(step({ status: 'waiting' }))).not.toContain('retry');
     expect(lib.stepButtons(step({ status: 'waiting' }))).toEqual(['check', 'askfirst', 'remove']);
   });
+  it('never offers check on a manual step that sends or wakes: it goes due and shows Run', () => {
+    for (const action_type of ['send_draft', 'wake_chat']) {
+      expect(lib.stepButtons(step({ action_type }))).not.toContain('check');
+      expect(lib.stepButtons(step({ action_type, status: 'due' }))).toEqual(['run', 'askfirst', 'remove']);
+    }
+  });
 });
 
 describe('stepPill', () => {
@@ -183,6 +189,19 @@ describe('routes', () => {
     expect((await call('POST', '/api/actions/close-when-done', { session: 'sess-cwd', on: false })).body.ok).toBe(true);
     expect((await call('GET', '/api/actions', undefined, '?session=sess-cwd')).body.close_when_done).toBe(false);
     expect((await call('POST', '/api/actions/close-when-done', { on: true })).code).toBe(400);
+  });
+
+  it('check refuses a step that sends or wakes, so it is never marked done unsent', async () => {
+    withDb((db) => {
+      addStep(db, { id: 'a0000000000c', session_id: 'sess-c', title: 'Send', when: 'manual', then: 'send-draft:d0123456789ab', ask_first: false, created_by: 'chat', at: 1 });
+      addStep(db, { id: 'a0000000000d', session_id: 'sess-c', title: 'Wake', when: 'manual', then: 'wake:"go"', ask_first: false, created_by: 'chat', at: 1 });
+    });
+    for (const id of ['a0000000000c', 'a0000000000d']) {
+      const r = await call('POST', '/api/actions/check', { id });
+      expect(r.code).toBe(409);
+      expect(r.body.detail).toMatch(/use Run/);
+      expect(withDb((db) => getStep(db, id)?.status)).toBe('waiting');
+    }
   });
 
   it('rejects an empty title, a missing session and an unknown step', async () => {

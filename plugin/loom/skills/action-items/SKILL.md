@@ -17,7 +17,8 @@ loom action add --title "<what this step is>" --when <trigger> --then <action> [
 
 `--when` (the trigger):
 
-- `now` fires at once. `manual` fires only when the user runs it from Loom.
+- `now` fires at once. `manual` waits for the user: with `--then none` they check it off in Loom; with
+  `send-draft` or `wake` it shows as due, and the send or wake happens only when they press Run.
 - `pr-merged:acme/app#123` or a PR URL: fires when the PR is merged. `pr-shipped:acme/app#123` fires when the merge is deployed.
 - `draft-sent:<draft id>`: fires when that outbox draft has been sent.
 - `slack-reply:<thread url>[,from=<name>][,answers=<question>]`: fires on a reply in the thread, optionally only
@@ -47,7 +48,8 @@ rejected by the CLI, so always look. Fix it with `loom action remove <id>` and a
 Ask-first toggles are in the Loom panel.
 
 If the user wants the chat closed at the end ("then close this chat"), run `loom action close-when-done on`
-(`off` to undo). The chat closes when all steps are done.
+(`off` to undo). The chat closes once all steps are done, this chat is idle (not mid-turn and not sitting at a
+permission prompt or a question), and it has no pending drafts.
 
 ## Example
 

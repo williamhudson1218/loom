@@ -23,7 +23,7 @@ import { SESSION_PREFIX, TOOL_DIR } from './paths.ts';
 import { paneNameMap, rememberPaneNames } from './panenames.ts';
 import { paneLabelConfig, realTopicDeps } from './panetopics.ts';
 import { panesMidTurn } from './midturn.ts';
-import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane } from './compact.ts';
+import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane, focusedPaneFrom, defaultRun } from './compact.ts';
 import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
 import { getTrees, filesFor, diffFor, removeWorktrees, panesFromLive, knownWorktree, type ScanInput } from './trees.ts';
@@ -82,7 +82,7 @@ import { provisionalViews, spawnTitles } from './liveindex.ts';
 import { isOrchestratorRef } from './orchsession.ts';
 import { configureWatcherRuntime, isDryRun, startWatcherTicks, BRIEFS_DIR as WATCHER_BRIEFS_DIR, type EngineDeps, type TestDeps } from './watchers/engine.ts';
 import { attentionCount, getEvent, setWatcherEnabled, validateDraft, getWatcher } from './watchers/model.ts';
-import { computeSignals } from './watchers/chatSignals.ts';
+import { computeSignals, readPendingTool } from './watchers/chatSignals.ts';
 import { prStateFrom, type PrState } from './watchers/sources/prs.ts';
 import { relayFromWatcher, tmuxLaunch } from './watchers/actions.ts';
 import { relayDeps } from './orchserver.ts';
@@ -495,6 +495,10 @@ function actionIo(): ActionIo {
     redraft: startRedraft,
     // A wake_chat step: typed into its live pane, or the ended chat resumed with the prompt.
     deliver: deliverToChat,
+    // Wakes and auto-redrafts hold while the user is in the chat's pane (the orchestrator relay's guard), or while
+    // it has a tool call open (a permission prompt or a question menu, which a typed Enter would answer).
+    focused: () => focusedPaneFrom(defaultRun),
+    openTool: (jsonlPath) => readPendingTool(jsonlPath) > 0,
     // Close when done: the Send & close pane closer. Pending drafts come from the outbox itself (actionserver's default).
     closePane: closeChatPane,
     // The board rebuilt now, not the memoized snapshot: the close re-checks working on it first. Only runs when a close is due.

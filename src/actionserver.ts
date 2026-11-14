@@ -49,6 +49,17 @@ export interface ActionIo {
    * resuming an ended chat). Called at most once per firing. Absent: the step fails, nothing is woken.
    */
   deliver?: (sid: string, prompt: string) => Promise<{ ok: boolean; detail: string }>;
+  /**
+   * The pane the user is looking at right now (server.ts: compact.focusedPaneFrom, the orchestrator relay's
+   * guard). A wake or an auto-redraft never types into it. Absent or a throw: no pane counts as focused.
+   */
+  focused?: () => string | null;
+  /**
+   * Does this transcript have a tool call with no result yet (watchers/chatSignals readPendingTool)? A pane
+   * sitting at a permission prompt or an AskUserQuestion menu has one; so does a command still running. Loom
+   * never types into such a pane, and close-when-done never closes it. Absent: not checked.
+   */
+  openTool?: (jsonlPath: string) => boolean;
 }
 
 function realWithDb<T>(fn: (db: Database.Database) => T): T {
@@ -192,7 +203,7 @@ export function scheduledDrafts(db: Database.Database): Map<string, { step_id: s
       const id = String(s.action_params.draft_id ?? '');
       if (!id || out.has(id)) continue;
       const when = stepSummary(s).split(' → ')[0];
-      const phrase = s.trigger_type === 'now' ? 'now' : s.trigger_type === 'manual' ? 'checked off' : when.replace(/^When /, '');
+      const phrase = s.trigger_type === 'now' ? 'now' : s.trigger_type === 'manual' ? 'you run it' : when.replace(/^When /, '');
       out.set(id, { step_id: s.id, label: `Scheduled: sends when ${phrase}` });
     }
   }
@@ -205,17 +216,68 @@ export function agentOf(snap: Snap, sid: string): string {
 }
 
 /**
+ * Does a live chat's transcript show a tool call still open (a permission prompt, a question menu, a running
+ * command)? False when not checked (no reader, or a Codex chat, which has no call/result pairing); null when
+ * Loom cannot tell (no transcript for the chat, a read that throws).
+ */
+export function openToolIn(snap: Snap, sid: string, agent: string, read: ActionIo['openTool']): boolean | null {
+  if (!read || agent !== 'claude') return false;
+  const v = snap.views.find((x) => x.session_id === sid && x.agent === agent) ?? snap.views.find((x) => x.session_id === sid);
+  if (!v?.jsonl_path) return null;
+  try {
+    return read(v.jsonl_path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why Loom must not type into this chat's pane right now ('' when it may). The user being in that pane holds it,
+ * as it holds an orchestrator relay; so does a prompt or menu on screen, which a typed Enter would answer. A chat
+ * with no live pane is resumed in a new one, which nobody is typing in. Unknown state defers.
+ */
+export function deliveryHold(snap: Snap, sid: string, agent: string, io: Pick<ActionIo, 'focused' | 'openTool'>): string {
+  const L = snap.live[agentSessionKey(agent as Agent, sid)];
+  if (!L) return '';
+  let f: string | null = null;
+  try {
+    f = io.focused ? io.focused() : null;
+  } catch {
+    f = null;
+  }
+  if (f && f === L.pane_id) return "you're in this chat";
+  const t = openToolIn(snap, sid, agent, io.openTool);
+  if (t === null) return "can't tell whether the chat is at a prompt";
+  if (t) return 'the chat is at a prompt or has a tool call open';
+  return '';
+}
+
+/** A delivery held off this tick: the step keeps its status and approval, only its why says what it waits on. */
+function holdDelivery(db: Database.Database, s: ActionItem, why: string): void {
+  if (s.status_why !== why) setStep(db, s.id, { status_why: why });
+}
+
+/**
  * What close-when-done needs to know about a chat, or null when Loom cannot tell:
  * a board that has not indexed yet, a pane whose working state was not read, an
  * outbox that could not be read. Null never closes.
  */
-export function closeChatFact(snap: Snap, sid: string, drafts: { session_id: string }[] | null): { working: boolean; pendingDrafts: number } | null {
+export function closeChatFact(
+  snap: Snap,
+  sid: string,
+  drafts: { session_id: string }[] | null,
+  openTool?: ActionIo['openTool'],
+): { working: boolean; pendingDrafts: number; atPrompt: boolean } | null {
   if (!snap.views.length || !drafts) return null;
-  const L = snap.live[agentSessionKey(agentOf(snap, sid) as Agent, sid)];
+  const agent = agentOf(snap, sid);
+  const L = snap.live[agentSessionKey(agent as Agent, sid)];
   // Neither on the board nor in a pane: Loom cannot see this chat, so it cannot say it is idle.
   if (!L && !snap.views.some((v) => v.session_id === sid)) return null;
   if (L && typeof L.working !== 'boolean') return null;
-  return { working: !!L?.working, pendingDrafts: drafts.filter((d) => d.session_id === sid).length };
+  // `working` reads a pane at a permission prompt or a question as idle: an open tool call says it is not.
+  const t = L ? openToolIn(snap, sid, agent, openTool) : false;
+  if (t === null) return null;
+  return { working: !!L?.working, pendingDrafts: drafts.filter((d) => d.session_id === sid).length, atPrompt: t };
 }
 
 /** A step that holds or fails puts its chat back on the board (only a close mark: a plain Remove stays). */
@@ -241,7 +303,7 @@ function closeDoneChats(db: Database.Database, snap: Snap, now: number, io: Acti
       const chain = listSteps(db, sid);
       // A send this process started is in flight whatever the row says.
       if (chain.some((s) => sending.has(s.id))) continue;
-      const d = closeDecision(chain, chatFlags(db, sid), closeChatFact(snap, sid, drafts));
+      const d = closeDecision(chain, chatFlags(db, sid), closeChatFact(snap, sid, drafts, io.openTool));
       if (!d.close) continue;
       // Claim the close first: only the write that flips closed_at from 0 closes the chat.
       if (db.prepare(`UPDATE action_chats SET closed_at = ? WHERE session_id = ? AND closed_at = 0`).run(now, sid).changes !== 1) continue;
@@ -272,8 +334,8 @@ function stillIdle(sid: string, tickSnap: Snap, io: ActionIo): boolean {
   } catch {
     drafts = null;
   }
-  const c = closeChatFact(fresh, sid, drafts);
-  return !!c && !c.working && c.pendingDrafts === 0;
+  const c = closeChatFact(fresh, sid, drafts, io.openTool);
+  return !!c && !c.working && !c.atPrompt && c.pendingDrafts === 0;
 }
 
 type Job =
@@ -427,6 +489,15 @@ function wakeStep(db: Database.Database, s: ActionItem, d: Decision, sid: string
   }
 }
 
+/** The session that owns a draft ('' when it cannot be read). */
+function draftOwner(io: ActionIo, draftId: string): string {
+  try {
+    return (io.readDraft ?? ((x: string) => readOutbox()[x]))(draftId)?.session_id ?? '';
+  } catch {
+    return '';
+  }
+}
+
 let busy = false;
 
 /** One pass over every open chain. Never throws; a second overlapping call returns at once. Sends and redrafts run after it, unawaited. */
@@ -448,8 +519,22 @@ export async function actionTick(snap: Snap, now: number = Date.now(), io: Actio
             // A send claims its step in memory before the row says running, so no tick can read it as interrupted.
             const job = s ? jobOf(d, sid, agentOf(snap, sid), s.title, draftId, draftId ? facts.draft(draftId)?.revised_at ?? '' : '') : null;
             if (d.effect === 'wake') {
-              if (s) wakeStep(db, s, d, sid, agentOf(snap, sid), now, jobs);
+              if (!s) continue;
+              // Not while the user is in the pane or it shows a prompt: the step stays waiting, and fires next tick.
+              const hold = deliveryHold(snap, sid, agentOf(snap, sid), io);
+              if (hold) holdDelivery(db, s, `waiting to wake the chat: ${hold}`);
+              else wakeStep(db, s, d, sid, agentOf(snap, sid), now, jobs);
               continue;
+            }
+            // The hold's redraft types into the chat that owns the draft: the same guard, and nothing of the hold
+            // is written until it can go, so the next tick checks the thread and asks again.
+            if (s && job?.kind === 'redraft' && (io.focused || io.openTool)) {
+              const owner = draftOwner(io, draftId) || sid;
+              const hold = deliveryHold(snap, owner, agentOf(snap, owner), io);
+              if (hold) {
+                holdDelivery(db, s, `the thread moved on; waiting to ask the chat to redraft: ${hold}`);
+                continue;
+              }
             }
             // The 2 h timeout never lands on a wake still being delivered.
             if (waking.has(d.id) && d.patch.status === 'failed') continue;

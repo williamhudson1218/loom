@@ -267,6 +267,16 @@ describe('send_draft steps', () => {
     expect(d[0].patch.status).toBe('running');
   });
 
+  it('a manual send_draft step goes due for Run, and never sends on its own', () => {
+    const a = sd({ trigger_type: 'manual' });
+    const d = evaluateChain([a], facts({ draft: pending, preSend: () => ({ decision: 'send', ack: [] }) }), NOW);
+    expect(d).toEqual([{ id: a.id, patch: { status: 'due', fired_at: NOW, status_why: 'waiting for Run' } }]);
+    // Due waits for a person; the Run (waiting with fired_at and the revision) then sends through the pre-send check.
+    expect(evaluateChain([{ ...a, status: 'due', fired_at: NOW }], facts({ draft: pending, preSend: () => ({ decision: 'send', ack: [] }) }), NOW)).toEqual([]);
+    const run = only(evaluateChain([{ ...a, fired_at: NOW, approved_rev: '' }], facts({ draft: pending, preSend: () => ({ decision: 'send', ack: [] }) }), NOW));
+    expect(run[0]).toMatchObject({ effect: 'send', patch: { status: 'running' } });
+  });
+
   it('the Run path still holds on a hold verdict', () => {
     const d = only(evaluateChain([sd({ ask_first: true, fired_at: 9 })], facts({ draft: pending, preSend: () => ({ decision: 'hold', why: 'wait' }) }), NOW));
     expect(d[0].patch.status).toBe('held');
@@ -331,6 +341,7 @@ describe('closeDecision', () => {
   });
   it('waits while the chat is working', () => {
     expect(closeDecision([done()], on, { working: true, pendingDrafts: 0 })).toEqual({ close: false, why: 'waiting: chat is working' });
+    expect(closeDecision([done()], on, { working: false, pendingDrafts: 0, atPrompt: true })).toEqual({ close: false, why: 'waiting: the chat is at a prompt or has a tool call open' });
   });
   it('waits on a pending draft', () => {
     expect(closeDecision([done()], on, { working: false, pendingDrafts: 1 })).toEqual({ close: false, why: 'waiting: 1 draft pending' });
@@ -372,6 +383,19 @@ describe('evaluateChain: wake_chat', () => {
   it('a Run (waiting with fired_at) wakes without asking the trigger again', () => {
     const d = evaluateChain([wake({ trigger_type: 'manual', ask_first: true, fired_at: 4_000 })], facts(), NOW);
     expect(d[0]).toMatchObject({ effect: 'wake', why: 'started with Run', patch: { status: 'running', fired_at: NOW } });
+  });
+
+  it('a manual wake step goes due for Run, never wakes on its own', () => {
+    const s = wake({ trigger_type: 'manual' });
+    const d = evaluateChain([s], facts(), NOW);
+    expect(d).toEqual([{ id: s.id, patch: { status: 'due', fired_at: NOW, status_why: 'waiting for Run' } }]);
+    expect(d.some((x) => x.effect)).toBe(false);
+    expect(evaluateChain([{ ...s, status: 'due', fired_at: NOW }], facts(), NOW)).toEqual([]);
+  });
+
+  it('a manual none step still only waits to be checked off', () => {
+    const s = step({ trigger_type: 'manual' });
+    expect(evaluateChain([s], facts(), NOW)).toEqual([{ id: s.id, patch: { status_why: 'check it off when done' } }]);
   });
 
   it('an unfired or unknown trigger never wakes', () => {

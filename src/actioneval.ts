@@ -49,6 +49,7 @@ export function triggerState(s: ActionItem, facts: ActionFacts, _now: number): T
     case 'now':
       return { fired: true, why: 'now' };
     case 'manual':
+      // A `none` step is checked off; one that sends or wakes goes due for Run (evaluateChain).
       return { fired: false, why: 'check it off when done' };
     case 'pr_merged':
     case 'pr_shipped': {
@@ -161,6 +162,12 @@ export function evaluateChain(chain: ActionItem[], facts: ActionFacts, now: numb
   }
   // fired_at on a waiting send_draft or wake_chat step means a person clicked Run on it: the trigger and ask_first are passed.
   const approved = (s.action_type === 'send_draft' || s.action_type === 'wake_chat') && s.fired_at > 0;
+  // A manual step that sends or wakes fires when the person runs it: it goes due (Run), and Run approves it
+  // through the same path as any other due step. Only a `none` step is checked off.
+  if (!approved && s.trigger_type === 'manual' && s.action_type !== 'none') {
+    out.push({ id: s.id, patch: { status: 'due', fired_at: now, status_why: 'waiting for Run' } });
+    return out;
+  }
   const t: TriggerState = approved ? { fired: true, why: s.action_type === 'wake_chat' ? 'started with Run' : 'Run' } : triggerState(s, facts, now);
   if (!t.fired) {
     if (t.why !== s.status_why) out.push({ id: s.id, patch: { status_why: t.why } });
@@ -215,13 +222,13 @@ function sendDraftFired(s: ActionItem, why: string, approved: boolean, facts: Ac
 /**
  * Close when done: may Loom close this chat now? Only with the flag on, not closed
  * since the last step was added, at least one step kept and every kept step done,
- * nothing running, and a chat Loom can see is idle with no pending drafts. An
+ * nothing running, and a chat Loom can see is idle (not at a prompt) with no pending drafts. An
  * unknown chat (null) never closes; the why says what it waits on.
  */
 export function closeDecision(
   chain: ActionItem[],
   flags: { close_when_done: boolean; closed_at: number },
-  chat: { working: boolean; pendingDrafts: number } | null,
+  chat: { working: boolean; pendingDrafts: number; atPrompt?: boolean } | null,
 ): { close: boolean; why: string } {
   const no = (why: string) => ({ close: false, why });
   if (!flags.close_when_done) return no('close when done is off');
@@ -233,6 +240,7 @@ export function closeDecision(
   if (open) return no(`waiting: ${open} step${open === 1 ? '' : 's'} not done`);
   if (!chat) return no("waiting: the chat's state is unknown");
   if (chat.working) return no('waiting: chat is working');
+  if (chat.atPrompt) return no('waiting: the chat is at a prompt or has a tool call open');
   if (chat.pendingDrafts !== 0) return no(`waiting: ${chat.pendingDrafts} draft${chat.pendingDrafts === 1 ? '' : 's'} pending`);
   return { close: true, why: 'every step done' };
 }

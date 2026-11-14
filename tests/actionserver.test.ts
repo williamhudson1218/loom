@@ -267,6 +267,33 @@ describe('actionTick: send_draft effects', () => {
     expect(asked).toEqual([DID]);
     expect(getStep(db, SID)).toMatchObject({ status: 'held', status_why: 'held: wait for #130; redraft failed: the chat is not running', held_rev: 'R1' });
   });
+
+  it('holds off the redraft while the user is in the chat that owns the draft, then asks once focus leaves', async () => {
+    const db = mk();
+    const asked: string[] = [];
+    let focused: string | null = '%5';
+    const live = { views: [], live: { 'claude:s2': { agent: 'claude', session_id: 's2', pane_id: '%5', working: false } } } as unknown as Snap;
+    const io = {
+      withDb: <T,>(fn: (d: Database.Database) => T) => fn(db),
+      facts: () => baseFacts({ preSend: () => ({ decision: 'hold' as const, why: 'wait for #130' }) }),
+      send: async () => { throw new Error('must not send'); },
+      redraft: async (id: string) => (asked.push(id), { ok: true, detail: 'sent to the chat' }),
+      readDraft: () => ({ session_id: 's2' }) as never,
+      focused: () => focused,
+    };
+    await actionTick(live, 1000, io);
+    await flush();
+    expect(asked).toEqual([]);
+    expect(getStep(db, SID)).toMatchObject({ status: 'waiting', held_at: 0, status_why: "the thread moved on; waiting to ask the chat to redraft: you're in this chat" });
+    await actionTick(live, 2000, io);
+    await flush();
+    expect(asked).toEqual([]);
+    focused = '%9';
+    await actionTick(live, 3000, io);
+    await flush();
+    expect(asked).toEqual([DID]);
+    expect(getStep(db, SID)).toMatchObject({ status: 'held', held_at: 3000 });
+  });
 });
 
 describe('actionTick: a refused send_kept', () => {
@@ -308,6 +335,13 @@ describe('scheduled drafts', () => {
     db.prepare(`UPDATE action_items SET status = 'done' WHERE id = 'a00000000002'`).run();
     expect([...scheduledDraftIds(db)]).toEqual(['d0123456789ab']);
     expect(scheduledDrafts(db).get('d0123456789ab')).toEqual({ step_id: 'a00000000001', label: 'Scheduled: sends when PR #123 merges' });
+  });
+
+  it('labels a manual step by what really sends it: Run', () => {
+    const db = new Database(':memory:');
+    applySchema(db);
+    addStep(db, { id: 'a00000000003', session_id: 's1', title: 'T', when: 'manual', then: 'send-draft:d0123456789ad', ask_first: false, created_by: 'chat', at: 1 });
+    expect(scheduledDrafts(db).get('d0123456789ad')?.label).toBe('Scheduled: sends when you run it');
   });
 });
 
@@ -371,6 +405,30 @@ describe('close when done (the tick)', () => {
     expect(closed).toEqual([]);
     io.pendingDrafts = () => [];
     await actionTick(idleSnap, 5000, io);
+    expect(closed).toEqual(['claude:s1']);
+  });
+
+  it('waits while the pane is at a permission prompt or a question (an open tool call), on the tick and on the re-check', async () => {
+    const { db, io, closed } = setup();
+    const snapT: Snap = { views: [view('s1', { jsonl_path: '/x/s1.jsonl' })], live: { 'claude:s1': loc('s1', false) } };
+    let open = true;
+    const withTool = { ...io, openTool: () => open };
+    await actionTick(snapT, 1000, withTool);
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    // Open on the live board only: the claim is released.
+    let n = 0;
+    withTool.openTool = () => ++n > 1;
+    await actionTick(snapT, 2000, { ...withTool, liveSnap: () => snapT });
+    expect(closed).toEqual([]);
+    expect(chatFlags(db, 's1').closed_at).toBe(0);
+    // A live chat with no transcript to read is unknown: never closes.
+    withTool.openTool = () => false;
+    await actionTick({ views: [view('s1')], live: { 'claude:s1': loc('s1', false) } }, 2500, withTool);
+    expect(closed).toEqual([]);
+    open = false;
+    withTool.openTool = () => open;
+    await actionTick(snapT, 3000, withTool);
     expect(closed).toEqual(['claude:s1']);
   });
 
@@ -486,6 +544,58 @@ describe('actionTick: wake_chat', () => {
     await actionTick(snap, 3000, io); // delivered, the chat has not reported
     expect(getStep(db, ID)?.status).toBe('running');
     expect(calls).toHaveLength(1);
+  });
+
+  it('holds a wake while the user is in the chat, or the pane is at a prompt; delivers once that clears', async () => {
+    const db = mk();
+    const calls: string[] = [];
+    let focused: string | null = '%4';
+    let open = false;
+    const live = { views: [view('s1', { jsonl_path: '/x/s1.jsonl' })], live: { 'claude:s1': { agent: 'claude', session_id: 's1', pane_id: '%4', working: false } } } as unknown as Snap;
+    const io = {
+      ...ioWith(db, async (sid) => (calls.push(sid), { ok: true, detail: 'sent to the chat' })),
+      focused: () => focused,
+      openTool: (p: string) => (expect(p).toBe('/x/s1.jsonl'), open),
+    };
+    await actionTick(live, 1000, io);
+    await flush();
+    expect(calls).toEqual([]);
+    expect(getStep(db, ID)).toMatchObject({ status: 'waiting', fired_at: 0, status_why: "waiting to wake the chat: you're in this chat" });
+    focused = '%9';
+    open = true; // a permission prompt or a question menu: an Enter would answer it
+    await actionTick(live, 2000, io);
+    await flush();
+    expect(calls).toEqual([]);
+    expect(getStep(db, ID)).toMatchObject({ status: 'waiting', status_why: 'waiting to wake the chat: the chat is at a prompt or has a tool call open' });
+    open = false;
+    await actionTick(live, 3000, io);
+    await flush();
+    expect(calls).toEqual(['s1']);
+    expect(getStep(db, ID)).toMatchObject({ status: 'running', fired_at: 3000 });
+  });
+
+  it('a held Run keeps its approval: it wakes, once, when focus leaves', async () => {
+    const db = mk('manual', true);
+    db.prepare(`UPDATE action_items SET status = 'waiting', fired_at = 500, status_why = 'waking the chat' WHERE id = ?`).run(ID);
+    const calls: string[] = [];
+    let focused: string | null = '%4';
+    const live = { views: [view('s1', { jsonl_path: '/x/s1.jsonl' })], live: { 'claude:s1': { agent: 'claude', session_id: 's1', pane_id: '%4', working: false } } } as unknown as Snap;
+    const io = { ...ioWith(db, async (sid) => (calls.push(sid), { ok: true, detail: 'sent' })), focused: () => focused, openTool: () => false };
+    await actionTick(live, 1000, io);
+    expect(getStep(db, ID)).toMatchObject({ status: 'waiting', fired_at: 500 });
+    focused = null;
+    await actionTick(live, 2000, io);
+    await flush();
+    await actionTick(live, 3000, io);
+    expect(calls).toEqual(['s1']);
+  });
+
+  it('an ended chat (no live pane) is not held: it is resumed in a pane nobody is typing in', async () => {
+    const db = mk();
+    const calls: string[] = [];
+    await actionTick(snap, 1000, { ...ioWith(db, async (sid) => (calls.push(sid), { ok: true, detail: 'resumed' })), focused: () => '%4', openTool: () => true });
+    await flush();
+    expect(calls).toEqual(['s1']);
   });
 
   it("a rejected delivery fails the step with the reason and puts a closed chat back on the board", async () => {

@@ -99,6 +99,8 @@ async function postCheck(ctx: RouteCtx): Promise<void> {
     const s = target(ctx, b, db);
     if (!s) return;
     if (isFinal(s.status)) return ctx.json(409, { ok: false, detail: `already ${s.status}` });
+    // Checking off a step that sends or wakes would mark it done without doing it: those go through Run.
+    if (s.action_type !== 'none') return ctx.json(409, { ok: false, detail: 'this step sends or wakes: use Run, or Remove it' });
     const now = deps.now();
     setStep(db, s.id, { status: 'done', status_why: '', done_at: now });
     logAction(db, s.session_id, `Checked off: ${s.title}`, now);

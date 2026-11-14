@@ -56,10 +56,11 @@ export const ACTIONS_PURE_JS = String.raw`
 var STEP_PILL={waiting:'Waiting',due:'Due',running:'Running',held:'Held',done:'Done',failed:'Failed',removed:'Removed'};
 function stepPill(status){return {label:STEP_PILL[status]||String(status||''),cls:'st-'+status};}
 function stepFinal(s){return s.status==='done'||s.status==='removed';}
-// Which of the row's buttons show: check (manual triggers), run (due), retry (failed or held),
-// the ask-first switch (any open step), remove (any open step). A done or removed row has none.
+// Which of the row's buttons show: check (manual steps that only track, action none), run (due), retry (failed
+// or held), the ask-first switch (any open step), remove (any open step). A done or removed row has none. A manual
+// step that sends or wakes goes due and shows Run instead: checking it off would skip the send.
 function stepButtons(s){if(stepFinal(s))return [];var b=[];
-  if(s.trigger_type==='manual')b.push('check');
+  if(s.trigger_type==='manual'&&(s.action_type||'none')==='none')b.push('check');
   if(s.status==='due')b.push('run');
   if(s.status==='failed'||s.status==='held')b.push('retry');
   b.push('askfirst','remove');return b;}
