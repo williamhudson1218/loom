@@ -64,6 +64,10 @@ function stepButtons(s){if(stepFinal(s))return [];var b=[];
   if(s.status==='due')b.push('run');
   if(s.status==='failed'||s.status==='held')b.push('retry');
   b.push('askfirst','remove');return b;}
+// A queued step has no status_why of its own (only the current step is evaluated), so say what it is behind.
+function waitingNote(s,cur){if(!cur||cur.id===s.id||s.status!=='waiting'||s.status_why)return '';
+  var t=String(cur.title||'').trim();if(t.length>40)t=t.slice(0,39).trimEnd()+'\u2026';
+  return 'waiting for \u201c'+t+'\u201d to finish';}
 function stepNeedsYou(s){return s.status==='due'||s.status==='held'||s.status==='failed';}
 function countOf(x){return Array.isArray(x)?x.length:(Number(x)||0);}
 // Default tab: Actions when any step needs a look, else the tab last picked for the chat
@@ -117,16 +121,16 @@ function stepBtnHtml(a,s){
   if(a==='run')return '<button type="button" data-act="run" title="Run this step now">Run now</button>';
   if(a==='retry')return '<button type="button" data-act="retry" title="Try this step again">Retry</button>';
   return '<button type="button" data-act="remove" title="Remove this step" aria-label="Remove this step">Remove</button>';}
-function stepRowHtml(s){
+function stepRowHtml(s,cur){
   if(s.status==='removed')return '<div class="act-row act-removed" data-step="'+esc(s.id)+'"><span>Removed · </span><button type="button" class="act-link" data-act="undo">Undo</button></div>';
   const p=stepPill(s.status);const draft=s.action_type==='send_draft'&&s.action_params?s.action_params.draft_id:'';
   return '<div class="act-row'+(stepFinal(s)?' final':'')+'" data-step="'+esc(s.id)+'"><div class="act-head"><span class="act-title">'+esc(s.title)+'</span><span class="act-pill '+p.cls+'">'+esc(p.label)+'</span></div>'+
-    '<div class="act-sum">'+esc(stepLine(s))+'</div>'+(s.status_why?'<div class="act-why">'+esc(s.status_why)+'</div>':'')+(ACT_ERR[s.id]?'<div class="act-err" role="alert">'+esc(ACT_ERR[s.id])+'</div>':'')+
+    '<div class="act-sum">'+esc(stepLine(s))+'</div>'+(s.status_why?'<div class="act-why">'+esc(s.status_why)+'</div>':(waitingNote(s,cur)?'<div class="act-why">'+esc(waitingNote(s,cur))+'</div>':''))+(ACT_ERR[s.id]?'<div class="act-err" role="alert">'+esc(ACT_ERR[s.id])+'</div>':'')+
     (s.status==='held'&&draft?'<button type="button" class="act-link" data-act="draft" data-draft="'+esc(draft)+'">Open the draft in the outbox</button>':'')+
     '<div class="act-btns">'+stepButtons(s).map(function(a){return stepBtnHtml(a,s);}).join('')+'</div></div>';}
 // The chat-level switch: once every step is done and the chat is idle with no drafts, Loom closes it the Send & close way.
 function cwdSwitchHtml(on){return '<div class="act-btns act-cwd"><button type="button" class="act-sw" role="switch" data-act="cwd" aria-checked="'+(on?'true':'false')+'" title="Close this chat once every step is done, it is idle and no draft is pending"><span class="trk" aria-hidden="true"></span>Close when all done</button></div>';}
-function actionsBodyHtml(as,cwd){const rows=as.length?as.map(stepRowHtml).join(''):'<div class="act-empty">No steps yet.</div>';
+function actionsBodyHtml(as,cwd){const cur=as.filter(function(s){return !stepFinal(s);})[0]||null;const rows=as.length?as.map(function(s){return stepRowHtml(s,cur);}).join(''):'<div class="act-empty">No steps yet.</div>';
   return '<div id="outcards" class="acts">'+rows+cwdSwitchHtml(!!cwd)+'<form class="act-add" data-actadd><input type="text" maxlength="300" placeholder="Add a step" aria-label="Add a step"><button type="submit">Add</button></form></div>';}
 // The browser's stepSummary: the same trigger -> action line the CLI prints (src/actions.ts), from the fields the panel has.
 function stepLine(s){const p=s.trigger_params||{};let w;

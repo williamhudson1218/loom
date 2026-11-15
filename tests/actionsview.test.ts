@@ -340,6 +340,17 @@ describe('panel markup', () => {
     expect(view.stepRowHtml({ ...base, status: 'due' })).toContain('<div class="act-err" role="alert">not available yet</div>');
     delete view.ACT_ERR[base.id];
   });
+  it('a queued step says which step it is waiting on, and not the current one', () => {
+    const a = { ...base, id: 'a1', title: 'First', status: 'due' };
+    const b = { ...base, id: 'a2', title: 'Second' };
+    const long = { ...base, id: 'a3', title: 'x'.repeat(80) };
+    const body = view.actionsBodyHtml([a, b]);
+    expect(body).toContain('waiting for \u201cFirst\u201d to finish');
+    expect(body.split('to finish').length - 1).toBe(1);
+    expect(view.actionsBodyHtml([{ ...a, status: 'done' }, b])).not.toContain('to finish');
+    expect(view.actionsBodyHtml([a, { ...b, status_why: 'own reason' }])).not.toContain('to finish');
+    expect(view.actionsBodyHtml([{ ...long, status: 'due' }, b])).toContain('\u2026\u201d to finish');
+  });
   it('carries the Close when all done switch, reflecting the flag', () => {
     expect(view.actionsBodyHtml([], false)).toContain('data-act="cwd" aria-checked="false"');
     expect(view.actionsBodyHtml([], true)).toContain('data-act="cwd" aria-checked="true"');
