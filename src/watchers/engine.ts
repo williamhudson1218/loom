@@ -114,7 +114,7 @@ export function decide(db: Database.Database, w: Watcher, m: Match, ctx: DecideC
   } else if (w.max_per_hour > 0 && !(w.action.kind === 'start_chat' && w.action.params.standing === true) && firedSince(db, w.id, ctx.now - HOUR) >= w.max_per_hour) {
     decision = 'held_cap';
     detail = `${w.max_per_hour} fires in the last hour`;
-  } else if (w.cooldown_min > 0 && ctx.now - lastFiredFor(db, w.id, m.subject) < w.cooldown_min * 60_000) {
+  } else if (w.cooldown_min > 0 && !(w.action.kind === 'start_chat' && w.action.params.standing === true) && ctx.now - lastFiredFor(db, w.id, m.subject) < w.cooldown_min * 60_000) {
     decision = 'held_cooldown';
     detail = `fired for this within ${w.cooldown_min} min`;
   } else {

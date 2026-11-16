@@ -1042,6 +1042,18 @@ describe('standing chat', () => {
     expect(d.relays).toHaveLength(2);
     expect(events().map((e) => e.result)).toEqual(['sent', 'sent', 'sent', 'sent']);
   });
+  it('cooldown does not hold a second finding on the same subject for a standing watcher', async () => {
+    const w = add(db, { ...draft(), cooldown_min: 60 });
+    setStandingSid(db, w.id, 'sid-old');
+    let t = NOW;
+    let list = [f('k1', 'ITEM-1')];
+    const d = mk(list, { now: () => t, work: async () => list });
+    await tickWatchers(db, d, newEngineState());
+    list = [f('k1', 'ITEM-1'), f('k2', 'ITEM-1')];
+    t = NOW + WORK_POLL_MS;
+    await tickWatchers(db, d, newEngineState());
+    expect(events().map((e) => e.result)).toEqual(['sent', 'sent']);
+  });
   it('a chat that is still starting is not replaced: events stay queued within five minutes', async () => {
     const w = add(db, draft());
     setStandingSid(db, w.id, 'sid-fresh', NOW - 60_000);
