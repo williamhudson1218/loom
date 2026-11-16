@@ -275,10 +275,9 @@ export function openView(paneId: string, panes: LivePane[], tmux: Tmux, name: st
 
 // Views that opened a shared window zoomed, newest last. Something else in the window
 // (a jump to another pane, a second view opening) can undo the zoom just after we made
-// it, leaving the viewer looking at the whole 2x2. For a short grace period after open,
+// it, leaving the viewer looking at the whole 2x2. For as long as the view is shown,
 // the NEWEST chat view of a window puts its own pane back; older views never do, so two
 // views cannot fight, and a deliberate "Show window" is never undone.
-export const REASSERT_GRACE_MS = 15_000;
 const zoomOpen = new Map<string, { pane: string; at: number; window: string; showWindow: boolean }>();
 
 export function noteZoomOpen(view: string, pane: string, tmux: Tmux, at: number = Date.now()): void {
@@ -294,10 +293,10 @@ export function forgetZoomOpen(view: string): void {
   zoomOpen.delete(view);
 }
 
-/** Put `view`'s pane back alone if the window lost its zoom (or zoomed another pane) soon after open. Returns true if it acted. */
+/** Put `view`'s pane back alone if the window lost its zoom (or zoomed another pane) while the view is shown. Returns true if it acted. */
 export function reassertZoom(view: string, tmux: Tmux, now: number = Date.now()): boolean {
   const v = zoomOpen.get(view);
-  if (!v || v.showWindow || now - v.at > REASSERT_GRACE_MS) return false;
+  if (!v || v.showWindow) return false;
   for (const [name, o] of zoomOpen) if (name !== view && o.window === v.window && o.at > v.at && !o.showWindow) return false; // a newer view owns the window
   try {
     const [z, active] = tmux(['display-message', '-p', '-t', v.pane, '#{window_zoomed_flag} #{pane_active}']).trim().split(' ');
@@ -318,13 +317,20 @@ export function reassertZoom(view: string, tmux: Tmux, now: number = Date.now())
  * this view (paneHome). The terminal then showed another chat's pane under the
  * selected chat's header. Returns what it did; `moved` false when it was right.
  */
-export function realignView(view: string, paneId: string, tmux: Tmux): { moved: boolean; from?: string; to?: string; error?: string } {
+export function realignView(view: string, paneId: string, tmux: Tmux, opts: { zoom?: boolean } = {}): { moved: boolean; from?: string; to?: string; error?: string } {
   if (!isViewSession(view)) return { moved: false };
   try {
     const want = tmux(['display-message', '-p', '-t', paneId, '#{window_id}']).trim();
     const have = tmux(['display-message', '-p', '-t', `=${view}:`, '#{window_id}']).trim();
     if (!want || want === have) return { moved: false };
     tmux(['select-window', '-t', `=${view}:${want}`]);
+    const zo = zoomOpen.get(view);
+    if (zo) zo.window = want;
+    // A zoomed lane view must still show its pane alone in the new window.
+    if (opts.zoom && !(zo && zo.showWindow)) {
+      tmux(['select-pane', '-Z', '-t', paneId]);
+      if (tmux(['display-message', '-p', '-t', paneId, '#{window_zoomed_flag}']).trim() !== '1') tmux(['resize-pane', '-Z', '-t', paneId]);
+    }
     return { moved: true, from: have, to: want };
   } catch (e) {
     return { moved: false, error: (e as Error).message };
@@ -968,7 +974,7 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
     if (mode === 'zoom' && paneId) noteZoomOpen(view, paneId, tmux);
     const align = (why: string) => {
       if (kind !== 'chat' || !paneId) return;
-      const r = realignView(view, paneId, tmux);
+      const r = realignView(view, paneId, tmux, { zoom: mode === 'zoom' });
       if (r.moved || r.error) pickLog().write('-', 'view-realigned', { why, view, pane: paneId, from: r.from, to: r.to, error: r.error });
     };
     if (kind === 'chat') {

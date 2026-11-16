@@ -205,7 +205,7 @@ function selectInTmux(target: JumpTarget, deps: JumpDeps): GotoResult | null {
     // of Loom's terminal views instead (see paneHome).
     const home = paneHome(target.paneId, deps.tmux);
     deps.tmux(['select-window', '-t', home ? `=${home.session}:${home.window}` : target.paneId]);
-    deps.tmux(['select-pane', '-t', target.paneId]);
+    deps.tmux(['select-pane', '-Z', '-t', target.paneId]);
     return null;
   } catch (e) {
     return { ok: false, detail: 'tmux select failed: ' + (e as Error).message };

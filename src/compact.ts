@@ -185,7 +185,7 @@ export function applySwaps(
       continue;
     }
     try {
-      deps.run(['swap-pane', '-d', '-s', s.src, '-t', s.dst]);
+      deps.run(['swap-pane', '-d', '-Z', '-s', s.src, '-t', s.dst]);
       out.applied++;
       deps.log({ ...base, result: 'ok' });
     } catch (e) {
@@ -358,7 +358,7 @@ export function movePane(ref: string, toRef: string, deps: GroupDeps): MoveResul
     if (m.tmux_session !== t.tmux_session) {
       const slot = pickMoveSlot(world.panes, t.pane_id, world.focused);
       if (!slot.ok) return slot;
-      deps.run(['swap-pane', '-d', '-s', m.pane_id, '-t', slot.pane_id]);
+      deps.run(['swap-pane', '-d', '-Z', '-s', m.pane_id, '-t', slot.pane_id]);
       swappedWith = slot.pane_id;
     }
     // A target already in a group extends it; otherwise the pair starts one.

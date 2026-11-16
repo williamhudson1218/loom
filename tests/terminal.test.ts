@@ -126,7 +126,7 @@ describe('adapters', () => {
   it('ghostty keeps the original sequence: select-window, select-pane, title-match script', () => {
     const f = fakeDeps();
     const r = jumpWith('ghostty', target, f.deps);
-    expect(f.calls.filter((c) => c[0] !== 'list-panes')).toEqual([['select-window', '-t', '%7'], ['select-pane', '-t', '%7']]);
+    expect(f.calls.filter((c) => c[0] !== 'list-panes')).toEqual([['select-window', '-t', '%7'], ['select-pane', '-Z', '-t', '%7']]);
     expect(f.osa).toEqual([{ script: GHOSTTY_FOCUS_SCRIPT, args: ['loom-tp-2'] }]);
     expect(r).toEqual({ ok: true, detail: 'tmux ok; ghostty ok' });
     expect(f.opened).toEqual([]);

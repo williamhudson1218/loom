@@ -292,7 +292,7 @@ describe('applySwaps', () => {
     const logged: unknown[] = [];
     const idle = longIdle(f.world.panes);
     const out = applySwaps([{ lane: 'tp', src: '%c', dst: '%h' }], idle, NOW, { run: f.run, read: f.read, log: (e) => logged.push(e) });
-    expect(f.calls).toEqual([['swap-pane', '-d', '-s', '%c', '-t', '%h']]);
+    expect(f.calls).toEqual([['swap-pane', '-d', '-Z', '-s', '%c', '-t', '%h']]);
     expect(out.applied).toBe(1);
     expect(logged).toEqual([expect.objectContaining({ result: 'ok', src: '%c', dst: '%h', lane: 'tp' })]);
     expect(f.world.panes.find((p) => p.pane_id === '%c')!.tmux_session).toBe('loom-tp-2');
@@ -405,7 +405,7 @@ describe('movePane', () => {
     const f = fakeWorld([claude('%t', 'loom-tp-2', 0, { name: 'red-otter' }), pane('%h', 'loom-tp-2', 1), claude('%m', 'loom-tp-5', 0, { name: 'blue-vanilla' })]);
     const r = movePane('blue-vanilla', 'red-otter', { run: f.run, read: f.read, now: () => NOW });
     expect(r).toEqual(expect.objectContaining({ ok: true, swappedWith: '%h' }));
-    expect(f.calls[0]).toEqual(['swap-pane', '-d', '-s', '%m', '-t', '%h']);
+    expect(f.calls[0]).toEqual(['swap-pane', '-d', '-Z', '-s', '%m', '-t', '%h']);
     const m = f.world.panes.find((p) => p.pane_id === '%m')!;
     const t = f.world.panes.find((p) => p.pane_id === '%t')!;
     expect(m.tmux_session).toBe('loom-tp-2');

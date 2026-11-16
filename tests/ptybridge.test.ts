@@ -33,7 +33,6 @@ import {
   noteView,
   noteZoomOpen,
   reassertZoom,
-  REASSERT_GRACE_MS,
 } from '../src/ptybridge.ts';
 import { tmux } from '../src/tmux.ts';
 import { listTmuxPanes } from '../src/placements.ts';
@@ -325,8 +324,7 @@ describe.skipIf(!hasTmux)('grouped view sessions (throwaway tmux server)', () =>
       noteZoomOpen(va, pz, t, 1000);
       t(['select-pane', '-t', other]); // something else jumps to the sibling pane: unzooms
       expect(t(['display-message', '-p', '-t', pz, '#{window_zoomed_flag}']).trim()).toBe('0');
-      expect(reassertZoom(va, t, 1000 + REASSERT_GRACE_MS + 1)).toBe(false); // past the grace period
-      expect(reassertZoom(va, t, 2000)).toBe(true);
+      expect(reassertZoom(va, t, 1000 + 60 * 60_000)).toBe(true); // no time cap while the view is shown
       expect(t(['display-message', '-p', '-t', pz, '#{window_zoomed_flag} #{pane_active} #{@loom_zoomed}']).trim()).toBe('1 1 loom-view-r1');
       expect(reassertZoom(va, t, 2100)).toBe(false); // already right: nothing to do
       // a newer view in the same window owns it
@@ -752,6 +750,17 @@ describe('realignView', () => {
     expect(realignView('loom-view-0de2', '%899', f.tmux)).toEqual({ moved: true, from: '@1039', to: '@854' });
     expect(f.views['loom-view-0de2']).toBe('@854');
     expect(f.calls).toContainEqual(['select-window', '-t', '=loom-view-0de2:@854']);
+  });
+  it('re-zooms a zoomed lane view after moving it to the new window', () => {
+    const f = fake({ 'loom-view-0de2': '@1039' }, { '%899': '@854' });
+    expect(realignView('loom-view-0de2', '%899', f.tmux, { zoom: true })).toMatchObject({ moved: true });
+    expect(f.calls).toContainEqual(['select-pane', '-Z', '-t', '%899']);
+    expect(f.calls).toContainEqual(['resize-pane', '-Z', '-t', '%899']);
+  });
+  it('does not zoom on realign when the view is not a zoom view', () => {
+    const f = fake({ 'loom-view-0de2': '@1039' }, { '%899': '@854' });
+    realignView('loom-view-0de2', '%899', f.tmux);
+    expect(f.calls.some((c) => c[0] === 'resize-pane')).toBe(false);
   });
   it('leaves a view that is already right alone', () => {
     const f = fake({ 'loom-view-0de2': '@854' }, { '%899': '@854' });
