@@ -850,6 +850,8 @@ describe('work source', () => {
     const f = fnd('k1');
     expect(parseFindings({ data: { findings: [f] } })).toHaveLength(1);
     expect(parseFindings({ findings: [f, { key: 'x' }] })).toHaveLength(1);
+    expect(() => parseFindings({ findings: [{ id: 'a', type: 'b' }] })).toThrow('not a findings response');
+    expect(parseFindings({ findings: [] })).toEqual([]);
     for (const bad of ['<html>', {}, { data: {} }, null]) expect(() => parseFindings(bad)).toThrow('not a findings response');
   });
   it('fetchFindings sends the bearer token and never echoes it in an error', async () => {
@@ -907,6 +909,17 @@ describe('work source', () => {
     t = NOW + WORK_POLL_MS;
     await tickWatchers(db, d, newEngineState());
     expect(count('watcher_events')).toBe(2);
+  });
+  it('a queued start_chat keeps the finding variables through the drain', async () => {
+    const w = add(db, { ...workDraft({ sweep_first: true }), run_mode: 'live', action: { kind: 'start_chat', params: { project_dir: '/work/app', target: 'lane:tp', brief_template: 'R={{RULE}} D={{DETAIL}} C={{CLEAR}} T={{TICKET}} K={{KEY}}', perm: 'inherit' } } });
+    const f: Finding = { key: 'k9', rule: 'rule_a', subject: 'S', detail: 'the detail', suggestedFix: { clear: true } };
+    const d = wdeps(() => [f]);
+    await tickWatchers(db, d, newEngineState());
+    expect(count('watcher_events')).toBe(1);
+    const run = deps({ panes: [pane('%12', 'loom-tp-3', 1)], launchSettings: () => LEGACY_LAUNCH_SETTINGS });
+    await drainQueue(db, getWatcher(db, w.id)!, run);
+    const row = db.prepare(`SELECT brief_path FROM watcher_events`).get() as { brief_path: string };
+    expect(fs.readFileSync(row.brief_path, 'utf8')).toContain('R=rule_a D=the detail C=yes T= K=k9');
   });
   it('a failed poll records the error, backs off, and does not baseline', async () => {
     const w = add(db, workDraft());

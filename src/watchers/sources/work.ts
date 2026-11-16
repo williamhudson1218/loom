@@ -5,6 +5,10 @@ import type { Match, Watcher } from '../model.ts';
 // recorded once and a new key fires. The bearer token comes from the Keychain
 // (service FINDINGS_TOKEN_SERVICE, account = the URL's host); it is never put
 // in an error message.
+//
+// Dedupe is per finding key, forever (watcher_seen / watcher_events). A finding
+// that closes and later reopens is NOT re-sent unless the endpoint encodes the
+// episode in the key.
 
 export const WORK_POLL_MS = 15 * 60_000;
 export const WORK_MAX_BACKOFF_MS = 60 * 60_000;
@@ -28,9 +32,12 @@ export function parseFindings(body: unknown): Finding[] {
   if (isObj(body) && Array.isArray(body.findings)) list = body.findings;
   else if (isObj(body) && isObj(body.data) && Array.isArray(body.data.findings)) list = body.data.findings;
   else throw new Error('not a findings response');
-  return (list as unknown[]).filter(
+  const ok = (list as unknown[]).filter(
     (f): f is Finding => isObj(f) && typeof f.key === 'string' && typeof f.rule === 'string' && typeof f.subject === 'string',
   );
+  // Every entry malformed means the shape changed (a renamed field), not "no findings".
+  if ((list as unknown[]).length > 0 && ok.length === 0) throw new Error('not a findings response');
+  return ok;
 }
 
 export async function fetchFindings(url: string, token: string, f: typeof fetch = fetch): Promise<Finding[]> {

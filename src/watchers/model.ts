@@ -442,6 +442,7 @@ export interface EventRow {
   brief_path: string;
   acted_at: number;
   reviewed_at: number;
+  vars_json: string;
 }
 
 export interface EventInput {
@@ -455,16 +456,18 @@ export interface EventInput {
   decision: Decision;
   result?: EventResult;
   detail?: string;
+  /** The match's template variables, kept so a queued start_chat renders the same brief later. */
+  vars_json?: string;
 }
 
 /** Record an event. Returns its id, or null when this watcher already has one for the key (dedupe). */
 export function recordEvent(db: Database.Database, e: EventInput): number | null {
   const info = db
     .prepare(
-      `INSERT OR IGNORE INTO watcher_events (watcher_id, event_key, subject, title, permalink, detected_at, mode, decision, result, detail)
-       VALUES (@watcher_id, @event_key, @subject, @title, @permalink, @detected_at, @mode, @decision, @result, @detail)`,
+      `INSERT OR IGNORE INTO watcher_events (watcher_id, event_key, subject, title, permalink, detected_at, mode, decision, result, detail, vars_json)
+       VALUES (@watcher_id, @event_key, @subject, @title, @permalink, @detected_at, @mode, @decision, @result, @detail, @vars_json)`,
     )
-    .run({ result: '', ...e, title: e.title.slice(0, 300), detail: (e.detail ?? '').slice(0, 500) });
+    .run({ result: '', vars_json: '', ...e, title: e.title.slice(0, 300), detail: (e.detail ?? '').slice(0, 500) });
   return info.changes ? Number(info.lastInsertRowid) : null;
 }
 

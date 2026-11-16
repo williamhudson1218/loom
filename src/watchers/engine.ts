@@ -116,7 +116,7 @@ export function decide(db: Database.Database, w: Watcher, m: Match, ctx: DecideC
     decision = 'fired';
   }
   const result: EventResult = decision === 'fired' && w.action.kind === 'start_chat' ? 'queued' : '';
-  const id = recordEvent(db, { ...base, mode: w.run_mode, decision, result, detail });
+  const id = recordEvent(db, { ...base, mode: w.run_mode, decision, result, detail, vars_json: result === 'queued' ? JSON.stringify(m.vars ?? {}).slice(0, 50_000) : '' });
   return id === null ? null : { id, decision };
 }
 
@@ -268,11 +268,19 @@ const safeName = (key: string): string => key.replace(/[^A-Za-z0-9_-]+/g, '-').r
  * its row (TITLE, URL, CHANNEL, TS: what the previous build's briefs used);
  * others carry title and link.
  */
-function matchVarsFromEvent(w: Watcher, q: { event_key: string; title: string; permalink: string; subject: string }): Record<string, string> {
+function matchVarsFromEvent(w: Watcher, q: { event_key: string; title: string; permalink: string; subject: string; vars_json?: string }): Record<string, string> {
   const v: Record<string, string> = { TITLE: q.title, URL: q.permalink, PERMALINK: q.permalink };
   if (w.source.kind === 'slack') Object.assign(v, { CHANNEL: slackChannel(w), TS: q.event_key });
   if (w.source.kind === 'prs') Object.assign(v, { PR: q.subject.replace(/^pr:/, '') });
-  if (w.source.kind === 'work') Object.assign(v, { TICKET: q.subject.replace(/^work:/, '') });
+  // The match's own variables, saved when it was queued (findings, a PR's CHECK, ...).
+  if (q.vars_json) {
+    try {
+      const saved = JSON.parse(q.vars_json) as Record<string, unknown>;
+      for (const [k, val] of Object.entries(saved)) if (typeof val === 'string') v[k] = val;
+    } catch {
+      /* an unreadable row falls back to the row-derived variables */
+    }
+  }
   return v;
 }
 
@@ -358,8 +366,9 @@ export async function tickWatchers(db: Database.Database, deps: EngineDeps, stat
         }
         // A sweep records no watcher_seen rows: every open finding is considered
         // once, and later polls are deduped by (watcher, event key) on the event row.
-        if (!w0.poll.baselined) db.prepare(`UPDATE watchers SET baselined = 1 WHERE id = ?`).run(w0.id);
         for (const m of matches) if (!wasBaselined(db, w0.id, m.key)) consider(w0)(m);
+        // After the loop: a crash mid-sweep re-sweeps, and the event dedupe absorbs the repeats.
+        if (!w0.poll.baselined) db.prepare(`UPDATE watchers SET baselined = 1 WHERE id = ?`).run(w0.id);
         mark();
       } else {
         const matches = w0.source.kind === 'chats' ? evaluateChats(w0, getSignals(), deps.now(), state.turns) : evaluatePrs(w0, (prs ??= deps.prs()));
