@@ -13,7 +13,7 @@ import type { LiveLoc } from '../src/dashboard.ts';
 import { acquireManagedPane } from '../src/managed.ts';
 import {
   getWatcher, insertWatcher, listWatchers, markReviewed, recentFires, setWatcherEnabled, shadowUnreviewed, unreviewedCounts, validateDraft,
-  inQuietHours, deleteWatcher, setStandingSid, attentionCount, replaceWatcher, toDraft, type Watcher, type WatcherDraft,
+  inQuietHours, deleteWatcher, setStandingSid, startsSince, attentionCount, replaceWatcher, toDraft, type Watcher, type WatcherDraft,
 } from '../src/watchers/model.ts';
 import { SLACK_RULES, ingest, backoffMs, slackMatch } from '../src/watchers/sources/slack.ts';
 import { evaluateChats, newTurnMemo } from '../src/watchers/sources/chats.ts';
@@ -1018,6 +1018,70 @@ describe('standing chat', () => {
     expect(d.launches).toHaveLength(0);
     expect(d.relays).toHaveLength(0);
     expect(events().map((e) => e.decision)).toEqual(['would_fire', 'would_fire', 'would_fire']);
+  });
+  it('one standing launch counts as one start toward the global cap', async () => {
+    add(db, draft());
+    await tickWatchers(db, mk(three), newEngineState());
+    expect(startsSince(db, 0)).toBe(1);
+  });
+  it('max_per_hour applies per delivery: over the cap everything stays queued, nothing is dropped', async () => {
+    const w = add(db, { ...draft(), max_per_hour: 1 });
+    setStandingSid(db, w.id, 'sid-old');
+    let t = NOW;
+    let list = three;
+    const d = mk(list, { now: () => t, work: async () => list });
+    await tickWatchers(db, d, newEngineState());
+    expect(d.relays).toHaveLength(1);
+    list = [...three, f('k4', 'ITEM-4')];
+    t = NOW + WORK_POLL_MS;
+    await tickWatchers(db, d, newEngineState());
+    expect(d.relays).toHaveLength(1);
+    expect(events().map((e) => e.result)).toEqual(['sent', 'sent', 'sent', 'queued']);
+    t = NOW + 61 * 60_000;
+    await tickWatchers(db, d, newEngineState());
+    expect(d.relays).toHaveLength(2);
+    expect(events().map((e) => e.result)).toEqual(['sent', 'sent', 'sent', 'sent']);
+  });
+  it('a chat that is still starting is not replaced: events stay queued within five minutes', async () => {
+    const w = add(db, draft());
+    setStandingSid(db, w.id, 'sid-fresh', NOW - 60_000);
+    const fail = { relay: () => ({ status: 'failed' as const, detail: 'that chat is not running' }) };
+    const d = mk(three, fail);
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(0);
+    expect(events().map((e) => e.result)).toEqual(['queued', 'queued', 'queued']);
+    expect(getWatcher(db, w.id)!.standing_sid).toBe('sid-fresh');
+    setStandingSid(db, w.id, 'sid-fresh', NOW - 6 * 60_000);
+    const d2 = mk(three, fail);
+    await tickWatchers(db, d2, newEngineState());
+    expect(d2.launches).toHaveLength(1);
+    expect(getWatcher(db, w.id)!.standing_sid).toBe('sid-new');
+  });
+  it('the replacement launch keeps why the old chat was replaced', async () => {
+    const w = add(db, draft());
+    setStandingSid(db, w.id, 'sid-dead');
+    await tickWatchers(db, mk(three, { relay: () => ({ status: 'failed', detail: 'that chat is not running' }) }), newEngineState());
+    const row = db.prepare(`SELECT detail FROM watcher_events`).get() as { detail: string };
+    expect(row.detail).toContain('that chat is not running');
+  });
+  it('no batch file is written while the launch is waiting for a pane', async () => {
+    add(db, draft());
+    const d = mk(three, { world: () => ({ panes: [], focused: null }) });
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(0);
+    expect(fs.existsSync(d.briefsDir) ? fs.readdirSync(d.briefsDir) : []).toEqual([]);
+  });
+  it('changing the project or turning standing on forgets the remembered chat', () => {
+    const w = add(db, { ...draft(), action: { kind: 'start_chat', params: { project_dir: '/work/app', target: 'lane:tp', brief_template: 'b', perm: 'inherit', standing: true } } });
+    setStandingSid(db, w.id, 'sid-old', NOW);
+    const same = validateDraft({ ...toDraft(getWatcher(db, w.id)!), label: 'Renamed' });
+    if (!same.ok) throw new Error(same.detail);
+    replaceWatcher(db, w.id, same.draft, NOW);
+    expect(getWatcher(db, w.id)!.standing_sid).toBe('sid-old');
+    const moved = validateDraft({ ...toDraft(getWatcher(db, w.id)!), action: { kind: 'start_chat', params: { project_dir: '/work/other', target: 'lane:tp', brief_template: 'b', perm: 'inherit', standing: true } } });
+    if (!moved.ok) throw new Error(moved.detail);
+    replaceWatcher(db, w.id, moved.draft, NOW);
+    expect(getWatcher(db, w.id)!.standing_sid).toBe('');
   });
   it('validates standing as a boolean', () => {
     const bad = draft();

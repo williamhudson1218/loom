@@ -82,6 +82,7 @@ export interface WatcherRow {
   updated_at: number;
   /** start_chat with standing: the one chat this watcher keeps messaging. */
   standing_sid: string;
+  standing_sid_at: number;
   // Slack poll state.
   baselined: number;
   watermark: string;
@@ -116,6 +117,8 @@ export interface Watcher {
   created_at: number;
   updated_at: number;
   standing_sid: string;
+  /** When the standing chat was launched (ms), for the start-up grace period. */
+  standing_sid_at: number;
   poll: { baselined: boolean; watermark: string; last_poll_at: number; last_ok_at: number; last_error: string; error_count: number; next_poll_at: number };
 }
 
@@ -162,6 +165,7 @@ export function fromRow(r: WatcherRow): Watcher {
     created_at: r.created_at,
     updated_at: r.updated_at,
     standing_sid: r.standing_sid ?? '',
+    standing_sid_at: r.standing_sid_at ?? 0,
     poll: {
       baselined: !!r.baselined,
       watermark: r.watermark,
@@ -361,8 +365,8 @@ export function insertWatcher(db: Database.Database, d: Clean, now: number, id: 
 }
 
 /** Remember the chat a standing start_chat watcher keeps messaging. */
-export function setStandingSid(db: Database.Database, watcherId: string, sid: string): void {
-  db.prepare(`UPDATE watchers SET standing_sid = ? WHERE id = ?`).run(sid, watcherId);
+export function setStandingSid(db: Database.Database, watcherId: string, sid: string, at = 0): void {
+  db.prepare(`UPDATE watchers SET standing_sid = ?, standing_sid_at = ? WHERE id = ?`).run(sid, sid ? at : 0, watcherId);
 }
 
 /**
@@ -382,6 +386,14 @@ export function replaceWatcher(db: Database.Database, id: string, d: Clean, now:
       d.trigger.kind !== before.trigger.kind ||
       JSON.stringify(d.trigger.params) !== JSON.stringify(before.trigger.params);
     if (moved || (d.enabled && !before.enabled)) rebaseline(db, id);
+    // The remembered standing chat belongs to one project: forget it when that changes or standing is newly on.
+    if (
+      before.standing_sid &&
+      (String(d.action.params.project_dir ?? '') !== String(before.action.params.project_dir ?? '') ||
+        (d.action.params.standing === true && before.action.params.standing !== true))
+    ) {
+      setStandingSid(db, id, '');
+    }
   })();
   return true;
 }
@@ -573,7 +585,13 @@ export function lastFiredFor(db: Database.Database, watcherId: string, subject: 
 
 /** Chats started by any watcher since `since` (the global start cap). */
 export function startsSince(db: Database.Database, since: number): number {
-  return (db.prepare(`SELECT COUNT(*) AS n FROM watcher_events WHERE result = 'started' AND acted_at >= ?`).get(since) as { n: number }).n;
+  // A standing launch marks every finding of its batch started with one batch file: it is one start.
+  return (db.prepare(`SELECT COUNT(DISTINCT CASE WHEN brief_path = '' THEN 'id:' || id ELSE brief_path END) AS n FROM watcher_events WHERE result = 'started' AND acted_at >= ?`).get(since) as { n: number }).n;
+}
+
+/** Deliveries (a started chat or a message to the standing chat; a batch is one) by a watcher since `since`. */
+export function deliveriesSince(db: Database.Database, watcherId: string, since: number): number {
+  return (db.prepare(`SELECT COUNT(DISTINCT CASE WHEN brief_path = '' THEN 'id:' || id ELSE brief_path END) AS n FROM watcher_events WHERE watcher_id = ? AND result IN ('started', 'sent') AND acted_at >= ?`).get(watcherId, since) as { n: number }).n;
 }
 
 /** Panes a watcher typed into since `since`: a pane just launched into may not show its claude process yet. */

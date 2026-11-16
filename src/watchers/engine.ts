@@ -11,7 +11,7 @@ import type { ManagedPaneResult } from '../managed.ts';
 import type { SlackMessage } from '../slack.ts';
 import type { Agent } from '../types.ts';
 import {
-  firedSince, getWatcher, setStandingSid, inQuietHours, lastFiredFor, listWatchers, panesUsedSince, queuedEvents, recordEvent, startsSince, updateEvent,
+  deliveriesSince, firedSince, getWatcher, setStandingSid, inQuietHours, lastFiredFor, listWatchers, panesUsedSince, queuedEvents, recordEvent, startsSince, updateEvent,
   type Decision, type EventResult, type EventRow, type Match, type Watcher,
 } from './model.ts';
 import { ingest, recordPollError, slackChannel, slackMatch, type SlackCtx } from './sources/slack.ts';
@@ -45,6 +45,8 @@ const HOUR = 3_600_000;
 /** At most this many live start_chat per 10 minutes, across every watcher that has a cap. */
 export const GLOBAL_START_CAP = 3;
 export const GLOBAL_START_WINDOW_MS = 10 * 60_000;
+/** A standing chat launched this recently may not be indexed yet, so a failed relay is not a dead chat. */
+export const STANDING_GRACE_MS = 5 * 60_000;
 
 export interface EngineDeps {
   now(): number;
@@ -109,7 +111,7 @@ export function decide(db: Database.Database, w: Watcher, m: Match, ctx: DecideC
   } else if (inQuietHours(w.quiet_start, w.quiet_end, ctx.date ?? new Date(ctx.now))) {
     decision = 'held_quiet';
     detail = `quiet hours ${w.quiet_start}-${w.quiet_end}`;
-  } else if (w.max_per_hour > 0 && firedSince(db, w.id, ctx.now - HOUR) >= w.max_per_hour) {
+  } else if (w.max_per_hour > 0 && !(w.action.kind === 'start_chat' && w.action.params.standing === true) && firedSince(db, w.id, ctx.now - HOUR) >= w.max_per_hour) {
     decision = 'held_cap';
     detail = `${w.max_per_hour} fires in the last hour`;
   } else if (w.cooldown_min > 0 && ctx.now - lastFiredFor(db, w.id, m.subject) < w.cooldown_min * 60_000) {
@@ -314,29 +316,48 @@ function savedVars(json: string | undefined): Record<string, string> {
 async function drainStanding(db: Database.Database, w: Watcher, deps: EngineDeps, queued: EventRow[], c: StandingCtx): Promise<{ started: number; waiting: number }> {
   const p = w.action.params;
   const now = deps.now();
-  let batchPath: string;
-  try {
-    batchPath = writeBatchFile(deps.briefsDir, w, queued, now);
-  } catch (e) {
-    for (const q of queued) updateEvent(db, q.id, { detail: 'batch file failed: ' + (e as Error).message });
-    return { started: 0, waiting: queued.length };
-  }
+  const batchPath = path.join(deps.briefsDir, `${w.id}-batch-${now}.md`);
   const m: Match = { key: queued[0].event_key, subject: queued[0].subject, title: queued[0].title, permalink: queued[0].permalink, vars: { BATCH_FILE: batchPath, COUNT: String(queued.length), TITLE: queued[0].title } };
   const all = vars(db, w, m);
   const markAll = (patch: Parameters<typeof updateEvent>[2]) => {
     for (const q of queued) updateEvent(db, q.id, patch);
   };
+  const writeBatch = (): boolean => {
+    try {
+      writeBatchFile(deps.briefsDir, w, queued, now);
+      return true;
+    } catch (e) {
+      markAll({ detail: 'batch file failed: ' + (e as Error).message });
+      return false;
+    }
+  };
   if (deps.dryRun) {
+    if (!writeBatch()) return { started: 0, waiting: queued.length };
     markAll({ decision: 'would_fire', mode: 'shadow', result: '', brief_path: batchPath, acted_at: now, reviewed_at: now, detail: 'dry run: nothing was typed' });
     return { started: 0, waiting: 0 };
   }
+  // max_per_hour counts deliveries (a batch is one), never findings: over the cap
+  // everything stays queued for a later tick, so no finding is dropped.
+  if (w.max_per_hour > 0 && deliveriesSince(db, w.id, now - HOUR) >= w.max_per_hour) {
+    markAll({ detail: `${w.max_per_hour} deliveries in the last hour; waiting` });
+    return { started: 0, waiting: queued.length };
+  }
+  let replaced = '';
   if (w.standing_sid) {
+    if (!writeBatch()) return { started: 0, waiting: queued.length };
     const out = deps.relay(w.label, 'claude', w.standing_sid, renderPrompt(p, 'brief_template', all, true), { bare: !!c.inv });
     if (out.status === 'sent' || out.status === 'queued') {
       markAll({ decision: 'fired', result: 'sent', brief_path: batchPath, acted_at: now, detail: out.detail });
       return { started: 0, waiting: 0 };
     }
+    if (w.standing_sid_at > 0 && now - w.standing_sid_at < STANDING_GRACE_MS) {
+      // The chat was launched moments ago and is not indexed yet: wait, do not start a second one.
+      fs.rmSync(batchPath, { force: true });
+      markAll({ detail: 'the standing chat is still starting; waiting' });
+      return { started: 0, waiting: queued.length };
+    }
     // The standing chat is gone or cannot take input: start a replacement below.
+    replaced = `replaced the standing chat: ${out.detail}`;
   }
   if (w.max_per_hour > 0 && startsSince(db, now - GLOBAL_START_WINDOW_MS) >= GLOBAL_START_CAP) {
     markAll({ decision: 'held_cap', detail: `waiting: ${GLOBAL_START_CAP} chats were started by watchers in the last 10 min` });
@@ -359,6 +380,7 @@ async function drainStanding(db: Database.Database, w: Watcher, deps: EngineDeps
     }
     pane = { id: mp.paneId, name: mp.name, where: mp.where };
   }
+  if (!writeBatch()) return { started: 0, waiting: queued.length };
   const sid = (deps.newSessionId ?? randomUUID)();
   const briefPath = path.join(deps.briefsDir, `${w.id}-batch-${now}-brief.md`);
   try {
@@ -369,8 +391,8 @@ async function drainStanding(db: Database.Database, w: Watcher, deps: EngineDeps
     if (pane.id) c.reserved.add(pane.id);
     return { started: 0, waiting: queued.length };
   }
-  setStandingSid(db, w.id, sid);
-  markAll({ decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: batchPath, acted_at: now, detail: '' });
+  setStandingSid(db, w.id, sid, now);
+  markAll({ decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: batchPath, acted_at: now, detail: replaced.slice(0, 500) });
   return { started: 1, waiting: 0 };
 }
 
@@ -457,33 +479,36 @@ export async function tickWatchers(db: Database.Database, deps: EngineDeps, stat
         }
       } else if (w0.source.kind === 'work') {
         const url = String(w0.source.params.url ?? '');
-        if (!url || deps.now() < w0.poll.next_poll_at) continue;
-        let findings: Finding[];
-        try {
-          findings = await deps.work(url);
-        } catch (e) {
-          const n = w0.poll.error_count + 1;
-          db.prepare(`UPDATE watchers SET last_poll_at = ?, last_error = ?, error_count = ?, next_poll_at = ? WHERE id = ?`).run(
-            deps.now(), (e as Error).message.slice(0, 500), n, deps.now() + workBackoffMs(n), w0.id,
-          );
-          continue;
-        }
-        const matches = evaluateWork(w0, findings);
-        const mark = () =>
-          db.prepare(`UPDATE watchers SET last_poll_at = ?, last_ok_at = ?, last_error = '', error_count = 0, next_poll_at = ? WHERE id = ?`).run(
-            deps.now(), deps.now(), deps.now() + WORK_POLL_MS, w0.id,
-          );
-        if (!w0.poll.baselined && w0.source.params.sweep_first !== true) {
-          baselineMatches(db, w0, matches, deps.now());
+        if (!url) continue;
+        // Between polls the tick still drains what is queued (a standing chat that was still starting).
+        if (deps.now() >= w0.poll.next_poll_at) {
+          let findings: Finding[];
+          try {
+            findings = await deps.work(url);
+          } catch (e) {
+            const n = w0.poll.error_count + 1;
+            db.prepare(`UPDATE watchers SET last_poll_at = ?, last_error = ?, error_count = ?, next_poll_at = ? WHERE id = ?`).run(
+              deps.now(), (e as Error).message.slice(0, 500), n, deps.now() + workBackoffMs(n), w0.id,
+            );
+            continue;
+          }
+          const matches = evaluateWork(w0, findings);
+          const mark = () =>
+            db.prepare(`UPDATE watchers SET last_poll_at = ?, last_ok_at = ?, last_error = '', error_count = 0, next_poll_at = ? WHERE id = ?`).run(
+              deps.now(), deps.now(), deps.now() + WORK_POLL_MS, w0.id,
+            );
+          if (!w0.poll.baselined && w0.source.params.sweep_first !== true) {
+            baselineMatches(db, w0, matches, deps.now());
+            mark();
+            continue;
+          }
+          // A sweep records no watcher_seen rows: every open finding is considered
+          // once, and later polls are deduped by (watcher, event key) on the event row.
+          for (const m of matches) if (!wasBaselined(db, w0.id, m.key)) consider(w0)(m);
+          // After the loop: a crash mid-sweep re-sweeps, and the event dedupe absorbs the repeats.
+          if (!w0.poll.baselined) db.prepare(`UPDATE watchers SET baselined = 1 WHERE id = ?`).run(w0.id);
           mark();
-          continue;
         }
-        // A sweep records no watcher_seen rows: every open finding is considered
-        // once, and later polls are deduped by (watcher, event key) on the event row.
-        for (const m of matches) if (!wasBaselined(db, w0.id, m.key)) consider(w0)(m);
-        // After the loop: a crash mid-sweep re-sweeps, and the event dedupe absorbs the repeats.
-        if (!w0.poll.baselined) db.prepare(`UPDATE watchers SET baselined = 1 WHERE id = ?`).run(w0.id);
-        mark();
       } else {
         const matches = w0.source.kind === 'chats' ? evaluateChats(w0, getSignals(), deps.now(), state.turns) : evaluatePrs(w0, (prs ??= deps.prs()));
         if (!w0.poll.baselined) {

@@ -147,6 +147,7 @@ export const WATCHERS_V2_COLUMNS: [string, string][] = [
   ['created_at', `INTEGER NOT NULL DEFAULT 0`],
   ['updated_at', `INTEGER NOT NULL DEFAULT 0`],
   ['standing_sid', `TEXT NOT NULL DEFAULT ''`],
+  ['standing_sid_at', `INTEGER NOT NULL DEFAULT 0`],
 ];
 
 /** Add any missing v2 column. ALTER ADD COLUMN keeps every existing row and value. */
