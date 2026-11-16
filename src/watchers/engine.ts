@@ -16,6 +16,7 @@ import {
 import { ingest, recordPollError, slackChannel, slackMatch, type SlackCtx } from './sources/slack.ts';
 import { evaluateChats, newTurnMemo, type TurnMemo } from './sources/chats.ts';
 import { evaluatePrs, type PrState } from './sources/prs.ts';
+import { evaluateWork, workBackoffMs, WORK_POLL_MS, type Finding } from './sources/work.ts';
 import type { ChatSignal } from './chatSignals.ts';
 import { launchCommand, paneWhere, pickPane, renderBrief, renderPrompt, settingsForPerm, type RelayOutcome } from './actions.ts';
 import { hasInvocable, readInvoke, type InvocableKind } from './invocables.ts';
@@ -56,6 +57,8 @@ export interface EngineDeps {
   /** Live chats' signals. Called at most once per tick, only when a chats watcher is on. */
   chats(needs: { context: boolean; pendingTool: boolean }): ChatSignal[];
   prs(): PrState[];
+  /** The findings endpoint's current findings. Throws on a failed poll. */
+  work(url: string): Promise<Finding[]>;
   world(): WorldState;
   launch(paneId: string, command: string): Promise<void>;
   /** A fresh managed window (capacity-checked). */
@@ -269,6 +272,7 @@ function matchVarsFromEvent(w: Watcher, q: { event_key: string; title: string; p
   const v: Record<string, string> = { TITLE: q.title, URL: q.permalink, PERMALINK: q.permalink };
   if (w.source.kind === 'slack') Object.assign(v, { CHANNEL: slackChannel(w), TS: q.event_key });
   if (w.source.kind === 'prs') Object.assign(v, { PR: q.subject.replace(/^pr:/, '') });
+  if (w.source.kind === 'work') Object.assign(v, { TICKET: q.subject.replace(/^work:/, '') });
   return v;
 }
 
@@ -329,6 +333,34 @@ export async function tickWatchers(db: Database.Database, deps: EngineDeps, stat
             recordPollError(db, w0, (e as Error).message, deps.now());
           }
         }
+      } else if (w0.source.kind === 'work') {
+        const url = String(w0.source.params.url ?? '');
+        if (!url || deps.now() < w0.poll.next_poll_at) continue;
+        let findings: Finding[];
+        try {
+          findings = await deps.work(url);
+        } catch (e) {
+          const n = w0.poll.error_count + 1;
+          db.prepare(`UPDATE watchers SET last_poll_at = ?, last_error = ?, error_count = ?, next_poll_at = ? WHERE id = ?`).run(
+            deps.now(), (e as Error).message.slice(0, 500), n, deps.now() + workBackoffMs(n), w0.id,
+          );
+          continue;
+        }
+        const matches = evaluateWork(w0, findings);
+        const mark = () =>
+          db.prepare(`UPDATE watchers SET last_poll_at = ?, last_ok_at = ?, last_error = '', error_count = 0, next_poll_at = ? WHERE id = ?`).run(
+            deps.now(), deps.now(), deps.now() + WORK_POLL_MS, w0.id,
+          );
+        if (!w0.poll.baselined && w0.source.params.sweep_first !== true) {
+          baselineMatches(db, w0, matches, deps.now());
+          mark();
+          continue;
+        }
+        // A sweep records no watcher_seen rows: every open finding is considered
+        // once, and later polls are deduped by (watcher, event key) on the event row.
+        if (!w0.poll.baselined) db.prepare(`UPDATE watchers SET baselined = 1 WHERE id = ?`).run(w0.id);
+        for (const m of matches) if (!wasBaselined(db, w0.id, m.key)) consider(w0)(m);
+        mark();
       } else {
         const matches = w0.source.kind === 'chats' ? evaluateChats(w0, getSignals(), deps.now(), state.turns) : evaluatePrs(w0, (prs ??= deps.prs()));
         if (!w0.poll.baselined) {
@@ -431,6 +463,7 @@ export interface TestDeps {
   slackSelf(): string;
   chats(): ChatSignal[];
   prs(): PrState[];
+  work(url: string): Promise<Finding[]>;
   now(): number;
 }
 
@@ -460,6 +493,12 @@ export async function testWatcher(w: Watcher, deps: TestDeps, ignoreSelf = true)
     const sigs = deps.chats();
     scanned = sigs.length;
     matches = evaluateChats(w, sigs, deps.now(), newTurnMemo(), { test: true });
+  } else if (w.source.kind === 'work') {
+    const url = String(w.source.params.url ?? '');
+    if (!url) return { ok: false, detail: 'enter the findings endpoint URL first' };
+    const found = await deps.work(url);
+    scanned = found.length;
+    matches = evaluateWork(w, found);
   } else {
     const prs = deps.prs();
     scanned = prs.length;

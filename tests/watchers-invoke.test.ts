@@ -170,7 +170,7 @@ function deps(over: Partial<EngineDeps> = {}): EngineDeps & { launches: [string,
   const relays: unknown[][] = [];
   const pane: LanePane = { pane_id: '%5', tmux_session: 'loom-tp-2', window_index: '1', pane_index: '0', command: 'zsh', name: 'n5', group: '', agent: false };
   return {
-    now: () => NOW, history: async () => [], slackOn: () => true, slackSelf: () => '', threadOwner: () => null, chats: () => [], prs: () => [],
+    now: () => NOW, history: async () => [], slackOn: () => true, slackSelf: () => '', threadOwner: () => null, chats: () => [], prs: () => [], work: async () => [],
     world: (): WorldState => ({ panes: [pane], focused: null }),
     launch: async (p, c) => { launches.push([p, c]); },
     acquireManaged: () => ({ ok: false, detail: 'no' }), launchSettings: () => SAFE_LAUNCH_SETTINGS,

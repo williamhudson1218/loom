@@ -21,6 +21,7 @@ import { evaluatePrs, type PrState } from '../src/watchers/sources/prs.ts';
 import { computeSignals, readPendingTool, type ChatSignal } from '../src/watchers/chatSignals.ts';
 import { decide, drainQueue, newEngineState, pruneBriefs, testWatcher, tickWatchers, GLOBAL_START_CAP, type EngineDeps } from '../src/watchers/engine.ts';
 import { launchCommand, pickPane, relayFromWatcher, renderBrief, tmuxLaunch, watcherPrefix } from '../src/watchers/actions.ts';
+import { evaluateWork, fetchFindings, parseFindings, workBackoffMs, WORK_POLL_MS, type Finding } from '../src/watchers/sources/work.ts';
 import { TEMPLATES, createFromTemplate, templateList } from '../src/watchers/templates.ts';
 
 const NOW = 1_800_000_000_000;
@@ -73,6 +74,7 @@ function deps(over: Partial<EngineDeps> & { panes?: LanePane[]; msgs?: SlackMess
     threadOwner: () => null,
     chats: () => over.signals ?? [],
     prs: () => over.prList ?? [],
+    work: async () => [],
     world: (): WorldState => ({ panes: over.panes ?? [], focused: null }),
     launch: async (p, c) => { launches.push([p, c]); },
     acquireManaged: () => ({ ok: false, detail: 'not in this test' }),
@@ -692,7 +694,7 @@ describe('Test (POST /api/watchers/test) writes nothing', () => {
     const count = () => db.prepare(`SELECT (SELECT COUNT(*) FROM watcher_seen) + (SELECT COUNT(*) FROM watcher_events) + (SELECT COUNT(*) FROM orchestrator_outbox) AS n`).get();
     const before = count();
     const pollBefore = getWatcher(db, w.id)!.poll;
-    const td = { recent: async () => [botPost('1.5', 5), chatter('1.6')], slackOn: () => true, slackSelf: () => '', chats: () => [sig({ working: false })], prs: () => [], now: () => NOW };
+    const td = { recent: async () => [botPost('1.5', 5), chatter('1.6')], slackOn: () => true, slackSelf: () => '', chats: () => [sig({ working: false })], prs: () => [], work: async () => [], now: () => NOW };
     expect(await testWatcher(w, td)).toMatchObject({ ok: true, scanned: 2, rows: [{ key: '1.5', title: '#5 Payroll export broken' }] });
     const chatW = add(db, { label: 'T', source: { kind: 'chats', params: {} }, trigger: { kind: 'became_your_turn', params: {} }, action: { kind: 'notify', params: { template: '' } } });
     expect(await testWatcher(chatW, td)).toMatchObject({ ok: true, rows: [{ subject: 'chat:claude:s1' }] });
@@ -825,5 +827,111 @@ describe('managed-target spawn on a throwaway tmux socket', () => {
     expect(screen).toContain('/bin/echo');
     expect(screen).toContain('hello #7 Payroll export broken');
     expect(fs.readFileSync(ev.brief_path, 'utf-8')).toBe('hello #7 Payroll export broken');
+  });
+});
+
+describe('work source', () => {
+  const URL_ = 'https://findings.example.com/api/audit';
+  const fnd = (key: string, rule = 'rule_a', code = 'ITEM-1'): Finding => ({ key, rule, subject: 'Something is off', detail: 'd', ticket: { code }, suggestedFix: { clear: true } });
+  const workDraft = (over: Record<string, unknown> = {}, rules: string[] = []): WatcherDraft => ({
+    label: 'Findings', enabled: true, run_mode: 'shadow',
+    source: { kind: 'work', params: { url: URL_, ...over } },
+    trigger: { kind: 'finding', params: { rules } },
+    action: { kind: 'notify', params: { template: '' } },
+  });
+  const count = (t: string) => (db.prepare(`SELECT COUNT(*) n FROM ${t}`).get() as { n: number }).n;
+  const wdeps = (get: () => Finding[] | Error, now = () => NOW) => {
+    const calls: string[] = [];
+    const d = deps({ now, work: async (u: string) => { calls.push(u); const r = get(); if (r instanceof Error) throw r; return r; } });
+    return Object.assign(d, { calls });
+  };
+
+  it('parses both response shapes and refuses anything else', () => {
+    const f = fnd('k1');
+    expect(parseFindings({ data: { findings: [f] } })).toHaveLength(1);
+    expect(parseFindings({ findings: [f, { key: 'x' }] })).toHaveLength(1);
+    for (const bad of ['<html>', {}, { data: {} }, null]) expect(() => parseFindings(bad)).toThrow('not a findings response');
+  });
+  it('fetchFindings sends the bearer token and never echoes it in an error', async () => {
+    let auth = '';
+    const ok = (async (_u: unknown, init: RequestInit) => { auth = String((init.headers as Record<string, string>).Authorization); return new Response(JSON.stringify({ findings: [fnd('k')] })); }) as unknown as typeof fetch;
+    expect(await fetchFindings(URL_, 'sekret', ok)).toHaveLength(1);
+    expect(auth).toBe('Bearer sekret');
+    const bad = (async () => new Response('no', { status: 401 })) as unknown as typeof fetch;
+    await expect(fetchFindings(URL_, 'sekret', bad)).rejects.toThrow('findings endpoint answered 401');
+    await fetchFindings(URL_, 'sekret', bad).catch((e) => expect(String(e.message)).not.toContain('sekret'));
+  });
+  it('turns findings into matches, filtered by rule, with a per-item subject', () => {
+    const w = add(db, workDraft({}, ['rule_a']));
+    const m = evaluateWork(w, [fnd('k1'), fnd('k2', 'rule_b', 'ITEM-2')]);
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ key: 'k1', subject: 'work:ITEM-1', permalink: '', title: 'rule_a ITEM-1: Something is off' });
+    expect(m[0].vars).toMatchObject({ RULE: 'rule_a', TICKET: 'ITEM-1', CLEAR: 'yes', KEY: 'k1' });
+    expect(evaluateWork(add(db, workDraft()), [fnd('k3', 'rule_b', 'ITEM-2')])).toHaveLength(1);
+  });
+  it('polls every 15 minutes, not every tick', async () => {
+    add(db, workDraft());
+    let t = NOW;
+    const d = wdeps(() => [], () => t);
+    const st = newEngineState();
+    await tickWatchers(db, d, st);
+    t = NOW + 15_000;
+    await tickWatchers(db, d, st);
+    expect(d.calls).toHaveLength(1);
+    t = NOW + WORK_POLL_MS;
+    await tickWatchers(db, d, st);
+    expect(d.calls).toHaveLength(2);
+  });
+  it('baselines silently on the first poll by default', async () => {
+    const w = add(db, workDraft());
+    let t = NOW;
+    let list = [fnd('k1'), fnd('k2', 'rule_a', 'ITEM-2')];
+    const d = wdeps(() => list, () => t);
+    await tickWatchers(db, d, newEngineState());
+    expect(count('watcher_events')).toBe(0);
+    expect(count('watcher_seen')).toBe(2);
+    list = [...list, fnd('k3', 'rule_a', 'ITEM-3')];
+    t = NOW + WORK_POLL_MS;
+    await tickWatchers(db, d, newEngineState());
+    expect(count('watcher_events')).toBe(1);
+    expect(getWatcher(db, w.id)!.poll.last_error).toBe('');
+  });
+  it('sweep_first sends what is already open once, then only new keys', async () => {
+    add(db, workDraft({ sweep_first: true }));
+    let t = NOW;
+    const list = [fnd('k1'), fnd('k2', 'rule_a', 'ITEM-2')];
+    const d = wdeps(() => list, () => t);
+    await tickWatchers(db, d, newEngineState());
+    expect(count('watcher_events')).toBe(2);
+    expect(count('watcher_seen')).toBe(0);
+    t = NOW + WORK_POLL_MS;
+    await tickWatchers(db, d, newEngineState());
+    expect(count('watcher_events')).toBe(2);
+  });
+  it('a failed poll records the error, backs off, and does not baseline', async () => {
+    const w = add(db, workDraft());
+    let t = NOW;
+    const d = wdeps(() => new Error('findings endpoint answered 500'), () => t);
+    await tickWatchers(db, d, newEngineState());
+    expect(getWatcher(db, w.id)!.poll).toMatchObject({ last_error: 'findings endpoint answered 500', error_count: 1, baselined: false, next_poll_at: NOW + 15 * 60_000 });
+    t = NOW + 15 * 60_000;
+    await tickWatchers(db, d, newEngineState());
+    expect(getWatcher(db, w.id)!.poll).toMatchObject({ error_count: 2, next_poll_at: t + 30 * 60_000 });
+    expect(workBackoffMs(9)).toBe(60 * 60_000);
+    expect(count('watcher_seen')).toBe(0);
+  });
+  it('Test reads the endpoint and writes nothing', async () => {
+    const w = add(db, workDraft());
+    const td = { recent: async () => [], slackOn: () => true, slackSelf: () => '', chats: () => [], prs: () => [], work: async () => [fnd('k1'), fnd('k2', 'rule_b', 'ITEM-2')], now: () => NOW };
+    const r = await testWatcher(w, td);
+    expect(r.ok && r.rows).toHaveLength(2);
+    expect(count('watcher_events')).toBe(0);
+    expect(count('watcher_seen')).toBe(0);
+  });
+  it('validates the source', () => {
+    expect(validateDraft(workDraft({ url: 'ftp://x' })).ok).toBe(false);
+    expect(validateDraft(workDraft({ url: 'http://localhost:4000/f' })).ok).toBe(true);
+    expect(validateDraft(workDraft({ url: '' }), { forEnable: true }).ok).toBe(false);
+    expect(validateDraft(workDraft({ sweep_first: 'yes' })).ok).toBe(false);
   });
 });

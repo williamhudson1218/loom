@@ -965,7 +965,7 @@ function wzTplDraw() {
   if (!el) return;
   var T = WZ.tpl;
   if (!T) { el.innerHTML = '<div class="def"><span class="spin"></span>Loading templates...</div>'; return; }
-  var groups = [['slack', 'Slack channel', 'needs the Direct Slack app'], ['chats', 'Chats', 'your live sessions, starts in Shadow'], ['prs', 'Pull requests', 'needs gh, logged in']];
+  var groups = [['slack', 'Slack channel', 'needs the Direct Slack app'], ['chats', 'Chats', 'your live sessions, starts in Shadow'], ['prs', 'Pull requests', 'needs gh, logged in'], ['work', 'Findings endpoint', 'needs an endpoint and a Keychain token']];
   var n = 0;
   var html = groups.map(function (g) {
     var items = T.filter(function (t) { return t.group === g[0]; });

@@ -99,7 +99,7 @@ describe('watchers view', () => {
     const p = page();
     const blank = p.wvBlank();
     expect(validateDraft(blank).ok).toBe(true);
-    for (const src of ['slack', 'chats', 'prs']) {
+    for (const src of ['slack', 'chats', 'prs', 'work']) {
       for (const t of p.wvTrigs(src)) {
         const d = p.wvBlank();
         p.wvSetSource(d, src);

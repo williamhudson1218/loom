@@ -11,14 +11,14 @@ import type Database from 'better-sqlite3';
 // an action in actions.ts, and the loop in engine.ts.
 
 export type RunMode = 'shadow' | 'live';
-export type SourceKind = 'slack' | 'chats' | 'prs';
+export type SourceKind = 'slack' | 'chats' | 'prs' | 'work';
 export type ActionKind = 'start_chat' | 'message_chat' | 'notify' | 'tell_orch';
 export type Decision = 'fired' | 'would_fire' | 'held_quiet' | 'held_cap' | 'held_cooldown' | 'held_capacity';
 export type EventResult = 'queued' | 'started' | 'sent' | 'notified' | 'told' | 'failed' | '';
 export type Params = Record<string, unknown>;
 
 export const RUN_MODES: readonly RunMode[] = ['shadow', 'live'];
-export const SOURCE_KINDS: readonly SourceKind[] = ['slack', 'chats', 'prs'];
+export const SOURCE_KINDS: readonly SourceKind[] = ['slack', 'chats', 'prs', 'work'];
 export const ACTION_KINDS: readonly ActionKind[] = ['start_chat', 'message_chat', 'notify', 'tell_orch'];
 
 /** Every trigger, per source, with its default params. A draft's params are merged over these. */
@@ -42,12 +42,16 @@ export const TRIGGERS: Record<SourceKind, Record<string, { label: string; defaul
     changes_requested: { label: 'Review requested changes', defaults: {} },
     approved_green: { label: 'Approved and green', defaults: {} },
   },
+  work: {
+    finding: { label: 'New finding', defaults: { rules: [] } },
+  },
 };
 
 export const SOURCE_DEFAULTS: Record<SourceKind, Params> = {
   slack: { channel: '', workspace: '' },
   chats: { projects: [], tags: [] },
   prs: { repos: [], mine_only: true },
+  work: { url: '', sweep_first: false },
 };
 
 export const ACTION_DEFAULTS: Record<ActionKind, Params> = {
@@ -193,7 +197,7 @@ export function validateDraft(
   const label = typeof d.label === 'string' ? d.label.trim() : '';
   if (!label || label.length > 120) return { ok: false, detail: 'label is required (at most 120 characters)' };
   const sk = d.source?.kind;
-  if (!sk || !(SOURCE_KINDS as readonly string[]).includes(sk)) return { ok: false, detail: 'source.kind must be slack, chats or prs' };
+  if (!sk || !(SOURCE_KINDS as readonly string[]).includes(sk)) return { ok: false, detail: 'source.kind must be slack, chats, prs or work' };
   const tk = d.trigger?.kind ?? '';
   const spec = TRIGGERS[sk][tk];
   if (!spec) return { ok: false, detail: `trigger ${tk || '(none)'} does not exist for source ${sk}` };
@@ -212,6 +216,10 @@ export function validateDraft(
     if (opts.forEnable && !sp.channel) return { ok: false, detail: 'choose a Slack channel first' };
   } else if (sk === 'chats') {
     if (!isStrList(sp.projects) || !isStrList(sp.tags)) return { ok: false, detail: 'source.params.projects and tags must be lists of strings' };
+  } else if (sk === 'work') {
+    if (typeof sp.url !== 'string' || (sp.url && !/^(https:\/\/|http:\/\/localhost[:/])/.test(sp.url))) return { ok: false, detail: 'source.params.url must be an https:// URL' };
+    if (typeof sp.sweep_first !== 'boolean') return { ok: false, detail: 'source.params.sweep_first must be true or false' };
+    if (opts.forEnable && !sp.url) return { ok: false, detail: 'enter the findings endpoint URL first' };
   } else {
     if (!isStrList(sp.repos) || sp.repos.some((r) => !/^[\w.-]+\/[\w.-]+$/.test(r))) return { ok: false, detail: 'source.params.repos must be owner/name strings' };
     if (typeof sp.mine_only !== 'boolean') return { ok: false, detail: 'source.params.mine_only must be true or false' };

@@ -84,6 +84,8 @@ import { configureWatcherRuntime, isDryRun, startWatcherTicks, BRIEFS_DIR as WAT
 import { attentionCount, getEvent, setWatcherEnabled, validateDraft, getWatcher } from './watchers/model.ts';
 import { computeSignals, readPendingTool } from './watchers/chatSignals.ts';
 import { prStateFrom, type PrState } from './watchers/sources/prs.ts';
+import { keychain } from './secrets.ts';
+import { FINDINGS_TOKEN_SERVICE, fetchFindings, type Finding } from './watchers/sources/work.ts';
 import { relayFromWatcher, tmuxLaunch } from './watchers/actions.ts';
 import { relayDeps } from './orchserver.ts';
 import { channelHistory } from './slack.ts';
@@ -819,6 +821,7 @@ function watcherEngineDeps(): EngineDeps {
       return computeSignals(views, live, Date.now(), needs);
     },
     prs: watcherPrs,
+    work: watcherWork,
     world: () => readWorld(),
     launch: (paneId, command) => tmuxLaunch(paneId, command),
     acquireManaged: (dir) => acquireManagedPane(dir, { ready: (id) => waitForShellReady(id) }),
@@ -842,6 +845,13 @@ function watcherEngineDeps(): EngineDeps {
   };
 }
 
+function watcherWork(url: string): Promise<Finding[]> {
+  const host = new URL(url).host;
+  const t = keychain().get(FINDINGS_TOKEN_SERVICE, host);
+  if (!t) return Promise.reject(new Error('no token in the Keychain for ' + host));
+  return fetchFindings(url, t.trim());
+}
+
 function watcherTestDeps(): TestDeps {
   return {
     recent: (channel) => conversationsHistory(channel, { limit: 200, maxPages: 1 }),
@@ -852,6 +862,7 @@ function watcherTestDeps(): TestDeps {
       return computeSignals(views, live, Date.now(), { context: true, pendingTool: true });
     },
     prs: watcherPrs,
+    work: watcherWork,
     now: () => Date.now(),
   };
 }

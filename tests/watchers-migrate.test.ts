@@ -251,7 +251,7 @@ describe('watchers migration, added after the install was already at schema 2 (t
       slackSelf: () => '',
       threadOwner: () => null,
       chats: () => [],
-      prs: () => [],
+      prs: () => [], work: async () => [],
       world: () => ({ panes: [pane('%31', 'loom-other-1'), pane('%30', 'loom-xy-2'), pane('%33', 'loom-xy-3')], focused: null }),
       launch: async (pid, c) => void launches.push([pid, c]),
       acquireManaged: () => ({ ok: false, detail: 'must not be used' }),
