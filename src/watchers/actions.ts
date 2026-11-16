@@ -82,8 +82,8 @@ export function settingsForPerm(s: LaunchSettings, perm: unknown): LaunchSetting
  * With rc_watchers on, Remote Control is named after the pane; skip-permissions
  * follows perm_watchers (src/launch.ts). The name must be passed: `--remote-control [name]` would otherwise eat the brief.
  */
-export function launchCommand(projectDir: string, briefPath: string, rcName: string, settings?: LaunchSettings): string {
-  return claudeCommand({ kind: 'watcher', dir: projectDir, promptFile: briefPath, name: rcName }, settings);
+export function launchCommand(projectDir: string, briefPath: string, rcName: string, settings?: LaunchSettings, sid?: string): string {
+  return claudeCommand({ kind: 'watcher', dir: projectDir, promptFile: briefPath, name: rcName, sid }, settings);
 }
 
 /** Type the command literally, then Enter as a separate send-keys. */

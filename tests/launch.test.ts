@@ -124,6 +124,13 @@ describe('a new user’s commands carry no skip-permissions, and Remote Control 
   });
 });
 
+describe('watcher launches', () => {
+  it('a watcher launch can pin its session id', () => {
+    expect(claudeCommand({ kind: 'watcher', dir: '/w', promptFile: '/b.md', name: 'n', sid: 'abc' }, LEGACY_LAUNCH_SETTINGS)).toContain(` --session-id 'abc'`);
+    expect(claudeCommand({ kind: 'watcher', dir: '/w', promptFile: '/b.md', name: 'n' }, LEGACY_LAUNCH_SETTINGS)).not.toContain('--session-id');
+  });
+});
+
 describe('each kind follows its own setting', () => {
   it('perm_chats does not touch watchers or the orchestrator, and the reverse', () => {
     const chatsOnly = { ...SAFE_LAUNCH_SETTINGS, skipChats: true };

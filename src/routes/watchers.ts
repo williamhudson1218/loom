@@ -215,7 +215,7 @@ export async function testHandler({ json, body }: RouteCtx): Promise<void> {
     id: str((b?.watcher as { id?: unknown })?.id) || 'draft', label: d.label, enabled: d.enabled ? 1 : 0, run_mode: d.run_mode,
     source_kind: d.source.kind, source_params: JSON.stringify(d.source.params), trigger_kind: d.trigger.kind, trigger_params: JSON.stringify(d.trigger.params),
     action_kind: d.action.kind, action_params: JSON.stringify(d.action.params), max_per_hour: d.max_per_hour, cooldown_min: d.cooldown_min,
-    quiet_start: d.quiet_start, quiet_end: d.quiet_end, template_id: d.template_id, created_at: 0, updated_at: 0,
+    quiet_start: d.quiet_start, quiet_end: d.quiet_end, template_id: d.template_id, created_at: 0, updated_at: 0, standing_sid: '',
     baselined: 0, watermark: '', last_poll_at: 0, last_ok_at: 0, last_error: '', error_count: 0, next_poll_at: 0,
     channel: '', rule_kind: '', rule_params: '{}', brief_path: '', project_dir: '', workspace: '',
   } satisfies WatcherRow;

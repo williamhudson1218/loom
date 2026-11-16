@@ -122,7 +122,7 @@ function assertConverted(db: Database.Database, lane: string) {
   const t = getWatcher(db, 'tickets')!;
   expect(t.source.params).toEqual({ channel: 'C0AAAAAAAAA', workspace: 'acme' });
   expect(t.trigger.params).toEqual({ bot_ids: ['BBOT'], user_ids: ['UBOT'], needle: 'New engineering ticket' });
-  expect(t.action.params).toEqual({ project_dir: '/Users/someone/dev/app', target: lane, brief_template: TICKETS_BRIEF, perm: 'inherit' });
+  expect(t.action.params).toEqual({ project_dir: '/Users/someone/dev/app', target: lane, brief_template: TICKETS_BRIEF, perm: 'inherit', standing: false });
   expect(getWatcher(db, 'prs')!.action.params.brief_template).toBe(PRS_BRIEF);
   expect(getWatcher(db, 'prs')!.trigger.params).toEqual({ repos: ['acme/app'], exclude_user_ids: ['UOWNER'] });
   // Poll state and the dedupe set are kept: no re-baseline, nothing replayed.

@@ -113,7 +113,7 @@ function wvTrigs(src){return WV_TRIGGERS[src]||[];}
 function wvTrigDef(src,kind){var l=wvTrigs(src);for(var i=0;i<l.length;i++)if(l[i].kind===kind)return l[i];return l[0];}
 function wvSetSource(d,src){var srcDefaults={slack:{channel:'',workspace:''},chats:{projects:[],tags:[]},prs:{repos:[],mine_only:true},work:{url:'',sweep_first:false}};d.source={kind:src,params:srcDefaults[src]};var t=wvTrigs(src)[0];d.trigger={kind:t.kind,params:wvClone(t.defaults)};}
 function wvSetTrigger(d,kind){var t=wvTrigDef(d.source.kind,kind);d.trigger={kind:t.kind,params:wvClone(t.defaults)};}
-function wvSetAction(d,kind){var old=d.action.params||{};var tmpl=old.template!=null?old.template:(old.brief_template||'');if(kind==='start_chat')d.action={kind:kind,params:{project_dir:old.project_dir||'',target:old.target||'managed',brief_template:old.brief_template!=null?old.brief_template:tmpl,perm:old.perm||'inherit'}};else d.action={kind:kind,params:{template:old.template!=null?old.template:tmpl}};wvCarryInvoke(d,old);}
+function wvSetAction(d,kind){var old=d.action.params||{};var tmpl=old.template!=null?old.template:(old.brief_template||'');if(kind==='start_chat')d.action={kind:kind,params:{project_dir:old.project_dir||'',target:old.target||'managed',brief_template:old.brief_template!=null?old.brief_template:tmpl,perm:old.perm||'inherit',standing:old.standing===true}};else d.action={kind:kind,params:{template:old.template!=null?old.template:tmpl}};wvCarryInvoke(d,old);}
 function wvCarryInvoke(d,old){var ap=d.action.params;if((d.action.kind==='start_chat'||d.action.kind==='message_chat')&&old.invoke){ap.invoke=wvClone(old.invoke);ap.notes=old.notes||'';}}
 function wvInvMode(ap){return ap.invoke&&ap.invoke.kind?ap.invoke.kind:'brief';}
 function wvSetInvMode(ap,mode){if(mode==='brief'){delete ap.invoke;return;}var cur=ap.invoke||{};ap.invoke={kind:mode,name:cur.kind===mode?cur.name:'',args:cur.args||''};if(ap.notes==null)ap.notes='';}
@@ -389,6 +389,7 @@ function wvDrawAction(right,d){
     var pr=wvSel([['inherit','Follow Settings, Agents and permissions'],['normal','Normal (asks before running commands)'],['skip','Skip permissions']],ap.perm,function(v){ap.perm=v;WV.skipOk=false;},function(){wvDrawEditor();});pr.id='wv-perm';
     c.appendChild(wvFld('Permissions for the chat',pr));
     if(wvNeedsSkipConfirm(d,WV.orig)){var cf=wvEl('label','wvtog');cf.style.margin='0 0 10px';var cc=wvEl('input');cc.type='checkbox';cc.id='wv-skipok';cc.checked=WV.skipOk;cc.onchange=function(){WV.skipOk=cc.checked;wvSync();};cf.appendChild(cc);var sp=wvEl('span','',"I understand: this chat will run commands without asking, on its own, whenever the watcher fires.");sp.style.color='#f0908f';cf.appendChild(sp);c.appendChild(cf);}
+    var sl=wvEl('label','wvtog');sl.style.margin='0 0 10px';var sc=wvEl('input');sc.type='checkbox';sc.id='wv-standing';sc.checked=ap.standing===true;sc.onchange=function(){ap.standing=sc.checked;wvSync();};sl.appendChild(sc);sl.appendChild(wvEl('span','','Keep one chat for this watcher: later matches are sent to it, and everything from one poll goes out as one batch.'));c.appendChild(sl);
     wvDrawPayload(c,d,ap,'brief_template',9);
   }else{
     if(d.action.kind==='message_chat')wvDrawPayload(c,d,ap,'template',4);

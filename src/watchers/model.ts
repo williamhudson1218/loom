@@ -55,7 +55,7 @@ export const SOURCE_DEFAULTS: Record<SourceKind, Params> = {
 };
 
 export const ACTION_DEFAULTS: Record<ActionKind, Params> = {
-  start_chat: { project_dir: '', target: 'managed', brief_template: '', perm: 'inherit' },
+  start_chat: { project_dir: '', target: 'managed', brief_template: '', perm: 'inherit', standing: false },
   message_chat: { template: '' },
   notify: { template: '' },
   tell_orch: { template: '' },
@@ -80,6 +80,8 @@ export interface WatcherRow {
   template_id: string;
   created_at: number;
   updated_at: number;
+  /** start_chat with standing: the one chat this watcher keeps messaging. */
+  standing_sid: string;
   // Slack poll state.
   baselined: number;
   watermark: string;
@@ -113,6 +115,7 @@ export interface Watcher {
   template_id: string;
   created_at: number;
   updated_at: number;
+  standing_sid: string;
   poll: { baselined: boolean; watermark: string; last_poll_at: number; last_ok_at: number; last_error: string; error_count: number; next_poll_at: number };
 }
 
@@ -158,6 +161,7 @@ export function fromRow(r: WatcherRow): Watcher {
     template_id: r.template_id,
     created_at: r.created_at,
     updated_at: r.updated_at,
+    standing_sid: r.standing_sid ?? '',
     poll: {
       baselined: !!r.baselined,
       watermark: r.watermark,
@@ -242,6 +246,7 @@ export function validateDraft(
   if (ak === 'start_chat') {
     if (typeof ap.project_dir !== 'string' || (ap.project_dir && !path.isAbsolute(ap.project_dir))) return { ok: false, detail: 'action.params.project_dir must be an absolute folder' };
     if (typeof ap.target !== 'string' || !(ap.target === 'managed' || LANE.test(ap.target))) return { ok: false, detail: "action.params.target must be 'managed' or 'lane:<name>'" };
+    if (typeof ap.standing !== 'boolean') return { ok: false, detail: 'action.params.standing must be true or false' };
     if (!['inherit', 'normal', 'skip'].includes(String(ap.perm))) return { ok: false, detail: 'action.params.perm must be inherit, normal or skip' };
     if (typeof ap.brief_template !== 'string' || ap.brief_template.length > MAX_TEMPLATE) return { ok: false, detail: 'action.params.brief_template must be text (at most 20000 characters)' };
     if (opts.forEnable && !ap.project_dir) return { ok: false, detail: 'choose the project the chat starts in' };
@@ -353,6 +358,11 @@ export function insertWatcher(db: Database.Database, d: Clean, now: number, id: 
   const keys = Object.keys(c);
   db.prepare(`INSERT INTO watchers (${keys.join(', ')}) VALUES (${keys.map((k) => '@' + k).join(', ')})`).run(c);
   return id;
+}
+
+/** Remember the chat a standing start_chat watcher keeps messaging. */
+export function setStandingSid(db: Database.Database, watcherId: string, sid: string): void {
+  db.prepare(`UPDATE watchers SET standing_sid = ? WHERE id = ?`).run(sid, watcherId);
 }
 
 /**

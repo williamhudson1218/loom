@@ -161,7 +161,7 @@ describe('save-time validation', () => {
   it('a watcher without invoke is stored exactly as before', () => {
     const v = validateDraft(draft({ kind: 'start_chat', params: { project_dir: proj, target: 'managed', brief_template: 'b', perm: 'inherit' } }), opts);
     expect(v).toMatchObject({ ok: true });
-    expect((v as { draft: WatcherDraft }).draft.action.params).toEqual({ project_dir: proj, target: 'managed', brief_template: 'b', perm: 'inherit' });
+    expect((v as { draft: WatcherDraft }).draft.action.params).toEqual({ project_dir: proj, target: 'managed', brief_template: 'b', perm: 'inherit', standing: false });
   });
 });
 

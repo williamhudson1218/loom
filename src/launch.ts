@@ -179,7 +179,7 @@ export interface ClaudeCommandInput {
   kind: ClaudeKind;
   /** Directory the command `cd`s into first. */
   dir: string;
-  /** chat: --session-id when given. resume/branch: the session to resume. orch: new id, or the one to resume. */
+  /** chat/watcher: --session-id when given. resume/branch: the session to resume. orch: new id, or the one to resume. */
   sid?: string;
   /** First turn. Quoted here (ANSI-C for most kinds; a branch seed is plain single-quoted). */
   prompt?: string;
@@ -220,7 +220,8 @@ export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSetting
       // The name must be passed: `--remote-control [name]` would otherwise eat the brief.
       const rc = settings.rcWatchers ? ` --remote-control ${shq(input.name ?? '')}` : '';
       const brief = input.promptFile ? ` "$(cat ${shq(input.promptFile)})"` : '';
-      return cd + `${claude}${settings.skipWatchers ? skip : ''}${rc}${brief}`;
+      const sid = input.sid ? ` --session-id ${shq(input.sid)}` : '';
+      return cd + `${claude}${settings.skipWatchers ? skip : ''}${sid}${rc}${brief}`;
     }
     case 'orch': {
       const name = input.name ?? '';

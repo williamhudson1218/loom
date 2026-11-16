@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { TOOL_DIR } from '../paths.ts';
@@ -10,8 +11,8 @@ import type { ManagedPaneResult } from '../managed.ts';
 import type { SlackMessage } from '../slack.ts';
 import type { Agent } from '../types.ts';
 import {
-  firedSince, getWatcher, inQuietHours, lastFiredFor, listWatchers, panesUsedSince, queuedEvents, recordEvent, startsSince, updateEvent,
-  type Decision, type EventResult, type Match, type Watcher,
+  firedSince, getWatcher, setStandingSid, inQuietHours, lastFiredFor, listWatchers, panesUsedSince, queuedEvents, recordEvent, startsSince, updateEvent,
+  type Decision, type EventResult, type EventRow, type Match, type Watcher,
 } from './model.ts';
 import { ingest, recordPollError, slackChannel, slackMatch, type SlackCtx } from './sources/slack.ts';
 import { evaluateChats, newTurnMemo, type TurnMemo } from './sources/chats.ts';
@@ -71,6 +72,8 @@ export interface EngineDeps {
   notify(title: string, body: string, target?: { agent: string; sid: string }): boolean;
   /** Hand an event to the orchestrator; false when it is off. */
   tellOrch(key: string, text: string, label: string): boolean;
+  /** A fresh session id for a standing chat. Defaults to a random UUID. */
+  newSessionId?(): string;
   dryRun: boolean;
   briefsDir: string;
   selfPane?: string;
@@ -206,6 +209,7 @@ export async function drainQueue(db: Database.Database, w: Watcher, deps: Engine
   }
   const settings = settingsForPerm(deps.launchSettings(), p.perm);
   const world = target.startsWith('lane:') ? deps.world() : null;
+  if (p.standing === true) return drainStanding(db, w, deps, queued, { target, projectDir, template, inv, settings, world, reserved });
   let started = 0;
   for (let i = 0; i < queued.length; i++) {
     const q = queued[i];
@@ -258,6 +262,116 @@ export async function drainQueue(db: Database.Database, w: Watcher, deps: Engine
     started++;
   }
   return { started, waiting: 0 };
+}
+
+/** What a standing drain needs, resolved once by drainQueue. */
+interface StandingCtx {
+  target: string;
+  projectDir: string;
+  template: string;
+  inv: ReturnType<typeof readInvoke>;
+  settings: LaunchSettings;
+  world: WorldState | null;
+  reserved: Set<string>;
+}
+
+/**
+ * Write the batch file a standing chat reads: a header, then one line per
+ * event (`- <title> [key: <key>] [clear: yes|no]`, the permalink when set), with
+ * the finding's detail indented under it. Returns the path.
+ */
+export function writeBatchFile(dir: string, w: Watcher, events: EventRow[], now: number): string {
+  const lines = [`${events.length} new findings from ${w.label}`];
+  for (const e of events) {
+    const v = savedVars(e.vars_json);
+    let line = `- ${e.title} [key: ${e.event_key}]`;
+    if (v.CLEAR) line += ` [clear: ${v.CLEAR}]`;
+    if (e.permalink) line += ` ${e.permalink}`;
+    lines.push(line);
+    if (v.DETAIL) lines.push(`  ${v.DETAIL.replace(/\s*\n\s*/g, ' ')}`);
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${w.id}-batch-${now}.md`);
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  return file;
+}
+
+function savedVars(json: string | undefined): Record<string, string> {
+  if (!json) return {};
+  try {
+    const o = JSON.parse(json) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(o).filter((kv): kv is [string, string] => typeof kv[1] === 'string'));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * start_chat with `standing`: everything queued is one batch. Message the
+ * watcher's own chat when it has one that still takes input, otherwise start a
+ * new one (its session id is pinned and remembered) and hand it the batch.
+ */
+async function drainStanding(db: Database.Database, w: Watcher, deps: EngineDeps, queued: EventRow[], c: StandingCtx): Promise<{ started: number; waiting: number }> {
+  const p = w.action.params;
+  const now = deps.now();
+  let batchPath: string;
+  try {
+    batchPath = writeBatchFile(deps.briefsDir, w, queued, now);
+  } catch (e) {
+    for (const q of queued) updateEvent(db, q.id, { detail: 'batch file failed: ' + (e as Error).message });
+    return { started: 0, waiting: queued.length };
+  }
+  const m: Match = { key: queued[0].event_key, subject: queued[0].subject, title: queued[0].title, permalink: queued[0].permalink, vars: { BATCH_FILE: batchPath, COUNT: String(queued.length), TITLE: queued[0].title } };
+  const all = vars(db, w, m);
+  const markAll = (patch: Parameters<typeof updateEvent>[2]) => {
+    for (const q of queued) updateEvent(db, q.id, patch);
+  };
+  if (deps.dryRun) {
+    markAll({ decision: 'would_fire', mode: 'shadow', result: '', brief_path: batchPath, acted_at: now, reviewed_at: now, detail: 'dry run: nothing was typed' });
+    return { started: 0, waiting: 0 };
+  }
+  if (w.standing_sid) {
+    const out = deps.relay(w.label, 'claude', w.standing_sid, renderPrompt(p, 'brief_template', all, true), { bare: !!c.inv });
+    if (out.status === 'sent' || out.status === 'queued') {
+      markAll({ decision: 'fired', result: 'sent', brief_path: batchPath, acted_at: now, detail: out.detail });
+      return { started: 0, waiting: 0 };
+    }
+    // The standing chat is gone or cannot take input: start a replacement below.
+  }
+  if (w.max_per_hour > 0 && startsSince(db, now - GLOBAL_START_WINDOW_MS) >= GLOBAL_START_CAP) {
+    markAll({ decision: 'held_cap', detail: `waiting: ${GLOBAL_START_CAP} chats were started by watchers in the last 10 min` });
+    return { started: 0, waiting: queued.length };
+  }
+  let pane: { id: string; name: string; where: string };
+  if (c.world) {
+    const lane = c.target.slice('lane:'.length);
+    const lp = pickPane(c.world.panes, { lane, exclude: c.reserved, focused: c.world.focused });
+    if (!lp) {
+      markAll({ detail: `waiting for a free loom-${lane} pane` });
+      return { started: 0, waiting: queued.length };
+    }
+    pane = { id: lp.pane_id, name: lp.name, where: paneWhere(lp) };
+  } else {
+    const mp = deps.acquireManaged(c.projectDir);
+    if (!mp.ok) {
+      markAll({ decision: 'held_capacity', detail: 'waiting: ' + mp.detail });
+      return { started: 0, waiting: queued.length };
+    }
+    pane = { id: mp.paneId, name: mp.name, where: mp.where };
+  }
+  const sid = (deps.newSessionId ?? randomUUID)();
+  const briefPath = path.join(deps.briefsDir, `${w.id}-batch-${now}-brief.md`);
+  try {
+    fs.writeFileSync(briefPath, c.inv ? renderPrompt(p, 'brief_template', all) : renderBrief(c.template, all));
+    await deps.launch(pane.id, launchCommand(c.projectDir, briefPath, pane.name || pane.id, c.settings, sid));
+  } catch (e) {
+    markAll({ detail: 'launch failed: ' + (e as Error).message });
+    if (pane.id) c.reserved.add(pane.id);
+    return { started: 0, waiting: queued.length };
+  }
+  setStandingSid(db, w.id, sid);
+  markAll({ decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: batchPath, acted_at: now, detail: '' });
+  return { started: 1, waiting: 0 };
 }
 
 /** A Slack ts keeps the previous build's brief file name (<id>-<sec>-<frac>.md). */

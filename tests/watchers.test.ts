@@ -13,7 +13,7 @@ import type { LiveLoc } from '../src/dashboard.ts';
 import { acquireManagedPane } from '../src/managed.ts';
 import {
   getWatcher, insertWatcher, listWatchers, markReviewed, recentFires, setWatcherEnabled, shadowUnreviewed, unreviewedCounts, validateDraft,
-  inQuietHours, deleteWatcher, attentionCount, replaceWatcher, toDraft, type Watcher, type WatcherDraft,
+  inQuietHours, deleteWatcher, setStandingSid, attentionCount, replaceWatcher, toDraft, type Watcher, type WatcherDraft,
 } from '../src/watchers/model.ts';
 import { SLACK_RULES, ingest, backoffMs, slackMatch } from '../src/watchers/sources/slack.ts';
 import { evaluateChats, newTurnMemo } from '../src/watchers/sources/chats.ts';
@@ -946,5 +946,82 @@ describe('work source', () => {
     expect(validateDraft(workDraft({ url: 'http://localhost:4000/f' })).ok).toBe(true);
     expect(validateDraft(workDraft({ url: '' }), { forEnable: true }).ok).toBe(false);
     expect(validateDraft(workDraft({ sweep_first: 'yes' })).ok).toBe(false);
+  });
+});
+
+describe('standing chat', () => {
+  const URL_ = 'https://findings.example.com/api/audit';
+  const f = (key: string, code: string, clear = false, detail = ''): Finding => ({ key, rule: 'rule_a', subject: 'S ' + key, detail, ticket: { code }, suggestedFix: { clear } });
+  const three = [f('k1', 'ITEM-1', true, 'why one'), f('k2', 'ITEM-2'), f('k3', 'ITEM-3')];
+  const draft = (run_mode: 'live' | 'shadow' = 'live'): WatcherDraft => ({
+    label: 'Findings', enabled: true, run_mode,
+    source: { kind: 'work', params: { url: URL_, sweep_first: true } },
+    trigger: { kind: 'finding', params: { rules: [] } },
+    action: { kind: 'start_chat', params: { project_dir: '/work/app', target: 'lane:tp', brief_template: '', perm: 'inherit', standing: true, invoke: { kind: 'skill', name: 'pm-skill', args: '{{BATCH_FILE}}' } } },
+    max_per_hour: 0, cooldown_min: 0,
+  });
+  const mk = (list: Finding[], over: Partial<EngineDeps> = {}) =>
+    deps({ panes: [pane('%12', 'loom-tp-3', 1)], launchSettings: () => LEGACY_LAUNCH_SETTINGS, invocable: () => true, newSessionId: () => 'sid-new', work: async () => list, ...over });
+  const events = () => db.prepare(`SELECT decision, result, brief_path FROM watcher_events ORDER BY id`).all() as { decision: string; result: string; brief_path: string }[];
+
+  it('three findings from one poll start one chat with one batch file and remember its session', async () => {
+    const w = add(db, draft());
+    const d = mk(three);
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(1);
+    expect(d.launches[0][1]).toContain(` --session-id 'sid-new'`);
+    expect(getWatcher(db, w.id)!.standing_sid).toBe('sid-new');
+    const ev = events();
+    expect(ev.map((e) => e.result)).toEqual(['started', 'started', 'started']);
+    expect(new Set(ev.map((e) => e.brief_path)).size).toBe(1);
+    const batch = fs.readFileSync(ev[0].brief_path, 'utf8');
+    expect(batch).toContain('3 new findings from Findings');
+    expect(batch).toContain('[key: k1] [clear: yes]');
+    expect(batch).toContain('  why one');
+    for (const k of ['k1', 'k2', 'k3']) expect(batch).toContain(`[key: ${k}]`);
+    expect(batch).toContain('[key: k2] [clear: no]');
+  });
+  it('the next poll messages the same chat instead of starting another', async () => {
+    const w = add(db, draft());
+    setStandingSid(db, w.id, 'sid-old');
+    const d = mk(three);
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(0);
+    expect(d.relays).toHaveLength(1);
+    const [label, agent, sid, text, opts] = d.relays[0] as [string, string, string, string, { bare: boolean }];
+    expect([label, agent, sid, opts]).toEqual(['Findings', 'claude', 'sid-old', { bare: true }]);
+    expect(text).toBe(`/pm-skill ${events()[0].brief_path}`);
+    expect(events().map((e) => e.result)).toEqual(['sent', 'sent', 'sent']);
+  });
+  it('a queued relay counts as delivered', async () => {
+    const w = add(db, draft());
+    setStandingSid(db, w.id, 'sid-old');
+    const d = mk(three, { relay: () => ({ status: 'queued', detail: 'queued' }) });
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(0);
+    expect(events().map((e) => e.result)).toEqual(['sent', 'sent', 'sent']);
+  });
+  it('a dead standing chat is replaced', async () => {
+    const w = add(db, draft());
+    setStandingSid(db, w.id, 'sid-dead');
+    const d = mk(three, { relay: () => ({ status: 'failed', detail: 'that chat is not running; it has no pane to type into' }) });
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(1);
+    expect(getWatcher(db, w.id)!.standing_sid).toBe('sid-new');
+    expect(events().map((e) => e.result)).toEqual(['started', 'started', 'started']);
+  });
+  it('Shadow never launches or relays', async () => {
+    const w = add(db, draft('shadow'));
+    setStandingSid(db, w.id, 'sid-old');
+    const d = mk(three);
+    await tickWatchers(db, d, newEngineState());
+    expect(d.launches).toHaveLength(0);
+    expect(d.relays).toHaveLength(0);
+    expect(events().map((e) => e.decision)).toEqual(['would_fire', 'would_fire', 'would_fire']);
+  });
+  it('validates standing as a boolean', () => {
+    const bad = draft();
+    (bad.action.params as Record<string, unknown>).standing = 'yes';
+    expect(validateDraft(bad).ok).toBe(false);
   });
 });
