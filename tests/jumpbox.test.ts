@@ -54,9 +54,9 @@ describe('jump box ranking', () => {
 });
 
 describe('jump box ended chats', () => {
-  it('resumes a known chat that is not live, previews on Cmd+Enter', () => {
-    expect(api.jumpActions({ kind: 'chat', live: false })).toEqual({ act: 'resume', hint: 'Resume' });
-    expect(api.jumpActions({ kind: 'chat', live: false }, true)).toEqual({ act: 'preview', hint: 'Preview' });
+  it('previews a known chat that is not live on Enter, resumes on Cmd+Enter', () => {
+    expect(api.jumpActions({ kind: 'chat', live: false })).toEqual({ act: 'preview', hint: 'Preview' });
+    expect(api.jumpActions({ kind: 'chat', live: false }, true)).toEqual({ act: 'resume', hint: 'Resume' });
   });
 });
 
@@ -116,9 +116,9 @@ describe('jump box recency', () => {
 });
 
 describe('jump box row actions', () => {
-  it('archived chats resume on Enter and preview on Cmd+Enter', () => {
-    expect(api.jumpActions({ kind: 'arch' })).toEqual({ act: 'resume', hint: 'Resume' });
-    expect(api.jumpActions({ kind: 'arch' }, true)).toEqual({ act: 'preview', hint: 'Preview' });
+  it('archived chats preview on Enter and resume on Cmd+Enter', () => {
+    expect(api.jumpActions({ kind: 'arch' })).toEqual({ act: 'preview', hint: 'Preview' });
+    expect(api.jumpActions({ kind: 'arch' }, true)).toEqual({ act: 'resume', hint: 'Resume' });
   });
   it('open chats and commands keep their single action', () => {
     expect(api.jumpActions({ kind: 'chat', live: true }, true)?.act).toBe('open');

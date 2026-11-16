@@ -50,11 +50,11 @@ function jumpAge(ts,now){
   if(s<60)return 'now';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';
   if(s<604800)return Math.floor(s/86400)+'d';return Math.floor(s/604800)+'w';
 }
-// What a row does. Archived and ended (not live) chats resume on Enter and preview on Cmd/Ctrl+Enter; everything
+// What a row does. Archived and ended (not live) chats preview on Enter and resume on Cmd/Ctrl+Enter; everything
 // else keeps its one action. hint is the label shown on the selected row.
 function jumpActions(it,meta){
   if(!it)return null;
-  if(it.kind==='arch'||(it.kind==='chat'&&it.live===false))return meta?{act:'preview',hint:'Preview'}:{act:'resume',hint:'Resume'};
+  if(it.kind==='arch'||(it.kind==='chat'&&it.live===false))return meta?{act:'resume',hint:'Resume'}:{act:'preview',hint:'Preview'};
   if(it.kind==='cmd')return {act:'run',hint:'Run'};
   return {act:'open',hint:'Open'};
 }
@@ -163,7 +163,7 @@ function jumpRender(){
   jumpBuild();var box=$('#jlist');if(!box)return;var h='',idx=0;
   JUMP.sections.forEach(function(s){h+='<div class="jh">'+esc(s.title)+'</div>';
     s.items.forEach(function(it){var lead=it.kind==='chat'?'<span class="sdot '+esc(it.dot||'')+'" style="margin-top:0"></span>':'<span class="ji">'+(it.kind==='arch'?'❖':esc(it.icon||''))+'</span>';
-      h+='<div class="jrow'+(idx===JUMP.sel?' sel':'')+'" role="option" data-i="'+idx+'">'+lead+'<span class="jt">'+esc(it.label)+'</span>'+(it.sub?'<span class="js">'+esc(it.sub)+'</span>':'')+(it.kind==='arch'&&jumpAge(it.ts)?'<span class="jage" title="last updated '+esc(new Date(it.ts<1e11?it.ts*1000:it.ts).toLocaleString())+'">'+esc(jumpAge(it.ts))+'</span>':'')+(it.kind==='arch'||(it.kind==='chat'&&it.live===false)?'<span class="jhint">Resume<kbd>⏎</kbd> · Preview<kbd>⌘⏎</kbd></span>':'')+'</div>';idx++;});
+      h+='<div class="jrow'+(idx===JUMP.sel?' sel':'')+'" role="option" data-i="'+idx+'">'+lead+'<span class="jt">'+esc(it.label)+'</span>'+(it.sub?'<span class="js">'+esc(it.sub)+'</span>':'')+(it.kind==='arch'&&jumpAge(it.ts)?'<span class="jage" title="last updated '+esc(new Date(it.ts<1e11?it.ts*1000:it.ts).toLocaleString())+'">'+esc(jumpAge(it.ts))+'</span>':'')+(it.kind==='arch'||(it.kind==='chat'&&it.live===false)?'<span class="jhint">Preview<kbd>⏎</kbd> · Resume<kbd>⌘⏎</kbd></span>':'')+'</div>';idx++;});
     if(s.loading)h+='<div class="jload">Searching archived chats…</div>';});
   if(!JUMP.flat.length&&!JUMP.sections.some(function(s){return s.loading;}))h+='<div class="jempty">Nothing matches “'+esc(JUMP.q.trim())+'”.</div>';
   box.innerHTML=h;var sel=box.querySelector('.jrow.sel');if(sel&&sel.scrollIntoView)sel.scrollIntoView({block:'nearest'});
