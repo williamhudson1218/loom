@@ -214,6 +214,8 @@ export interface ShipDetail {
   chats: DetailChat[];
   onlyUnstagedChats: number;
   unattributed: DetailUnattributed[];
+  /** Work in flight: chats owning only unstaged/untracked files, plus unattributed files that are not staged. */
+  notStaged: { chats: DetailChat[]; unknown: DetailUnattributed[] };
   gate: ShipGate;
   confirm: string; // the sentence the Ship confirm step shows
   commands: { plain: string };
@@ -239,11 +241,14 @@ export function buildShipDetail(i: DetailInput): ShipDetail {
     return { path: f.path, state: f.state, added: n?.added ?? 0, deleted: n?.deleted ?? 0, binary: n?.binary ?? false, ...(f.shared ? { shared: true } : {}) };
   };
   const chats: DetailChat[] = [];
+  const notStagedChats: DetailChat[] = [];
   let onlyUnstagedChats = 0;
   for (const c of board.next.chats) {
     const staged = c.files.filter((f) => rides(f.state)).map((f) => row(f, 'staged'));
     if (!staged.length) {
       onlyUnstagedChats++;
+      const lab = i.labels[c.key] ?? { label: '', source: 'none' as const };
+      notStagedChats.push({ key: c.key, title: i.titles[c.key] ?? '', label: lab.label, labelSource: lab.source, staged: [], unstaged: c.files.map((f) => row(f, 'unstaged')) });
       continue;
     }
     const lab = i.labels[c.key] ?? { label: '', source: 'none' as const };
@@ -271,6 +276,10 @@ export function buildShipDetail(i: DetailInput): ShipDetail {
     chats,
     onlyUnstagedChats,
     unattributed: board.next.unattributed.map((f) => ({ ...row(f, rides(f.state) ? 'staged' : 'unstaged'), guess: i.guesses[f.path] ?? null })),
+    notStaged: {
+      chats: notStagedChats,
+      unknown: board.next.unattributed.filter((f) => !rides(f.state)).map((f) => ({ ...row(f, 'unstaged'), guess: i.guesses[f.path] ?? null })),
+    },
     gate: shipDisabledReason({ onMain: board.onMain, staged: totals.staged, lock: l, base: board.base }),
     confirm: shipConfirmText(board.repo, totals.staged, board.command),
     commands: { plain: shipPrompt(board.command) },

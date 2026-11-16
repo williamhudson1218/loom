@@ -109,6 +109,8 @@ describe('buildShipDetail grouping', () => {
     expect(a.staged.map((f) => [f.path, f.added, f.deleted])).toEqual([['a.ts', 3, 1], ['c.ts', 2, 2]]);
     expect(a.unstaged.map((f) => [f.path, f.state, f.added])).toEqual([['c.ts', 'partial', 4]]);
     expect(d.unattributed.map((f) => [f.path, f.guess?.key ?? null])).toEqual([['e.ts', 'claude:Z'], ['d.ts', null]]);
+    expect(d.notStaged.chats.map((c) => [c.key, c.staged.length, c.unstaged.map((f) => [f.path, f.added])])).toEqual([['claude:B', 0, [['b.ts', 1]]]]);
+    expect(d.notStaged.unknown.map((f) => [f.path, f.state])).toEqual([['d.ts', 'untracked']]);
     expect(d.gate.ok).toBe(true);
     expect(d.confirm).toContain('commits the 3 staged files as one batch');
     expect(d.commands).toEqual({ plain: '/ship' });

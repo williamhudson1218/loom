@@ -82,7 +82,7 @@ function tourFixture(now,o){
     totals:{staged:3,added:58,deleted:6,unstaged:0},lock:null,
     chats:[{key:key(2),title:'Release notes draft',label:'',labelSource:'none',
       staged:[{path:f1.path,state:'staged',added:41,deleted:2,binary:false},{path:f2.path,state:'staged',added:12,deleted:4,binary:false}],unstaged:[]}],
-    onlyUnstagedChats:0,
+    onlyUnstagedChats:0,notStaged:{chats:[],unknown:[]},
     unattributed:[{path:f3.path,state:'staged',added:5,deleted:0,binary:false,guess:null}],
     gate:{ok:true,reason:''},confirm:'Commit the 3 staged files as one batch and open a pull request.',commands:{plain:'/ship'}};
   var diffText=['diff --git a/docs/release-notes.md b/docs/release-notes.md','--- a/docs/release-notes.md','+++ b/docs/release-notes.md',

@@ -163,11 +163,20 @@ function smChatHtml(c,d){const pane=smPane(c.key);const cur=SM.lab[c.key]!==unde
   return h+'</div>';}
 function smAssignOptions(){const rows=[];Object.keys(DATA.live).forEach(k=>{const c=chatByKey(k);if(c)rows.push([k,(smPane(k)||'')+' '+disp(c)]);});
   return '<option value="">Assign to…</option>'+rows.sort((a,b)=>a[1].localeCompare(b[1])).map(r=>'<option value="'+esc(r[0])+'">'+esc(r[1].trim())+'</option>').join('');}
-function smUnHtml(d){if(!d.unattributed.length)return '';
-  let h='<div class="smown"><h3>Needs an owner <span>· '+smPlural(d.unattributed.length,'file','files')+' no chat claims</span></h3>';
-  d.unattributed.forEach(f=>{const side=(f.state==='staged'||f.state==='partial')?'staged':'unstaged';const g=f.guess;
+function smUnRows(list){let h='';
+  list.forEach(f=>{const side=(f.state==='staged'||f.state==='partial')?'staged':'unstaged';const g=f.guess;
     h+='<div class="smrow">'+smFile(f,side)+(g?'<button class="smlink" data-smassign="'+esc(f.path)+'" data-smkey="'+esc(g.key)+'">Use '+esc(smPane(g.key)||smChatName(g.key))+'</button>':'')+
       '<select data-smpick="'+esc(f.path)+'" aria-label="Assign '+esc(f.path)+' to a chat" '+(TERM_TOKEN?'':'disabled')+'>'+smAssignOptions()+'</select></div>';});
+  return h;}
+function smUnHtml(d){const list=d.unattributed.filter(f=>f.state==='staged'||f.state==='partial');if(!list.length)return '';
+  return '<div class="smown"><h3>Needs an owner <span>· '+smPlural(list.length,'file','files')+' no chat claims</span></h3>'+smUnRows(list)+'</div>';}
+function smUnStagedCount(d){return d.unattributed.filter(f=>f.state==='staged'||f.state==='partial').length;}
+function smNotStagedChat(c){const pane=smPane(c.key);
+  return '<div class="smcard" data-smns="'+esc(c.key)+'"><div class="smct"><span class="sdot '+smDot(c.key)+'"></span><span class="nm" data-smchat="'+esc(c.key)+'">'+esc(smChatName(c.key))+'</span>'+(pane?'<span class="pn">'+esc(pane)+'</span>':'')+'<span class="spacer"></span><span>'+smPlural(c.unstaged.length,'file','files')+'</span></div>'+c.unstaged.map(f=>smFile(f,'unstaged')).join('')+'</div>';}
+function smNotStagedHtml(d){const n=d.notStaged||{chats:[],unknown:[]};if(!n.chats.length&&!n.unknown.length)return '';
+  const total=n.chats.reduce((a,c)=>a+c.unstaged.length,0)+n.unknown.length;
+  let h='<div class="smown"><h3>Not staged <span>· '+smPlural(total,'file','files')+' in progress, won’t ship</span></h3>'+n.chats.map(smNotStagedChat).join('');
+  if(n.unknown.length)h+='<div class="smns-unknown"><h3>Unknown owner <span>· '+smPlural(n.unknown.length,'file','files')+' no chat claims</span></h3>'+smUnRows(n.unknown)+'</div>';
   return h+'</div>';}
 function smSumHtml(d){const rows=d.chats.map(c=>{const a=c.staged.reduce((n,f)=>n+f.added,0),x=c.staged.reduce((n,f)=>n+f.deleted,0);
     return '<div class="r"><span class="l">'+esc(smLabelOf(c)||c.title||smChatName(c.key))+'</span><span class="m">'+smPlural(c.staged.length,'file','files')+' · <span class="a">+'+a+'</span> <span class="d">−'+x+'</span></span></div>';});
@@ -180,8 +189,8 @@ function smBodyHtml(d){
   if(SM.view==='started')return smStepsHtml([['sdone','Session launched',smPlural(d.totals.staged,'staged file','staged files')+' locked for this ship.'],['snow','Committing and opening the pull request','Watch it in the ship session.'],['slater','Merge when CI and review are green']])+'<div class="smnote">Other chats can keep working. New staged files wait for the next ship.</div>';
   if(SM.view==='confirm')return smSumHtml(d)+smStepsHtml([['','Commit the staged files as one batch','Unstaged changes are left alone.'],['','Open a <span class="mono">ship/</span> pull request','Labels become the PR’s change list.'],['','Merge when CI and review are green','Production deploy follows.']])+(SM.err?'<div class="smerr">'+esc(SM.err)+'</div>':'');
   let b=d.chats.map(c=>smChatHtml(c,d)).join('')+smUnHtml(d);
-  if(!d.chats.length&&!d.unattributed.length)b='<div class="smempty">Nothing staged.</div>';
-  if(d.onlyUnstagedChats)b+='<div class="smnote">'+d.onlyUnstagedChats+' more '+(d.onlyUnstagedChats===1?'chat is':'chats are')+' working in this checkout with nothing staged yet.</div>';
+  if(!d.chats.length&&!smUnStagedCount(d))b='<div class="smempty">Nothing staged.</div>';
+  b+=smNotStagedHtml(d);
   return b;}
 // The footer's message: why Ship is or is not available.
 function smGateInfo(d){
