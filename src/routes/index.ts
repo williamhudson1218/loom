@@ -34,11 +34,16 @@ import { routes as actionsRoutes } from './actions.ts';
 //   cli      The plugin's `loom` CLI and hooks. Host is Loom's, no Origin (a
 //            browser always sends one on a write), and `x-loom-cli-token` matches
 //            $LOOM_HOME/cli-token (0600).
+//   browser+cli  Either of the two above, each in full: a request with an Origin
+//            is judged as browser, one without as cli. Neither guard is loosened;
+//            the route simply accepts both callers. Used by the watcher writes a
+//            local agent drives through `loom watcher` (create, update, test,
+//            run-mode, toggle, delete); the rest of the watcher writes stay browser.
 //   orch     The orchestrator's MCP process: its own 0600 token, unchanged.
 //   read     A module GET with nothing to guard beyond the Host check every
 //            request gets. Never use it for a route that changes state.
 
-export type WriteKind = 'browser' | 'cli' | 'orch';
+export type WriteKind = 'browser' | 'cli' | 'browser+cli' | 'orch';
 export type RouteKind = WriteKind | 'read';
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
@@ -117,7 +122,7 @@ export const CORE_ROUTES: RouteDef[] = [
   b('POST', '/api/outbox/send-now'),
   b('POST', '/api/outbox/redraft'),
   b('POST', '/api/outbox/redraft-cancel'),
-  b('POST', '/api/watchers/toggle'),
+  b('POST', '/api/watchers/toggle', { kind: 'browser+cli' }),
   b('POST', '/api/watchers/goto'),
   // Trees
   b('POST', '/api/trees/goto', { legacyGet: true }),
@@ -204,6 +209,9 @@ const header = (req: http.IncomingMessage, name: string): string => {
 export function requireWrite(req: http.IncomingMessage, kind: RouteKind): Verdict {
   if (!ownHost(req)) return { ok: false, status: 403, reason: 'bad host' };
   if (kind === 'read') return { ok: true };
+  // Browser always sends an Origin on a write and the cli guard refuses one, so
+  // the Origin decides which guard applies; the request must pass that one fully.
+  if (kind === 'browser+cli') return requireWrite(req, req.headers.origin !== undefined ? 'browser' : 'cli');
   if (kind === 'browser') {
     if (!ownOrigin(req)) return { ok: false, status: 403, reason: 'bad origin' };
     const given = header(req, 'x-loom-token') || header(req, 'x-loom-term-token');

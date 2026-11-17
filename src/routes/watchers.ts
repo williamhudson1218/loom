@@ -20,6 +20,9 @@ import type { RouteCtx, RouteDef } from './index.ts';
 // (/api/watchers/goto) are still answered inline by server.ts.
 // Every entry is gated by requireWrite(kind) in src/routes/index.ts before its
 // handler runs; tests/auth.test.ts sweeps this list, so a route cannot skip it.
+// create, update, delete, run-mode, test and toggle are kind browser+cli, so the
+// plugin's `loom watcher` command can drive them with the CLI token; the other
+// writes stay browser-only.
 
 function withDb<T>(fn: (db: Database.Database) => T): T {
   const db = openDb();
@@ -203,9 +206,14 @@ export async function runModeHandler({ json, body }: RouteCtx): Promise<void> {
   json(ok ? 200 : 404, ok ? { ok, mode: b.mode } : { ok, detail: 'unknown watcher' });
 }
 
-/** Evaluate a draft against recent items. Writes nothing, acts on nothing. */
+/** Evaluate a draft (`watcher`) or a saved watcher (`id`) against recent items. Writes nothing, acts on nothing. */
 export async function testHandler({ json, body }: RouteCtx): Promise<void> {
-  const b = await body();
+  let b = await body();
+  if (b && b.watcher === undefined && typeof b.id === 'string') {
+    const saved = withDb((db) => getWatcher(db, b!.id as string));
+    if (!saved) return json(404, { ok: false, detail: 'unknown watcher' });
+    b = { watcher: { ...toDraft(saved), id: saved.id } };
+  }
   const v = validateDraft(b?.watcher);
   if (!v.ok) return json(400, v);
   const deps = runtimeTestDeps();
@@ -285,6 +293,8 @@ export async function fromPermalinkHandler({ json, body }: RouteCtx): Promise<vo
 
 const b = (path: string, handler: RouteDef['handler']): RouteDef => ({ method: 'POST', path, kind: 'browser', handler });
 const r = (path: string, handler: RouteDef['handler']): RouteDef => ({ method: 'GET', path, kind: 'read', handler });
+/** Also open to the `loom watcher` CLI (kind browser+cli, §13): the handlers' checks are unchanged. */
+const bc = (path: string, handler: RouteDef['handler']): RouteDef => ({ method: 'POST', path, kind: 'browser+cli', handler });
 
 export const routes: RouteDef[] = [
   r('/api/watchers', listHandler),
@@ -292,12 +302,12 @@ export const routes: RouteDef[] = [
   r('/api/watchers/events', eventsHandler),
   r('/api/watchers/invocables', invocablesHandler),
   b('/api/watchers/from-template', fromTemplateHandler),
-  b('/api/watchers/create', createHandler),
-  b('/api/watchers/update', updateHandler),
-  b('/api/watchers/delete', deleteHandler),
+  bc('/api/watchers/create', createHandler),
+  bc('/api/watchers/update', updateHandler),
+  bc('/api/watchers/delete', deleteHandler),
   b('/api/watchers/duplicate', duplicateHandler),
-  b('/api/watchers/run-mode', runModeHandler),
-  b('/api/watchers/test', testHandler),
+  bc('/api/watchers/run-mode', runModeHandler),
+  bc('/api/watchers/test', testHandler),
   b('/api/watchers/review', reviewHandler),
   b('/api/watchers/from-permalink', fromPermalinkHandler),
 ];

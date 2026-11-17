@@ -53,7 +53,7 @@ function raw(method: string, p: string, headers: Record<string, string>, body?: 
 
 const own = () => `http://127.0.0.1:${port}`;
 const goodHeaders = (r: RouteDef): Record<string, string> => {
-  if (r.kind === 'browser') return { origin: own(), 'x-loom-token': termToken() };
+  if (r.kind === 'browser' || r.kind === 'browser+cli') return { origin: own(), 'x-loom-token': termToken() };
   if (r.kind === 'cli') return { 'x-loom-cli-token': readCliToken() };
   if (r.kind === 'orch') return { 'x-loom-orch-token': ensureOrchToken(orchDir()) };
   return {};
@@ -154,12 +154,72 @@ describe('route table sweep', () => {
   });
 });
 
+describe('routes open to both the page and the CLI (browser+cli)', () => {
+  const both = ROUTES.filter((r) => r.kind === 'browser+cli');
+  const cli = () => ({ 'x-loom-cli-token': ensureCliToken() });
+
+  it('are exactly the watcher writes `loom watcher` drives', () => {
+    expect(both.map((r) => r.path).sort()).toEqual(
+      ['/api/watchers/create', '/api/watchers/delete', '/api/watchers/run-mode', '/api/watchers/test', '/api/watchers/toggle', '/api/watchers/update'],
+    );
+    for (const p of ['/api/watchers/from-template', '/api/watchers/duplicate', '/api/watchers/review', '/api/watchers/from-permalink', '/api/watchers/goto']) {
+      expect(ROUTES.find((r) => r.path === p)?.kind, p).toBe('browser');
+    }
+    expect(ROUTES.find((r) => r.path === '/api/watchers' && r.method === 'GET')?.kind).toBe('read');
+  });
+
+  it('let a valid CLI token with no Origin reach the handler', async () => {
+    // An empty body is a 400 from every one of these handlers: past the gate, nothing written.
+    for (const r of both) {
+      const out = await raw(r.method, r.path, { ...JSON_BODY, ...cli() }, '{}');
+      expect(out.status, `${r.method} ${r.path}`).toBe(400);
+    }
+    // Test by a saved watcher's id (what `loom watcher test --id` sends).
+    expect((await raw('POST', '/api/watchers/test', { ...JSON_BODY, ...cli() }, JSON.stringify({ id: 'no-such-watcher' }))).status).toBe(404);
+  });
+
+  it('still let the page in with its own Origin and token', async () => {
+    for (const r of both) {
+      const out = await raw(r.method, r.path, { ...JSON_BODY, origin: own(), 'x-loom-token': termToken() }, '{}');
+      expect(out.status, `${r.method} ${r.path}`).toBe(400);
+    }
+  });
+
+  it('refuse a CLI token sent with any Origin, foreign or Loom\'s own', async () => {
+    for (const r of both) {
+      const foreign = await raw(r.method, r.path, { ...JSON_BODY, ...cli(), origin: 'https://evil.example' }, '{}');
+      expect([foreign.status, foreign.body.detail], `${r.method} ${r.path}`).toEqual([403, 'bad origin']);
+      // With Loom's Origin it is judged as the page, and the CLI token is not the page's token.
+      const ownO = await raw(r.method, r.path, { ...JSON_BODY, ...cli(), origin: own() }, '{}');
+      expect([ownO.status, ownO.body.detail], `${r.method} ${r.path}`).toEqual([403, 'bad token']);
+    }
+  });
+
+  it('refuse a missing or wrong CLI token, and a foreign Host', async () => {
+    for (const r of both) {
+      const none = await raw(r.method, r.path, { ...JSON_BODY }, '{}');
+      expect([none.status, none.body.detail], `${r.method} ${r.path}`).toEqual([403, 'bad token']);
+      const wrong = await raw(r.method, r.path, { ...JSON_BODY, 'x-loom-cli-token': termToken() }, '{}');
+      expect([wrong.status, wrong.body.detail], `${r.method} ${r.path}`).toEqual([403, 'bad token']);
+      const host = await raw(r.method, r.path, { ...JSON_BODY, ...cli(), host: `evil.example:${port}` }, '{}');
+      expect([host.status, host.body.detail], `${r.method} ${r.path}`).toEqual([403, 'bad host']);
+    }
+  });
+
+  it('leave every browser-only route closed to the CLI token', async () => {
+    for (const r of ROUTES.filter((x) => x.kind === 'browser')) {
+      const out = await raw(r.method, r.path, { ...JSON_BODY, ...cli() }, '{}');
+      expect([out.status, out.body.detail], `${r.method} ${r.path}`).toEqual([403, 'bad origin']);
+    }
+  });
+});
+
 describe('requireWrite', () => {
   const fake = (headers: Record<string, string>, localPort = 4317) => ({ headers, socket: { localPort } }) as unknown as http.IncomingMessage;
   const host = { host: 'localhost:4317' };
 
   it('checks Host first for every kind', () => {
-    for (const k of ['browser', 'cli', 'orch', 'read'] as const) {
+    for (const k of ['browser', 'cli', 'browser+cli', 'orch', 'read'] as const) {
       expect(requireWrite(fake({ host: 'localhost:9999' }), k)).toMatchObject({ ok: false, reason: 'bad host' });
     }
     expect(requireWrite(fake(host), 'read')).toEqual({ ok: true });
@@ -180,6 +240,17 @@ describe('requireWrite', () => {
     expect(requireWrite(fake({ ...host, 'x-loom-cli-token': t }), 'cli')).toEqual({ ok: true });
     expect(requireWrite(fake({ ...host, 'x-loom-cli-token': t, origin: 'http://localhost:4317' }), 'cli')).toMatchObject({ ok: false, reason: 'bad origin' });
     expect(requireWrite(fake({ ...host, 'x-loom-cli-token': termToken() }), 'cli')).toMatchObject({ ok: false, reason: 'bad token' });
+  });
+
+  it('browser+cli: one guard or the other in full, never a mix', () => {
+    const t = termToken();
+    const c = ensureCliToken();
+    expect(requireWrite(fake({ ...host, origin: 'http://localhost:4317', 'x-loom-token': t }), 'browser+cli')).toEqual({ ok: true });
+    expect(requireWrite(fake({ ...host, 'x-loom-cli-token': c }), 'browser+cli')).toEqual({ ok: true });
+    // The page's token without an Origin, or the CLI token with one, passes neither.
+    expect(requireWrite(fake({ ...host, 'x-loom-token': t }), 'browser+cli')).toMatchObject({ ok: false, reason: 'bad token' });
+    expect(requireWrite(fake({ ...host, origin: 'http://localhost:4317', 'x-loom-cli-token': c }), 'browser+cli')).toMatchObject({ ok: false, reason: 'bad token' });
+    expect(requireWrite(fake({ ...host, origin: 'http://localhost:9999', 'x-loom-cli-token': c }), 'browser+cli')).toMatchObject({ ok: false, reason: 'bad origin' });
   });
 });
 

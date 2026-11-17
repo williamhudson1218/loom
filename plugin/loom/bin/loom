@@ -33,6 +33,12 @@
                  slack-reply:<thread url>[,from=<who>][,answers=<question, last>] | draft-sent:<draft id>
       <action>:  send-draft:<draft id> | wake:"<instruction>" | none
   loom trees prune [--repo <dir>] [--dry-run] [--json]   remove worktrees that are merged, clean and unused
+  loom watcher list [--json]                         every watcher: id, on/off, shadow/live, label
+  loom watcher create --file <draft.json> [--confirm-skip]   save a watcher ({watcher: {...}} or the draft itself);
+                                                     prints its id. --confirm-skip is required for perm "skip"
+  loom watcher update <id> --file <draft.json> [--confirm-skip]   replace a watcher's definition
+  loom watcher test --file <draft.json> | --id <id>  what it would fire on now (writes nothing, acts on nothing)
+  loom watcher enable <id> | disable <id> | mode <id> shadow|live | delete <id>
   loom whoami
 
 Writes are atomic event files in $LOOM_HOME/events/, so they survive Loom being down. Reads and Slack
@@ -914,6 +920,90 @@ def cmd_trees(args):
         sys.exit(1)
 
 
+# ---------- watchers ----------
+
+WATCHER_USAGE = (
+    "usage: loom watcher list [--json] | create --file <draft.json> [--confirm-skip]"
+    " | update <id> --file <draft.json> [--confirm-skip] | test --file <draft.json> | test --id <id>"
+    " | enable <id> | disable <id> | mode <id> shadow|live | delete <id>"
+)
+WATCHER_TEST_TIMEOUT = 60.0
+
+
+def watcher_post(path, body, timeout=10.0):
+    try:
+        return c.http("POST", path, body, timeout=timeout)
+    except c.LoomUnavailable as e:
+        die("Loom is not reachable (%s). Is it running?" % e, 3)
+    except c.LoomError as e:
+        detail = e.body
+        try:
+            detail = json.loads(e.body).get("detail") or e.body
+        except (ValueError, AttributeError):
+            pass
+        die("watcher: HTTP %s: %s" % (e.status, detail), 4)
+
+
+def watcher_draft(o, cmd):
+    f = o.get("file")
+    if not isinstance(f, str):
+        die("watcher %s: --file <draft.json> is required" % cmd, 2)
+    d = read_json(f, "watcher " + cmd, "--file")
+    if not isinstance(d, dict):
+        die("watcher %s: --file must hold a JSON object" % cmd, 2)
+    return d["watcher"] if isinstance(d.get("watcher"), dict) else d
+
+
+def cmd_watcher(args):
+    sub = args[0] if args else ""
+    o, rest = opts(args[1:], flags=("json", "confirm_skip"))
+    if sub == "list":
+        r = get("/api/watchers")
+        ws = r.get("watchers") or []
+        if o.get("json"):
+            print(json.dumps(ws, indent=2))
+            return
+        for w in ws:
+            print("%s  %-3s  %-6s  %s" % (w.get("id"), "on" if w.get("enabled") else "off", w.get("run_mode"), w.get("label")))
+        if not ws:
+            print("no watchers")
+    elif sub in ("create", "update"):
+        if (sub == "create" and rest) or (sub == "update" and len(rest) != 1):
+            die(WATCHER_USAGE, 2)
+        body = {"watcher": watcher_draft(o, sub)}
+        if sub == "update":
+            body["id"] = rest[0]
+        if o.get("confirm_skip") is True:
+            body["confirm_skip"] = True
+        r = watcher_post("/api/watchers/" + sub, body)
+        print((r.get("watcher") or {}).get("id") or "")
+    elif sub == "test":
+        if rest or ("file" in o) == ("id" in o) or o.get("id") is True:
+            die("usage: loom watcher test --file <draft.json> | --id <id>", 2)
+        body = {"id": o["id"]} if "id" in o else {"watcher": watcher_draft(o, "test")}
+        r = watcher_post("/api/watchers/test", body, timeout=WATCHER_TEST_TIMEOUT)
+        print(json.dumps(r, separators=(",", ":")))
+        if r.get("ok") is False:
+            sys.exit(1)
+    elif sub in ("enable", "disable"):
+        if len(rest) != 1:
+            die(WATCHER_USAGE, 2)
+        watcher_post("/api/watchers/toggle", {"id": rest[0], "enabled": sub == "enable"})
+        print("%sd %s" % (sub, rest[0]))
+    elif sub == "mode":
+        if len(rest) != 2 or rest[1] not in ("shadow", "live"):
+            die("usage: loom watcher mode <id> shadow|live", 2)
+        watcher_post("/api/watchers/run-mode", {"id": rest[0], "mode": rest[1]})
+        print("%s is %s" % (rest[0], rest[1]))
+    elif sub == "delete":
+        if len(rest) != 1:
+            die(WATCHER_USAGE, 2)
+        watcher_post("/api/watchers/delete", {"id": rest[0]})
+        print("deleted " + rest[0])
+    else:
+        die(WATCHER_USAGE, 2)
+
+
 # ---------- route / whoami ----------
 
 def cmd_route(args):
@@ -950,6 +1040,7 @@ def cmd_whoami(_args):
 COMMANDS = {
     "outbox": cmd_outbox, "thread": cmd_thread, "ship-label": cmd_ship_label, "ship-lock": cmd_ship_lock,
     "route": cmd_route, "whoami": cmd_whoami, "test-links": cmd_test_links, "action": cmd_action, "trees": cmd_trees,
+    "watcher": cmd_watcher,
 }
 
 

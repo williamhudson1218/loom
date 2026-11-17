@@ -29,6 +29,8 @@ import type { RouteCtx, RouteDef, Verdict } from './index.ts';
 //
 // Every entry is gated by requireWrite(kind) in src/routes/index.ts before its
 // handler runs; tests/auth.test.ts sweeps this list, so a route cannot skip it.
+// `loom watcher` does not come through here: it calls the watcher routes
+// themselves (src/routes/watchers.ts), which are kind browser+cli.
 
 /** What the CLI handlers need from the running server. server.ts fills it in (setCliDeps); tests pass fakes. */
 export interface CliDeps {
