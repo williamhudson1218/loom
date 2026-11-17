@@ -39,6 +39,7 @@ import { SHIPMODAL_CSS, SHIPMODAL_HTML, SHIPMODAL_JS } from './shipmodal.ts';
 import { GITMARK_CSS, GITMARK_JS } from './gitmarkview.ts';
 import { OVERLAY_CSS } from './overlayview.ts';
 import type { Agent, ChatRow, LaunchPreference } from './types.ts';
+import { isStandingChat, standingRefs } from './standingchats.ts';
 
 export interface ChatView {
   agent: Agent;
@@ -1291,7 +1292,10 @@ function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%3
 // filter) so they don't jump around as you toggle Live-only.
 function openSettings(){if(tab==='settings')return;tab='settings';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();}
 // Badges only where something is actionable, hidden at zero. Board and Saved never carry one.
-function watchBadge(){var n=Number(WATCH.unreviewed)||0;(WATCH.watchers||[]).forEach(function(w){n+=Number(w.unreviewed)||0;});return n;}
+// Unreviewed shadow matches, plus every standing watcher chat that is waiting on you: it is not on the Board,
+// so this count is what keeps it from being missed.
+function watchBadge(){var n=Number(WATCH.unreviewed)||0;(WATCH.watchers||[]).forEach(function(w){n+=Number(w.unreviewed)||0;});return n+standingTurnCount(DATA.standing,dotCls);}
+function standingTurnCount(list,dot){var n=0;(list||[]).forEach(function(s){if(s&&s.chat&&dot(s.chat)==='d-turn')n++;});return n;}
 // The Trees badge counts only worktrees that are safe to delete: not the primary, nothing
 // running in it, and its branch merged and clean (git.ts verdict 'safe'). Merely idle ones
 // (old lastCommitAt) are not counted: with dozens of worktrees that made the badge noise.
@@ -1616,7 +1620,11 @@ function wireSteps(box){box.querySelectorAll('[data-step]').forEach(el=>el.oncli
 // when the chat or its pane changes.
 var mtab='terminal', MSGS_SIG='', closeArm='', closeTimer=null;
 function selKey(){return sel?sel.agent+':'+sel.sid:'';}
-function selChat(){if(!sel)return null;if(sel.arch)return sel.chat||null;return DATA.chats.find(c=>c.agent===sel.agent&&c.session_id===sel.sid)||null;}
+// A standing watcher chat is not a board row (it lives on the Watchers tab, DATA.standing), but it opens,
+// shows and closes in the main panel like one: lookups that select or open a chat fall back to it.
+function standingChat(agent,sid){const s=(DATA.standing||[]).find(x=>x.chat&&x.chat.session_id===sid&&(!agent||x.chat.agent===agent));return s?s.chat:null;}
+function chatAny(agent,sid){return DATA.chats.find(c=>c.session_id===sid&&(!agent||c.agent===agent))||standingChat(agent,sid);}
+function selChat(){if(!sel)return null;if(sel.arch)return sel.chat||null;return chatAny(sel.agent,sel.sid)||null;}
 function isTurn(c){return st(c)==='waiting_on_user'&&!isWorking(c);}
 function detailFor(c){return DETAIL&&c&&DETAIL.session_id===c.session_id?DETAIL:null;}
 function prStateOf(c){const d=detailFor(c);const pr=d&&d.pr&&!d.pr.loading?d.pr:null;if(!pr)return '';return pr.state==='MERGED'?'merged':pr.state==='CLOSED'?'closed':pr.isDraft?'draft':'review';}
@@ -1635,18 +1643,18 @@ function selectChat(sid,agent,arch){leaveHome();leaveColumns();leaveOrch();leave
 function archChatOf(sid){const h=archHits.find(x=>x.session_id===sid)||JUMP.hits.find(x=>x.session_id===sid);return h?archChat(h):null;}
 function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);closeCtx();document.querySelectorAll('#sidelist .srow.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));renderMain();}
 // A Tickets card opens its chat in the Sessions view, where the terminal lives.
-function openInBoard(sid,agent){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);tab=c&&c.saved?'saved':'board';boardView='list';stateFilter='all';selectChat(sid,agent,null);syncControls();liveToggle();chips();render();}
+function openInBoard(sid,agent){const c=chatAny(agent,sid);tab=c&&c.saved?'saved':'board';boardView='list';stateFilter='all';selectChat(sid,agent,null);syncControls();liveToggle();chips();render();}
 // ---- Jump with the terminal set to inside Loom ---------------------------------
 // The server publishes the newest jump request; when its seq moves, open the chat
 // in that pane. The first poll only records the seq, so a stale request never fires.
 var FOCUS_SEQ=null;
 function checkInsideFocus(f){if(!f)return;if(FOCUS_SEQ===null){FOCUS_SEQ=f.seq;return;}if(f.seq===FOCUS_SEQ)return;FOCUS_SEQ=f.seq;
   const k=Object.keys(DATA.live).find(x=>DATA.live[x].pane_id===f.pane_id);if(!k)return;const L=DATA.live[k];
-  const c=DATA.chats.find(x=>chatKey(x)===k);if(!c)return;openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();if(typeof setPending==='function')setPending(null);}
+  const c=DATA.chats.find(x=>chatKey(x)===k)||standingChat(L.agent,L.session_id);if(!c)return;openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();if(typeof setPending==='function')setPending(null);}
 // A notification click lands here (app/main.ts): switch to the tab that lists the chat, drop any filter hiding it,
 // select it and open its terminal. A chat not indexed yet gets one retry after a refresh, then a toast.
 window.loomOpenChat=function(agent,sid,retried){
-  const c=DATA.chats.find(x=>x.session_id===sid&&(!agent||x.agent===agent));
+  const c=chatAny(agent,sid);
   if(!c){if(retried){toast('that chat is not on the board','#8a2b2e');return;}
     refresh();setTimeout(function(){window.loomOpenChat(agent,sid,true);},1500);return;}
   const q=$('#q');if(q&&q.value)q.value='';onlyGroup=null;
@@ -1784,7 +1792,7 @@ function removeFromBoard(c){const nav=closeNavPlan(c);fetch('/api/hide',{method:
 var ctxState=null;
 function ctxInput(c){const L=c.arch?null:DATA.live[chatKey(c)];return {live:!!L,done:!!c.done,parked:!!parkedOf(c),saved:!!c.saved,archive:!!c.arch,prNum:chatPrNum(c),prState:prStateOf(c),hasSlack:ownsSlack(c),slackCount:slackCountOf(c),armedClose:closeArm===chatKey(c),tagCount:chatTags(c).length,orchLive:!!(DATA.orch&&DATA.orch.live),extLabel:(DATA.terminal&&DATA.terminal.label)||''};}
 function openCtx(c,x,y,anchor,only){closeArm='';ctxState={c,x,y,anchor,only:only||'',tagsOpen:false,slackOpen:false};renderCtx();}
-function currentChat(c){return c.arch?c:(DATA.chats.find(x=>x.agent===c.agent&&x.session_id===c.session_id)||c);}
+function currentChat(c){return c.arch?c:(chatAny(c.agent,c.session_id)||c);}
 // Tags submenu: a checkbox per tag, then an inline field that creates a tag (colour
 // picked automatically) and applies it to this chat.
 function tagsPanel(c){const has=chatTags(c);return '<div class="cmtags">'+((DATA.tags||[]).map(t=>{const on=has.indexOf(t.name)>=0;return '<button type="button" class="cmi tg" role="menuitemcheckbox" aria-checked="'+on+'" data-tag="'+esc(t.name)+'"><span class="tgck">'+(on?'☑':'☐')+'</span><span class="tgdot" style="background:'+t.color+'"></span><span class="tgn">'+esc(t.name)+'</span></button>';}).join(''))+'<input id="newtag" class="newtag" maxlength="40" placeholder="New tag…" aria-label="New tag name"/></div>';}
@@ -1980,9 +1988,9 @@ $('#tbcancel').onclick=closeTermBox;$('#tbgo').onclick=createTermSession;
 $('#termbox').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeTermBox();}else if(e.key==='Enter'){e.preventDefault();createTermSession();}});
 loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.gitMarks||{})+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{});}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.gitMarks||{})+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{})+'##'+(DATA.standing||[]).map(x=>x.watcher_id+'='+chatKey(x.chat)+':'+(x.chat.state||'')+':'+(x.chat.title||'')).join(',');}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMenuSync();}
-function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.standing=d.standing||[];DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();}).catch(()=>{pollFailed=true;renderStale();if(homeSel)homeClock();});}
@@ -2508,7 +2516,8 @@ export function writeDashboard(
   outPath: string = DASHBOARD_PATH,
   now: number = Date.now(),
 ): { count: number; path: string } {
-  const views = toChatViews(db);
+  const refs = standingRefs(db);
+  const views = toChatViews(db).filter((v) => !isStandingChat(refs, v));
   const html = renderDashboard(views, now, {}, getDefaultAgent(db));
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, html, 'utf-8');

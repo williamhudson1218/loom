@@ -100,7 +100,7 @@ function tourFetch(input,init){
   if(p==='/api/data'){
     return TOUR.prevFetch(input,init).then(function(r){return r.json();}).then(function(d){
       d=Object.assign({},d);d.chats=fx.chats;d.live=fx.live;d.drafts=fx.drafts;d.slackOwners=fx.slackOwners;d.slackCounts=fx.slackCounts;
-      d.ships=fx.ships;d.gitMarks=fx.gitMarks;d.parked=fx.parked;d.pipes=fx.pipes;d.chatPr=fx.chatPr;d.slackStarts=[];d.launches=[];d.slackMode=TOUR.sampleSlackMode;return tourJson(d);});
+      d.ships=fx.ships;d.gitMarks=fx.gitMarks;d.parked=fx.parked;d.pipes=fx.pipes;d.chatPr=fx.chatPr;d.slackStarts=[];d.launches=[];d.standing=[];d.slackMode=TOUR.sampleSlackMode;return tourJson(d);});
   }
   if(p==='/api/detail'&&sid.indexOf('sample-')===0)return tourJson(fx.detail(sid));
   if(p==='/api/transcript'&&sid.indexOf('sample-')===0)return tourJson(fx.transcript(sid));
@@ -113,7 +113,7 @@ function tourFetch(input,init){
 function tourApplySample(){
   var fx=TOUR.fx;
   DATA.chats=fx.chats;DATA.live=fx.live;DATA.drafts=fx.drafts;DATA.slackOwners=fx.slackOwners;DATA.slackCounts=fx.slackCounts;
-  DATA.ships=fx.ships;DATA.gitMarks=fx.gitMarks;DATA.parked=fx.parked;DATA.pipes=fx.pipes;DATA.chatPr=fx.chatPr;DATA.slackStarts=[];
+  DATA.ships=fx.ships;DATA.gitMarks=fx.gitMarks;DATA.parked=fx.parked;DATA.pipes=fx.pipes;DATA.chatPr=fx.chatPr;DATA.slackStarts=[];DATA.standing=[];
   // The sample shows every stop, Slack's included, whatever this Mac has set up.
   DATA.slackMode=TOUR.sampleSlackMode;
 }
@@ -308,7 +308,7 @@ function tourBegin(first){
   TOUR.slackOn=tourSlackIsOn();
   TOUR.saved={panes:tourPaneHtml(),tab:tab,sel:sel?{sid:sel.sid,agent:sel.agent,arch:sel.arch||null}:null,mtab:mtab,chats:DATA.chats,live:DATA.live,drafts:DATA.drafts,
     slackOwners:DATA.slackOwners,slackCounts:DATA.slackCounts,ships:DATA.ships,gitMarks:DATA.gitMarks,parked:DATA.parked,pipes:DATA.pipes,chatPr:DATA.chatPr,
-    slackStarts:DATA.slackStarts,shipOpen:shipOpen,outCollapsed:outCollapsed,focus:document.activeElement};
+    slackStarts:DATA.slackStarts,standing:DATA.standing,shipOpen:shipOpen,outCollapsed:outCollapsed,focus:document.activeElement};
   TOUR.sample=DATA.chats.filter(function(c){return !c.arch;}).length===0;
   TOUR.saved.slackMode=DATA.slackMode;
   if(TOUR.sample){TOUR.slackOn=true;TOUR.sampleSlackMode='direct';}
@@ -350,7 +350,7 @@ function tourEnd(result){
   window.fetch=TOUR.origFetch;
   if(TOUR.sample){
     DATA.chats=S.chats;DATA.live=S.live;DATA.drafts=S.drafts;DATA.slackOwners=S.slackOwners;DATA.slackCounts=S.slackCounts;
-    DATA.ships=S.ships;DATA.gitMarks=S.gitMarks;DATA.parked=S.parked;DATA.pipes=S.pipes;DATA.chatPr=S.chatPr;DATA.slackStarts=S.slackStarts;
+    DATA.ships=S.ships;DATA.gitMarks=S.gitMarks;DATA.parked=S.parked;DATA.pipes=S.pipes;DATA.chatPr=S.chatPr;DATA.slackStarts=S.slackStarts;DATA.standing=S.standing||[];
     DATA.slackMode=S.slackMode;
   }
   shipOpen=S.shipOpen;

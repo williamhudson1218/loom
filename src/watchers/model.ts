@@ -465,6 +465,8 @@ export interface EventRow {
   acted_at: number;
   reviewed_at: number;
   vars_json: string;
+  /** The chat a standing watcher started for this event ('' otherwise). */
+  session_id?: string;
 }
 
 export interface EventInput {
@@ -493,7 +495,7 @@ export function recordEvent(db: Database.Database, e: EventInput): number | null
   return info.changes ? Number(info.lastInsertRowid) : null;
 }
 
-export type EventPatch = Partial<Pick<EventRow, 'decision' | 'result' | 'detail' | 'pane_id' | 'pane_name' | 'pane_where' | 'brief_path' | 'acted_at' | 'mode' | 'reviewed_at'>>;
+export type EventPatch = Partial<Pick<EventRow, 'decision' | 'result' | 'detail' | 'pane_id' | 'pane_name' | 'pane_where' | 'brief_path' | 'acted_at' | 'mode' | 'reviewed_at' | 'session_id'>>;
 
 export function updateEvent(db: Database.Database, id: number, patch: EventPatch): void {
   const keys = Object.keys(patch);

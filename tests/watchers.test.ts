@@ -971,6 +971,8 @@ describe('standing chat', () => {
     expect(d.launches).toHaveLength(1);
     expect(d.launches[0][1]).toContain(` --session-id 'sid-new'`);
     expect(getWatcher(db, w.id)!.standing_sid).toBe('sid-new');
+    // Each event remembers the chat it started, so a replaced standing chat stays the watcher's (src/standingchats.ts).
+    expect(db.prepare(`SELECT DISTINCT session_id FROM watcher_events`).all()).toEqual([{ session_id: 'sid-new' }]);
     const ev = events();
     expect(ev.map((e) => e.result)).toEqual(['started', 'started', 'started']);
     expect(new Set(ev.map((e) => e.brief_path)).size).toBe(1);

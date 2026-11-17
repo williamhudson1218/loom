@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS watcher_events (
   acted_at    INTEGER NOT NULL DEFAULT 0,
   reviewed_at INTEGER NOT NULL DEFAULT 0,
   vars_json   TEXT NOT NULL DEFAULT '',
+  session_id  TEXT NOT NULL DEFAULT '',
   UNIQUE (watcher_id, event_key)
 );
 
@@ -154,6 +155,8 @@ export const WATCHERS_V2_COLUMNS: [string, string][] = [
 export function ensureWatcherColumns(db: Database.Database): void {
   const haveEv = new Set((db.prepare(`PRAGMA table_info(watcher_events)`).all() as { name: string }[]).map((c) => c.name));
   if (!haveEv.has('vars_json')) db.exec(`ALTER TABLE watcher_events ADD COLUMN vars_json TEXT NOT NULL DEFAULT ''`);
+  // The chat a standing watcher started for this event (src/standingchats.ts), so a replaced standing chat that is still running stays the watcher's.
+  if (!haveEv.has('session_id')) db.exec(`ALTER TABLE watcher_events ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
   const have = new Set((db.prepare(`PRAGMA table_info(watchers)`).all() as { name: string }[]).map((c) => c.name));
   for (const [name, def] of WATCHERS_V2_COLUMNS) {
     if (!have.has(name)) db.exec(`ALTER TABLE watchers ADD COLUMN ${name} ${def}`);

@@ -85,6 +85,14 @@ export const WATCHER_VIEW_CSS = String.raw`
   #watch-section .wvmsg.ok { color:#7ee08a; }
   #watch-section .wvempty { padding:18px 6px; color:var(--wv-muted); font-size:13px; }
   #watch-section .wvdirty { color:var(--wv-amber); font-size:12px; font-weight:600; }
+  #watch-section .wvstand { display:flex; gap:7px; align-items:center; min-width:0; margin:0 0 5px; padding:4px 7px; border:1px solid var(--wv-line); border-radius:7px; background:var(--wv-ctl); cursor:pointer; font-size:12px; color:var(--wv-text2); }
+  #watch-section .wvstand:hover { border-color:#4d5b80; }
+  #watch-section .wvstand.turn { border-color:#3a5fae; background:rgba(110,162,255,.1); }
+  #watch-section .wvstand .sdot { margin-top:0; }
+  #watch-section .wvstand .t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #watch-section .wvstand .wvstl { color:var(--wv-muted); font-size:11.5px; white-space:nowrap; }
+  #watch-section .wvstand.turn .wvstl { color:#8db6ff; font-weight:600; }
+  #watch-section #wv-stand { margin-top:8px; }
 `;
 
 export const WATCHER_VIEW_HTML = String.raw`
@@ -208,6 +216,7 @@ function wvDrawList(){
     var b=wvEl('button','wvli'+(w.id===WV.sel?' sel':''));b.type='button';b.setAttribute('data-wid',w.id);
     b.appendChild(wvEl('b','',w.label));
     var sm=wvEl('span','wvdef',wvWatches(w));sm.style.display='block';sm.style.margin='0 0 5px';b.appendChild(sm);
+    wvStandingOf(w.id).forEach(function(s){b.appendChild(wvStandingEl(s,false));});
     var pl=wvEl('span','pl');
     pl.appendChild(wvEl('span','wvpill '+(w.enabled?'ok':''),w.enabled?'On':'Off'));
     var sn={slack:'Slack',chats:'Chats',prs:'Pull requests',work:'Findings endpoint'}[w.source.kind]||w.source.kind;
@@ -280,10 +289,11 @@ function wvDrawEditor(){
   }
   var dis=wvBtn('Discard','',function(){WV.dirty=false;WV.msg='';if(isNew){WV.sel='';WV.draft=null;wvDrawList();wvDrawEditor();return;}var w=wvById(WV.sel);WV.draft=w?wvDraftOf(w):null;WV.orig=w?wvDraftOf(w):null;WV.editorFor='__none__';wvDrawEditor();});dis.id='wv-discard';hr.appendChild(dis);
   var sv=wvBtn('Save','pri',wvSave);sv.id='wv-save';hr.appendChild(sv);
-  hc.appendChild(hr);var msg=wvEl('div','wvmsg');msg.id='wv-msg';msg.style.marginTop='6px';hc.appendChild(msg);
+  hc.appendChild(hr);var stand=wvEl('div');stand.id='wv-stand';hc.appendChild(stand);var msg=wvEl('div','wvmsg');msg.id='wv-msg';msg.style.marginTop='6px';hc.appendChild(msg);
   var w0=isNew?null:wvById(WV.sel);
   if(w0&&w0.last_error){var le=wvEl('div','wvmsg err','Last poll failed: '+w0.last_error);le.style.marginTop='4px';hc.appendChild(le);}
   right.appendChild(hc);
+  wvStandingSync();
   wvDrawSource(right,d);wvDrawTrigger(right,d);wvDrawAction(right,d);wvDrawMode(right,d);wvDrawSafety(right,d);
   if(!isNew){wvDrawTest(right,d);var sh=wvEl('div','wvcard');sh.id='wv-shadow';right.appendChild(sh);var fi=wvEl('div','wvcard');fi.id='wv-fires';right.appendChild(fi);wvDrawEvents();}
   else{var tc=wvEl('div','wvcard');tc.appendChild(wvEl('h4','','Test'));tc.appendChild(wvEl('div','wvdef','Save the watcher first, then Test it against recent items.'));right.appendChild(tc);}
@@ -481,11 +491,30 @@ function wvRender(){
   if(WV.sel!=='new'&&WV.sel&&!wvById(WV.sel)&&!WV.dirty){WV.sel='';WV.draft=null;}
   if(!WV.sel&&(WATCH.watchers||[]).length){wvSelect(WATCH.watchers[0].id);}
   wvDrawTop();wvDrawNote();wvDrawSpawns();
-  wvDrawListKeepFocus();
+  wvDrawListKeepFocus();wvStandingSync();
   if(WV.dirty&&WV.draft)return;
   if(!WV.draft&&WV.sel===''){wvDrawEditor();}
   else if(WV.draft&&!document.getElementById('wv-save'))wvDrawEditor();
   if(WV.sel&&WV.sel!=='new')wvLoadEvents();
 }
+// ---- Standing chats ----------------------------------------------------------
+// A standing watcher's own chat is kept off the Board (src/standingchats.ts) and shown here instead: in the
+// watcher's list row and the editor header, with the Board's status dot (dotCls/DOT_LABEL) and title (disp).
+// Clicking it opens the chat the way a notification or a board row does (openInBoard + its terminal).
+function wvStandingOf(id){var l=(typeof DATA!=='undefined'&&DATA&&DATA.standing)||[];return l.filter(function(s){return s&&s.chat&&s.watcher_id===id;});}
+function wvOpenStanding(c){openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();}
+function wvStandingEl(s,withBtn){
+  var c=s.chat;var cls=dotCls(c);var label=DOT_LABEL[cls]||'';
+  var row=wvEl('div','wvstand'+(cls==='d-turn'?' turn':''));row.setAttribute('data-sid',c.session_id);row.setAttribute('data-agent',c.agent);
+  row.title=(s.current?'This watcher':'An earlier chat of this watcher')+' · '+label+' · open the chat';
+  var dot=wvEl('span','sdot '+cls);dot.title=label;row.appendChild(dot);
+  row.appendChild(wvEl('span','t',disp(c)));
+  row.appendChild(wvEl('span','wvstl',s.current?label:label+' · earlier chat'));
+  if(withBtn){var ob=wvBtn('Open chat','sm',null);ob.setAttribute('data-open','1');row.appendChild(ob);}
+  row.onclick=function(e){if(e&&e.stopPropagation)e.stopPropagation();wvOpenStanding(c);};
+  return row;
+}
+function wvStandingSync(){var slot=document.getElementById('wv-stand');if(!slot)return;slot.textContent='';
+  var l=WV.sel&&WV.sel!=='new'?wvStandingOf(WV.sel):[];l.forEach(function(s){slot.appendChild(wvStandingEl(s,true));});}
 function wvDrawListKeepFocus(){var a=document.activeElement;if(a&&a.closest&&a.closest('#wvleft'))return;wvDrawList();}
 `.split('__WV_TRIGGERS__').join(TRIGGER_JSON);

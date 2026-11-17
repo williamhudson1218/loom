@@ -82,6 +82,7 @@ import { autoResumeParked, settingsGet, settingsPut } from './settings.ts';
 import { orchSettings } from './orchestrator.ts';
 import { provisionalViews, spawnTitles } from './liveindex.ts';
 import { isOrchestratorRef } from './orchsession.ts';
+import { isStandingChat, splitStanding, standingRefs, type StandingRef } from './standingchats.ts';
 import { configureWatcherRuntime, isDryRun, startWatcherTicks, BRIEFS_DIR as WATCHER_BRIEFS_DIR, type EngineDeps, type TestDeps } from './watchers/engine.ts';
 import { attentionCount, getEvent, setWatcherEnabled, validateDraft, getWatcher } from './watchers/model.ts';
 import { computeSignals, readPendingTool } from './watchers/chatSignals.ts';
@@ -943,19 +944,39 @@ function slackModeSafe(): string {
   }
 }
 
-function provisionalForLive(views: ChatView[], live: Record<string, LiveLoc>): ChatView[] {
+function provisionalForLive(views: ChatView[], live: Record<string, LiveLoc>, standing: Map<string, StandingRef> = new Map()): ChatView[] {
   if (views.length && Object.keys(live).every((k) => views.some((v) => agentSessionKey(v.agent, v.session_id) === k))) return [];
   try {
     const db = openDb();
     try {
       const orchSid = orchSettings.sessionId(db);
-      return provisionalViews(views, live, spawnTitles(db), Date.now(), { exclude: (l) => isOrchestratorRef(l, orchSid, { run: tmux }) });
+      return provisionalViews(views, live, spawnTitles(db), Date.now(), { exclude: (l) => isStandingChat(standing, l) || isOrchestratorRef(l, orchSid, { run: tmux }) });
     } finally {
       db.close();
     }
   } catch {
     return [];
   }
+}
+
+/**
+ * The board's rows and the standing watcher chats kept off it (src/standingchats.ts).
+ * Only what the page shows is split: the snapshot keeps every chat, so relays,
+ * notifications, the orchestrator and the tray still see the standing chat.
+ */
+function boardSplit(views: ChatView[], live: Record<string, LiveLoc>): ReturnType<typeof splitStanding> & { refs: Map<string, StandingRef> } {
+  let refs = new Map<string, StandingRef>();
+  try {
+    const db = openDb();
+    try {
+      refs = standingRefs(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* no DB this poll: nothing is held back */
+  }
+  return { ...splitStanding(views, live, refs), refs };
 }
 
 function snapshot(): Snap {
@@ -1300,8 +1321,10 @@ export function createServer(): http.Server {
       launches = launches.map(launchView) as typeof launches;
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
-      const chats = [...views, ...provisionalForLive(views, live)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      // Standing watcher chats ride separately, for the Watchers tab, never as board rows.
+      const { board, standing, refs } = boardSplit(views, live);
+      const chats = [...board, ...provisionalForLive(views, live, refs)];
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -2249,7 +2272,7 @@ export function createServer(): http.Server {
       // Read fresh, never from the snapshot memo: Enter on the welcome screen
       // must not be followed by a reload that shows it again.
       const boot = (() => { const db = openDb(); try { return firstPaint(db); } catch { return { welcome: false }; } finally { db.close(); } })();
-      const html = renderDashboard(views, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList(), boot);
+      const html = renderDashboard(boardSplit(views, live).board, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList(), boot);
       return send(res, 200, 'text/html; charset=utf-8', withClientFetch(html));
     }
 

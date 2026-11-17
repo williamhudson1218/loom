@@ -33,9 +33,11 @@ describe('window.loomOpenChat', () => {
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
     const src = scripts.find((s) => s.includes('window.loomOpenChat='))!;
     const a = src.indexOf('window.loomOpenChat=');
-    const body = src.slice(a, src.indexOf('};', a) + 2);
+    // chatAny / standingChat: the lookup it shares with selChat (a standing watcher chat is not in DATA.chats).
+    const helpers = ['standingChat', 'chatAny'].map((n) => src.match(new RegExp(`^function ${n}\\(.*$`, 'm'))![0]).join('\n');
+    const body = helpers + '\n' + src.slice(a, src.indexOf('};', a) + 2);
     const log: string[] = [];
-    const st = { chats: [{ agent: 'claude', session_id: 's1' }] as { agent: string; session_id: string }[] };
+    const st = { chats: [{ agent: 'claude', session_id: 's1' }] as { agent: string; session_id: string }[], standing: [{ watcher_id: 'w1', chat: { agent: 'claude', session_id: 'pm1' } }] };
     const win: Record<string, unknown> = {};
     const q = { value: 'stale filter' };
     const run = new Function(
@@ -56,6 +58,12 @@ describe('window.loomOpenChat', () => {
     expect(log).toEqual(['open:claude:s1', 'render']);
     expect(q.value).toBe('');
     expect(api.state()).toEqual({ onlyGroup: null, mtab: 'terminal' });
+  });
+
+  it('opens a standing watcher chat, which is kept off the board', () => {
+    const { api, log } = load();
+    api.open('claude', 'pm1');
+    expect(log).toEqual(['open:claude:pm1', 'render']);
   });
 
   it('retries once after a refresh for an unknown chat, then toasts', () => {

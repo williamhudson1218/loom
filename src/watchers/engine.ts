@@ -392,7 +392,7 @@ async function drainStanding(db: Database.Database, w: Watcher, deps: EngineDeps
     return { started: 0, waiting: queued.length };
   }
   setStandingSid(db, w.id, sid, now);
-  markAll({ decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: batchPath, acted_at: now, detail: replaced.slice(0, 500) });
+  markAll({ decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: batchPath, acted_at: now, session_id: sid, detail: replaced.slice(0, 500) });
   return { started: 1, waiting: 0 };
 }
 
