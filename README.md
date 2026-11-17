@@ -2,9 +2,13 @@
 
 [![Latest release](https://img.shields.io/github/v/release/williamhudson1218/loom?sort=semver&label=download)](https://github.com/williamhudson1218/loom/releases/latest)
 
+[![Loom: every Claude Code chat in one place](site/shots/board.png)](https://williamhudson1218.github.io/loom/)
+
 Loom is a macOS app that shows all of your [Claude Code](https://claude.com/claude-code) chats in one place. It indexes every chat, summarizes it, tells you which ones are running and whose turn it is, and lets you open, resume, branch, park and message any of them.
 
 macOS only. tmux is required. It keeps chats alive when Loom quits and is how Loom types into them. Loom installs it, runs it on its own socket and shows each chat as a terminal inside the app, so you never have to learn it.
+
+See the features with screenshots at **[williamhudson1218.github.io/loom](https://williamhudson1218.github.io/loom/)**.
 
 ## Get started
 

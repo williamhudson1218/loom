@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Loom</title>
+<meta name="description" content="Loom is a macOS app that shows all of your Claude Code chats in one place: who is working, whose turn it is, and what is scheduled next.">
+<meta property="og:title" content="Loom">
+<meta property="og:description" content="Every Claude Code chat in one place, on your Mac.">
+<meta property="og:image" content="https://williamhudson1218.github.io/loom/shots/home.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0f1118; --panel: #151926; --line: #232838; --text: #e6e9f2; --muted: #8b93a7; --faint: #6f778a;
+    --accent: #9cc0ff; --gold: #e8a94a;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: .2px; }
+  .brand img { width: 30px; height: 30px; }
+  .top nav a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 14px; }
+  .top nav a:hover { color: var(--text); }
+
+  .hero { text-align: center; padding: 48px 0 28px; }
+  .hero h1 { font-size: clamp(32px, 5.5vw, 54px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -.5px; }
+  .hero p.lede { font-size: clamp(16px, 2.2vw, 19px); color: var(--muted); max-width: 680px; margin: 0 auto 28px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+  .btn { display: inline-block; padding: 11px 20px; border-radius: 8px; font-weight: 600; font-size: 15px; text-decoration: none; }
+  .btn.primary { background: #2f6fd6; color: #fff; }
+  .btn.primary:hover { background: #3a7ae3; }
+  .btn.ghost { border: 1px solid var(--line); color: var(--text); }
+  .btn.ghost:hover { background: var(--panel); }
+  .req { color: var(--faint); font-size: 13px; margin-top: 14px; }
+
+  .shot { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 24px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.02); background: var(--panel); }
+  .hero-shot { margin: 36px auto 0; max-width: 1080px; }
+
+  section.feature { display: grid; grid-template-columns: 5fr 7fr; gap: 44px; align-items: center; padding: 72px 0; border-top: 1px solid var(--line); }
+  section.feature.flip { grid-template-columns: 7fr 5fr; }
+  section.feature.flip .copy { order: 2; }
+  .kicker { color: var(--gold); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+  .feature h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.2; margin: 8px 0 14px; letter-spacing: -.3px; }
+  .feature p { color: var(--muted); margin: 0 0 12px; }
+  .feature ul { color: var(--muted); padding-left: 18px; margin: 0; }
+  .feature li { margin: 4px 0; }
+  kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; color: var(--text); white-space: nowrap; }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }
+
+  .more { border-top: 1px solid var(--line); padding: 72px 0; }
+  .more h2 { text-align: center; font-size: clamp(24px, 3vw, 32px); margin: 0 0 32px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .install { border-top: 1px solid var(--line); padding: 72px 0 40px; text-align: center; }
+  .install h2 { font-size: clamp(24px, 3vw, 32px); margin: 0 0 10px; }
+  .install p { color: var(--muted); max-width: 640px; margin: 0 auto 20px; }
+  .cmd { display: flex; align-items: center; gap: 10px; max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 12px 16px; text-align: left; }
+  .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; background: none; border: 0; padding: 0; font-size: 13px; }
+  .cmd button { flex-shrink: 0; font: 600 13px -apple-system, system-ui, sans-serif; color: var(--text); background: #222839; border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  .cmd button:hover { background: #2a3146; }
+  footer { color: var(--faint); font-size: 13px; text-align: center; padding: 28px 0 44px; }
+
+  @media (max-width: 820px) {
+    section.feature, section.feature.flip { grid-template-columns: 1fr; gap: 24px; padding: 52px 0; }
+    section.feature.flip .copy { order: 0; }
+    .grid { grid-template-columns: 1fr; }
+    .top nav a:not(.gh) { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><img src="icon.svg" alt="">Loom</div>
+    <nav><a href="#features">Features</a><a href="#install">Install</a><a class="gh" href="https://github.com/williamhudson1218/loom">GitHub</a></nav>
+  </header>
+
+  <div class="hero">
+    <h1>Every Claude Code chat,<br>in one place.</h1>
+    <p class="lede">Loom is a Mac app for people who run a lot of Claude Code at once. It shows which chats are working, whose turn it is, and what is coming up next, and it opens any of them as its real terminal.</p>
+    <div class="cta">
+      <a class="btn primary" href="#install">Install Loom</a>
+      <a class="btn ghost" href="https://github.com/williamhudson1218/loom/releases/latest">Download the latest release</a>
+    </div>
+    <div class="req">macOS on Apple silicon. Needs Claude Code and tmux (Loom installs tmux if it is missing).</div>
+    <img class="shot hero-shot" src="shots/home.png" alt="Loom's Home page: counts of working and waiting chats, chats in orbit, and what needs you" width="2880" height="1800">
+  </div>
+
+  <div id="features">
+    <section class="feature">
+      <div class="copy">
+        <div class="kicker">The board</div>
+        <h2>See every chat and whose turn it is</h2>
+        <p>Loom indexes every Claude Code chat on your Mac, summarizes it, and groups it by state: working, waiting on you, or done.</p>
+        <ul>
+          <li>Each chat opens as its real terminal inside Loom. Quitting Loom detaches, and the chats keep running.</li>
+          <li>Read the transcript, the key moments and the files it edited.</li>
+          <li>Resume an old chat, branch it, or close it to free its window.</li>
+        </ul>
+      </div>
+      <img class="shot" src="shots/board.png" alt="A chat selected on the board, showing its transcript" loading="lazy" width="2880" height="1800">
+    </section>
+
+    <section class="feature flip">
+      <div class="copy">
+        <div class="kicker">Home</div>
+        <h2>Know what needs you at a glance</h2>
+        <p>Home shows how many chats are working, how many are waiting on you, and which have gone stale, with the ones that need you first.</p>
+        <p>The menu-bar icon keeps the same counts in view when Loom is in the background.</p>
+      </div>
+      <img class="shot" src="shots/home.png" alt="Loom's Home page with chats in orbit and a Needs you list" loading="lazy" width="2880" height="1800">
+    </section>
+
+    <section class="feature">
+      <div class="copy">
+        <div class="kicker">Outbox</div>
+        <h2>Review what a chat wants to send</h2>
+        <p>When a chat drafts a Slack reply, it lands in the Outbox next to that chat instead of going out on its own.</p>
+        <ul>
+          <li>Edit it, then send.</li>
+          <li>Send and park the chat until the thread replies, or send and close it.</li>
+          <li>Loom warns you if someone wrote in the thread after the draft was written.</li>
+        </ul>
+      </div>
+      <img class="shot" src="shots/outbox.png" alt="The Outbox rail beside a chat, showing a drafted Slack reply" loading="lazy" width="2880" height="1800">
+    </section>
+
+    <section class="feature flip">
+      <div class="copy">
+        <div class="kicker">Scheduled</div>
+        <h2>Follow-ups that run themselves</h2>
+        <p>A chat can leave itself steps: when the PR merges, send the reply; at 7:00 tomorrow, check the overnight build; when they answer in Slack, update the ticket.</p>
+        <p>Loom watches each trigger and wakes the chat that set it, with its own context, even if that chat has ended. The Scheduled tab lists everything pending across all your chats.</p>
+      </div>
+      <img class="shot" src="shots/scheduled.png" alt="The Scheduled tab listing timed steps, steps waiting on a pull request, and watchers" loading="lazy" width="2880" height="1100">
+    </section>
+
+    <section class="feature">
+      <div class="copy">
+        <div class="kicker">Keyboard</div>
+        <h2>Jump anywhere without the mouse</h2>
+        <p><kbd>⌘K</kbd> finds any chat, ticket or command. <kbd>⌘1</kbd> to <kbd>⌘9</kbd> open chats by position.</p>
+        <p><kbd>⌃H</kbd> and <kbd>⌃L</kbd> move between the chat list, the terminal and the Outbox. <kbd>⌃J</kbd> and <kbd>⌃K</kbd> step through chats, and letting go of <kbd>⌃</kbd> drops you into the one you stopped on.</p>
+      </div>
+      <img class="shot" src="shots/jump.png" alt="The Command-K jump box open over the board" loading="lazy" width="2880" height="1800">
+    </section>
+  </div>
+
+  <section class="more">
+    <h2>Also in Loom</h2>
+    <div class="grid">
+      <div class="card"><h3>Restores itself</h3><p>After a reboot or a tmux crash, Loom rebuilds your sessions and resumes every chat where it left off.</p></div>
+      <div class="card"><h3>Watchers</h3><p>Rules like "tell me when a chat is stuck", "a PR's checks went red", or "a bot posted an alert in this channel". They start in shadow mode, which logs what they would have done.</p></div>
+      <div class="card"><h3>Ship</h3><p>One button per repo commits the staged work, opens a pull request and merges it when checks pass. It never force-pushes or skips hooks.</p></div>
+      <div class="card"><h3>Slack</h3><p>Connect your own account to send from the Outbox, notice replies on parked threads, and see channel and people names. Your token stays in the macOS Keychain.</p></div>
+      <div class="card"><h3>Search all history</h3><p>Search every transcript on disk, not only the chats on the board.</p></div>
+      <div class="card"><h3>Your terminal, if you prefer</h3><p>Open chats in Ghostty, iTerm2 or Terminal.app instead of inside Loom.</p></div>
+    </div>
+  </section>
+
+  <section class="install" id="install">
+    <h2>Install</h2>
+    <p>Run this in Terminal. It downloads the latest release, checks its checksum and signature, puts Loom in Applications and opens it. Loom updates itself after that.</p>
+    <div class="cmd"><code id="cmd">curl -fsSL https://raw.githubusercontent.com/williamhudson1218/loom/main/scripts/get-loom.sh | bash</code><button type="button" id="copy">Copy</button></div>
+    <p style="margin-top:18px">Or <a href="https://github.com/williamhudson1218/loom/releases/latest">download the zip</a> and move Loom to Applications. Setup details are in <a href="https://github.com/williamhudson1218/loom/blob/main/SETUP.md">SETUP.md</a>.</p>
+  </section>
+
+  <footer>Loom is open source. <a href="https://github.com/williamhudson1218/loom">View it on GitHub</a>.</footer>
+</div>
+<script>
+  (function () {
+    var b = document.getElementById('copy');
+    b.addEventListener('click', function () {
+      var t = document.getElementById('cmd').textContent;
+      var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); };
+      if (navigator.clipboard) navigator.clipboard.writeText(t).then(done, function () {});
+    });
+  })();
+</script>
+</body>
+</html>
