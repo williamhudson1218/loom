@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { applySchema } from '../src/schema.ts';
 import {
-  parseWhen, parseThen, addStep, listSteps, getStep, setStep, openChains, setCloseWhenDone, chatFlags, stepSummary, newStepId, type ActionItem,
+  clockLabel, parseWhen, parseThen, addStep, listSteps, getStep, setStep, openChains, setCloseWhenDone, chatFlags, stepSummary, newStepId, type ActionItem,
 } from '../src/actions.ts';
 
 const S = 's1';
@@ -44,6 +44,38 @@ describe('parseWhen', () => {
     expect(parseWhen('now')).toEqual({ type: 'now', params: {} });
     expect(parseWhen('manual')).toEqual({ type: 'manual', params: {} });
     expect(parseWhen('tomorrow')).toHaveProperty('error');
+  });
+});
+
+describe('parseWhen at:', () => {
+  // A fixed local wall time, so the cases read the same in any timezone the suite runs in.
+  const now = new Date(2026, 10, 16, 21, 30, 0).getTime(); // Mon Nov 16 2026, 9:30pm local
+
+  it('a time of day is its next occurrence: later today, else tomorrow', () => {
+    const w = parseWhen('at:07:00', now) as { type: string; params: { at: number; label: string } };
+    expect(w.type).toBe('clock');
+    expect(w.params.at).toBe(new Date(2026, 10, 17, 7, 0).getTime());
+    expect(w.params.label).toBe('7:00am Tue Nov 17');
+    expect((parseWhen('at:23:15', now) as { params: { at: number } }).params.at).toBe(new Date(2026, 10, 16, 23, 15).getTime());
+    expect((parseWhen('at:21:30', now) as { params: { at: number } }).params.at).toBe(new Date(2026, 10, 17, 21, 30).getTime());
+    expect((parseWhen('at:7am', now) as { params: { at: number } }).params.at).toBe(new Date(2026, 10, 17, 7, 0).getTime());
+    expect((parseWhen('at:12:05am', now) as { params: { label: string } }).params.label).toBe('12:05am Tue Nov 17');
+    expect((parseWhen('at:7:45pm', now) as { params: { label: string } }).params.label).toBe('7:45pm Tue Nov 17');
+  });
+
+  it('a local date-time or an ISO instant, which must be in the future', () => {
+    expect((parseWhen('at:2026-11-18T07:00', now) as { params: { at: number } }).params.at).toBe(new Date(2026, 10, 18, 7, 0).getTime());
+    expect((parseWhen('at:2030-01-01T00:00:00Z', now) as { params: { at: number } }).params.at).toBe(Date.UTC(2030, 0, 1));
+    expect((parseWhen('at:2030-01-01T00:00-10:00', now) as { params: { at: number } }).params.at).toBe(Date.UTC(2030, 0, 1, 10));
+    expect(parseWhen('at:2026-11-16T07:00', now)).toEqual({ error: 'at: 2026-11-16T07:00 is in the past' });
+  });
+
+  it('refuses what is not a time', () => {
+    for (const bad of ['at:25:00', 'at:7:60', 'at:13pm', 'at:', 'at:tomorrow', 'at:2026-02-30T07:00']) expect(parseWhen(bad, now)).toHaveProperty('error');
+  });
+
+  it('labels a time in the local clock', () => {
+    expect(clockLabel(new Date(2026, 10, 17, 7, 0).getTime())).toBe('7:00am Tue Nov 17');
   });
 });
 

@@ -19,6 +19,10 @@ loom action add --title "<what this step is>" --when <trigger> --then <action> [
 
 - `now` fires at once. `manual` waits for the user: with `--then none` they check it off in Loom; with
   `send-draft` or `wake` it shows as due, and the send or wake happens only when they press Run.
+- `at:07:00` (or `at:7am`, `at:7:30pm`): fires at the next 7:00 on this machine's clock. `at:2026-11-17T07:00`
+  is a local date-time, and an ISO instant with `Z` or an offset also works. The time is fixed when the step is
+  added and shown on it. If Loom isn't running then, the step fires when Loom next starts, late rather than skipped.
+  It fires once; it does not repeat.
 - `pr-merged:acme/app#123` or a PR URL: fires when the PR is merged. `pr-shipped:acme/app#123` fires when the merge is deployed.
 - `draft-sent:<draft id>`: fires when that outbox draft has been sent.
 - `slack-reply:<thread url>[,from=<name>][,answers=<question>]`: fires on a reply in the thread, optionally only

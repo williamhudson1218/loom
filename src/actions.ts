@@ -7,7 +7,7 @@ import { parseSlackThread } from './slackref.ts';
 // Action items: a per-chat chain of steps, each a trigger and an action. This
 // file is storage and grammar only; the evaluator that fires steps lives apart.
 
-export type TriggerType = 'now' | 'manual' | 'pr_merged' | 'pr_shipped' | 'slack_reply' | 'draft_sent';
+export type TriggerType = 'now' | 'manual' | 'pr_merged' | 'pr_shipped' | 'slack_reply' | 'draft_sent' | 'clock';
 export type ActionType = 'none' | 'send_draft' | 'wake_chat';
 export type StepStatus = 'waiting' | 'due' | 'running' | 'held' | 'done' | 'failed' | 'removed';
 
@@ -100,8 +100,55 @@ function prParams(ref: string): Record<string, unknown> | null {
   return null;
 }
 
-/** The `--when` grammar. TypeScript is the authority; the plugin only checks the prefix. */
-export function parseWhen(s: string): Parsed<TriggerType> {
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "7:00am Tue Nov 17", in this machine's timezone. Stored on the step so every surface shows the same time. */
+export function clockLabel(ms: number): string {
+  const d = new Date(ms);
+  const h = d.getHours();
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return `${hh}:${String(d.getMinutes()).padStart(2, '0')}${h < 12 ? 'am' : 'pm'} ${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+/**
+ * `at:` resolves to one instant at add time, in this machine's timezone: a time of day (07:00, 7am, 7:30pm)
+ * is its next occurrence after `now`; a local date-time (2026-11-17T07:00) or an ISO instant with Z or an
+ * offset is taken as written and must be in the future.
+ */
+export function parseClock(rest: string, now: number): { at: number; label: string } | { error: string } {
+  const r = rest.trim().toLowerCase();
+  const tod = /^(\d{1,2}):(\d{2})$/.exec(r) ?? /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/.exec(r);
+  if (tod) {
+    let h = Number(tod[1]);
+    const m = Number(tod[2] ?? 0);
+    const ap = tod[3];
+    if (ap) {
+      if (h < 1 || h > 12) return { error: `at: ${rest} is not a time` };
+      h = (h % 12) + (ap === 'pm' ? 12 : 0);
+    }
+    if (h > 23 || m > 59) return { error: `at: ${rest} is not a time` };
+    const d = new Date(now);
+    d.setHours(h, m, 0, 0);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1); // setDate keeps the wall time across a DST change
+    return { at: d.getTime(), label: clockLabel(d.getTime()) };
+  }
+  const local = /^(\d{4})-(\d{2})-(\d{2})[t ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(r);
+  let at = NaN;
+  if (local) {
+    const [y, mo, da, h, mi, se] = local.slice(1).map((x) => Number(x ?? 0));
+    const d = new Date(y, mo - 1, da, h, mi, se || 0, 0);
+    if (d.getMonth() === mo - 1 && d.getDate() === da && d.getHours() === h && d.getMinutes() === mi) at = d.getTime();
+  } else if (/^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}(:\d{2}(\.\d+)?)?(z|[+-]\d{2}:?\d{2})$/.test(r)) {
+    at = Date.parse(rest.trim());
+  }
+  if (!Number.isFinite(at)) return { error: 'at: needs a time like 07:00 or 7am, or a date-time like 2026-11-17T07:00' };
+  if (at <= now) return { error: `at: ${rest.trim()} is in the past` };
+  return { at, label: clockLabel(at) };
+}
+
+/** The `--when` grammar. TypeScript is the authority; the plugin only checks the prefix. `now` resolves `at:`. */
+export function parseWhen(s: string, now: number = Date.now()): Parsed<TriggerType> {
   const spec = (s ?? '').trim();
   if (spec === 'now' || spec === 'manual') return { type: spec, params: {} };
   const colon = spec.indexOf(':');
@@ -138,7 +185,12 @@ export function parseWhen(s: string): Parsed<TriggerType> {
     if (!DRAFT_ID_RE.test(rest)) return { error: 'draft-sent needs a draft id like d0123456789ab' };
     return { type: 'draft_sent', params: { draft_id: rest } };
   }
-  return { error: 'expected now, manual, pr-merged:, pr-shipped:, slack-reply: or draft-sent:' };
+  if (head === 'at') {
+    const c = parseClock(rest, now);
+    if ('error' in c) return c;
+    return { type: 'clock', params: c };
+  }
+  return { error: 'expected now, manual, at:, pr-merged:, pr-shipped:, slack-reply: or draft-sent:' };
 }
 
 /** The `--then` grammar. */
@@ -186,7 +238,7 @@ export function addStep(
 ): Applied {
   if (!input.id || !input.session_id) return { ok: false, detail: 'id and session are required' };
   if (db.prepare(`SELECT 1 FROM action_items WHERE id = ?`).get(input.id)) return { ok: true, detail: 'exists' };
-  const w = parseWhen(input.when);
+  const w = parseWhen(input.when, input.at);
   const t = parseThen(input.then);
   const why: string[] = [];
   if ('error' in w) why.push(`couldn't read --when '${input.when}': ${w.error}`);
@@ -289,6 +341,9 @@ export function stepSummary(s: ActionItem): string {
       break;
     case 'draft_sent':
       when = `When draft ${p.draft_id} is sent`;
+      break;
+    case 'clock':
+      when = `At ${p.label}`;
       break;
   }
   const bare = (s.trigger_type === 'now' || s.trigger_type === 'manual') && s.action_type === 'none';

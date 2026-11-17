@@ -103,6 +103,13 @@ describe('triggerState', () => {
   it('pr_shipped fires on pass', () => {
     expect(t('pr_shipped', pr, { pr: () => ({ state: 'merged', deploy: 'pass' }) })).toEqual({ fired: true, why: 'PR #123 shipped' });
   });
+  it('clock fires once now reaches the stored time, late rather than skipped', () => {
+    const p = { at: 1_000_000, label: '7:00am Tue Nov 17' };
+    expect(triggerState(step({ trigger_type: 'clock', trigger_params: p }), facts(), 999_999)).toEqual({ fired: false, why: 'waiting until 7:00am Tue Nov 17' });
+    expect(triggerState(step({ trigger_type: 'clock', trigger_params: p }), facts(), 1_000_000)).toEqual({ fired: true, why: 'it is 7:00am Tue Nov 17' });
+    expect(triggerState(step({ trigger_type: 'clock', trigger_params: p }), facts(), 9_000_000).fired).toBe(true);
+  });
+
   it('draft_sent', () => {
     const p = { draft_id: 'd0123456789ab' };
     const d = (status: string) => () => ({ status, kind: 'slack' as const, revised_at: '' });

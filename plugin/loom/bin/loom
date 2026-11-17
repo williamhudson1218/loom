@@ -29,7 +29,7 @@
   loom test-links add <url> [--label "<what to check>"] | list [--json] | clear [<url>]
   loom action add --title "<step>" --when <trigger> --then <action> [--ask-first]   append a step to this chat's chain
   loom action done <id> | fail <id> --why "<reason>" | remove <id> | close-when-done on|off | list [--json]
-      <trigger>: now | manual | pr-merged:<owner/repo#n|PR url> | pr-shipped:<same> |
+      <trigger>: now | manual | at:<07:00|7am|2026-11-17T07:00> | pr-merged:<owner/repo#n|PR url> | pr-shipped:<same> |
                  slack-reply:<thread url>[,from=<who>][,answers=<question, last>] | draft-sent:<draft id>
       <action>:  send-draft:<draft id> | wake:"<instruction>" | none
   loom trees prune [--repo <dir>] [--dry-run] [--json]   remove worktrees that are merged, clean and unused
@@ -808,7 +808,7 @@ def cmd_test_links(args):
 
 # ---------- action items ----------
 
-WHEN_PREFIXES = ("pr-merged:", "pr-shipped:", "slack-reply:", "draft-sent:")
+WHEN_PREFIXES = ("at:", "pr-merged:", "pr-shipped:", "slack-reply:", "draft-sent:")
 THEN_PREFIXES = ("send-draft:", "wake:")
 ACTION_USAGE = (
     'usage: loom action add --title "<step>" --when <trigger> --then <action> [--ask-first]'
@@ -825,7 +825,7 @@ def cmd_action(args):
         if rest or not isinstance(title, str) or not title.strip():
             die(ACTION_USAGE, 2)
         if not isinstance(when, str) or not (when in ("now", "manual") or when.startswith(WHEN_PREFIXES)):
-            die("action add: --when must be now, manual, pr-merged:, pr-shipped:, slack-reply: or draft-sent:", 2)
+            die("action add: --when must be now, manual, at:, pr-merged:, pr-shipped:, slack-reply: or draft-sent:", 2)
         if not isinstance(then, str) or not (then == "none" or then.startswith(THEN_PREFIXES)):
             die("action add: --then must be send-draft:<id>, wake:<instruction> or none", 2)
         sid = need_session(o)

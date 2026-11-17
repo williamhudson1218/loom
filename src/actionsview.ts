@@ -136,7 +136,7 @@ function actionsBodyHtml(as,cwd){const cur=as.filter(function(s){return !stepFin
 function stepLine(s){const p=s.trigger_params||{};let w;
   switch(s.trigger_type){case 'now':w='Now';break;case 'manual':w='To do';break;
     case 'pr_merged':w='When PR #'+p.number+' merges';break;case 'pr_shipped':w='When '+p.repo+'#'+p.number+' ships';break;
-    case 'slack_reply':w='When '+(p.from?String(p.from):'someone')+' replies';break;case 'draft_sent':w='When draft '+p.draft_id+' is sent';break;default:w='';}
+    case 'slack_reply':w='When '+(p.from?String(p.from):'someone')+' replies';break;case 'draft_sent':w='When draft '+p.draft_id+' is sent';break;case 'clock':w='At '+p.label;break;default:w='';}
   const bare=(s.trigger_type==='now'||s.trigger_type==='manual')&&s.action_type==='none';
   const ph={none:'none',send_draft:'send draft',wake_chat:'wake the chat'};
   return bare?w:w+' → '+(ph[s.action_type]||s.action_type);}

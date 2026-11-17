@@ -44,7 +44,7 @@ export function currentStep(chain: ActionItem[]): ActionItem | null {
 
 export type TriggerState = { fired: true; why: string } | { fired: false; why: string };
 
-export function triggerState(s: ActionItem, facts: ActionFacts, _now: number): TriggerState {
+export function triggerState(s: ActionItem, facts: ActionFacts, now: number): TriggerState {
   switch (s.trigger_type) {
     case 'now':
       return { fired: true, why: 'now' };
@@ -73,6 +73,13 @@ export function triggerState(s: ActionItem, facts: ActionFacts, _now: number): T
     }
     case 'slack_reply':
       return slackReplyState(s, facts);
+    case 'clock': {
+      // Late, not skipped: a tick after the time (Loom was asleep or closed) still fires.
+      const at = Number(s.trigger_params.at);
+      const label = String(s.trigger_params.label ?? '');
+      if (!Number.isFinite(at)) return { fired: false, why: 'no time set' };
+      return now >= at ? { fired: true, why: `it is ${label}` } : { fired: false, why: `waiting until ${label}` };
+    }
     default:
       return { fired: false, why: 'waiting' };
   }
