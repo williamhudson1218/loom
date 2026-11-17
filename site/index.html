@@ -50,6 +50,20 @@
   kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; color: var(--text); white-space: nowrap; }
   code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }
 
+  .conn { border-top: 1px solid var(--line); padding: 72px 0; }
+  .conn .head { text-align: center; max-width: 720px; margin: 0 auto 36px; }
+  .conn .head h2 { font-size: clamp(24px, 3vw, 32px); margin: 8px 0 12px; letter-spacing: -.3px; }
+  .conn .head p { color: var(--muted); margin: 0; }
+  .conn .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .conn .col { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .conn .col h3 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 18px; }
+  .conn .col h3 .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .conn .col p.lead { color: var(--text); margin: 0; font-size: 15px; }
+  .conn .col ul { color: var(--muted); padding-left: 18px; margin: 0; font-size: 14px; }
+  .conn .col li { margin: 5px 0; }
+  .conn .col .shot { margin-top: auto; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+  .conn .note { color: var(--faint); font-size: 13px; text-align: center; margin: 22px auto 0; max-width: 760px; }
+  .conn .wide { margin: 36px auto 0; max-width: 1080px; }
   .more { border-top: 1px solid var(--line); padding: 72px 0; }
   .more h2 { text-align: center; font-size: clamp(24px, 3vw, 32px); margin: 0 0 32px; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
@@ -70,6 +84,7 @@
     section.feature, section.feature.flip { grid-template-columns: 1fr; gap: 24px; padding: 52px 0; }
     section.feature.flip .copy { order: 0; }
     .grid { grid-template-columns: 1fr; }
+    .conn .cols { grid-template-columns: 1fr; }
     .top nav a:not(.gh) { display: none; }
   }
 </style>
@@ -78,7 +93,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><img src="icon.svg" alt="">Loom</div>
-    <nav><a href="#features">Features</a><a href="#install">Install</a><a class="gh" href="https://github.com/williamhudson1218/loom">GitHub</a></nav>
+    <nav><a href="#features">Features</a><a href="#connections">Connections</a><a href="#install">Install</a><a class="gh" href="https://github.com/williamhudson1218/loom">GitHub</a></nav>
   </header>
 
   <div class="hero">
@@ -152,13 +167,60 @@
     </section>
   </div>
 
+  <section class="conn" id="connections">
+    <div class="head">
+      <div class="kicker">Connections</div>
+      <h2>Slack, GitHub and Gmail, wired into each chat</h2>
+      <p>Most of the work a chat does ends in a message, a pull request or an email. Connect the three you use and Loom tracks each one against the chat it belongs to, so you can see where every thread, PR and email stands and act on it from one place. Each is optional, and each signs in as you.</p>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <h3><span class="dot" style="background:#e01e5a"></span>Slack</h3>
+        <p class="lead">Know which chat owns which thread, and never post blind.</p>
+        <ul>
+          <li>Every thread a chat is working on shows on that chat, with unread replies.</li>
+          <li>Replies a chat drafts wait in the Outbox until you send them.</li>
+          <li>Send and park: the chat sleeps until someone answers, then wakes with the reply.</li>
+          <li>Pick any Slack message with a shortcut to jump to the chat handling it, or start one.</li>
+          <li>Watchers on channels: start a chat when a PR is posted or an alert fires.</li>
+        </ul>
+        <img class="shot" src="shots/conn-slack.png" alt="A drafted Slack reply waiting in the Outbox" loading="lazy" width="800" height="660">
+      </div>
+      <div class="col">
+        <h3><span class="dot" style="background:#9cc0ff"></span>GitHub</h3>
+        <p class="lead">Each chat's pull requests, checks and reviews, in the chat.</p>
+        <ul>
+          <li>The chat header shows its PR and the CI status, with a menu for checks, changed files and each failing job.</li>
+          <li>Reviews a chat writes, inline comments included, go through the Outbox before they post.</li>
+          <li>Steps that wait on a PR: when it merges, send the update; when it ships, close the chat.</li>
+          <li>Watchers for red checks, requested changes and approved, green PRs.</li>
+          <li>Ship commits the staged work, opens the PR and merges it when checks pass.</li>
+        </ul>
+        <img class="shot" src="shots/conn-github.png" alt="A chat's pull request menu with its CI status and one failing job" loading="lazy" width="960" height="510">
+      </div>
+      <div class="col">
+        <h3><span class="dot" style="background:#f2b84b"></span>Gmail</h3>
+        <p class="lead">Email follow-ups without leaving the chat that wrote them.</p>
+        <ul>
+          <li>A chat drafts the email; you read it in the Outbox and send it through your Gmail.</li>
+          <li>Park the chat on the email thread, and it wakes when the other side replies.</li>
+          <li>Several accounts, each kept in the macOS Keychain.</li>
+          <li>Loom can only send mail and read message headers. It never reads your inbox's contents.</li>
+        </ul>
+        <img class="shot" src="shots/conn-gmail.png" alt="An email reply drafted by a chat, waiting in the Outbox" loading="lazy" width="800" height="1060">
+      </div>
+    </div>
+    <img class="shot wide" src="shots/review.png" alt="A pull request review with inline comments, drafted by a chat and waiting in the Outbox" loading="lazy" width="2880" height="1800">
+    <p class="note">Connect any of them from the setup wizard or Settings. GitHub uses your existing <code>gh</code> login. Slack and Gmail tokens stay in the macOS Keychain on your Mac.</p>
+  </section>
+
   <section class="more">
     <h2>Also in Loom</h2>
     <div class="grid">
       <div class="card"><h3>Restores itself</h3><p>After a reboot or a tmux crash, Loom rebuilds your sessions and resumes every chat where it left off.</p></div>
       <div class="card"><h3>Watchers</h3><p>Rules like "tell me when a chat is stuck", "a PR's checks went red", or "a bot posted an alert in this channel". They start in shadow mode, which logs what they would have done.</p></div>
       <div class="card"><h3>Ship</h3><p>One button per repo commits the staged work, opens a pull request and merges it when checks pass. It never force-pushes or skips hooks.</p></div>
-      <div class="card"><h3>Slack</h3><p>Connect your own account to send from the Outbox, notice replies on parked threads, and see channel and people names. Your token stays in the macOS Keychain.</p></div>
+      <div class="card"><h3>Menu bar</h3><p>Live counts of chats that are working and waiting on you, without opening the window.</p></div>
       <div class="card"><h3>Search all history</h3><p>Search every transcript on disk, not only the chats on the board.</p></div>
       <div class="card"><h3>Your terminal, if you prefer</h3><p>Open chats in Ghostty, iTerm2 or Terminal.app instead of inside Loom.</p></div>
     </div>
