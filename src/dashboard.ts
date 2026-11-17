@@ -36,6 +36,7 @@ import { ACTIONS_PURE_JS, ACTIONS_VIEW_CSS, ACTIONS_VIEW_JS } from './actionsvie
 import { UPDATE_HEADER_HTML, UPDATE_VIEW_CSS, UPDATE_VIEW_JS } from './updateview.ts';
 import { SLACKMD_JS } from './slackmd.ts';
 import { SHIPMODAL_CSS, SHIPMODAL_HTML, SHIPMODAL_JS } from './shipmodal.ts';
+import { GITMARK_CSS, GITMARK_JS } from './gitmarkview.ts';
 import { OVERLAY_CSS } from './overlayview.ts';
 import type { Agent, ChatRow, LaunchPreference } from './types.ts';
 
@@ -762,7 +763,8 @@ ${PRUNE_VIEW_CSS}
   .sgrp:hover { color:#c4ccdc; }
   .sgrp .car { display:inline-block; width:12px; font-size:9px; transition:transform .15s; }
   .sgrp.closed .car { transform:rotate(-90deg); }
-  .smk { font-size:11px; margin-right:4px; color:#6ea2ff; } .smk.wipm { color:#e8b04a; } .smk.hot { color:#e8b04a; }
+  .smk { font-size:11px; margin-right:4px; color:#6ea2ff; } .smk.hot { color:#e8b04a; }
+${GITMARK_CSS}
   .shipln { margin:0 8px 6px; border-radius:8px; border:1px solid #232634; background:#161a24; font-size:12.5px; overflow:hidden; }
   .shipln .shipbar { display:flex; align-items:center; gap:7px; width:100%; height:30px; padding:0 10px; border:0; background:transparent; color:#8b93a7; font:inherit; text-align:left; cursor:pointer; white-space:nowrap; }
   .shipln .shipbar .sl { overflow:hidden; text-overflow:ellipsis; min-width:0; }
@@ -1224,6 +1226,7 @@ ${WELCOME_VIEW_JS}
 ${TOUR_VIEW_JS}
 ${WATCHER_VIEW_JS}
 ${SHIPMODAL_JS}
+${GITMARK_JS}
 ${SLACKMD_JS}
 ${OUTBOX_PURE_JS}
 ${ACTIONS_PURE_JS}
@@ -1436,10 +1439,10 @@ function flipPlay(before){const rows=document.querySelectorAll('#list .srow[data
   r.style.transition='none';r.style.transform='translateY('+d+'px)';requestAnimationFrame(()=>{r.style.transition='transform .15s ease-out';r.style.transform='';});});}
 // The chat that ran a ship owns it until it merges: ⚓ while it holds the lock (shipping now)
 // and while its ship PR is open (in review), not only for the minutes the lock is held.
+// Otherwise the chat's git mark: clean / all staged / unstaged / untracked (gitmarks.ts).
 function shipMark(c){const k=chatKey(c);for(const b of DATA.ships||[]){if(b.lock&&!b.lock.stale&&b.lock.holderKey===k)return '<span class="smk hot" title="shipping now">⚓</span>';}
   for(const b of DATA.ships||[]){const g=(b.shipped||[]).find(g=>g.runner===k&&g.state==='OPEN');if(g)return '<span class="smk own" title="owns ship #'+g.number+', in review">⚓</span>';}
-  const x=shipRole(c);if(!x)return '';
-  if(!x.r.next)return '';return x.r.next==='unstaged'?'<span class="smk wipm" title="in the next ship, not staged yet">⛵…</span>':'<span class="smk" title="rides the next ship">⛵</span>';}
+  return gitMarkHtml((DATA.gitMarks||{})[k]);}
 function orderRows(gk,gr,selKey){if(sortMode==='recent'&&tab!=='saved'){const want=gr.map(chatKey);const pinned={};if(selKey)pinned[selKey]=1;if(pointerIn)want.forEach(k=>{pinned[k]=1;});
       const out=pinOrder(lastOrder[gk]||[],want,pinned);if(out.join('|')!==want.join('|'))pendingReorder=pointerIn||pendingReorder;
       const by={};gr.forEach(c=>{by[chatKey(c)]=c;});gr=out.map(k=>by[k]);lastOrder[gk]=out;}return gr;}
@@ -1977,9 +1980,9 @@ $('#tbcancel').onclick=closeTermBox;$('#tbgo').onclick=createTermSession;
 $('#termbox').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeTermBox();}else if(e.key==='Enter'){e.preventDefault();createTermSession();}});
 loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{});}
+function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.gitMarks||{})+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{});}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMenuSync();}
-function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){return fetch('/api/data').then(r=>r.json()).then(d=>{pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();}).catch(()=>{pollFailed=true;renderStale();if(homeSel)homeClock();});}

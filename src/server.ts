@@ -63,6 +63,7 @@ import { claimThread, dismissStart, getChannelProjects, recentStarts, replaceSta
 import { parseLane } from './compact.ts';
 import { cachedPipeline, dots, parsePrRef, pipelineKey, tickPipelines, wantPipeline, type Pipeline } from './pipeline.ts';
 import { refreshShipBoards, shipBoards, type ShipBoard } from './ships.ts';
+import { gitMarks, refreshGitMarks } from './gitmarks.ts';
 import { onShipBoards } from './prune.ts';
 import { gatherShipDetail, isShipRepo, safeRepoPath, shipFileDiff, startShipSession } from './shipdetail.ts';
 import { addProject, listProjects, removeProject, seedProjects, updateProject } from './projects.ts';
@@ -1300,7 +1301,7 @@ export function createServer(): http.Server {
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
       const chats = [...views, ...provisionalForLive(views, live)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -2297,7 +2298,14 @@ export function startGhTicks(): void {
   setScheduledDrafts(() => withDbHandle((db) => scheduledDraftIds(db)));
   const ships = () => {
     const snap = snapshot();
-    refreshShipBoards(snap.views, snap.live).then(onShipBoards).catch((e) => console.error('[loom] ship boards failed:', (e as Error).message));
+    refreshShipBoards(snap.views, snap.live)
+      .then((b) => {
+        onShipBoards(b);
+        // Each chat's git mark rides the same pass: the boards' grouping for Ship repos,
+        // one cached status per other checkout (src/gitmarks.ts).
+        return refreshGitMarks(snap.views, snap.live, b);
+      })
+      .catch((e) => console.error('[loom] ship boards failed:', (e as Error).message));
     orchTick(snap);
     void actionTick(snap, Date.now(), actionIo());
   };

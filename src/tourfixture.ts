@@ -8,7 +8,7 @@
 // No backticks, no dollar-brace and no backslashes: the script is spliced into the
 // dashboard's page script.
 //
-// tourFixture(now, o) -> { chats, live, drafts, slackOwners, slackCounts, ships,
+// tourFixture(now, o) -> { chats, live, drafts, slackOwners, slackCounts, ships, gitMarks,
 //   detail(sid), transcript(sid), shipDetail, diff, repo, sids, draftId }
 //   o.slack: include the draft and the Slack thread (Slack is on)
 //   o.ship:  include the ship line and the staged-work dialog (a Ship repo is set up)
@@ -78,6 +78,9 @@ function tourFixture(now,o){
   var ships=o.ship?[{repo:repo,slug:'acme/web',base:'main',command:'/ship',labelRequired:false,generatedAt:now,onMain:true,
     next:{chats:[{key:key(2),files:[f1,f2],staged:2,unstaged:0}],unattributed:[f3],shared:[],staged:3,unstaged:0},
     lock:null,shipped:[],byChat:(function(){var m={};m[key(2)]={next:'staged',ships:[]};return m;})()}]:[];
+  // One git mark per chat row: the first has a modified and a new file, the ship chat is all staged.
+  var gitMarks={};gitMarks[key(0)]={state:'untracked',staged:0,unstaged:1,untracked:1};gitMarks[key(1)]={state:'clean',staged:0,unstaged:0,untracked:0};
+  gitMarks[key(2)]=o.ship?{state:'staged',staged:2,unstaged:0,untracked:0}:{state:'clean',staged:0,unstaged:0,untracked:0};
   var shipDetail={repo:repo,slug:'acme/web',base:'main',command:'/ship',labelRequired:false,onMain:true,generatedAt:now,
     totals:{staged:3,added:58,deleted:6,unstaged:0},lock:null,
     chats:[{key:key(2),title:'Release notes draft',label:'',labelSource:'none',
@@ -106,7 +109,7 @@ function tourFixture(now,o){
     return {ok:true,agent:'claude',live:true,messages:m};
   }
   function c0(i){return i<0?'':chats[i].first_message;}
-  return {chats:chats,live:live,drafts:drafts,slackOwners:slackOwners,slackCounts:slackCounts,ships:ships,parked:parked,chatPr:chatPr,pipes:pipes,
+  return {chats:chats,live:live,drafts:drafts,slackOwners:slackOwners,slackCounts:slackCounts,ships:ships,gitMarks:gitMarks,parked:parked,chatPr:chatPr,pipes:pipes,
     detail:detail,transcript:transcript,shipDetail:shipDetail,diff:diffText,repo:repo,sids:sids,draftId:draftId};
 }
 `;
