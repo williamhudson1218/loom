@@ -27,7 +27,7 @@ function paneCommand(p: PaneSnap): { text: string; run: boolean } | null {
   return null; // shell -> nothing to type (pane already opened in its cwd)
 }
 
-function existingSessions(): Set<string> {
+export function existingSessions(): Set<string> {
   try {
     return new Set(
       runTmux(['list-sessions', '-F', '#{session_name}'])

@@ -241,6 +241,7 @@ function sxAxRow(){var a=SX.ax;var pill=!a?sxPill('off','Checking'):a.unavailabl
 function sxTerminal(){var T=SET.terminal||{};
   return sxKey('terminal',{kind:'select',title:'Open chats in',help:'Where Jump and Open in external terminal land.',eff:T.effective,noDef:true,note:T.stored?'':'<span class="def">Not set: using '+sxEsc(T.label||T.effective)+'.</span>'})+
    sxKey('launch_target',{kind:'seg',title:'Where new chats run',help:'Managed windows are created and closed by Loom, one tmux window per chat. Lanes are numbered tmux sessions you arrange yourself (see Advanced).',eff:(SET.launch_target||{}).effective,labels:{managed:'Managed windows',lanes:'Lanes'}})+
+   sxKey('auto_restore',{title:'Restore sessions automatically',help:'After a reboot, a quit or a tmux crash, Loom rebuilds the saved workspace sessions and resumes their chats on its own. Restore sessions in the More menu still works when this is off.'})+
    sxGrp('Ghostty')+
    sxKey('ghostty_rehome',{title:'Re-home tabs after a restore',help:'After tmux restarts, reattach each session to its Ghostty tab. Applies only when Ghostty is the terminal.'})+
    sxKey('ghostty_attach_cmd',{title:'Attach command typed into a tab',help:'The command Loom types to attach a tab to its session.',mono:true,noDef:false})+

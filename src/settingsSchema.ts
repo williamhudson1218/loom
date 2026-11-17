@@ -273,6 +273,11 @@ export const SETTINGS = [
     defaultNew: true, legacyUnset: true, restart: false,
   }),
   boolDef({
+    key: 'auto_restore', section: 'terminal', label: 'Restore sessions automatically',
+    help: 'When Loom starts after a reboot or a quit, or the tmux server dies, rebuild the saved workspace sessions and resume their chats.',
+    defaultNew: true, legacyUnset: true, restart: false,
+  }),
+  boolDef({
     key: 'ghostty_rehome', section: 'terminal', label: 'Reuse Ghostty tabs', help: 'Restore re-homes sessions into their existing Ghostty tabs.',
     defaultNew: false, legacyUnset: true, restart: false,
   }),

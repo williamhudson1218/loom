@@ -45,7 +45,7 @@ const DESIGN_KEYS = [
   'default_agent', 'summary_model', 'analyze_cap', 'analyze_concurrency', 'active_window_days', 'new_thread_dir', 'notify_sound',
   'claude_bin', 'extra_path', 'codex_visible',
   'auto_update',
-  'terminal', 'launch_target', 'lane_view', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
+  'terminal', 'launch_target', 'lane_view', 'auto_restore', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
   'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill',
   'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_client_id', 'slack_reconnect', 'slack_poll_parked', 'slack_open_flash', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_goto_confirm_new', 'slack_ax_last_result',
   'outbox_primary', 'outbox_confirm', 'auto_resume_parked', 'outbox_slack_drafts', 'outbox_chat_drafts', 'email_cli', 'email_via', 'google_client_id', 'google_client_secret', 'google_accounts', 'outbox_keep_days',
@@ -76,6 +76,7 @@ const TODAY: Record<string, unknown> = {
   terminal: '', // auto: terminal.resolveTerminal picks ghostty on lanes, else inside
   launch_target: '', // auto: lanes when lane sessions exist
   lane_view: 'zoom',
+  auto_restore: true,
   ghostty_rehome: true,
   ghostty_attach_cmd: 'tmux attach -t', // ghostty.ts on the default socket (a shell alias of this before)
   pane_labels: true,
@@ -146,7 +147,7 @@ const TODAY: Record<string, unknown> = {
 const NEW_USER: Record<string, unknown> = {
   default_agent: 'claude', summary_model: 'haiku', analyze_cap: 10, analyze_concurrency: 2, active_window_days: 7, new_thread_dir: 'last',
   notify_sound: 'system', claude_bin: '', extra_path: [], codex_visible: 'auto',
-  terminal: 'inside', launch_target: 'managed', lane_view: 'zoom', ghostty_rehome: false, ghostty_attach_cmd: 'tmux attach -t', pane_labels: true,
+  terminal: 'inside', launch_target: 'managed', lane_view: 'zoom', auto_restore: true, ghostty_rehome: false, ghostty_attach_cmd: 'tmux attach -t', pane_labels: true,
   pane_label_model: 'haiku', pane_tint: false, pane_tint_base: '#1e1e2e',
   perm_chats: 'normal', perm_watchers: 'normal', perm_orchestrator: 'normal', rc_watchers: false,
   review_skill: 'loom:review', voice_skill: '',

@@ -13,9 +13,10 @@ import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './das
 import { liveSessions, listTmuxPanes, attachedSessions } from './placements.ts';
 import { gotoPane, launchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
-import { writeLayout } from './snapshot.ts';
+import { readLayout, writeLayout } from './snapshot.ts';
 import { lastTurnAtFromTail } from './parser.ts';
-import { restore } from './restore.ts';
+import { existingSessions, restore } from './restore.ts';
+import { autoRestoreGate, sessionsToRestore, type AutoRestoreEvent, type AutoRestoreMode } from './autorestore.ts';
 import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath, findChatFromSettings, setFindChatBin } from './findchat.ts';
 import { startPluginStateSync } from './pluginmgr.ts';
@@ -439,6 +440,56 @@ async function startRedraft(id: string): Promise<{ ok: boolean; detail: string; 
     return { ok: true, detail: out.detail, how: out.how };
   } catch (e) {
     return { ok: false, detail: (e as Error).message, code: 500 };
+  }
+}
+
+/**
+ * Rebuild any workspace (loom-*) session not already running, then open a Ghostty
+ * tab attached to each newly-restored session. The menu item and auto-restore share it.
+ */
+function restoreWorkspaceNow(): { ok: boolean; restored: string[]; skipped: string[]; opened: number; reused: number; detail: string } {
+  let r;
+  try {
+    r = restore({ prefix: SESSION_PREFIX });
+  } catch (e) {
+    return { ok: false, restored: [], skipped: [], opened: 0, reused: 0, detail: (e as Error).message };
+  }
+  // Tab rehoming is Ghostty-only; for any other terminal restore just rebuilds tmux.
+  const g = !r.attach.length
+    ? { ok: true, opened: 0, reused: 0, detail: 'nothing to restore' }
+    : currentTerminal() === 'ghostty'
+      ? attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows })
+      : { ok: true, opened: 0, reused: 0, detail: 'tmux sessions rebuilt; attach to them from your terminal' };
+  return { ok: g.ok, restored: r.restored, skipped: r.skipped, opened: g.opened, reused: g.reused, detail: g.detail };
+}
+
+// The last automatic restore (shown once on the page) and when it ran (the loop guard).
+let lastAutoRestore: AutoRestoreEvent | null = null;
+let lastAutoRestoreAt = 0;
+let autoRestoreHeldLogged = false;
+
+/** Restore the saved workspace on its own: at startup any saved session not running, while running only after tmux died. */
+function autoRestoreTick(mode: AutoRestoreMode): void {
+  try {
+    if (!withDbHandle((db) => getSetting(db, 'auto_restore'))) return;
+    const missing = sessionsToRestore(readLayout(), existingSessions(), mode, SESSION_PREFIX);
+    const now = Date.now();
+    const gate = autoRestoreGate(missing, lastAutoRestoreAt, now);
+    if (gate === 'none') {
+      autoRestoreHeldLogged = false;
+      return;
+    }
+    if (gate === 'held') {
+      if (!autoRestoreHeldLogged) console.error(`[loom] auto-restore held: sessions went away again within 5 min (${missing.join(', ')}); use Restore sessions`);
+      autoRestoreHeldLogged = true;
+      return;
+    }
+    lastAutoRestoreAt = now;
+    const r = restoreWorkspaceNow();
+    lastAutoRestore = { at: now, ok: r.ok, restored: r.restored, detail: r.detail };
+    console.log(`[loom] auto-restore (${mode}): ${r.restored.length} session(s) ${r.restored.join(', ')}; ${r.detail}`);
+  } catch (e) {
+    console.error('[loom] auto-restore failed:', (e as Error).message);
   }
 }
 
@@ -1249,7 +1300,7 @@ export function createServer(): http.Server {
       const { pipes, chatPr } = boardPipes(views, live);
       // A live session with no chat row yet shows as a provisional row until the live indexer lands it.
       const chats = [...views, ...provisionalForLive(views, live)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -2002,23 +2053,7 @@ export function createServer(): http.Server {
     }
 
     if (url.pathname === '/restore') {
-      // Rebuild any workspace (loom-*) session not already running, then open a
-      // Ghostty tab attached to each newly-restored session.
-      let r;
-      try {
-        r = restore({ prefix: SESSION_PREFIX });
-      } catch (e) {
-        return send(res, 200, 'application/json', JSON.stringify({ ok: false, detail: (e as Error).message }));
-      }
-      // Tab rehoming is Ghostty-only; for any other terminal restore just rebuilds tmux.
-      const g = !r.attach.length
-        ? { ok: true, opened: 0, reused: 0, detail: 'nothing to restore' }
-        : currentTerminal() === 'ghostty'
-          ? attachGhosttyTabs(r.attach, { attached: attachedSessions(), saved: r.windows })
-          : { ok: true, opened: 0, reused: 0, detail: 'tmux sessions rebuilt; attach to them from your terminal' };
-      return send(res, 200, 'application/json', JSON.stringify({
-        ok: g.ok, restored: r.restored, skipped: r.skipped, opened: g.opened, reused: g.reused, detail: g.detail,
-      }));
+      return send(res, 200, 'application/json', JSON.stringify(restoreWorkspaceNow()));
     }
 
     if (url.pathname === '/api/transcript') {
@@ -2318,12 +2353,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
   // Capture a full tmux-layout snapshot for crash recovery while tmux is healthy.
   const snap = () => {
+    // Restore before snapshotting, so a session Loom itself starts (a terminal view) is never
+    // the first thing written over the saved workspace.
+    autoRestoreTick(firstSnap ? 'startup' : 'running');
+    firstSnap = false;
     try {
       writeLayout(Date.now());
     } catch {
       /* tmux not running */
     }
   };
+  let firstSnap = true;
   snap();
   setInterval(snap, 15_000);
 
