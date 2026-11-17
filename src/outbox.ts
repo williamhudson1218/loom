@@ -874,6 +874,8 @@ export interface SendOpts extends StoreOpts {
   /** The email CLI. null = email is off (emailOff says how to turn it on). */
   email?: EmailAdapter | null;
   emailOff?: string;
+  /** A Slack draft went out in full: the draft as Claude last recorded it, and the text actually sent. */
+  onSent?: (draft: Draft, sent: string[]) => void;
 }
 
 /**
@@ -1074,6 +1076,13 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
       /* posted; the permalink is a nicety */
     }
     const marked = closeDraft(id, 'sent', { by: 'loom', permalink: permalink || reviewUrl, bySend: true, at: now() }, opts);
+    if (opts.onSent && sent.length) {
+      try {
+        opts.onSent(d, clean);
+      } catch {
+        /* learning from the edit is a nicety; the post went out */
+      }
+    }
     if (!d.thread_ts && opts.onStarted && sent[0]?.ts) {
       const ref = parseSlackThread(permalink) ?? { key: `${channel}/${sent[0].ts}`, url: '', channel, ts: sent[0].ts, linkTs: sent[0].ts };
       if (ref.ts === ref.linkTs && !ref.channel.startsWith('D')) {

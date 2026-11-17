@@ -7,6 +7,7 @@ import { readThreads, type ThreadRec } from '../slack.ts';
 import { reactionsAdd, reactionsRemove, chatPostMessage, SlackError, type CallOpts } from '../slackapi.ts';
 import { SLACK_OFF, slackFeatureOn } from '../slackmode.ts';
 import { ensureThreadState, recentAcks, type ThreadStateRow } from '../slackowner.ts';
+import { fetchMine } from '../slackmine.ts';
 import { getSetting } from '../settingsSchema.ts';
 import fs from 'node:fs';
 import { isViewSession, tmux } from '../tmux.ts';
@@ -337,6 +338,25 @@ async function postReply(ctx: RouteCtx): Promise<void> {
   }
 }
 
+/**
+ * `loom slack mine`: the person's own recent messages (search.messages, from:me),
+ * minus what the Outbox sent and what carries the Claude connector's stamp. Read-only.
+ */
+async function getSlackMine(ctx: RouteCtx): Promise<void> {
+  if (!deps.slackOn()) return ctx.json(409, { ok: false, error: SLACK_OFF, hint: 'Loom has no Slack token (direct mode is off). Use the Claude Slack connector\'s search instead.' });
+  const raw = Number(ctx.url.searchParams.get('limit') ?? 500);
+  const limit = Number.isFinite(raw) ? Math.max(1, Math.min(Math.floor(raw), 2000)) : 500;
+  const identity = withDb((db) => getSetting(db, 'slack_identity')) as { user_id?: string };
+  try {
+    const r = await fetchMine({ limit, userId: identity?.user_id, drafts: Object.values(readOutbox(deps.outbox)) }, deps.slack);
+    ctx.json(200, { ok: true, ...r });
+  } catch (e) {
+    const code = slackErr(e);
+    if (code === 'missing_scope') return ctx.json(409, { ok: false, error: 'missing_scope', hint: 'The Slack token lacks search:read. Reconnect Slack in Loom Settings to grant it.' });
+    ctx.json(502, { ok: false, error: code });
+  }
+}
+
 /* ------------------------------------------------------------------ focus + sessions */
 
 const SESSION_RE = /^loom-[a-z0-9][a-z0-9-]{0,62}$/;
@@ -510,6 +530,7 @@ export const routes: RouteDef[] = [
   { method: 'GET', path: '/api/cli/whoami', kind: 'cli', handler: getWhoami },
   { method: 'POST', path: '/api/cli/slack/react', kind: 'cli', handler: postReact },
   { method: 'POST', path: '/api/cli/slack/reply', kind: 'cli', handler: postReply },
+  { method: 'GET', path: '/api/cli/slack/mine', kind: 'cli', handler: getSlackMine },
 ];
 
 /**

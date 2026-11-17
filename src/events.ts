@@ -8,6 +8,10 @@ import { claimForChat, recordAck, releaseThread, setThreadStage, syncLegacyThrea
 import { addStep, getStep, setStep, setCloseWhenDone } from './actions.ts';
 import { addTestLink, clearTestLinks } from './testlinks.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
+import { setSetting } from './settingsSchema.ts';
+
+/** Settings `loom settings set` may change: the voice-tuning skill sets the voice skill it wrote. */
+export const CHAT_SETTABLE = ['voice_skill'] as const;
 
 // The plugin's writes (§4.3). The `loom` CLI and its hooks never talk to Loom to
 // change anything: each write is one JSON file in $LOOM_HOME/events/
@@ -176,6 +180,13 @@ export function applyEvent(db: Database.Database, e: LoomEvent, opts: IngestOpts
       if (!str(e.session)) return { ok: false, detail: 'session is required' };
       setCloseWhenDone(db, str(e.session), e.on === true, at);
       return { ok: true, detail: e.on === true ? 'on' : 'off' };
+    }
+    case 'setting.set': {
+      // Only the settings a chat may set for the person (`loom settings set`), validated like Settings does.
+      const key = str(e.key);
+      if (!(CHAT_SETTABLE as readonly string[]).includes(key)) return { ok: false, detail: `setting ${JSON.stringify(key)} cannot be set from a chat` };
+      const r = setSetting(db, key as (typeof CHAT_SETTABLE)[number], e.value);
+      return r.ok ? { ok: true, detail: r.changed ? 'set' : 'unchanged' } : { ok: false, detail: r.detail };
     }
     default:
       return { ok: false, detail: `unknown kind ${JSON.stringify(e.kind)}` };

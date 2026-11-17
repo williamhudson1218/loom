@@ -491,6 +491,35 @@ export async function conversationsHistory(channel: string, p: { oldest?: string
   return out;
 }
 
+/** One search.messages hit: the message plus where it was posted. */
+export interface SearchMatch extends SlackMessage {
+  channel?: { id?: string; name?: string; is_im?: boolean; is_mpim?: boolean; is_channel?: boolean; is_group?: boolean; is_private?: boolean };
+  permalink?: string;
+  attachments?: unknown;
+}
+
+interface SearchPage {
+  messages?: { matches?: SearchMatch[]; paging?: { page?: number; pages?: number }; pagination?: { page?: number; page_count?: number } };
+}
+
+/**
+ * search.messages (needs search:read): newest first, up to `limit` hits, 100 a
+ * page. Read-only. Slack caps search at 100 pages, far past any limit asked here.
+ */
+export async function searchMessages(query: string, p: { limit?: number } = {}, opts: CallOpts = {}): Promise<SearchMatch[]> {
+  const limit = Math.max(1, Math.min(p.limit ?? 100, 2000));
+  const out: SearchMatch[] = [];
+  for (let page = 1; out.length < limit; page++) {
+    const count = Math.min(100, limit - out.length);
+    const { data } = await call<SearchPage>('search.messages', { query, sort: 'timestamp', sort_dir: 'desc', count: 100, page }, opts);
+    const matches = data.messages?.matches ?? [];
+    out.push(...matches.slice(0, count));
+    const pages = data.messages?.paging?.pages ?? data.messages?.pagination?.page_count ?? page;
+    if (!matches.length || page >= pages) break;
+  }
+  return out;
+}
+
 /** conversations.replies: a thread, root first. */
 export async function conversationsReplies(channel: string, ts: string, p: { limit?: number; oldest?: string; maxPages?: number } = {}, opts: CallOpts = {}): Promise<SlackMessage[]> {
   const out: SlackMessage[] = [];

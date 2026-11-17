@@ -259,7 +259,16 @@ function sxAgents(){var skipOn=['perm_chats','perm_watchers','perm_orchestrator'
    sxKey('rc_watchers',{title:'Remote Control for watcher workers',help:'Lets you steer them from the Claude app. Needs a supported account.'})+
    sxKey('orchestrator_trust',{title:'Trust the orchestrator folder in ~/.claude.json',help:'Lets the orchestrator run unattended. The trust entry is only added with your consent.'})+
    sxChoice('review_skill',[['loom:review','loom:review (generic, read-only)'],['none','None']],{title:'Review skill for watcher briefs',help:'Which skill a PR-review watcher tells its worker to load.',customLabel:'Another skill…',ph:'skill-name',defTxt:'loom:review'})+
-   sxChoice('voice_skill',[['','None']],{title:'Voice skill for drafts',help:'Optional. A skill that writes drafts in your tone.',customLabel:'A skill…',ph:'skill-name',defTxt:'None'});}
+   sxChoice('voice_skill',[['','None']],{title:'Voice skill for drafts',help:'Optional. A skill that writes drafts in your tone.',customLabel:'A skill…',ph:'skill-name',defTxt:'None'})+
+   sxVoiceTuneRow()+
+   sxKey('voice_learn_from_edits',{title:'Learn from Outbox edits',help:'When you change a draft before sending it, Loom logs what Claude wrote and what you sent in the voice skill’s corrections.md.'});}
+// Tune my voice: a chat that reads your own Slack messages and writes a voice skill. Needs a way to read Slack.
+function sxVoiceTune(sl){if(!sl||sl.ok===false)return [false,'Checking the Slack connection.'];var m=sl.mode;
+  if(m==='direct'){var miss=(sl.scopes&&sl.scopes.missing)||[];if(miss.indexOf('search:read')>=0)return [false,'Your Slack token cannot search messages. Reconnect Slack in the Slack section to grant search:read.'];return [true,'Reads your recent Slack messages through Loom. Nothing is posted.'];}
+  if(m==='mcp')return [true,'Reads your recent Slack messages through the Claude Slack connector. Nothing is posted.'];
+  return [false,'Slack is not connected and no Claude Slack connector is set up. Connect Slack in the Slack section first.'];}
+function sxVoiceTuneRow(){var st=sxVoiceTune(SX.data.slack);
+  return sxRow('Tune my voice','Starts a chat that measures how you write in Slack, drafts a voice skill with you, and sets it here. '+sxEsc(st[1]),sxBtn('vtune','Tune my voice',{dis:!st[0]}));}
 // Connect Slack: start a flow, open Slack's page in the browser, then poll the status route
 // until the callback reports the outcome (or 10 minutes pass).
 function sxOAuthStop(){if(SX.oauth&&SX.oauth.t)clearInterval(SX.oauth.t);SX.oauth=null;}
@@ -365,6 +374,7 @@ var SX_ITEMS=[
  ['slack-drafting','Skill','How a chat writes and queues a Slack draft.','slack'],
  ['handling-slack-threads','Skill','Picks up a Slack thread as a ticket or as context.','slack'],
  ['tmux-route','Skill','Messages another pane by its name.',''],
+ ['voice-tuning','Skill','Builds a voice skill from your own Slack messages (Tune my voice).','slack'],
  ['review','Skill','Generic read-only pull request review used by watchers.','']];
 function sxGate(g){var sm=sxv('slack_mode');var sh=(SX.data.ship&&SX.data.ship.projects||[]).filter(function(p){return p.enabled&&p.label_required;}).length;
   if(g==='slack')return sm==='off'?'Inactive: Slack is off':'';
@@ -484,6 +494,7 @@ function sxAct(a,arg,btn){
   if(a==='snd'){var cur=sxv('notify_sound');var sel2=$('[data-sx="notify_sound"]');sxPost('/api/sound/preview',{name:sel2?sel2.value:cur}).then(function(j){if(!j.ok)sxBad(sxErr(j));});return;}
   if(a==='detect'){sxJ('/api/probe?fresh=1').then(function(j){SX.data.probe=j;var pth=j.ok&&j.probe.claude&&j.probe.claude.found?j.probe.claude.path:'';if(!pth){sxBad('Claude Code was not found on this machine');sxRerender(true);return;}sxPut({claude_bin:pth});});return;}
   if(a==='sdir'){btn.disabled=true;btn.textContent='Refreshing…';sxPost('/api/slack/directory/refresh',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast('Refreshed '+j.people+' people, '+j.channels+' channels, '+j.emoji+' emoji');sxLoad('dir',true);});return;}
+  if(a==='vtune'){if(!sxVoiceTune(SX.data.slack)[0])return;if(typeof openComposer==='function')openComposer({prompt:'/loom:voice-tuning'});else sxBad('Open the Board to start a chat');return;}
   if(a==='sreauth'){SX.pwOpen=true;sxAct('smanifest');renderSettings();return;}
   if(a==='psave'){var ta=$('#sx-prompt');if(!ta)return;var pd=SX.data.prompt;var txt3=ta.value;if(pd&&txt3.trim()===pd['default'].trim())txt3='';sxJ('/api/orchestrator/prompt-override',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({text:txt3})}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast(j.active==='override'?'Prompt saved':'Using the default prompt');sxLoad('prompt',true);});return;}
   if(a==='preset'){sxJ('/api/orchestrator/prompt-override',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({text:''})}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast('Using the default prompt');sxLoad('prompt',true);});return;}

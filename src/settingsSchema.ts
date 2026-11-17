@@ -329,6 +329,10 @@ export const SETTINGS = [
     key: 'voice_skill', section: 'agents', label: 'Writing voice skill', help: 'A skill loaded before drafting text that goes out under your name.',
     defaultNew: '', legacyUnset: '', restart: false,
   }),
+  boolDef({
+    key: 'voice_learn_from_edits', section: 'agents', label: 'Learn from Outbox edits', help: 'When you edit a draft before sending it, log the before and after in the voice skill’s corrections.md.',
+    defaultNew: true, legacyUnset: true, restart: false,
+  }),
 
   // ---- Slack
   // Before the registry Slack ran whenever its CLI was present, which is direct.

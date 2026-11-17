@@ -40,6 +40,10 @@
   loom watcher test --file <draft.json> | --id <id>  what it would fire on now (writes nothing, acts on nothing)
   loom watcher enable <id> | disable <id> | mode <id> shadow|live | delete <id>
   loom whoami
+  loom slack mine [--limit 500] [--out file.jsonl]   your own recent Slack messages, newest first, as JSONL
+                                                     ({ts, channel_type: dm|channel|thread, channel, channel_name, text}); leaves out what
+                                                     the Outbox sent and what carries the Claude stamp. Read-only.
+  loom settings set voice_skill <skill-name>         set the voice skill drafts load (the only chat-settable key)
 
 Writes are atomic event files in $LOOM_HOME/events/, so they survive Loom being down. Reads and Slack
 actions go over HTTP to 127.0.0.1 with the CLI token. The Slack token never reaches this process.
@@ -1031,6 +1035,64 @@ def cmd_route(args):
         die("usage: loom route list | send <name> <text...>", 2)
 
 
+def slack_mine(args):
+    o, _ = opts(args)
+    try:
+        limit = int(o.get("limit", 500))
+    except (TypeError, ValueError):
+        die("--limit takes a number", 2)
+    if limit < 1 or limit > 2000:
+        die("--limit must be between 1 and 2000", 2)
+    try:
+        r = c.http("GET", "/api/cli/slack/mine?limit=%d" % limit, timeout=120.0)
+    except c.LoomUnavailable as e:
+        die("Loom is not reachable (%s). Is it running?" % e, 3)
+    except c.LoomError as e:
+        try:
+            body = json.loads(e.body) if getattr(e, "body", None) else {}
+        except ValueError:
+            body = {}
+        if e.status == 409:
+            die(body.get("hint") or "Loom has no Slack token; use the Claude Slack connector's search instead", 5)
+        if e.status == 404:
+            die("this Loom does not have `slack mine` yet; update Loom, or use the Claude Slack connector's search", 5)
+        die(str(e), 4)
+    keys = ("ts", "channel_type", "channel", "channel_name", "text")
+    lines = [json.dumps({k: m.get(k, "") for k in keys}, ensure_ascii=False) for m in r.get("messages") or []]
+    out = o.get("out")
+    if out and out is not True:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("".join(l + "\n" for l in lines))
+    else:
+        sys.stdout.write("".join(l + "\n" for l in lines))
+    sk = r.get("skipped") or {}
+    print("loom: kept %d; skipped %d sent from the Outbox, %d stamped by Claude, %d Slack notices, %d empty"
+          % (r.get("kept", len(lines)), sk.get("outbox", 0), sk.get("stamped", 0), sk.get("system", 0), sk.get("empty", 0)),
+          file=sys.stderr)
+
+
+def cmd_slack(args):
+    if args and args[0] == "mine":
+        slack_mine(args[1:])
+    else:
+        die("usage: loom slack mine [--limit 500] [--out file.jsonl]", 2)
+
+
+SETTABLE = ("voice_skill",)
+
+
+def cmd_settings(args):
+    if len(args) != 3 or args[0] != "set":
+        die("usage: loom settings set voice_skill <skill-name>", 2)
+    key, value = args[1], args[2]
+    if key not in SETTABLE:
+        die("only %s can be set from a chat" % ", ".join(SETTABLE), 2)
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9:._-]*$", value):
+        die("not a skill name: %r" % value, 2)
+    c.write_event("setting.set", key=key, value=value)
+    print("loom: %s set to %s (Loom applies it within a few seconds)" % (key, value))
+
+
 def cmd_whoami(_args):
     r = get("/api/cli/whoami?pane=%s&session=%s" % (os.environ.get("TMUX_PANE", ""), c.session_id()))
     for k in ("name", "pane_id", "session", "project"):
@@ -1040,7 +1102,7 @@ def cmd_whoami(_args):
 COMMANDS = {
     "outbox": cmd_outbox, "thread": cmd_thread, "ship-label": cmd_ship_label, "ship-lock": cmd_ship_lock,
     "route": cmd_route, "whoami": cmd_whoami, "test-links": cmd_test_links, "action": cmd_action, "trees": cmd_trees,
-    "watcher": cmd_watcher,
+    "watcher": cmd_watcher, "slack": cmd_slack, "settings": cmd_settings,
 }
 
 

@@ -35,7 +35,8 @@ import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, readAllThreads, threadOwners } from './slack.ts';
 import { slackCounts } from './slackthreads.ts';
 import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
-import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readOutboxShared, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress, setScheduledDrafts, type SendResult } from './outbox.ts';
+import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readOutboxShared, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress, setScheduledDrafts, type Draft, type SendResult } from './outbox.ts';
+import { learnFromEdit } from './voicelearn.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps, tickPendingLinks } from './routes/cli.ts';
@@ -408,7 +409,24 @@ function sendOpts(dry: boolean, ackStale = false, ackFresh: boolean | string[] =
     emailOff: EMAIL_OFF_DETAIL,
     onStarted: claimStartedThread,
     checkPosted: async (x: string) => (await reconcileLive({}, [x])).includes(x),
+    onSent: learnFromSend,
   };
+}
+
+/** voice_learn_from_edits: a draft the person edited before sending teaches their voice skill. */
+function learnFromSend(d: Draft, sent: string[]): void {
+  const db = openDb();
+  let enabled = false;
+  let skill = '';
+  try {
+    enabled = getSetting(db, 'voice_learn_from_edits') as boolean;
+    skill = getSetting(db, 'voice_skill') as string;
+  } finally {
+    db.close();
+  }
+  const where = d.label || slackNames()[d.channel] || getDirectory().channels[d.channel] || 'Slack';
+  const r = learnFromEdit({ enabled, skill, before: d.messages ?? [], after: sent, where });
+  if (r.written) console.log(`[loom] outbox edit to ${d.id} logged in the voice skill's corrections.md`);
 }
 
 let seenBusy = false;

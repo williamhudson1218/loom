@@ -46,7 +46,7 @@ const DESIGN_KEYS = [
   'claude_bin', 'extra_path', 'codex_visible',
   'auto_update',
   'terminal', 'launch_target', 'lane_view', 'auto_restore', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
-  'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill',
+  'perm_chats', 'perm_watchers', 'perm_orchestrator', 'rc_watchers', 'review_skill', 'voice_skill', 'voice_learn_from_edits',
   'slack_mode', 'slack_identity', 'slack_scopes_granted', 'slack_client_id', 'slack_reconnect', 'slack_poll_parked', 'slack_open_flash', 'channel_projects', 'slack_goto_hotkey', 'slack_paste_fallback', 'slack_goto_confirm_new', 'slack_ax_last_result',
   'outbox_primary', 'outbox_confirm', 'auto_resume_parked', 'outbox_slack_drafts', 'outbox_chat_drafts', 'email_cli', 'email_via', 'google_client_id', 'google_client_secret', 'google_accounts', 'outbox_keep_days',
   'orchestrator_enabled', 'orchestrator_autostart', 'orchestrator_notify', 'orchestrator_trust', 'orchestrator_session_id', 'orchestrator_pane_id',
@@ -89,6 +89,7 @@ const TODAY: Record<string, unknown> = {
   rc_watchers: true, // watchers.ts --remote-control
   review_skill: 'loom:review', // nothing read it; the migration takes an install's own from its briefs
   voice_skill: '', // likewise
+  voice_learn_from_edits: true, // new: on, but it writes only when a voice skill with a corrections.md is set
   slack_mode: 'direct', // Slack ran whenever its CLI was present
   slack_identity: {},
   slack_scopes_granted: [],
@@ -150,7 +151,7 @@ const NEW_USER: Record<string, unknown> = {
   terminal: 'inside', launch_target: 'managed', lane_view: 'zoom', auto_restore: true, ghostty_rehome: false, ghostty_attach_cmd: 'tmux attach -t', pane_labels: true,
   pane_label_model: 'haiku', pane_tint: false, pane_tint_base: '#1e1e2e',
   perm_chats: 'normal', perm_watchers: 'normal', perm_orchestrator: 'normal', rc_watchers: false,
-  review_skill: 'loom:review', voice_skill: '',
+  review_skill: 'loom:review', voice_skill: '', voice_learn_from_edits: true,
   slack_mode: 'off', slack_poll_parked: true, slack_open_flash: true, channel_projects: {}, slack_goto_hotkey: 'Command+Shift+L', slack_paste_fallback: true, slack_goto_confirm_new: true,
   outbox_primary: 'send', outbox_confirm: true, auto_resume_parked: false, outbox_slack_drafts: false, outbox_chat_drafts: true, email_cli: '', email_via: 'auto', google_client_id: '', google_client_secret: '', google_accounts: [], outbox_keep_days: 14,
   orchestrator_enabled: '0', orchestrator_autostart: true, orchestrator_notify: 'needs_you', orchestrator_trust: false,
