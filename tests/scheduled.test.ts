@@ -68,7 +68,8 @@ describe('scheduledList', () => {
 describe('Scheduled tab', () => {
   it('is a header tab with its own section, rendered by renderSched', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
-    expect(html).toContain("['sched','◷ Scheduled',");
+    // The badge counts every open step across chats (actionSummary's open), not only the ones needing you.
+    expect(html).toContain("['sched','◷ Scheduled',Object.values(DATA.actions||{}).reduce((n,a)=>n+(a&&a.open||0),0),' schedtab']");
     expect(html).toContain('<section id="sched-section"');
     expect(html).toContain("if(tab==='sched'){renderSched();return;}");
     expect(html).toContain("fetch('/api/actions/scheduled')");
