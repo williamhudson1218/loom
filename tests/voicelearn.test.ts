@@ -141,6 +141,12 @@ describe('Settings: Tune my voice button', () => {
     expect(SETTINGS_VIEW_JS).toContain("openComposer({prompt:'/loom:voice-tuning'})");
     expect(SETTINGS_VIEW_JS).toContain("'voice_learn_from_edits'");
   });
+
+  it('states where the messages go, under the button and in the learn-from-edits help', () => {
+    expect(SETTINGS_VIEW_JS).toContain('Reads your own recent Slack messages through your Slack connection, on this computer. Your Claude session analyzes them like any chat. The voice skill is saved in ~/.claude/skills. Nothing is sent to Loom or anyone else, and nothing is posted to Slack.');
+    expect(SETTINGS_VIEW_JS).toContain('sxNote(sxEsc(SX_VOICE_PRIVACY))');
+    expect(SETTINGS_VIEW_JS).toMatch(/Learn from Outbox edits[^}]*locally to your voice skill’s corrections file/);
+  });
 });
 
 describe('setting.set event (loom settings set)', () => {

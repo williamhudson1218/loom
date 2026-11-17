@@ -261,14 +261,15 @@ function sxAgents(){var skipOn=['perm_chats','perm_watchers','perm_orchestrator'
    sxChoice('review_skill',[['loom:review','loom:review (generic, read-only)'],['none','None']],{title:'Review skill for watcher briefs',help:'Which skill a PR-review watcher tells its worker to load.',customLabel:'Another skill…',ph:'skill-name',defTxt:'loom:review'})+
    sxChoice('voice_skill',[['','None']],{title:'Voice skill for drafts',help:'Optional. A skill that writes drafts in your tone.',customLabel:'A skill…',ph:'skill-name',defTxt:'None'})+
    sxVoiceTuneRow()+
-   sxKey('voice_learn_from_edits',{title:'Learn from Outbox edits',help:'When you change a draft before sending it, Loom logs what Claude wrote and what you sent in the voice skill’s corrections.md.'});}
+   sxKey('voice_learn_from_edits',{title:'Learn from Outbox edits',help:'When you change a draft before sending it, Loom saves what Claude wrote and what you sent locally to your voice skill’s corrections file. Nothing is sent anywhere.'});}
+var SX_VOICE_PRIVACY='Reads your own recent Slack messages through your Slack connection, on this computer. Your Claude session analyzes them like any chat. The voice skill is saved in ~/.claude/skills. Nothing is sent to Loom or anyone else, and nothing is posted to Slack.';
 // Tune my voice: a chat that reads your own Slack messages and writes a voice skill. Needs a way to read Slack.
 function sxVoiceTune(sl){if(!sl||sl.ok===false)return [false,'Checking the Slack connection.'];var m=sl.mode;
-  if(m==='direct'){var miss=(sl.scopes&&sl.scopes.missing)||[];if(miss.indexOf('search:read')>=0)return [false,'Your Slack token cannot search messages. Reconnect Slack in the Slack section to grant search:read.'];return [true,'Reads your recent Slack messages through Loom. Nothing is posted.'];}
-  if(m==='mcp')return [true,'Reads your recent Slack messages through the Claude Slack connector. Nothing is posted.'];
+  if(m==='direct'){var miss=(sl.scopes&&sl.scopes.missing)||[];if(miss.indexOf('search:read')>=0)return [false,'Your Slack token cannot search messages. Reconnect Slack in the Slack section to grant search:read.'];return [true,'Uses Loom’s Slack connection.'];}
+  if(m==='mcp')return [true,'Uses your Claude Slack connector.'];
   return [false,'Slack is not connected and no Claude Slack connector is set up. Connect Slack in the Slack section first.'];}
 function sxVoiceTuneRow(){var st=sxVoiceTune(SX.data.slack);
-  return sxRow('Tune my voice','Starts a chat that measures how you write in Slack, drafts a voice skill with you, and sets it here. '+sxEsc(st[1]),sxBtn('vtune','Tune my voice',{dis:!st[0]}));}
+  return sxRow('Tune my voice','Starts a chat that measures how you write in Slack, drafts a voice skill with you, and sets it here. '+sxEsc(st[1]),sxBtn('vtune','Tune my voice',{dis:!st[0]}))+sxNote(sxEsc(SX_VOICE_PRIVACY));}
 // Connect Slack: start a flow, open Slack's page in the browser, then poll the status route
 // until the callback reports the outcome (or 10 minutes pass).
 function sxOAuthStop(){if(SX.oauth&&SX.oauth.t)clearInterval(SX.oauth.t);SX.oauth=null;}

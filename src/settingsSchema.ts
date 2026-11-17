@@ -330,7 +330,7 @@ export const SETTINGS = [
     defaultNew: '', legacyUnset: '', restart: false,
   }),
   boolDef({
-    key: 'voice_learn_from_edits', section: 'agents', label: 'Learn from Outbox edits', help: 'When you edit a draft before sending it, log the before and after in the voice skill’s corrections.md.',
+    key: 'voice_learn_from_edits', section: 'agents', label: 'Learn from Outbox edits', help: 'When you edit a draft before sending it, save the before and after locally to your voice skill’s corrections file.',
     defaultNew: true, legacyUnset: true, restart: false,
   }),
 

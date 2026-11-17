@@ -64,7 +64,7 @@ You can reopen the tour or the wizard from Settings › Help (**Take the tour**,
 
 ## The plugin
 
-Loom talks to Claude Code through a plugin. It adds four hooks (which tmux window a chat lives in, Slack thread ownership, Outbox recording, ship labels), a `loom` command, and five skills: `loom:ship`, `loom:slack-drafting`, `loom:handling-slack-threads`, `loom:tmux-route` and `loom:review`.
+Loom talks to Claude Code through a plugin. It adds four hooks (which tmux window a chat lives in, Slack thread ownership, Outbox recording, ship labels), a `loom` command, and skills including `loom:ship`, `loom:slack-drafting`, `loom:handling-slack-threads`, `loom:tmux-route`, `loom:review` and `loom:voice-tuning`.
 
 Loom installs it with Claude Code's own plugin commands, so it never edits `settings.json` itself. The wizard (or Settings › Helpers) shows the exact commands before it runs them:
 
@@ -125,6 +125,14 @@ Slack sends you back to Loom through a small static page, `https://williamhudson
 **MCP only.** Loom uses the Claude Slack connector you already have in Claude Code. There is no app to create, but Loom has no token of its own, so these stay **off**: watchers on Slack, parked-thread reply detection, Outbox sending, Slack names and emoji, and thread previews and unread counts. Still working: chats that read or post to Slack through the connector, thread ownership, Outbox drafts being visible, and the shortcut.
 
 **Off.** Nothing Slack-related appears, and Loom makes no Slack call.
+
+### Tune my voice
+
+Settings › Agents › **Tune my voice** starts a chat running `loom:voice-tuning`. It measures how you write in Slack (length, openers, capitalization, punctuation, bursts, who you write to and how), writes a voice skill to `~/.claude/skills/<handle>-voice/` (`SKILL.md`, `people.md`, `corrections.md`), tunes it with you on five sample drafts, and sets it as **Voice skill for drafts**. It needs Direct mode with `search:read`, or the Claude Slack connector. `loom slack mine` is the read it uses; it leaves out what the Outbox sent and messages stamped "Sent using" Claude.
+
+With **Learn from Outbox edits** on (the default), a draft you change before sending adds a dated before and after to the voice skill's `corrections.md`.
+
+**Privacy.** The chat reads your own recent Slack messages through your Slack connection, on this computer, and your Claude session analyzes them like any chat. It asks before it reads anything. The raw messages go only to a temp file, which it deletes once the voice skill is written. The voice skill and the corrections file are saved locally in `~/.claude/skills`. Nothing is sent to Loom or anyone else, and nothing is posted to Slack.
 
 ### The shortcut
 

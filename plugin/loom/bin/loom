@@ -40,7 +40,9 @@
   loom watcher test --file <draft.json> | --id <id>  what it would fire on now (writes nothing, acts on nothing)
   loom watcher enable <id> | disable <id> | mode <id> shadow|live | delete <id>
   loom whoami
-  loom slack mine [--limit 500] [--out file.jsonl]   your own recent Slack messages, newest first, as JSONL
+  loom slack mine [--limit 500] [--out [file.jsonl]] your own recent Slack messages, newest first, as JSONL
+                                                     to stdout, or a 0600 temp file (--out alone makes one; a
+                                                     path must be in a temp directory)
                                                      ({ts, channel_type: dm|channel|thread, channel, channel_name, text}); leaves out what
                                                      the Outbox sent and what carries the Claude stamp. Read-only.
   loom settings set voice_skill <skill-name>         set the voice skill drafts load (the only chat-settable key)
@@ -55,6 +57,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1035,6 +1038,18 @@ def cmd_route(args):
         die("usage: loom route list | send <name> <text...>", 2)
 
 
+def temp_roots():
+    roots = {os.path.realpath(tempfile.gettempdir()), os.path.realpath("/tmp")}
+    if os.environ.get("TMPDIR"):
+        roots.add(os.path.realpath(os.environ["TMPDIR"]))
+    return sorted(roots)
+
+
+def in_temp(path):
+    p = os.path.realpath(os.path.abspath(path))
+    return any(p.startswith(r.rstrip("/") + "/") for r in temp_roots())
+
+
 def slack_mine(args):
     o, _ = opts(args)
     try:
@@ -1043,6 +1058,8 @@ def slack_mine(args):
         die("--limit takes a number", 2)
     if limit < 1 or limit > 2000:
         die("--limit must be between 1 and 2000", 2)
+    if o.get("out") not in (None, True) and not in_temp(o["out"]):
+        die("--out must be in a temp directory (%s); give --out alone to get one" % ", ".join(temp_roots()), 2)
     try:
         r = c.http("GET", "/api/cli/slack/mine?limit=%d" % limit, timeout=120.0)
     except c.LoomUnavailable as e:
@@ -1060,9 +1077,15 @@ def slack_mine(args):
     keys = ("ts", "channel_type", "channel", "channel_name", "text")
     lines = [json.dumps({k: m.get(k, "") for k in keys}, ensure_ascii=False) for m in r.get("messages") or []]
     out = o.get("out")
-    if out and out is not True:
-        with open(out, "w", encoding="utf-8") as f:
+    if out:
+        # Private message text: only ever a temp file (0600), never a persistent location.
+        if out is True:
+            fd, out = tempfile.mkstemp(prefix="loom-mine-", suffix=".jsonl")
+            os.close(fd)
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("".join(l + "\n" for l in lines))
+        print("loom: wrote %s (delete it when you are done)" % out, file=sys.stderr)
     else:
         sys.stdout.write("".join(l + "\n" for l in lines))
     sk = r.get("skipped") or {}
@@ -1075,7 +1098,7 @@ def cmd_slack(args):
     if args and args[0] == "mine":
         slack_mine(args[1:])
     else:
-        die("usage: loom slack mine [--limit 500] [--out file.jsonl]", 2)
+        die("usage: loom slack mine [--limit 500] [--out [temp-file.jsonl]]", 2)
 
 
 SETTABLE = ("voice_skill",)

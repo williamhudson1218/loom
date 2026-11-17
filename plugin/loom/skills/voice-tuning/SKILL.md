@@ -11,16 +11,36 @@ The result is three files Loom's drafting already knows how to use, and the user
 **This skill never posts, reacts, or sends anything to Slack.** It only reads. Sample drafts are shown in
 chat; they are never recorded in the Outbox.
 
-## 1. Pull their messages
+## Privacy
 
-Work in the session scratchpad. Message text is private: never paste more than a few short examples into
-chat, and never write it anywhere outside the scratchpad and the new skill folder.
+The messages are read through the user's own Slack connection (Loom's token on this computer, or their
+Claude Slack connector). This Claude session analyzes them like any chat, so their text goes to the user's
+model as part of this conversation. The raw messages are written only to a temp file, which is deleted
+once the voice skill is written. The voice skill is saved in `~/.claude/skills`. Nothing is sent to Loom or
+anyone else, and nothing is posted to Slack. Don't paste more than a few short examples into chat, and
+don't write message text anywhere except the temp file and the new skill folder.
+
+## 0. Say what happens, and ask first
+
+Before reading anything, tell the user in plain words:
+
+> This reads your own recent Slack messages (about 500) through your Slack connection, on this computer. This
+> Claude session analyzes them like any chat. The raw messages go to a temp file that is deleted once your
+> voice skill is written to ~/.claude/skills/<handle>-voice/. Nothing is sent to Loom or anyone else, and
+> nothing is posted to Slack. Go ahead?
+
+Wait for a yes. Without one, stop.
+
+## 1. Pull their messages
 
 **With a Loom Slack token** (Settings, Slack, Connected):
 
 ```bash
-loom slack mine --limit 500 --out <scratchpad>/mine.jsonl
+loom slack mine --limit 500 --out
 ```
+
+`--out` with no path writes a private (0600) temp file and prints its path; keep that path for step 5. A path
+of your own must be in a temp directory, or the command refuses it. Without `--out` the JSONL goes to stdout.
 
 Each line is `{"ts", "channel_type": "dm"|"channel"|"thread", "channel", "channel_name", "text"}`, newest
 first. Loom has already left out messages its Outbox sent, messages carrying the Claude connector's "Sent
@@ -35,7 +55,8 @@ join/leave/rename notices. The command prints kept and skipped counts.
 `sort: timestamp`, `include_context: false`, `response_format: concise`, 20 per page, following the cursor
 until you have about 300 messages or the results run out. Note the channel type from where each hit was
 (a DM, a channel, a thread reply). Leave out anything that reads as drafted by Claude: the "Sent using" stamp,
-and any message whose text matches a draft in `loom outbox list --all --json`. Write the same JSONL shape.
+and any message whose text matches a draft in `loom outbox list --all --json`. Write the same JSONL shape to a temp file (`mktemp -t loom-mine` gives one), never to a
+persistent location.
 
 Fewer than 50 messages is too little to measure: say so and ask whether to go on.
 
@@ -135,5 +156,8 @@ loom settings set voice_skill <handle>-voice
 ```
 
 Tell the user it is set, that Settings, Agents, "Voice skill for drafts" shows it, and that with "Learn from
-Outbox edits" on, every draft they edit before sending is logged in corrections.md for the next tune.
-Then delete the scratchpad JSONL.
+Outbox edits" on, every draft they edit before sending is saved locally to corrections.md for the next tune.
+
+Delete the temp file from step 1 (`rm <path>`), along with any other scratch file holding message text, and
+say so: "Deleted the temp file with your messages. Your voice skill is in ~/.claude/skills/<handle>-voice/."
+If the user stops partway, delete the temp file then too.

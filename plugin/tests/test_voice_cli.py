@@ -27,6 +27,17 @@ class VoiceCli(HomeCase):
         self.assertEqual(r.returncode, 3)
         self.assertIn("not reachable", r.stderr)
 
+    def test_slack_mine_writes_only_to_a_temp_directory(self):
+        home = os.path.expanduser("~/loom-mine-test.jsonl")
+        r = self.run_cli("slack", "mine", "--out", home)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("temp directory", r.stderr)
+        self.assertFalse(os.path.exists(home))
+        # A temp path or a bare --out gets past the check (then fails only because Loom is down).
+        import tempfile
+        self.assertEqual(self.run_cli("slack", "mine", "--out", os.path.join(tempfile.gettempdir(), "m.jsonl")).returncode, 3)
+        self.assertEqual(self.run_cli("slack", "mine", "--out").returncode, 3)
+
     def test_slack_mine_checks_the_limit(self):
         self.assertEqual(self.run_cli("slack", "mine", "--limit", "0").returncode, 2)
         self.assertEqual(self.run_cli("slack", "nope").returncode, 2)
