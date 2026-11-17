@@ -224,7 +224,7 @@ describe('watchers tab layout text', () => {
     expect(p.wvRowLine1(W({ source: { kind: 'prs', params: {} }, poll_every_ms: 15_000, enabled: false }), now)).toBe('Pull requests · every 15 s · not polling');
     expect(p.wvRowLine1(W({ source: { kind: 'work', params: {} }, poll_every_ms: 900_000 }), now)).toBe('Findings endpoint · every 15 min · not polled yet');
     expect(p.wvRowLine2(W({}), 'd-working')).toEqual([]);
-    expect(p.wvRowLine2(W({ shadow_unreviewed: 1, last_error: 'x' }), 'd-turn').map((x: string[]) => x[1])).toEqual(['1 match to review', 'Poll error', 'Chat waiting on you']);
+    expect(p.wvRowLine2(W({ shadow_unreviewed: 1, last_error: 'x' }), 'd-turn').map((x: string[]) => x[1])).toEqual(['Chat waiting on you', '1 match to review', 'Poll error']);
   });
 
   it('header line says what the action does: standing chat, lane, skill', () => {

@@ -137,6 +137,23 @@ export const WATCHER_VIEW_CSS = String.raw`
   #watch-section #wv-msgs { height:calc(100vh - 310px); min-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:9px; padding:2px 2px 16px; }
   #watch-section #wv-msgs .msg { max-width:100%; align-self:stretch; box-sizing:border-box; flex:none; }
   #watch-section #wv-txmsg { margin-bottom:8px; }
+  #watch-section .wvgrp.needs { color:#8db6ff; margin:2px 0 6px; }
+  #watch-section .wvsp { padding:6px 2px; border-bottom:1px solid var(--wv-line); font-size:12px; }
+  #watch-section .wvsp1 { display:flex; gap:6px; align-items:center; min-width:0; }
+  #watch-section .wvsp1 .wvago { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #watch-section .wvsp2 { color:var(--wv-text2); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #watch-section .wvsp2 a { color:var(--wv-accent); text-decoration:none; }
+  #watch-section #wvroot.wvfit { display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden; }
+  #watch-section #wvroot.wvfit .wvtop, #watch-section #wvroot.wvfit #wvnote { flex:none; }
+  #watch-section #wvroot.wvfit .wvwrap { flex:1 1 auto; min-height:0; grid-template-rows:minmax(0,1fr); align-items:stretch; }
+  #watch-section #wvroot.wvfit #wvleft { min-height:0; overflow-y:auto; padding-right:2px; }
+  #watch-section #wvroot.wvfit #wvright { min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+  #watch-section #wvroot.wvfit #wvright > * { flex:none; }
+  #watch-section #wvroot.wvfit #wv-testcard { max-height:40%; overflow-y:auto; }
+  #watch-section #wvroot.wvfit #wvright > [id^=wv-pane-] { flex:1 1 auto; min-height:0; overflow-y:auto; }
+  #watch-section #wvroot.wvfit #wv-pane-terminal, #watch-section #wvroot.wvfit #wv-pane-transcript { display:flex; flex-direction:column; overflow:hidden; }
+  #watch-section #wvroot.wvfit #wv-termhost { flex:1 1 auto; height:auto; min-height:0; box-sizing:border-box; }
+  #watch-section #wvroot.wvfit #wv-msgs { flex:1 1 auto; height:auto; min-height:0; }
   #watch-section #wv-termhost { height:calc(100vh - 290px); min-height:340px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
   #watch-section #wv-termmsg { padding:28px 16px; text-align:center; color:var(--wv-muted); font-size:13px; border:1px dashed var(--wv-line); border-radius:10px; }
 `;
@@ -185,7 +202,16 @@ var WV_SRCNAME={slack:'Slack',chats:'Chats',prs:'Pull requests',work:'Findings e
 /* The list row's first muted line: "<source kind> · every N min · polled X ago". */
 function wvRowLine1(w,now){var p=[WV_SRCNAME[w.source.kind]||w.source.kind];var e=wvEvery(w.poll_every_ms);if(e)p.push(e);p.push(w.enabled?wvPollText(w,now).toLowerCase():'not polling');return p.join(' · ');}
 /* The second line, only when something wants attention: [class, text] parts. */
-function wvRowLine2(w,dot){var o=[];if(w.shadow_unreviewed>0)o.push(['rev',w.shadow_unreviewed+(w.shadow_unreviewed===1?' match':' matches')+' to review']);if(w.last_error)o.push(['err','Poll error']);if(w.skip_permissions)o.push(['err','Skip permissions']);if(dot==='d-turn')o.push(['turn','Chat waiting on you']);return o;}
+/* A watcher needs you when its standing chat is on your turn, or (while it is on) it has Shadow matches to
+   review or its last poll failed. The same rule as src/watchers/attention.ts needReasons, which the tray and
+   the notification use. */
+function wvNeeds(w,dot){var o=[];if(dot==='d-turn')o.push('turn');if(w.enabled&&w.shadow_unreviewed>0)o.push('review');if(w.enabled&&w.last_error)o.push('error');return o;}
+function wvNeedWords(w,reasons){return reasons.map(function(r){return r==='turn'?'your turn':r==='review'?w.shadow_unreviewed+(w.shadow_unreviewed===1?' match':' matches')+' to review':'poll error';});}
+function wvDotOf(id){var st=wvStandingOf(id);return st.length&&typeof dotCls==='function'?dotCls(st[0].chat):'';}
+/* The Watchers tab badge: watchers that need you; amber when every one of them is only a poll error. */
+function wvBadge(){var n=0,onlyErr=true;(WATCH.watchers||[]).forEach(function(w){var r=wvNeeds(w,wvDotOf(w.id));if(!r.length)return;n++;if(r.length!==1||r[0]!=='error')onlyErr=false;});return {n:n,amber:n>0&&onlyErr};}
+/* The row's second line: why it needs you, then skip permissions. */
+function wvRowLine2(w,dot){var o=[];var r=wvNeeds(w,dot);wvNeedWords(w,r).forEach(function(t,i){o.push([r[i]==='error'?'err':r[i]==='turn'?'turn':'rev',r[i]==='turn'?'Chat waiting on you':r[i]==='error'?'Poll error':t]);});if(w.skip_permissions)o.push(['err','Skip permissions']);return o;}
 /* The header's muted line: what the action does, e.g. "Standing chat · lane main · /triage". */
 function wvActionLine(d,projects){var a=d.action,p=a.params||{};var inv=p.invoke&&p.invoke.name?'/'+p.invoke.name:'';var o=[];
   if(a.kind==='start_chat'){o.push(p.standing===true?'Standing chat':'New chat per match');var nm='';(projects||[]).forEach(function(x){if(x.path===p.project_dir)nm=x.name;});if(p.project_dir)o.push(nm||p.project_dir);o.push(p.target&&p.target!=='managed'?'lane '+String(p.target).slice(5):'new managed window');o.push(inv||'brief');}
@@ -255,9 +281,19 @@ function wvBuild(){
   var top=wvEl('div','wvtop');top.id='wvtop';
   var note=wvEl('div');note.id='wvnote';
   var wrap=wvEl('div','wvwrap');
-  var left=wvEl('div');left.id='wvleft';
+  var left=wvEl('div');left.id='wvleft';var list=wvEl('div');list.id='wvlist';var sp=wvEl('div');sp.id='wvspawns';wvAdd(left,list,sp);
   var right=wvEl('div');right.id='wvright';
-  var sp=wvEl('div');sp.id='wvspawns';wvAdd(wrap,left,right);wvAdd(s,top,note,wrap,sp);WV.built=true;
+  var root=wvEl('div');root.id='wvroot';wvAdd(wrap,left,right);wvAdd(root,top,note,wrap);s.appendChild(root);WV.built=true;
+  window.addEventListener('resize',wvFit);
+}
+/* The tab fits the window: the page never scrolls; the list and the editor scroll inside (and the terminal,
+   which fills what is left under the tabs, refits through openTerm's own ResizeObserver). Narrow windows,
+   where the two columns stack, scroll as a page instead. */
+function wvFit(){
+  var r=document.getElementById('wvroot'),s=document.getElementById('watch-section');if(!r||!s||s.style.display==='none')return;
+  if(window.innerWidth<=900){r.classList.remove('wvfit');r.style.height='';return;}
+  r.classList.add('wvfit');var top=r.getBoundingClientRect().top+(window.scrollY||0);var pb=parseFloat(getComputedStyle(s).paddingBottom)||0;
+  var h=Math.max(300,Math.floor(window.innerHeight-top-pb));if(r.style.height!==h+'px')r.style.height=h+'px';
 }
 function wvDrawTop(){
   var top=document.getElementById('wvtop');if(!top)return;top.textContent='';
@@ -290,11 +326,13 @@ function wvSelect(id){
   wvDrawList();wvDrawEditor();wvLoadEvents();
 }
 function wvDrawList(){
-  var left=document.getElementById('wvleft');if(!left)return;left.textContent='';
+  var left=document.getElementById('wvlist');if(!left)return;left.textContent='';
   var ws=WATCH.watchers||[];var now=Date.now();
   var nb=wvBtn('+ New watcher','',function(){wvSelect('new');});nb.id='wv-new';nb.style.width='100%';nb.style.marginBottom='4px';left.appendChild(nb);
   if(!ws.length&&WV.sel!=='new')left.appendChild(wvEl('div','wvempty','No watchers yet. Add one, or start from a template.'));
-  ws.forEach(wvRow);
+  var need=ws.filter(function(w){return wvNeeds(w,wvDotOf(w.id)).length>0;});var rest=ws.filter(function(w){return need.indexOf(w)<0;});
+  if(need.length){var nh=wvEl('div','wvgrp needs','Needs you · '+need.length);nh.id='wv-needs';left.appendChild(nh);need.forEach(wvRow);if(rest.length)left.appendChild(wvEl('div','wvgrp sub2','Watchers'));}
+  rest.forEach(wvRow);
   // One compact row: the standing chat's status dot, label, Live/Shadow, On/Off; then one or two muted lines.
   function wvRow(w){
     var b=wvEl('button','wvli'+(w.id===WV.sel?' sel':'')+(w.enabled?'':' off'));b.type='button';b.setAttribute('data-wid',w.id);
@@ -605,14 +643,18 @@ function wvDrawSpawns(){
   var h=wvBtn('','',function(){WV.spawnsOpen=!WV.spawnsOpen;wvDrawSpawns();});h.className='wvfold grp'+(WV.spawnsOpen?' open':'');h.id='wv-spawnfold';h.appendChild(wvEl('span','car','>'));h.appendChild(wvEl('span','','Workers started'+(sps.length?' · '+sps.length:'')));c.appendChild(h);
   if(!WV.spawnsOpen)return;
   if(!sps.length){c.appendChild(wvEl('div','wvdef','Nothing started yet.'));return;}
-  var t=wvEl('table','wvt');var hr=wvEl('tr');['When','Event','Watcher','Status',''].forEach(function(x){hr.appendChild(wvEl('th','',x));});t.appendChild(hr);var now=Date.now();
-  sps.forEach(function(e){var r=wvEl('tr');r.appendChild(wvEl('td','',wvTimeText(e.detected_at,now)));r.appendChild(wvEventCell(e));var w=wvById(e.watcher_id);r.appendChild(wvEl('td','',w?w.label:e.watcher_id));var td=wvEl('td');td.appendChild(wvEl('span','wvpill '+(e.status==='spawned'?'ok':'warn'),e.status==='spawned'?'Started':e.status));if(e.pane_name)td.appendChild(wvEl('span','wvdef',' '+e.pane_name));r.appendChild(td);var g=wvEl('td');if(e.status==='spawned'&&e.pane_id){var b=wvBtn('go','sm',function(){wvPost('/api/watchers/goto?id='+encodeURIComponent(e.id),{});});g.appendChild(b);}r.appendChild(g);t.appendChild(r);});
-  c.appendChild(t);
+  var now=Date.now();
+  sps.forEach(function(e){var r=wvEl('div','wvsp');var w=wvById(e.watcher_id);
+    var l1=wvEl('div','wvsp1');l1.appendChild(wvEl('span','wvpill '+(e.status==='spawned'?'ok':'warn'),e.status==='spawned'?'Started':e.status));l1.appendChild(wvEl('span','wvago',wvTimeText(e.detected_at,now)+' · '+(w?w.label:e.watcher_id)+(e.pane_name?' · '+e.pane_name:'')));
+    if(e.status==='spawned'&&e.pane_id){var b=wvBtn('go','sm',function(){wvPost('/api/watchers/goto?id='+encodeURIComponent(e.id),{});});l1.appendChild(b);}
+    r.appendChild(l1);var ev=wvEl('div','wvsp2');if(e.permalink){var a=wvEl('a','',e.title||e.subject);a.href=e.permalink;a.target='_blank';a.rel='noopener';ev.appendChild(a);}else ev.textContent=e.title||e.subject;r.appendChild(ev);c.appendChild(r);});
 }
 /* ---- entry point, called by dashboard.ts renderWatch() on every render and every 15 s ---- */
 function wvRender(){
   if(!WV.built)wvBuild();
+  wvFit();
   if(!WV.loaded){if(!WV.loading){WV.loading=true;wvLoadStatic().then(function(){wvRender();});}return;}
+  if(WV.pendingSel&&wvById(WV.pendingSel)){var ps=WV.pendingSel;WV.pendingSel='';if(ps!==WV.sel)wvSelect(ps);}
   if(WV.sel!=='new'&&WV.sel&&!wvById(WV.sel)&&!WV.dirty){WV.sel='';WV.draft=null;}
   if(!WV.sel&&(WATCH.watchers||[]).length){wvSelect(WATCH.watchers[0].id);}
   wvDrawTop();wvDrawNote();wvDrawSpawns();
@@ -676,6 +718,8 @@ function wvTxSync(toBottom){
     if(sig!==WV.txSig){WV.txSig=sig;b.innerHTML=transcriptMsgsHtml(d);}
     if(toBottom||atBottom)b.scrollTop=b.scrollHeight;});
 }
+/* A watcher notification's click (app/main.ts): the Watchers tab with that watcher selected. */
+if(typeof window!=='undefined')window.loomOpenWatcher=function(id){WV.pendingSel=String(id||'');tab='watch';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();refreshWatch();};
 /* dashboard.ts render(): any tab but Watchers drops the watcher terminal. */
 function wvLeave(){if(typeof termKey==='string'&&termKey.indexOf('wv|')===0)closeTerm();}
 function wvDrawListKeepFocus(){var a=document.activeElement;if(a&&a.closest&&a.closest('#wvleft'))return;wvDrawList();}

@@ -217,6 +217,7 @@ ${WELCOME_BOOT_CSS}
   .tab.on { background:#26304a; color:#fff; }
   .tab.on:hover { background:#2b3654; }
   .tab .cnt { opacity:.6; margin-left:6px; }
+  .tab .cnt.amber { opacity:1; color:#e8b04a; }
   /* Narrow window: tabs shrink to their glyph and count (the name stays in the title). */
   @media (max-width:1100px) { .tab .tl { display:none; } .tab { padding:0 11px; } }
   .tab.savedtab.on { background:#3a3826; color:#f0dfa0; }
@@ -1299,16 +1300,18 @@ function pcolor(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))%3
 // filter) so they don't jump around as you toggle Live-only.
 function openSettings(){if(tab==='settings')return;tab='settings';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();}
 // Badges only where something is actionable, hidden at zero. Board and Saved never carry one.
-// Unreviewed shadow matches, plus every standing watcher chat that is waiting on you: it is not on the Board,
-// so this count is what keeps it from being missed.
-function watchBadge(){var n=Number(WATCH.unreviewed)||0;(WATCH.watchers||[]).forEach(function(w){n+=Number(w.unreviewed)||0;});return n+standingTurnCount(DATA.standing,dotCls);}
+// Watchers that need you (watcherview.ts wvNeeds): a standing chat on your turn (it is not on the Board, so
+// this is what keeps it from being missed), Shadow matches to review, or a failed poll. One per watcher.
+function watchBadge(){if(typeof wvBadge==='function'&&(WATCH.watchers||[]).length)return wvBadge().n;return (Number(WATCH.unreviewed)||0)+standingTurnCount(DATA.standing,dotCls);}
+// Amber when every watcher that needs you is there only for a poll error (watcherview.ts wvBadge).
+function watchBadgeAmber(){return typeof wvBadge==='function'&&wvBadge().amber;}
 function standingTurnCount(list,dot){var n=0;(list||[]).forEach(function(s){if(s&&s.chat&&dot(s.chat)==='d-turn')n++;});return n;}
 // The Trees badge counts only worktrees that are safe to delete: not the primary, nothing
 // running in it, and its branch merged and clean (git.ts verdict 'safe'). Merely idle ones
 // (old lastCommitAt) are not counted: with dozens of worktrees that made the badge noise.
 function treeIsStale(w){if(w.primary||(w.livePanes&&w.livePanes.length))return false;return w.verdict==='safe';}
 function staleTreeCount(){var n=0;TREES.repos.forEach(function(r){r.worktrees.forEach(function(w){if(treeIsStale(w))n++;});});return n;}
-function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['sched','◷ Scheduled',Object.values(DATA.actions||{}).reduce((n,a)=>n+(a&&a.open||0),0),' schedtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'" title="'+d[1].slice(2)+'" aria-label="'+d[1].slice(2)+'"><span class="ti">'+d[1].slice(0,1)+'</span><span class="tl"> '+d[1].slice(2)+'</span>'+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
+function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['sched','◷ Scheduled',Object.values(DATA.actions||{}).reduce((n,a)=>n+(a&&a.open||0),0),' schedtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'" title="'+d[1].slice(2)+'" aria-label="'+d[1].slice(2)+'"><span class="ti">'+d[1].slice(0,1)+'</span><span class="tl"> '+d[1].slice(2)+'</span>'+(d[2]>0?'<span class="cnt'+(d[0]==='watch'&&watchBadgeAmber()?' amber':'')+'">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
 // Header status: "Updated Ns ago" only when the data is over 30 s old or the last poll failed.
 var pollFailed=false;
 function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(DATA.generatedAt||0);

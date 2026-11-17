@@ -45,6 +45,8 @@ import {
 } from '../src/placements.ts';
 import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
+import { standingRefs } from '../src/standingchats.ts';
+import { watcherNeeds } from '../src/watchers/attention.ts';
 import { PaneTints, desiredTints } from '../src/panetint.ts';
 import { nameNewPanesAsync } from '../src/panenames.ts';
 import { PaneTopics, paneLabelConfig } from '../src/panetopics.ts';
@@ -235,7 +237,9 @@ setAppNotifier(({ title, body, target, sound }) => {
     const js =
       target && 'orch' in target
         ? 'typeof selectOrch === "function" && selectOrch()'
-        : target && 'pr' in target
+        : target && 'watcher' in target
+          ? 'typeof window.loomOpenWatcher === "function" && window.loomOpenWatcher(' + JSON.stringify(target.watcher) + ')'
+          : target && 'pr' in target
           ? 'typeof window.loomOpenPr === "function" && window.loomOpenPr(' + JSON.stringify(target.pr) + ')'
           : target
             ? 'typeof window.loomOpenChat === "function" && window.loomOpenChat(' + JSON.stringify(target.agent) + ',' + JSON.stringify(target.sid) + ')'
@@ -314,7 +318,7 @@ function readSetting<K extends 'ghostty_attach_cmd' | 'pane_tint' | 'pane_tint_b
   }
 }
 
-type TrayCounts = { live: number; working: number; yourTurn: number };
+type TrayCounts = { live: number; working: number; yourTurn: number; watchers?: number };
 
 // liveSessions() inlined so the pane list it builds can be reused for the tint
 // reconciliation, rather than shelling out to tmux a second time. The 4 s tick
@@ -342,9 +346,19 @@ function trayTickFrom(panes: TmuxPane[], agents: ReturnType<typeof agentPaneIds>
   try {
     const db = openDb();
     const views = toChatViews(db);
-    db.close();
     const now = Date.now();
     const live = liveSessionsFrom(panes, agents, readPlacements());
+    // Watchers that need you (src/watchers/attention.ts). A standing watcher chat on your
+    // turn counts there, as its watcher, so it is left out of the plain your-turn count.
+    let refs = new Map<string, unknown>();
+    let watchers = 0;
+    try {
+      refs = standingRefs(db);
+      watchers = watcherNeeds(db, views, (k) => live.has(k)).length;
+    } catch {
+      /* no watchers table yet */
+    }
+    db.close();
 
     // Keyed by agent:session_id, which is what liveSessionsFrom emits. Keying this
     // by the bare session_id silently matched nothing, so working/yourTurn were
@@ -372,7 +386,7 @@ function trayTickFrom(panes: TmuxPane[], agents: ReturnType<typeof agentPaneIds>
       if (!v) continue;
       const mt = lastActive.get(key);
       if (mt !== undefined && now - mt < WORKING_MS) working++;
-      if (v.state === 'waiting_on_user') yourTurn++;
+      if (v.state === 'waiting_on_user' && !(v.agent === 'claude' && refs.has(v.session_id))) yourTurn++;
     }
 
     paneTints.apply(
@@ -380,7 +394,7 @@ function trayTickFrom(panes: TmuxPane[], agents: ReturnType<typeof agentPaneIds>
       new Set(panes.map((p) => p.pane_id)),
     );
 
-    return { live: live.size, working, yourTurn };
+    return { live: live.size, working, yourTurn, watchers };
   } catch {
     // tmux or the DB is unavailable this tick; leave the tints exactly as they are.
     return { live: 0, working: 0, yourTurn: 0 };
@@ -400,8 +414,9 @@ function showTrayCounts(c: TrayCounts): void {
   const parts: string[] = [];
   if (c.working) parts.push(`⚡${c.working}`);
   if (c.yourTurn) parts.push(`🔵${c.yourTurn}`);
+  if (c.watchers) parts.push(`◉${c.watchers}`);
   tray.setTitle(parts.length ? ' ' + parts.join(' ') : '');
-  tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn`);
+  tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn` + (c.watchers ? ` · ${c.watchers} watcher${c.watchers === 1 ? '' : 's'} need${c.watchers === 1 ? 's' : ''} you` : ''));
   const compactItem = trayMenu?.getMenuItemById('compact');
   if (compactItem) compactItem.checked = compactEnabled();
 }

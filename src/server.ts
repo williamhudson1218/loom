@@ -57,6 +57,7 @@ import { cachedFresh, checkFresh, clearFreshCache, currentSeen, ghActivityVia, g
 import { getDirectory as getDirectoryRaw, readDirectory } from './slackdir.ts';
 import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
+import { enteringNeeds, needText, watcherNeeds } from './watchers/attention.ts';
 import { EMOJI_MAP } from './emojimap.ts';
 import { confirmLaunches, dismissLaunch, indexFreshLaunches, launchById, launchView, recentLaunches, startThread, waitForShellReady, waitForShellReadyAsync } from './newthread.ts';
 import { pickLog } from './picklog.ts';
@@ -894,6 +895,31 @@ function watcherPrs(): PrState[] {
     if (ref && !owner.has(pipelineKey(ref.repo, ref.number))) owner.set(pipelineKey(ref.repo, ref.number), { agent: v.agent, session_id: v.session_id });
   }
   return Object.entries(allPipelines()).map(([k, p]) => prStateFrom(p, owner.get(k) ?? null));
+}
+
+// A watcher moving into needs-you (its standing chat on your turn, Shadow matches to
+// review, a failed poll) is notified once; a click opens the Watchers tab on it. The
+// first tick only records what is true, and the master switch being off resets that,
+// so turning watchers on or starting Loom does not replay every open item.
+let watcherNeedSeen: Set<string> | null = null;
+function watcherAttentionTick(): void {
+  try {
+    const { views, live } = snapshot();
+    const db = openDb();
+    try {
+      if (getSetting(db, 'watchers_enabled') === false) {
+        watcherNeedSeen = null;
+        return;
+      }
+      const { entered, next } = enteringNeeds(watcherNeedSeen, watcherNeeds(db, views, (k) => !!live[k]));
+      watcherNeedSeen = next;
+      for (const n of entered) notifyUser({ title: 'Watcher needs you', body: needText(n), target: { watcher: n.id } });
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    console.error('[loom] watcher attention:', (e as Error).message);
+  }
 }
 
 function watcherEngineDeps(): EngineDeps {
@@ -2493,6 +2519,8 @@ export function startGhTicks(): void {
   // Parked chats: each thread is due about every 2 minutes, backing off as it ages (src/parked.ts).
   setTimeout(() => void parkedTick(), 15_000);
   setInterval(() => void parkedTick(), 30_000);
+  // Watchers that need you: one notification on the way in (src/watchers/attention.ts).
+  setInterval(watcherAttentionTick, 15_000).unref?.();
   // The plugin's event files (drafts, claims, stages, ship labels): on change and every 2 s.
   startEventIngest(() => openDb(), { legacyThreads: legacyThreadState });
   // `seen` for drafts the chat did not pass one for: what each target held when the draft arrived.

@@ -51,7 +51,7 @@ describe('dashboard', () => {
     const html = renderDashboard([], Date.now(), {}, 'claude');
     expect(html).not.toContain('id="gen"');
     expect(html).not.toContain("$('#gen')");
-    expect(html).toContain("(d[2]>0?'<span class=\"cnt\">'");
+    expect(html).toContain("(d[2]>0?'<span class=\"cnt'+(d[0]==='watch'&&watchBadgeAmber()?' amber':'')+'\">'");
     expect(html).toContain("['board','▦ Board',0,'']");
     expect(html).toContain("['saved','★ Saved',0,");
     expect(html).toContain('staleTreeCount()');
