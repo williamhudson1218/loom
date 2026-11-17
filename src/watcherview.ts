@@ -133,6 +133,10 @@ export const WATCHER_VIEW_CSS = String.raw`
   #watch-section .wvsum { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; color:var(--wv-text2); }
   #watch-section .wvsec.open .wvsech { margin-bottom:10px; }
   #watch-section .wvmeta { color:var(--wv-muted); font-size:11.5px; white-space:nowrap; }
+  #watch-section .wvtabs .mtab .n { margin-left:6px; font-size:11px; padding:0 6px; border-radius:8px; background:rgba(110,162,255,.16); color:#8db6ff; }
+  #watch-section #wv-msgs { height:calc(100vh - 310px); min-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:9px; padding:2px 2px 16px; }
+  #watch-section #wv-msgs .msg { max-width:100%; align-self:stretch; box-sizing:border-box; flex:none; }
+  #watch-section #wv-txmsg { margin-bottom:8px; }
   #watch-section #wv-termhost { height:calc(100vh - 290px); min-height:340px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
   #watch-section #wv-termmsg { padding:28px 16px; text-align:center; color:var(--wv-muted); font-size:13px; border:1px dashed var(--wv-line); border-radius:10px; }
 `;
@@ -197,7 +201,8 @@ function wvLimitsSum(d){var o=[d.max_per_hour?d.max_per_hour+' per hour':'No hou
 function wvChatMeta(L,fires,now){var o=[];if(L&&(L.name||L.pane_id))o.push('pane '+(L.name||L.pane_id));var last=0;(fires||[]).forEach(function(e){if(!last&&(e.result==='started'||e.result==='sent'))last=e.detected_at;});if(last)o.push('last batch '+wvAgo(last,now));return o.join(' · ');}
 /* Does this watcher keep a standing chat (so the editor gets a Chat tab)? */
 function wvHasChat(w,standing){return !!(w&&((w.action&&w.action.kind==='start_chat'&&w.action.params&&w.action.params.standing===true)||(standing&&standing.length)));}
-function wvPaneFor(cur,hasChat){if(cur==='chat'&&!hasChat)return 'history';if(cur)return cur;return hasChat?'chat':'history';}
+/* Which editor tab shows: a standing chat opens on Terminal (Transcript when it cannot have one, as on the Board). */
+function wvPaneFor(cur,hasChat,canTerm){var chat=cur==='terminal'||cur==='transcript';if(chat&&!hasChat)return 'history';if(cur==='terminal'&&!canTerm)return 'transcript';if(cur)return cur;return hasChat?(canTerm?'terminal':'transcript'):'history';}
 /* What the Chat tab shows: the chosen (else the current) standing chat's live pane, or a plain reason there is none. */
 function wvTermPlan(list,sid,live,token){
   if(!list||!list.length)return {msg:'No chat is running for this watcher. Its standing chat starts on the next match it acts on.'};
@@ -385,19 +390,26 @@ function wvDrawEditor(){
   if(!isNew){var tc=wvEl('div','wvcard');tc.id='wv-testcard';var th=wvEl('div','wvsech');th.appendChild(wvEl('h4','','Test'));th.appendChild(wvEl('span','wvsum','The rule only. Nothing is started, sent or recorded.'));th.appendChild(wvBtn('Close','sm',function(){WV.test=null;wvDrawTestResult();}));tc.appendChild(th);var res=wvEl('div');res.id='wv-testres';res.style.marginTop='10px';tc.appendChild(res);right.appendChild(tc);wvDrawTestResult();}
   if(isNew){wvDrawSettings(right,d,true);wvSync();wvTermSync();return;}
   // An existing watcher: its standing chat (live terminal), its settings and its history, one at a time.
-  var stand=wvStandingOf(WV.sel);var hasChat=wvHasChat(w0,stand);WV.pane=wvPaneFor(WV.pane,hasChat);
-  var tabs=wvEl('div','wvtabs');tabs.id='wv-tabs';
-  function tabBtn(k,label,extra){var b=wvEl('button','wvtab'+(WV.pane===k?' on':''));b.type='button';b.setAttribute('data-pane',k);if(extra&&extra.dot)b.appendChild(extra.dot);b.appendChild(wvEl('span','',label));if(extra&&extra.n)b.appendChild(wvEl('span','n',String(extra.n)));b.onclick=function(){if(WV.pane===k)return;WV.pane=k;wvDrawEditor();};tabs.appendChild(b);}
-  if(hasChat){var dt=null;if(stand.length&&typeof dotCls==='function')dt=wvEl('span','sdot '+dotCls(stand[0].chat));tabBtn('chat','Chat',{dot:dt});}
+  var stand=wvStandingOf(WV.sel);var hasChat=wvHasChat(w0,stand);var live=wvChatLive();var canTerm=live&&!!TERM_TOKEN;WV.pane=wvPaneFor(WV.pane,hasChat,canTerm);
+  // The tab row: the Board's own Terminal / Transcript switch (dashboard.ts chatTabsHtml), then Settings and History.
+  var tabs=wvEl('div','wvtabs');tabs.id='wv-tabs';tabs.setAttribute('role','tablist');
+  var chatEff=WV.pane==='terminal'||WV.pane==='transcript'?WV.pane:'';
+  if(hasChat&&typeof chatTabsHtml==='function'){var tmp=wvEl('div');tmp.innerHTML=chatTabsHtml(live,chatEff);while(tmp.firstChild)tabs.appendChild(tmp.firstChild);}
+  function tabBtn(k,label,n){var b=wvEl('button','mtab'+(WV.pane===k?' on':''));b.type='button';b.setAttribute('role','tab');b.setAttribute('data-pane',k);b.appendChild(wvEl('span','',label));if(n)b.appendChild(wvEl('span','n',String(n)));tabs.appendChild(b);}
   tabBtn('settings','Settings');
-  tabBtn('history','History',{n:w0&&w0.shadow_unreviewed>0?w0.shadow_unreviewed:0});
+  tabBtn('history','History',w0&&w0.shadow_unreviewed>0?w0.shadow_unreviewed:0);
+  tabs.onclick=function(e){var b=e.target&&e.target.closest?e.target.closest('button'):null;if(!b||b.disabled)return;var k=b.getAttribute('data-t')||b.getAttribute('data-pane');if(!k||WV.pane===k)return;WV.pane=k;wvDrawEditor();};
   right.appendChild(tabs);
   function pane(k){var p=wvEl('div');p.id='wv-pane-'+k;if(WV.pane!==k)p.style.display='none';right.appendChild(p);return p;}
-  if(hasChat){var cp=pane('chat');var sl=wvEl('div');sl.id='wv-stand';cp.appendChild(sl);var tm=wvEl('div');tm.id='wv-termmsg';tm.style.display='none';cp.appendChild(tm);
-    if(!WV.termHost){WV.termHost=wvEl('div');WV.termHost.id='wv-termhost';}WV.termHost.style.display='none';cp.appendChild(WV.termHost);}
+  if(hasChat){
+    var sl=wvEl('div');sl.id='wv-stand';if(!chatEff)sl.style.display='none';right.appendChild(sl);
+    var tp=pane('terminal');var tm=wvEl('div');tm.id='wv-termmsg';tm.style.display='none';tp.appendChild(tm);
+    if(!WV.termHost){WV.termHost=wvEl('div');WV.termHost.id='wv-termhost';}WV.termHost.style.display='none';tp.appendChild(WV.termHost);
+    var xp=pane('transcript');var xm=wvEl('div','wvdef');xm.id='wv-txmsg';xm.style.display='none';xp.appendChild(xm);var ms=wvEl('div');ms.id='wv-msgs';xp.appendChild(ms);WV.txSig='';
+  }
   wvDrawSettings(pane('settings'),d,false);
   var hp=pane('history');var sh=wvEl('div','wvcard');sh.id='wv-shadow';hp.appendChild(sh);var fi=wvEl('div','wvcard');fi.id='wv-fires';hp.appendChild(fi);
-  wvDrawEvents();wvStandingSync();wvSync();wvTermSync();
+  wvDrawEvents();wvStandingSync();wvSync();wvTermSync();wvTxSync(true);
 }
 /* Settings: the name, then Source / Trigger / Action / Limits as cards showing a one-line summary with Edit,
    each expanding in place (all open for a new watcher), then Shadow/Live at the bottom. */
@@ -609,7 +621,7 @@ function wvRender(){
   if(!WV.draft&&WV.sel===''){wvDrawEditor();}
   else if(WV.draft&&!document.getElementById('wv-save'))wvDrawEditor();
   if(WV.sel&&WV.sel!=='new')wvLoadEvents();
-  wvTermSync();
+  wvTermSync();wvTxSync(false);
 }
 // ---- Standing chats ----------------------------------------------------------
 // A standing watcher's own chat is kept off the Board (src/standingchats.ts) and shown here instead: a status
@@ -629,7 +641,7 @@ function wvStandingEl(s,shown){
   row.appendChild(wvEl('span','wvstl',s.current?label:label+' · earlier chat'));
   if(shown){var L=(typeof DATA!=='undefined'&&DATA&&DATA.live&&DATA.live[c.agent+':'+c.session_id])||null;var mt=wvChatMeta(L,WV.fires,Date.now());if(mt)row.appendChild(wvEl('span','wvmeta','· '+mt));}
   var ob=wvBtn('Open on Board','sm',function(e){if(e&&e.stopPropagation)e.stopPropagation();wvOpenStanding(c);});ob.setAttribute('data-open','1');row.appendChild(ob);
-  row.onclick=function(){if(WV.termSid===c.session_id)return;WV.termSid=c.session_id;wvStandingSync();wvTermSync();};
+  row.onclick=function(){if(WV.termSid===c.session_id)return;WV.termSid=c.session_id;wvStandingSync();wvTermSync();if(typeof wvTxSync==='function')wvTxSync(true);};
   return row;
 }
 function wvStandingSync(){var slot=document.getElementById('wv-stand');if(!slot)return;slot.textContent='';
@@ -640,13 +652,29 @@ function wvStandingSync(){var slot=document.getElementById('wv-stand');if(!slot)
 function wvTermSync(){
   if(typeof openTerm!=='function')return;
   var onTab=typeof tab==='undefined'||tab==='watch';
-  var want=onTab&&WV.sel&&WV.sel!=='new'&&WV.pane==='chat'&&WV.termHost&&document.body.contains(WV.termHost);
+  var want=onTab&&WV.sel&&WV.sel!=='new'&&WV.pane==='terminal'&&WV.termHost&&document.body.contains(WV.termHost);
   var plan=want?wvTermPlan(wvStandingOf(WV.sel),WV.termSid,(DATA&&DATA.live)||{},TERM_TOKEN):null;
   var msg=document.getElementById('wv-termmsg');
   if(plan&&plan.key){WV.termHost.style.display='';if(msg)msg.style.display='none';if(termKey!==plan.key){openTerm(plan.pane,WV.termHost);termKey=plan.key;}else alignTerm();return;}
   if(termKey.indexOf('wv|')===0)closeTerm();
   if(WV.termHost)WV.termHost.style.display='none';
   if(msg){msg.textContent=plan?plan.msg:'';msg.style.display=plan?'':'none';}
+}
+/* Is the standing chat on show running in a pane? (The Board's "live": it decides whether Terminal is offered.) */
+function wvChatLive(){var l=WV.sel&&WV.sel!=='new'?wvStandingOf(WV.sel):[];return !!wvTermPlan(l,WV.termSid,(typeof DATA!=='undefined'&&DATA&&DATA.live)||{},'x').pane;}
+/* The Transcript tab: the Board's fetch and render (transcriptUrl, transcriptMsgsHtml) for the chosen standing chat. */
+function wvTxSync(toBottom){
+  var box=document.getElementById('wv-msgs');var note=document.getElementById('wv-txmsg');if(!box||WV.pane!=='transcript')return;
+  var l=wvStandingOf(WV.sel);var live=(typeof DATA!=='undefined'&&DATA&&DATA.live)||{};
+  var plan=wvTermPlan(l,WV.termSid,live,typeof TERM_TOKEN!=='undefined'?TERM_TOKEN:'');
+  if(note){var why=!plan.chat?plan.msg:(!plan.key?plan.msg:'');note.textContent=why;note.style.display=why?'':'none';}
+  if(!plan.chat){box.textContent='';WV.txSig='';return;}
+  var c=plan.chat.chat;var sel0=WV.sel;if(typeof transcriptUrl!=='function')return;
+  wvGet(transcriptUrl(c.session_id,c.agent)).then(function(d){
+    if(!d||!d.ok||WV.sel!==sel0||WV.pane!=='transcript')return;var b=document.getElementById('wv-msgs');if(!b)return;
+    var atBottom=b.scrollTop+b.clientHeight>=b.scrollHeight-50;var last=d.messages.length?d.messages[d.messages.length-1].text:'';var sig=c.session_id+':'+d.messages.length+':'+last.length;
+    if(sig!==WV.txSig){WV.txSig=sig;b.innerHTML=transcriptMsgsHtml(d);}
+    if(toBottom||atBottom)b.scrollTop=b.scrollHeight;});
 }
 /* dashboard.ts render(): any tab but Watchers drops the watcher terminal. */
 function wvLeave(){if(typeof termKey==='string'&&termKey.indexOf('wv|')===0)closeTerm();}

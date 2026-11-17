@@ -1736,9 +1736,10 @@ function renderMain(){const box=$('#chatmain');syncHomeTab();renderOutbox();
 // chat's pane, in case something moved it (ptybridge.realignView). Cheap, and runs on every render.
 function syncTerm(L){const key=L.pane_id+'|'+selKey();if(termKey===key){alignTerm();return;}openTerm(L.pane_id,$('#mterm'));termKey=key;}
 function alignTerm(){try{if(termWs&&termWs.readyState===1)termWs.send(JSON.stringify({t:'a'}));}catch(e){}}
-function renderTabsBar(live,eff){const el=$('#mtabs');const sig=live+'|'+eff+'|'+!!TERM_TOKEN;if(el.dataset.sig===sig)return;el.dataset.sig=sig;
-  const can=live&&!!TERM_TOKEN;
-  el.innerHTML='<button type="button" role="tab" class="mtab'+(eff==='terminal'?' on':'')+'" data-t="terminal"'+(can?'':' disabled title="'+(live?'the terminal needs the running Loom server':'not running')+'"')+'>Terminal</button>'+
+function renderTabsBar(live,eff){const el=$('#mtabs');const sig=live+'|'+eff+'|'+!!TERM_TOKEN;if(el.dataset.sig===sig)return;el.dataset.sig=sig;el.innerHTML=chatTabsHtml(live,eff);}
+// The Terminal / Transcript switch of a chat. Shared by the Board's chat view and the Watchers tab's standing chat (watcherview.ts).
+function chatTabsHtml(live,eff){const can=live&&!!TERM_TOKEN;
+  return '<button type="button" role="tab" class="mtab'+(eff==='terminal'?' on':'')+'" data-t="terminal"'+(can?'':' disabled title="'+(live?'the terminal needs the running Loom server':'not running')+'"')+'>Terminal</button>'+
     '<button type="button" role="tab" class="mtab'+(eff==='transcript'?' on':'')+'" data-t="transcript">Transcript</button>';}
 function mbtn(act,label,cls,extra){return '<button type="button" class="mbtn'+(cls?' '+cls:'')+'" data-act="'+act+'"'+(extra||'')+'>'+label+'</button>';}
 function renderHead(c,L,live){const h=$('#mhead');const prn=chatPrNum(c),prs=prStateOf(c),sk=slackKeyOf(c);
@@ -1865,10 +1866,13 @@ function wireRename(){$('#rncancel').onclick=closeRename;$('#rnsave').onclick=sa
   $('#renamebox').addEventListener('mousedown',e=>{if(e.target.id==='renamebox')closeRename();});
   $('#renamebox').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeRename();}else if(e.key==='Enter'){e.preventDefault();saveRename();}});}
 // ---- Transcript tab -----------------------------------------------------------
-function loadTranscript(toBottom){if(!sel)return;const req=selKey();var u='/api/transcript?session='+encodeURIComponent(sel.sid)+'&agent='+encodeURIComponent(sel.agent);if(sel.arch)u+='&jsonl='+encodeURIComponent(sel.arch.jsonl)+'&proj='+encodeURIComponent(sel.arch.proj)+'&title='+encodeURIComponent(sel.arch.title);
+// A chat's transcript, fetched and rendered the same way for the Board and the Watchers tab (watcherview.ts).
+function transcriptUrl(sid,agent){return '/api/transcript?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent);}
+function transcriptMsgsHtml(d){return d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':agentLabel(d.agent))+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';}
+function loadTranscript(toBottom){if(!sel)return;const req=selKey();var u=transcriptUrl(sel.sid,sel.agent);if(sel.arch)u+='&jsonl='+encodeURIComponent(sel.arch.jsonl)+'&proj='+encodeURIComponent(sel.arch.proj)+'&title='+encodeURIComponent(sel.arch.title);
   fetch(u).then(r=>r.json()).then(d=>{if(selKey()!==req||!d.ok)return;const wrap=$('#mmsgs');const atBottom=wrap.scrollTop+wrap.clientHeight>=wrap.scrollHeight-50;
     const last=d.messages.length?d.messages[d.messages.length-1].text:'';const sig=d.messages.length+':'+last.length;
-    if(sig!==MSGS_SIG||toBottom){MSGS_SIG=sig;$('#mmsgs').innerHTML=d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':agentLabel(d.agent))+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';}
+    if(sig!==MSGS_SIG||toBottom){MSGS_SIG=sig;$('#mmsgs').innerHTML=transcriptMsgsHtml(d);}
     if(toBottom||atBottom)wrap.scrollTop=wrap.scrollHeight;renderFoot(d);}).catch(()=>{});}
 function renderFoot(d){const f=$('#mfoot');if(d.live&&sel&&!sel.arch&&DATA.live[selKey()]){if(!f.querySelector('textarea')){f.innerHTML='<textarea id="pinput" placeholder="message this chat… (Enter to send, Shift+Enter for newline)"></textarea><div class="sendrow"><span class="grow">types straight into the live '+agentLabel(d.agent)+' pane</span><button class="send" id="psend">Send ↵</button></div>';$('#psend').onclick=sendMsg;$('#pinput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});}}else{f.innerHTML='';}}
 function sendMsg(){const ta=$('#pinput');if(!ta||!sel)return;const t=ta.value.trim();if(!t)return;ta.value='';fetch('/send?session='+encodeURIComponent(sel.sid)+'&agent='+encodeURIComponent(sel.agent)+'&text='+encodeURIComponent(t),{method:'POST'}).then(r=>r.json()).then(()=>{setTimeout(()=>loadTranscript(true),500);setTimeout(()=>loadTranscript(true),2500);}).catch(()=>{});}

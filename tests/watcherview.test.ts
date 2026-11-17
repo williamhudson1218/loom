@@ -160,7 +160,7 @@ describe('standing chat terminal on the Watchers tab', () => {
     expect(notoken.msg).toContain('Open on Board');
   });
 
-  it('gives a standing watcher a Chat tab, opened first; others open on History', () => {
+  it('a standing watcher opens on Terminal (Transcript when it has no live pane); others open on History', () => {
     const p = page();
     const standing = { action: { kind: 'start_chat', params: { standing: true } } };
     const oneShot = { action: { kind: 'start_chat', params: { standing: false } } };
@@ -168,10 +168,27 @@ describe('standing chat terminal on the Watchers tab', () => {
     expect(p.wvHasChat(oneShot, [])).toBe(false);
     expect(p.wvHasChat(oneShot, list)).toBe(true); // switched off standing, but its chat still runs
     expect(p.wvHasChat({ action: { kind: 'notify', params: {} } }, [])).toBe(false);
-    expect(p.wvPaneFor('', true)).toBe('chat');
-    expect(p.wvPaneFor('', false)).toBe('history');
-    expect(p.wvPaneFor('chat', false)).toBe('history');
-    expect(p.wvPaneFor('settings', true)).toBe('settings');
+    expect(p.wvPaneFor('', true, true)).toBe('terminal');
+    expect(p.wvPaneFor('', true, false)).toBe('transcript');
+    expect(p.wvPaneFor('terminal', true, false)).toBe('transcript');
+    expect(p.wvPaneFor('', false, false)).toBe('history');
+    expect(p.wvPaneFor('transcript', false, false)).toBe('history');
+    expect(p.wvPaneFor('settings', true, true)).toBe('settings');
+  });
+
+  it('uses the Board\'s own Terminal / Transcript switch and transcript render, not copies', () => {
+    const html = String(renderDashboard([], Date.now()));
+    // one switch, used by the Board's chat view and by the Watchers tab
+    expect(html).toContain("el.innerHTML=chatTabsHtml(live,eff);");
+    expect(WATCHER_VIEW_JS).toContain('tmp.innerHTML=chatTabsHtml(live,chatEff);');
+    expect(WATCHER_VIEW_JS).not.toContain('>Terminal</button>');
+    // one transcript fetch and render
+    expect(html).toContain("$('#mmsgs').innerHTML=transcriptMsgsHtml(d);");
+    expect(html).toContain('var u=transcriptUrl(sel.sid,sel.agent);');
+    expect(WATCHER_VIEW_JS).toContain('wvGet(transcriptUrl(c.session_id,c.agent))');
+    expect(WATCHER_VIEW_JS).toContain('b.innerHTML=transcriptMsgsHtml(d);');
+    // only the Terminal tab holds the terminal
+    expect(WATCHER_VIEW_JS).toContain("WV.pane==='terminal'&&WV.termHost");
   });
 
   it('opens with openTerm into its own host and closes on leaving the tab', () => {
