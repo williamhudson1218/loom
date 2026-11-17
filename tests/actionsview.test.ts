@@ -143,9 +143,9 @@ describe('routes', () => {
     }
   };
 
-  it('registers the browser rows and the one read in the route table', () => {
+  it('registers the browser rows and the reads in the route table', () => {
     const rows = ROUTES.filter((r) => r.path.startsWith('/api/actions'));
-    expect(rows.filter((r) => r.kind === 'read').map((r) => r.path)).toEqual(['/api/actions']);
+    expect(rows.filter((r) => r.kind === 'read').map((r) => r.path)).toEqual(['/api/actions', '/api/actions/scheduled']);
     expect(rows.filter((r) => r.kind === 'browser').map((r) => r.path).sort()).toEqual(
       ['add', 'ask-first', 'check', 'close-when-done', 'remove', 'retry', 'run', 'undo'].map((x) => '/api/actions/' + x),
     );

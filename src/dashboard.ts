@@ -17,6 +17,7 @@ import { BRAND_ICONS_CSS, BRAND_ICONS_JS, BRAND_SVG } from './brandicons.ts';
 import { ORCH_VIEW_CSS, ORCH_VIEW_HTML, ORCH_VIEW_JS } from './orchview.ts';
 import { HOME_VIEW_CSS, HOME_VIEW_HTML, HOME_VIEW_JS } from './homeview.ts';
 import { SETTINGS_VIEW_CSS, SETTINGS_VIEW_HTML, SETTINGS_VIEW_JS } from './settingsview.ts';
+import { SCHED_VIEW_CSS, SCHED_VIEW_HTML, SCHED_VIEW_JS } from './scheduledview.ts';
 import { WIZARD_VIEW_CSS, WIZARD_VIEW_HTML, WIZARD_VIEW_JS } from './wizardview.ts';
 import { ERROR_VIEW_CSS, ERROR_VIEW_JS } from './errorview.ts';
 import { LOGO_SVG, threadMark } from './logo.ts';
@@ -243,6 +244,7 @@ ${WELCOME_BOOT_CSS}
   .tab.watchtab.on:hover { background:#45345a; }
   #watch-section, #settings-section { display:none; padding:0 20px 24px; }
 ${SETTINGS_VIEW_CSS}
+${SCHED_VIEW_CSS}
 ${CONNECT_VIEW_CSS}
 ${PRUNE_VIEW_CSS}
   .emrow.w-on { border-left-color:var(--done); }
@@ -1147,6 +1149,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
   <div id="watch-spawns" class="emfeed"></div>
 </section>
   ${SETTINGS_VIEW_HTML}
+${SCHED_VIEW_HTML}
 <section id="trees-section">
   <div class="emtop">
     <h2 class="emtitle">Worktrees</h2>
@@ -1291,7 +1294,7 @@ function watchBadge(){var n=Number(WATCH.unreviewed)||0;(WATCH.watchers||[]).for
 // (old lastCommitAt) are not counted: with dozens of worktrees that made the badge noise.
 function treeIsStale(w){if(w.primary||(w.livePanes&&w.livePanes.length))return false;return w.verdict==='safe';}
 function staleTreeCount(){var n=0;TREES.repos.forEach(function(r){r.worktrees.forEach(function(w){if(treeIsStale(w))n++;});});return n;}
-function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'" title="'+d[1].slice(2)+'" aria-label="'+d[1].slice(2)+'"><span class="ti">'+d[1].slice(0,1)+'</span><span class="tl"> '+d[1].slice(2)+'</span>'+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
+function renderTabs(){const gb=$('#setbtn');if(gb){gb.classList.toggle('on',tab==='settings');gb.setAttribute('aria-pressed',tab==='settings'?'true':'false');}const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board',0,''],['saved','★ Saved',0,' savedtab'],['watch','◉ Watchers',watchBadge(),' watchtab'],['sched','◷ Scheduled',Object.values(DATA.actions||{}).filter(a=>a&&a.attention).length,' schedtab'],['trees','⑂ Trees',staleTreeCount(),' treetab']];$('#tabs').innerHTML=defs.map(d=>'<button class="tab'+d[3]+(tab===d[0]?' on':'')+'" data-t="'+d[0]+'" title="'+d[1].slice(2)+'" aria-label="'+d[1].slice(2)+'"><span class="ti">'+d[1].slice(0,1)+'</span><span class="tl"> '+d[1].slice(2)+'</span>'+(d[2]>0?'<span class="cnt">'+d[2]+'</span>':'')+'</button>').join('');$('#tabs').querySelectorAll('.tab').forEach(el=>el.onclick=()=>{if(tab===el.dataset.t)return;tab=el.dataset.t;stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();});}
 // Header status: "Updated Ns ago" only when the data is over 30 s old or the last poll failed.
 var pollFailed=false;
 function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(DATA.generatedAt||0);
@@ -1304,7 +1307,7 @@ function renderStale(){const el=$('#stale');if(!el)return;const age=Date.now()-(
 // The Trees, Watchers and Settings tabs show something other than chats, so every
 // chat-scoped control goes away with them — leaving the project/sort pickers
 // visible would imply they filter it.
-function syncControls(){const tr=tab==='trees';const tk=boardColumns();const wa=tab==='watch';const se=tab==='settings';const other=tr||wa||se;const hm=tab==='home';
+function syncControls(){const tr=tab==='trees';const tk=boardColumns();const wa=tab==='watch';const se=tab==='settings';const sc=tab==='sched';const other=tr||wa||se||sc;const hm=tab==='home';
   $('#livetoggle').style.display=(tab==='saved'||other)?'none':'';
   $('.controls').style.display=other?'none':'';
   $('#row3').style.display=other?'none':'';
@@ -1324,6 +1327,7 @@ function syncControls(){const tr=tab==='trees';const tk=boardColumns();const wa=
   $('#trees-section').style.display=tr?'block':'none';
   $('#watch-section').style.display=wa?'block':'none';
   $('#settings-section').style.display=se?'block':'none';
+  $('#sched-section').style.display=sc?'block':'none';
 }
 function liveToggle(){const board=DATA.chats.filter(c=>!isSaved(c));const nLive=board.filter(isLive).length;const nAll=board.length;const t=$('#livetoggle');t.innerHTML='<button data-live="1" class="'+(liveOnly?'on':'')+'" title="only chats running in a pane">● Live '+nLive+'</button><button data-live="0" class="'+(liveOnly?'':'on')+'" title="every chat on the board">All '+nAll+'</button>';t.querySelectorAll('button').forEach(b=>b.onclick=()=>{liveOnly=b.dataset.live==='1';liveToggle();chips();render();});}
 function isWorking(c){const L=DATA.live[chatKey(c)];return !!(L&&L.working);}
@@ -1370,7 +1374,7 @@ function wireSideTop(){$('#sort').value=sortMode;
     render();});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const h=e.target.closest&&e.target.closest('.sgrp[data-gk]');if(!h||e.target!==h)return;e.preventDefault();h.click();});}
 function matchFilter(c){if(fDraft&&!hasDrafts(c))return false;if(fIssue){const s=st(c);if(!(s==='warning'||s==='error'))return false;}return true;}
-function render(){syncHomeTab();renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
+function render(){syncHomeTab();renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='sched'){renderSched();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||searchHay(c,(DATA.live[chatKey(c)]||{}).name).includes(q));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
@@ -1654,6 +1658,7 @@ window.loomOpenPr=function(url){
   if(typeof selectOrch==='function')selectOrch();
 };
 ${SETTINGS_VIEW_JS}
+${SCHED_VIEW_JS}
 ${PRUNE_VIEW_JS}
 // ---- Slack auto-start banner ----------------------------------------------------
 // A hotkey press on a thread no chat owned started one (server: slackowner.ts).
@@ -2481,6 +2486,7 @@ setInterval(renderStale,5000);renderStale();
 setTimeout(refresh,0);
 setInterval(visOnly(function(){refreshTrees(false);}),300000);
 setInterval(visOnly(refreshWatch),15000);
+setInterval(visOnly(function(){if(tab==='sched'){schedLoad(true);}}),10000);
 loadShipCands();setInterval(visOnly(loadShipCands),15000);
 ['dragover','drop'].forEach(n=>document.addEventListener(n,e=>{if(e.dataTransfer&&Array.prototype.indexOf.call(e.dataTransfer.types||[],'Files')>=0)e.preventDefault();}));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();loadTerminals();}});

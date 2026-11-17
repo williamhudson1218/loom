@@ -129,7 +129,7 @@ function jumpTab(t){if(t==='columns'||t==='list'){if(tab==='board'&&boardView===
 function jumpToBoard(){if(boardColumns()){leaveColumns();return;}if(tab==='board'||tab==='saved')return;jumpTab('board');}
 function openSettingsAt(sec){try{SX.sec=sec;SX.ghLoaded=0;SX.gmLoaded=0;lsSet('loom.settingsSec',sec);}catch(e){}if(tab==='settings'){if(typeof renderSettings==='function')renderSettings();}else openSettings();}
 function jumpCommands(){
-  var tabs=[['home','Home'],['board','Board'],['columns','Board columns'],['saved','Saved'],['watch','Watchers'],['trees','Trees']];
+  var tabs=[['home','Home'],['board','Board'],['columns','Board columns'],['saved','Saved'],['watch','Watchers'],['sched','Scheduled'],['trees','Trees']];
   var c=[
     {kind:'cmd',id:'new',label:'New thread',hay:'start launch chat',icon:'＋',run:function(){if(!composerOpen)openComposer();}},
     {kind:'cmd',id:'restore',label:'Restore sessions',hay:'rebuild tmux workspace snapshot',icon:'⟲',run:function(){restoreWorkspace();}},

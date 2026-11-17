@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import { openDb as realOpenDb } from '../db.ts';
-import { addStep, chatFlags, getStep, listSteps, newStepId, setCloseWhenDone, setStep } from '../actions.ts';
+import { addStep, chatFlags, getStep, listSteps, newStepId, openChains, setCloseWhenDone, setStep, stepSummary } from '../actions.ts';
+import { currentStep } from '../actioneval.ts';
+import { listWatchers } from '../watchers/model.ts';
 import { logAction } from '../actionserver.ts';
 import { readOutbox } from '../outbox.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
@@ -54,6 +56,64 @@ export function actionSummary(db: Database.Database): Record<string, { open: num
   const out: Record<string, { open: number; attention: boolean }> = {};
   for (const r of rows) out[r.session_id] = { open: r.open, attention: !!r.attention };
   return out;
+}
+
+/** One open step on the Scheduled page. `current` is false for a step queued behind an earlier one in its chain. */
+export interface ScheduledStep {
+  id: string;
+  session_id: string;
+  position: number;
+  title: string;
+  summary: string;
+  trigger_type: string;
+  /** clock steps: when it fires (ms) */
+  at: number;
+  action_type: string;
+  status: string;
+  status_why: string;
+  current: boolean;
+}
+
+/** One watcher on the Scheduled page: what it watches and when it next checks. */
+export interface ScheduledWatcher {
+  id: string;
+  label: string;
+  enabled: boolean;
+  run_mode: string;
+  source: string;
+  next_poll_at: number;
+  last_poll_at: number;
+  last_error: string;
+}
+
+/** Everything that will happen without a person starting it: every open step in every chain, and every watcher. */
+export function scheduledList(db: Database.Database): { steps: ScheduledStep[]; watchers: ScheduledWatcher[] } {
+  const steps: ScheduledStep[] = [];
+  for (const [sid, chain] of openChains(db)) {
+    const cur = currentStep(chain);
+    for (const s of chain) {
+      if (s.status === 'done' || s.status === 'removed') continue;
+      steps.push({
+        id: s.id, session_id: sid, position: s.position, title: s.title, summary: stepSummary(s), trigger_type: s.trigger_type,
+        at: s.trigger_type === 'clock' ? Number(s.trigger_params.at) || 0 : 0, action_type: s.action_type,
+        status: s.status, status_why: s.status_why, current: s === cur,
+      });
+    }
+  }
+  let watchers: ScheduledWatcher[] = [];
+  try {
+    watchers = listWatchers(db).map((w) => ({
+      id: w.id, label: w.label, enabled: w.enabled, run_mode: w.run_mode, source: w.source.kind,
+      next_poll_at: w.poll.next_poll_at, last_poll_at: w.poll.last_poll_at, last_error: w.poll.last_error,
+    }));
+  } catch {
+    // No watcher tables yet: the page still lists the steps.
+  }
+  return { steps, watchers };
+}
+
+function getScheduled(ctx: RouteCtx): void {
+  ctx.json(200, { ok: true, ...withDb((db) => scheduledList(db)) });
 }
 
 const str = (v: unknown, n: number): string => (typeof v === 'string' ? v.trim().slice(0, n) : '');
@@ -211,6 +271,7 @@ const post = (p: string, handler: RouteDef['handler']): RouteDef => ({ method: '
 
 export const routes: RouteDef[] = [
   { method: 'GET', path: '/api/actions', kind: 'read', handler: getActions },
+  { method: 'GET', path: '/api/actions/scheduled', kind: 'read', handler: getScheduled },
   post('add', postAdd),
   post('check', postCheck),
   post('remove', postRemove),
