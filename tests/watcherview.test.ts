@@ -134,6 +134,69 @@ describe('watchers view', () => {
   });
 });
 
+describe('standing chat terminal on the Watchers tab', () => {
+  const chat = (sid: string) => ({ agent: 'claude', session_id: sid });
+  const list = [
+    { watcher_id: 'w1', current: true, chat: chat('cur') },
+    { watcher_id: 'w1', current: false, chat: chat('old') },
+  ];
+  const live = { 'claude:cur': { pane_id: '%42' }, 'claude:old': { pane_id: '%7' } };
+
+  it('plans the current chat, or the one picked, keyed so it never collides with the board or orchestrator', () => {
+    const p = page();
+    expect(p.wvTermPlan(list, '', live, 'tok')).toMatchObject({ pane: '%42', key: 'wv|%42' });
+    expect(p.wvTermPlan(list, 'old', live, 'tok')).toMatchObject({ pane: '%7', key: 'wv|%7' });
+    expect(p.wvTermPlan(list, 'gone', live, 'tok').pane).toBe('%42');
+  });
+
+  it('says plainly why there is no terminal instead of showing a blank box', () => {
+    const p = page();
+    expect(p.wvTermPlan([], '', live, 'tok')).toEqual({ msg: expect.stringContaining('No chat is running') });
+    const nopane = p.wvTermPlan(list, '', {}, 'tok');
+    expect(nopane.key).toBeUndefined();
+    expect(nopane.msg).toContain('no live pane');
+    const notoken = p.wvTermPlan(list, '', live, '');
+    expect(notoken.key).toBeUndefined();
+    expect(notoken.msg).toContain('Open on Board');
+  });
+
+  it('gives a standing watcher a Chat tab, opened first; others open on Activity', () => {
+    const p = page();
+    const standing = { action: { kind: 'start_chat', params: { standing: true } } };
+    const oneShot = { action: { kind: 'start_chat', params: { standing: false } } };
+    expect(p.wvHasChat(standing, [])).toBe(true);
+    expect(p.wvHasChat(oneShot, [])).toBe(false);
+    expect(p.wvHasChat(oneShot, list)).toBe(true); // switched off standing, but its chat still runs
+    expect(p.wvHasChat({ action: { kind: 'notify', params: {} } }, [])).toBe(false);
+    expect(p.wvPaneFor('', true)).toBe('chat');
+    expect(p.wvPaneFor('', false)).toBe('activity');
+    expect(p.wvPaneFor('chat', false)).toBe('activity');
+    expect(p.wvPaneFor('settings', true)).toBe('settings');
+  });
+
+  it('opens with openTerm into its own host and closes on leaving the tab', () => {
+    expect(WATCHER_VIEW_JS).toContain('openTerm(plan.pane,WV.termHost);termKey=plan.key;');
+    expect(WATCHER_VIEW_JS).toContain("if(termKey.indexOf('wv|')===0)closeTerm();");
+    const html = String(renderDashboard([], Date.now()));
+    expect(html).toContain("function render(){if(tab!=='watch'&&typeof wvLeave==='function')wvLeave();");
+    // a late board poll must not take the terminal back while the Watchers tab shows it
+    expect(html).toContain("if(tab==='watch'&&termKey.indexOf('wv|')===0)return;");
+    // a parked view reopened in a different host moves there
+    expect(html).toContain('if(e.col.parentNode!==el){el.appendChild(e.col);');
+  });
+
+  it('list rows read at a glance: last poll time, off when off', () => {
+    const p = page();
+    const now = 10_000_000;
+    expect(p.wvPollText({ enabled: false, last_poll_at: now }, now)).toBe('Off');
+    expect(p.wvPollText({ enabled: true, last_poll_at: 0 }, now)).toBe('Not polled yet');
+    expect(p.wvPollText({ enabled: true, last_poll_at: now - 20_000 }, now)).toBe('Polled just now');
+    expect(p.wvPollText({ enabled: true, last_poll_at: now - 5 * 60_000 }, now)).toBe('Polled 5 min ago');
+    expect(p.wvAgo(now - 3 * 3_600_000, now)).toBe('3 h ago');
+    expect(p.wvAgo(now - 72 * 3_600_000, now)).toBe('3 d ago');
+  });
+});
+
 describe('recent fires paging', () => {
   it('shows 20 at a time with a Show more button', () => {
     expect(WATCHER_VIEW_JS).toContain('firesShown:20');

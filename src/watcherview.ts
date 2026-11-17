@@ -92,7 +92,32 @@ export const WATCHER_VIEW_CSS = String.raw`
   #watch-section .wvstand .t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #watch-section .wvstand .wvstl { color:var(--wv-muted); font-size:11.5px; white-space:nowrap; }
   #watch-section .wvstand.turn .wvstl { color:#8db6ff; font-weight:600; }
-  #watch-section #wv-stand { margin-top:8px; }
+  #watch-section .wvstand.cur { border-color:#4d5b80; }
+  #watch-section #wv-stand { margin-bottom:8px; }
+  #watch-section .wvli .l1 { display:flex; gap:7px; align-items:center; min-width:0; margin-bottom:2px; }
+  #watch-section .wvli .l1 b { flex:1; min-width:0; margin:0; }
+  #watch-section .wvli .l1 .sdot { margin-top:0; flex:0 0 8px; width:8px; }
+  #watch-section .wvon { flex:none; width:8px; height:8px; border-radius:50%; background:#4a5060; }
+  #watch-section .wvon.y { background:var(--wv-green); }
+  #watch-section .wvli .sub { display:block; font-size:12px; color:var(--wv-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 6px 15px; }
+  #watch-section .wvli .pl { margin-left:15px; align-items:center; }
+  #watch-section .wvago { font-size:11.5px; color:var(--wv-muted); white-space:nowrap; }
+  #watch-section .wvgrp.sub2 { margin:14px 0 6px; }
+  #watch-section .wvfold { display:flex; align-items:center; gap:6px; width:100%; margin:10px 0 0; padding:4px 0; border:0; background:transparent; color:var(--wv-muted); font:inherit; font-size:12.5px; cursor:pointer; text-align:left; }
+  #watch-section .wvfold:hover { color:var(--wv-text); }
+  #watch-section .wvfold .car { display:inline-block; width:10px; transition:transform .12s; }
+  #watch-section .wvfold.open .car { transform:rotate(90deg); }
+  #watch-section .wvfold.grp { margin:20px 0 6px; font-size:11.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
+  #watch-section .wvhead2 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  #watch-section .wvhead2 .sp { flex:1; }
+  #watch-section .wvtabs { display:flex; gap:2px; margin:0 0 12px; border-bottom:1px solid var(--wv-line); }
+  #watch-section .wvtab { font:inherit; font-size:13px; padding:7px 14px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:transparent; color:var(--wv-muted); cursor:pointer; display:inline-flex; gap:7px; align-items:center; }
+  #watch-section .wvtab:hover { color:var(--wv-text); }
+  #watch-section .wvtab.on { color:#fff; border-bottom-color:var(--wv-accent); }
+  #watch-section .wvtab .sdot { margin-top:0; }
+  #watch-section .wvtab .n { font-size:11px; padding:0 6px; border-radius:8px; background:rgba(110,162,255,.16); color:#8db6ff; }
+  #watch-section #wv-termhost { height:62vh; min-height:340px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
+  #watch-section #wv-termmsg { padding:28px 16px; text-align:center; color:var(--wv-muted); font-size:13px; border:1px dashed var(--wv-line); border-radius:10px; }
 `;
 
 export const WATCHER_VIEW_HTML = String.raw`
@@ -105,7 +130,7 @@ var WV_SRC=[['slack','Slack channel'],['chats','Chats'],['prs','Pull requests'],
 var WV_ACT=[['start_chat','Start a chat with a brief'],['message_chat','Send a message into the matching chat'],['notify','Notify me (Mac notification)'],['tell_orch','Tell the orchestrator']];
 var WV_CHIPS={slack:['WATCHER','TITLE','URL','TEXT','AUTHOR','CHANNEL'],chats:['WATCHER','CHAT_TITLE','PROJECT','PANE','IDLE_MIN','PERCENT'],prs:['WATCHER','TITLE','PR','PR_TITLE','URL','CHECK'],work:['WATCHER','TITLE','RULE','TICKET','SUBJECT','DETAIL','CLEAR','BATCH_FILE','COUNT']};
 var WV_LABELS={bot_ids:['Bot ids','Comma separated Slack bot ids (B...).'],user_ids:['User ids','Comma separated Slack user ids (U...).'],needle:['Phrase','Slack bot posts match the exact text; people posts ignore case.'],repos:['Repos','Comma separated owner/name. Empty means any repo.'],exclude_user_ids:['Ignore these user ids','Comma separated. Your own id is always ignored when "Ignore my own posts" is on.'],any_author:['Include posts by bots','Off means people only.'],min:['Minutes',''],min_sec:['Seconds waiting',''],max_h:['Ignore after (hours)','Chats waiting longer than this are old news.'],fraction:['Fraction of context used','0.85 means 85 percent.']};
-var WV={built:false,sel:'',draft:null,orig:null,dirty:false,tpls:[],have:{},chan:{},projects:[],lanes:[],cfg:{},test:null,testing:false,shadow:[],fires:[],msg:'',msgErr:false,skipOk:false,confirmDel:false,editorFor:'__none__',loaded:false,link:'',linkMsg:'',firesShown:20,inv:{},invQ:'',chipTarget:'wv-brief'};
+var WV={built:false,sel:'',draft:null,orig:null,dirty:false,tpls:[],have:{},chan:{},projects:[],lanes:[],cfg:{},test:null,testing:false,shadow:[],fires:[],msg:'',msgErr:false,skipOk:false,confirmDel:false,editorFor:'__none__',loaded:false,link:'',linkMsg:'',firesShown:20,inv:{},invQ:'',chipTarget:'wv-brief',pane:'',termSid:'',termHost:null,optsOpen:false,addOpen:false,spawnsOpen:false};
 
 /* ---- pure helpers (no DOM; the unit tests run these) ---- */
 function wvClone(o){return JSON.parse(JSON.stringify(o));}
@@ -132,6 +157,20 @@ function wvActionText(d){return d.action.kind==='start_chat'?d.action.params.bri
 function wvNeedsSkipConfirm(d,orig){return d.action.kind==='start_chat'&&d.action.params.perm==='skip'&&!(orig&&orig.action.kind==='start_chat'&&orig.action.params.perm==='skip');}
 function wvActLabel(kind){for(var i=0;i<WV_ACT.length;i++)if(WV_ACT[i][0]===kind)return WV_ACT[i][1];return kind;}
 function wvResultPill(e){var m={held_quiet:['warn','Held: quiet hours'],held_cap:['warn','Held: hourly cap'],held_cooldown:['warn','Held: cooldown'],held_capacity:['warn','Held: no free window']};if(m[e.decision])return m[e.decision];var r={started:['ok','Started'],sent:['ok','Sent'],notified:['ok','Notified'],told:['ok','Told orchestrator'],queued:['warn','Queued'],failed:['err','Failed']};if(r[e.result])return r[e.result];return e.decision==='would_fire'?['rev','Would fire']:['',e.decision];}
+function wvAgo(ms,now){if(!ms)return '';var s=Math.max(0,Math.round((now-ms)/1000));if(s<60)return 'just now';var m=Math.round(s/60);if(m<60)return m+' min ago';var h=Math.round(m/60);if(h<48)return h+' h ago';return Math.round(h/24)+' d ago';}
+function wvPollText(w,now){if(!w.enabled)return 'Off';if(!w.last_poll_at)return 'Not polled yet';return 'Polled '+wvAgo(w.last_poll_at,now);}
+/* Does this watcher keep a standing chat (so the editor gets a Chat tab)? */
+function wvHasChat(w,standing){return !!(w&&((w.action&&w.action.kind==='start_chat'&&w.action.params&&w.action.params.standing===true)||(standing&&standing.length)));}
+function wvPaneFor(cur,hasChat){if(cur==='chat'&&!hasChat)return 'activity';if(cur)return cur;return hasChat?'chat':'activity';}
+/* What the Chat tab shows: the chosen (else the current) standing chat's live pane, or a plain reason there is none. */
+function wvTermPlan(list,sid,live,token){
+  if(!list||!list.length)return {msg:'No chat is running for this watcher. Its standing chat starts on the next match it acts on.'};
+  var s=list[0];for(var i=0;i<list.length;i++)if(list[i].chat.session_id===sid)s=list[i];
+  var L=live&&live[s.chat.agent+':'+s.chat.session_id];var pane=L&&L.pane_id;
+  if(!pane)return {chat:s,msg:'This chat has no live pane right now.'};
+  if(!token)return {chat:s,msg:'The terminal needs the running Loom app. Use Open on Board instead.'};
+  return {chat:s,pane:pane,key:'wv|'+pane};
+}
 function wvTimeText(ms,now){var d=new Date(ms),n=new Date(now),p=function(x){return (x<10?'0':'')+x;};var hm=p(d.getHours())+':'+p(d.getMinutes());if(d.toDateString()===n.toDateString())return hm;var y=new Date(now-86400000);if(d.toDateString()===y.toDateString())return 'Yesterday '+hm;var mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return mo[d.getMonth()]+' '+d.getDate()+' '+hm;}
 
 /* ---- tiny DOM builders ---- */
@@ -185,10 +224,13 @@ function wvDrawTop(){
   var on=wvCfg('watchers_enabled',false);
   function row(title,help,ctl){var r=wvEl('div','wvset');var a=wvEl('div');a.appendChild(wvEl('b','',title));a.appendChild(wvEl('span','h',help));var c=wvEl('div','ctl');c.appendChild(ctl);r.appendChild(a);r.appendChild(c);return r;}
   var tg=wvEl('label','wvtog');var cb=wvEl('input');cb.type='checkbox';cb.id='wv-master';cb.checked=!!on;cb.onchange=function(){setting('watchers_enabled',cb.checked);};tg.appendChild(cb);tg.appendChild(wvEl('span','',on?'On':'Off'));
+  var mc=wvEl('div','wvrow');mc.appendChild(tg);var ob=wvBtn(WV.optsOpen?'Hide options':'Options','sm',function(){WV.optsOpen=!WV.optsOpen;wvDrawTop();});ob.id='wv-opts';mc.appendChild(ob);
+  top.appendChild(row('Watchers','Master switch. Nothing below runs while it is off.',mc));
+  if(!WV.optsOpen)return;
   var days=wvEl('input');days.type='number';days.min=0;days.className='wvnum';days.id='wv-prune';days.value=wvCfg('watcher_brief_prune_days',0);days.onchange=function(){setting('watcher_brief_prune_days',Number(days.value)||0);};
   var dw=wvEl('div','wvrow');dw.appendChild(days);dw.appendChild(wvEl('span','wvdef','days (0 keeps them)'));
   var ig=wvEl('label','wvtog');var ic=wvEl('input');ic.type='checkbox';ic.id='wv-ignore';ic.checked=wvCfg('watchers_ignore_self',true)!==false;ic.onchange=function(){setting('watchers_ignore_self',ic.checked);};ig.appendChild(ic);ig.appendChild(wvEl('span','',ic.checked?'On':'Off'));
-  wvAdd(top,row('Watchers','Master switch. Nothing below runs while it is off.',tg),row('Prune per-match briefs after','Each match that starts a chat writes a brief to the watchers folder in your Loom data folder.',dw),row('Ignore my own posts','Excludes your Slack user id on every Slack watcher.',ig));
+  wvAdd(top,row('Prune per-match briefs after','Each match that starts a chat writes a brief to the watchers folder in your Loom data folder.',dw),row('Ignore my own posts','Excludes your Slack user id on every Slack watcher.',ig));
 }
 function wvDrawNote(){
   var n=document.getElementById('wvnote');if(!n)return;n.textContent='';n.className='';
@@ -200,6 +242,7 @@ function wvDrawNote(){
 }
 function wvSelect(id){
   if(WV.dirty&&id!==WV.sel){WV.msg='Unsaved changes. Save or Discard them before opening another watcher.';WV.msgErr=true;wvSync();return;}
+  if(id!==WV.sel){WV.pane='';WV.termSid='';}
   WV.sel=id;WV.firesShown=20;WV.test=null;WV.msg='';WV.confirmDel=false;WV.skipOk=false;WV.dirty=false;WV.editorFor='__none__';
   if(id==='new'){WV.draft=wvBlank();WV.orig=null;}
   else{var w=wvById(id);WV.draft=w?wvDraftOf(w):null;WV.orig=w?wvDraftOf(w):null;}
@@ -207,30 +250,29 @@ function wvSelect(id){
 }
 function wvDrawList(){
   var left=document.getElementById('wvleft');if(!left)return;left.textContent='';
-  left.appendChild(wvEl('div','wvgrp','Watchers'));
-  var ws=WATCH.watchers||[];
+  var ws=WATCH.watchers||[];var now=Date.now();
+  var nb=wvBtn('+ New watcher','',function(){wvSelect('new');});nb.id='wv-new';nb.style.width='100%';nb.style.marginBottom='4px';left.appendChild(nb);
   if(!ws.length&&WV.sel!=='new')left.appendChild(wvEl('div','wvempty','No watchers yet. Add one, or start from a template.'));
   var order=[['slack','Slack channels'],['chats','Chats'],['prs','Pull requests'],['work','Findings endpoints']];
-  order.forEach(function(g){var gl=ws.filter(function(w){return w.source.kind===g[0];});if(!gl.length)return;var gh=wvEl('div','wvgrp',g[1]);gh.style.margin='12px 0 6px';left.appendChild(gh);gl.forEach(wvRow);});
+  order.forEach(function(g){var gl=ws.filter(function(w){return w.source.kind===g[0];});if(!gl.length)return;left.appendChild(wvEl('div','wvgrp sub2',g[1]));gl.forEach(wvRow);});
   function wvRow(w){
     var b=wvEl('button','wvli'+(w.id===WV.sel?' sel':''));b.type='button';b.setAttribute('data-wid',w.id);
-    b.appendChild(wvEl('b','',w.label));
-    var sm=wvEl('span','wvdef',wvWatches(w));sm.style.display='block';sm.style.margin='0 0 5px';b.appendChild(sm);
-    wvStandingOf(w.id).forEach(function(s){b.appendChild(wvStandingEl(s,false));});
+    var l1=wvEl('span','l1');var on=wvEl('span','wvon'+(w.enabled?' y':''));on.title=w.enabled?'On':'Off';l1.appendChild(on);l1.appendChild(wvEl('b','',w.label));
+    var st=wvStandingOf(w.id);if(st.length&&typeof dotCls==='function'){var cls=dotCls(st[0].chat);var sd=wvEl('span','sdot '+cls);sd.setAttribute('data-standing','1');sd.title='Standing chat: '+((typeof DOT_LABEL!=='undefined'&&DOT_LABEL[cls])||'running');l1.appendChild(sd);}
+    b.appendChild(l1);
+    b.appendChild(wvEl('span','sub',wvWatches(w)));
     var pl=wvEl('span','pl');
-    pl.appendChild(wvEl('span','wvpill '+(w.enabled?'ok':''),w.enabled?'On':'Off'));
-    var sn={slack:'Slack',chats:'Chats',prs:'Pull requests',work:'Findings endpoint'}[w.source.kind]||w.source.kind;
-    pl.appendChild(wvEl('span','wvpill',sn));
     pl.appendChild(wvEl('span','wvpill '+(w.run_mode==='shadow'?'warn':'ok'),w.run_mode==='shadow'?'Shadow':'Live'));
     if(w.shadow_unreviewed>0)pl.appendChild(wvEl('span','wvpill rev',w.shadow_unreviewed+' to review'));
     if(w.last_error)pl.appendChild(wvEl('span','wvpill err','Poll error'));
     if(w.skip_permissions)pl.appendChild(wvEl('span','wvpill err','Skip permissions'));
+    pl.appendChild(wvEl('span','wvago',wvPollText(w,now)));
     b.appendChild(pl);b.onclick=function(){wvSelect(w.id);};left.appendChild(b);
   }
-  var nb=wvBtn('+ New watcher','',function(){wvSelect('new');});nb.id='wv-new';nb.style.width='100%';nb.style.marginTop='4px';left.appendChild(nb);
+  var fold=wvBtn('','',function(){WV.addOpen=!WV.addOpen;wvDrawList();});fold.className='wvfold'+(WV.addOpen?' open':'');fold.id='wv-addfold';fold.appendChild(wvEl('span','car','>'));fold.appendChild(wvEl('span','','Other ways to add a watcher'));left.appendChild(fold);
+  if(!WV.addOpen)return;
   // from template
-  var tf=wvEl('div','wvfld');tf.style.marginTop='12px';tf.appendChild(wvEl('label','','Start from a template'));
-  var opts=[['','Choose a template...']];
+  var tf=wvEl('div','wvfld');tf.style.marginTop='8px';tf.appendChild(wvEl('label','','Start from a template'));
   var groups=['Slack','Chats','Pull requests'];
   var ts=wvEl('select');ts.id='wv-tpl';var o0=wvEl('option','','Choose a template...');o0.value='';ts.appendChild(o0);
   groups.forEach(function(g){var og=wvEl('optgroup');og.label=g;WV.tpls.forEach(function(t){if(t.group!==g)return;var needsSlack=t.needs==='slack_direct'&&!WV.have.slack_direct;var needsOrch=t.needs==='orchestrator'&&!WV.have.orchestrator;var op=wvEl('option','',t.label+(needsSlack?' (needs Slack, Direct)':needsOrch?' (needs the orchestrator)':t.needs==='gh'?' (needs gh)':''));op.value=t.id;op.title=t.description;og.appendChild(op);});ts.appendChild(og);});
@@ -277,27 +319,47 @@ function wvDrawEditor(){
     var e=wvEl('div','wvcard');e.appendChild(wvEl('div','wvempty',(WATCH.watchers||[]).length?'Choose a watcher on the left to edit it.':'Add a watcher, or start from a template. A watcher is Source, then Trigger, then Action.'));right.appendChild(e);return;
   }
   var isNew=WV.sel==='new';
-  // header card
+  var w0=isNew?null:wvById(WV.sel);
+  // header card: name, save state and the main actions; status and the rarer actions on the line below
   var hc=wvEl('div','wvcard');var hr=wvEl('div','wvrow');
   var nm=wvText(function(){return d.label;},function(v){d.label=v;});nm.className='wvname';nm.id='wv-name';hr.appendChild(nm);
-  hr.appendChild(wvEl('span','wvpill '+(d.enabled?'ok':''),d.enabled?'On':'Off'));
   var dirty=wvEl('span','wvdirty');dirty.id='wv-dirty';hr.appendChild(dirty);
-  if(!isNew){
-    hr.appendChild(wvBtn('Duplicate','',function(){wvPost('/api/watchers/duplicate',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not duplicate';WV.msgErr=true;wvSync();return;}wvRefresh().then(function(){WV.dirty=false;wvSelect(j.watcher.id);});});}));
-    var en=wvBtn(d.enabled?'Disable':'Enable','',function(){var was=WV.dirty;d.enabled=!d.enabled;WV.dirty=true;wvSave(function(){d.enabled=!d.enabled;WV.dirty=was;wvDrawEditor();wvSync();});});en.id='wv-enable';hr.appendChild(en);
-    var del=wvBtn(WV.confirmDel?'Confirm delete':'Delete','danger',function(){if(!WV.confirmDel){WV.confirmDel=true;wvDrawEditor();return;}wvPost('/api/watchers/delete',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not delete';WV.msgErr=true;wvSync();return;}WV.dirty=false;WV.sel='';WV.draft=null;WV.orig=null;wvRefresh().then(function(){var f=(WATCH.watchers||[])[0];if(f)wvSelect(f.id);else{wvDrawList();wvDrawEditor();}});});});del.id='wv-delete';hr.appendChild(del);
-  }
+  if(!isNew){var en=wvBtn(d.enabled?'Disable':'Enable','',function(){var was=WV.dirty;d.enabled=!d.enabled;WV.dirty=true;wvSave(function(){d.enabled=!d.enabled;WV.dirty=was;wvDrawEditor();wvSync();});});en.id='wv-enable';hr.appendChild(en);}
   var dis=wvBtn('Discard','',function(){WV.dirty=false;WV.msg='';if(isNew){WV.sel='';WV.draft=null;wvDrawList();wvDrawEditor();return;}var w=wvById(WV.sel);WV.draft=w?wvDraftOf(w):null;WV.orig=w?wvDraftOf(w):null;WV.editorFor='__none__';wvDrawEditor();});dis.id='wv-discard';hr.appendChild(dis);
   var sv=wvBtn('Save','pri',wvSave);sv.id='wv-save';hr.appendChild(sv);
-  hc.appendChild(hr);var stand=wvEl('div');stand.id='wv-stand';hc.appendChild(stand);var msg=wvEl('div','wvmsg');msg.id='wv-msg';msg.style.marginTop='6px';hc.appendChild(msg);
-  var w0=isNew?null:wvById(WV.sel);
+  hc.appendChild(hr);
+  if(!isNew){
+    var h2=wvEl('div','wvhead2');
+    h2.appendChild(wvEl('span','wvpill '+(d.enabled?'ok':''),d.enabled?'On':'Off'));
+    h2.appendChild(wvEl('span','wvpill '+(d.run_mode==='shadow'?'warn':'ok'),d.run_mode==='shadow'?'Shadow':'Live'));
+    if(w0)h2.appendChild(wvEl('span','wvago',wvWatches(w0)+(w0.enabled?' · '+wvPollText(w0,Date.now()):'')));
+    h2.appendChild(wvEl('span','sp'));
+    h2.appendChild(wvBtn('Duplicate','sm',function(){wvPost('/api/watchers/duplicate',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not duplicate';WV.msgErr=true;wvSync();return;}wvRefresh().then(function(){WV.dirty=false;wvSelect(j.watcher.id);});});}));
+    var del=wvBtn(WV.confirmDel?'Confirm delete':'Delete','danger sm',function(){if(!WV.confirmDel){WV.confirmDel=true;wvDrawEditor();return;}wvPost('/api/watchers/delete',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not delete';WV.msgErr=true;wvSync();return;}WV.dirty=false;WV.sel='';WV.draft=null;WV.orig=null;wvRefresh().then(function(){var f=(WATCH.watchers||[])[0];if(f)wvSelect(f.id);else{wvDrawList();wvDrawEditor();}});});});del.id='wv-delete';h2.appendChild(del);
+    hc.appendChild(h2);
+  }
+  var msg=wvEl('div','wvmsg');msg.id='wv-msg';msg.style.marginTop='6px';hc.appendChild(msg);
   if(w0&&w0.last_error){var le=wvEl('div','wvmsg err','Last poll failed: '+w0.last_error);le.style.marginTop='4px';hc.appendChild(le);}
   right.appendChild(hc);
-  wvStandingSync();
-  wvDrawSource(right,d);wvDrawTrigger(right,d);wvDrawAction(right,d);wvDrawMode(right,d);wvDrawSafety(right,d);
-  if(!isNew){wvDrawTest(right,d);var sh=wvEl('div','wvcard');sh.id='wv-shadow';right.appendChild(sh);var fi=wvEl('div','wvcard');fi.id='wv-fires';right.appendChild(fi);wvDrawEvents();}
-  else{var tc=wvEl('div','wvcard');tc.appendChild(wvEl('h4','','Test'));tc.appendChild(wvEl('div','wvdef','Save the watcher first, then Test it against recent items.'));right.appendChild(tc);}
-  wvSync();
+  if(isNew){
+    wvDrawSource(right,d);wvDrawTrigger(right,d);wvDrawAction(right,d);wvDrawMode(right,d);wvDrawSafety(right,d);
+    var tc=wvEl('div','wvcard');tc.appendChild(wvEl('h4','','Test'));tc.appendChild(wvEl('div','wvdef','Save the watcher first, then Test it against recent items.'));right.appendChild(tc);
+    wvSync();wvTermSync();return;
+  }
+  // an existing watcher: its standing chat (live terminal), its activity, and its settings, one at a time
+  var stand=wvStandingOf(WV.sel);var hasChat=wvHasChat(w0,stand);WV.pane=wvPaneFor(WV.pane,hasChat);
+  var tabs=wvEl('div','wvtabs');tabs.id='wv-tabs';
+  function tabBtn(k,label,extra){var b=wvEl('button','wvtab'+(WV.pane===k?' on':''));b.type='button';b.setAttribute('data-pane',k);if(extra&&extra.dot)b.appendChild(extra.dot);b.appendChild(wvEl('span','',label));if(extra&&extra.n)b.appendChild(wvEl('span','n',String(extra.n)));b.onclick=function(){if(WV.pane===k)return;WV.pane=k;wvDrawEditor();};tabs.appendChild(b);}
+  if(hasChat){var dt=null;if(stand.length&&typeof dotCls==='function')dt=wvEl('span','sdot '+dotCls(stand[0].chat));tabBtn('chat','Chat',{dot:dt});}
+  tabBtn('activity','Activity',{n:w0&&w0.shadow_unreviewed>0?w0.shadow_unreviewed:0});
+  tabBtn('settings','Settings');
+  right.appendChild(tabs);
+  function pane(k){var p=wvEl('div');p.id='wv-pane-'+k;if(WV.pane!==k)p.style.display='none';right.appendChild(p);return p;}
+  if(hasChat){var cp=pane('chat');var sl=wvEl('div');sl.id='wv-stand';cp.appendChild(sl);var tm=wvEl('div');tm.id='wv-termmsg';tm.style.display='none';cp.appendChild(tm);
+    if(!WV.termHost){WV.termHost=wvEl('div');WV.termHost.id='wv-termhost';}WV.termHost.style.display='none';cp.appendChild(WV.termHost);}
+  var ap=pane('activity');wvDrawTest(ap,d);var sh=wvEl('div','wvcard');sh.id='wv-shadow';ap.appendChild(sh);var fi=wvEl('div','wvcard');fi.id='wv-fires';ap.appendChild(fi);
+  var sp=pane('settings');wvDrawSource(sp,d);wvDrawTrigger(sp,d);wvDrawAction(sp,d);wvDrawMode(sp,d);wvDrawSafety(sp,d);
+  wvDrawEvents();wvStandingSync();wvSync();wvTermSync();
 }
 function wvCard(title){var c=wvEl('div','wvcard');c.appendChild(wvEl('h4','',title));return c;}
 function wvDrawSource(right,d){
@@ -478,8 +540,10 @@ function wvDrawEvents(){
 }
 
 function wvDrawSpawns(){
-  var c=document.getElementById('wvspawns');if(!c)return;c.textContent='';var h=wvEl('div','wvgrp','Workers started');h.style.margin='20px 0 6px';c.appendChild(h);
-  var sps=WATCH.spawns||[];if(!sps.length){c.appendChild(wvEl('div','wvdef','Nothing started yet.'));return;}
+  var c=document.getElementById('wvspawns');if(!c)return;c.textContent='';var sps=WATCH.spawns||[];
+  var h=wvBtn('','',function(){WV.spawnsOpen=!WV.spawnsOpen;wvDrawSpawns();});h.className='wvfold grp'+(WV.spawnsOpen?' open':'');h.id='wv-spawnfold';h.appendChild(wvEl('span','car','>'));h.appendChild(wvEl('span','','Workers started'+(sps.length?' · '+sps.length:'')));c.appendChild(h);
+  if(!WV.spawnsOpen)return;
+  if(!sps.length){c.appendChild(wvEl('div','wvdef','Nothing started yet.'));return;}
   var t=wvEl('table','wvt');var hr=wvEl('tr');['When','Event','Watcher','Status',''].forEach(function(x){hr.appendChild(wvEl('th','',x));});t.appendChild(hr);var now=Date.now();
   sps.forEach(function(e){var r=wvEl('tr');r.appendChild(wvEl('td','',wvTimeText(e.detected_at,now)));r.appendChild(wvEventCell(e));var w=wvById(e.watcher_id);r.appendChild(wvEl('td','',w?w.label:e.watcher_id));var td=wvEl('td');td.appendChild(wvEl('span','wvpill '+(e.status==='spawned'?'ok':'warn'),e.status==='spawned'?'Started':e.status));if(e.pane_name)td.appendChild(wvEl('span','wvdef',' '+e.pane_name));r.appendChild(td);var g=wvEl('td');if(e.status==='spawned'&&e.pane_id){var b=wvBtn('go','sm',function(){wvPost('/api/watchers/goto?id='+encodeURIComponent(e.id),{});});g.appendChild(b);}r.appendChild(g);t.appendChild(r);});
   c.appendChild(t);
@@ -496,25 +560,45 @@ function wvRender(){
   if(!WV.draft&&WV.sel===''){wvDrawEditor();}
   else if(WV.draft&&!document.getElementById('wv-save'))wvDrawEditor();
   if(WV.sel&&WV.sel!=='new')wvLoadEvents();
+  wvTermSync();
 }
 // ---- Standing chats ----------------------------------------------------------
-// A standing watcher's own chat is kept off the Board (src/standingchats.ts) and shown here instead: in the
-// watcher's list row and the editor header, with the Board's status dot (dotCls/DOT_LABEL) and title (disp).
-// Clicking it opens the chat the way a notification or a board row does (openInBoard + its terminal).
+// A standing watcher's own chat is kept off the Board (src/standingchats.ts) and shown here instead: a status
+// dot on the watcher's list row, and the editor's Chat tab, which embeds the chat's live terminal (openTerm, the
+// same mechanism as the orchestrator's Terminal view, keyed 'wv|<pane>'). Each running chat of the watcher is a row
+// above the terminal (the Board's dot, DOT_LABEL and title); clicking one shows it, and Open on Board opens it the
+// way a notification or a board row does (openInBoard + its terminal). Leaving the tab, choosing another watcher
+// or another editor tab closes the terminal (wvTermSync, wvLeave).
 function wvStandingOf(id){var l=(typeof DATA!=='undefined'&&DATA&&DATA.standing)||[];return l.filter(function(s){return s&&s.chat&&s.watcher_id===id;});}
 function wvOpenStanding(c){openInBoard(c.session_id,c.agent);if(TERM_TOKEN)mtab='terminal';renderMain();}
-function wvStandingEl(s,withBtn){
+function wvStandingEl(s,shown){
   var c=s.chat;var cls=dotCls(c);var label=DOT_LABEL[cls]||'';
-  var row=wvEl('div','wvstand'+(cls==='d-turn'?' turn':''));row.setAttribute('data-sid',c.session_id);row.setAttribute('data-agent',c.agent);
-  row.title=(s.current?'This watcher':'An earlier chat of this watcher')+' · '+label+' · open the chat';
+  var row=wvEl('div','wvstand'+(cls==='d-turn'?' turn':'')+(shown?' cur':''));row.setAttribute('data-sid',c.session_id);row.setAttribute('data-agent',c.agent);
+  row.title=(s.current?'This watcher':'An earlier chat of this watcher')+' · '+label+(shown?'':' · show its terminal');
   var dot=wvEl('span','sdot '+cls);dot.title=label;row.appendChild(dot);
   row.appendChild(wvEl('span','t',disp(c)));
   row.appendChild(wvEl('span','wvstl',s.current?label:label+' · earlier chat'));
-  if(withBtn){var ob=wvBtn('Open chat','sm',null);ob.setAttribute('data-open','1');row.appendChild(ob);}
-  row.onclick=function(e){if(e&&e.stopPropagation)e.stopPropagation();wvOpenStanding(c);};
+  var ob=wvBtn('Open on Board','sm',function(e){if(e&&e.stopPropagation)e.stopPropagation();wvOpenStanding(c);});ob.setAttribute('data-open','1');row.appendChild(ob);
+  row.onclick=function(){if(WV.termSid===c.session_id)return;WV.termSid=c.session_id;wvStandingSync();wvTermSync();};
   return row;
 }
 function wvStandingSync(){var slot=document.getElementById('wv-stand');if(!slot)return;slot.textContent='';
-  var l=WV.sel&&WV.sel!=='new'?wvStandingOf(WV.sel):[];l.forEach(function(s){slot.appendChild(wvStandingEl(s,true));});}
+  var l=WV.sel&&WV.sel!=='new'?wvStandingOf(WV.sel):[];if(!l.length)return;
+  var plan=wvTermPlan(l,WV.termSid,(typeof DATA!=='undefined'&&DATA&&DATA.live)||{},'x');var cur=plan.chat?plan.chat.chat.session_id:'';
+  l.forEach(function(s){slot.appendChild(wvStandingEl(s,s.chat.session_id===cur));});}
+/* Open, keep or close the Chat tab's terminal to match what is selected. Safe to call on every render. */
+function wvTermSync(){
+  if(typeof openTerm!=='function')return;
+  var onTab=typeof tab==='undefined'||tab==='watch';
+  var want=onTab&&WV.sel&&WV.sel!=='new'&&WV.pane==='chat'&&WV.termHost&&document.body.contains(WV.termHost);
+  var plan=want?wvTermPlan(wvStandingOf(WV.sel),WV.termSid,(DATA&&DATA.live)||{},TERM_TOKEN):null;
+  var msg=document.getElementById('wv-termmsg');
+  if(plan&&plan.key){WV.termHost.style.display='';if(msg)msg.style.display='none';if(termKey!==plan.key){openTerm(plan.pane,WV.termHost);termKey=plan.key;}else alignTerm();return;}
+  if(termKey.indexOf('wv|')===0)closeTerm();
+  if(WV.termHost)WV.termHost.style.display='none';
+  if(msg){msg.textContent=plan?plan.msg:'';msg.style.display=plan?'':'none';}
+}
+/* dashboard.ts render(): any tab but Watchers drops the watcher terminal. */
+function wvLeave(){if(typeof termKey==='string'&&termKey.indexOf('wv|')===0)closeTerm();}
 function wvDrawListKeepFocus(){var a=document.activeElement;if(a&&a.closest&&a.closest('#wvleft'))return;wvDrawList();}
 `.split('__WV_TRIGGERS__').join(TRIGGER_JSON);

@@ -173,18 +173,21 @@ describe('Watchers tab', () => {
     ctx.wvStandingSync();
     expect(slot.children).toHaveLength(1);
     const row = slot.children[0];
-    expect(row.className).toBe('wvstand turn');
+    expect(row.className).toBe('wvstand turn cur'); // cur: the one the Chat tab's terminal shows
     expect(row.attrs['data-sid']).toBe('sid-now');
     const parts = all(row);
     expect(parts.find((p) => p.className.startsWith('sdot'))!.className).toBe('sdot d-turn');
     expect(parts.find((p) => p.className === 't')!.text).toBe('Findings PM: weekly audit');
     expect(parts.find((p) => p.className === 'wvstl')!.text).toBe('Your turn');
-    expect(parts.some((p) => p.attrs['data-open'] === '1')).toBe(true);
+    const openBtn = parts.find((p) => p.attrs['data-open'] === '1')!;
     let stopped = false;
-    row.onclick!({ stopPropagation: () => { stopped = true; } });
-    expect(stopped).toBe(true); // a click on the list row's chat does not also select the watcher
+    openBtn.onclick!({ stopPropagation: () => { stopped = true; } });
+    expect(stopped).toBe(true); // Open on Board does not also pick the row for the terminal
     expect(opened).toEqual(['claude:sid-now', 'renderMain']);
     expect(ctx.mtab).toBe('terminal');
+    // Clicking the row itself picks that chat for the embedded terminal.
+    row.onclick!();
+    expect(ctx.WV.termSid).toBe('sid-now');
     // A working chat gets the working dot; another watcher's chat is not shown here.
     ctx.WV.sel = 'w2';
     ctx.wvStandingSync();
