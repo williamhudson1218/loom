@@ -414,6 +414,18 @@ export function setWatcherEnabled(db: Database.Database, id: string, enabled: bo
   return r.changes > 0;
 }
 
+/**
+ * Run now: an enabled watcher polls on the engine's next tick instead of waiting for
+ * its schedule (or its error backoff). 'off' for a disabled one, which never polls.
+ */
+export function pollNow(db: Database.Database, id: string): 'ok' | 'off' | 'missing' {
+  const row = db.prepare(`SELECT enabled FROM watchers WHERE id = ?`).get(id) as { enabled: number } | undefined;
+  if (!row) return 'missing';
+  if (!row.enabled) return 'off';
+  db.prepare(`UPDATE watchers SET next_poll_at = 0 WHERE id = ?`).run(id);
+  return 'ok';
+}
+
 export function setRunMode(db: Database.Database, id: string, mode: RunMode, now: number = Date.now()): boolean {
   return db.prepare(`UPDATE watchers SET run_mode = ?, updated_at = ? WHERE id = ?`).run(mode, now, id).changes > 0;
 }

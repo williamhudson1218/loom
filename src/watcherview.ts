@@ -116,7 +116,24 @@ export const WATCHER_VIEW_CSS = String.raw`
   #watch-section .wvtab.on { color:#fff; border-bottom-color:var(--wv-accent); }
   #watch-section .wvtab .sdot { margin-top:0; }
   #watch-section .wvtab .n { font-size:11px; padding:0 6px; border-radius:8px; background:rgba(110,162,255,.16); color:#8db6ff; }
-  #watch-section #wv-termhost { height:62vh; min-height:340px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
+  #watch-section .wvli.off { opacity:.55; }
+  #watch-section .wvli .l1 .wvpill { height:16px; font-size:10.5px; padding:0 6px; }
+  #watch-section .sdot.d-none { background:transparent; border:1px solid #4a5060; box-sizing:border-box; }
+  #watch-section .wvli .sub.l2 { margin-top:-3px; }
+  #watch-section .wvli .sub .rev, #watch-section .wvli .sub .turn { color:#8db6ff; font-weight:600; }
+  #watch-section .wvli .sub .err { color:var(--wv-red); }
+  #watch-section .wvhd .wvtitle { font-size:15px; font-weight:600; color:var(--wv-text); max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #watch-section .wvrow .sp { flex:1; }
+  #watch-section .wvsubline { margin-top:6px; font-size:12.5px; color:var(--wv-muted); }
+  #watch-section .wvmorewrap { position:relative; }
+  #watch-section .wvmenu { position:absolute; right:0; top:100%; margin-top:4px; z-index:4; display:flex; flex-direction:column; gap:4px; min-width:140px; padding:6px; border:1px solid var(--wv-ctl-line); border-radius:8px; background:var(--wv-card); box-shadow:0 6px 18px rgba(0,0,0,.4); }
+  #watch-section .wvmenu .wvbtn { text-align:left; }
+  #watch-section .wvsech { display:flex; gap:12px; align-items:center; min-width:0; }
+  #watch-section .wvsech h4 { margin:0; flex:none; width:64px; }
+  #watch-section .wvsum { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; color:var(--wv-text2); }
+  #watch-section .wvsec.open .wvsech { margin-bottom:10px; }
+  #watch-section .wvmeta { color:var(--wv-muted); font-size:11.5px; white-space:nowrap; }
+  #watch-section #wv-termhost { height:calc(100vh - 290px); min-height:340px; padding:6px 0 0 8px; border-radius:10px; border:1px solid #232634; background:#07080c; overflow:hidden; }
   #watch-section #wv-termmsg { padding:28px 16px; text-align:center; color:var(--wv-muted); font-size:13px; border:1px dashed var(--wv-line); border-radius:10px; }
 `;
 
@@ -130,7 +147,7 @@ var WV_SRC=[['slack','Slack channel'],['chats','Chats'],['prs','Pull requests'],
 var WV_ACT=[['start_chat','Start a chat with a brief'],['message_chat','Send a message into the matching chat'],['notify','Notify me (Mac notification)'],['tell_orch','Tell the orchestrator']];
 var WV_CHIPS={slack:['WATCHER','TITLE','URL','TEXT','AUTHOR','CHANNEL'],chats:['WATCHER','CHAT_TITLE','PROJECT','PANE','IDLE_MIN','PERCENT'],prs:['WATCHER','TITLE','PR','PR_TITLE','URL','CHECK'],work:['WATCHER','TITLE','RULE','TICKET','SUBJECT','DETAIL','CLEAR','BATCH_FILE','COUNT']};
 var WV_LABELS={bot_ids:['Bot ids','Comma separated Slack bot ids (B...).'],user_ids:['User ids','Comma separated Slack user ids (U...).'],needle:['Phrase','Slack bot posts match the exact text; people posts ignore case.'],repos:['Repos','Comma separated owner/name. Empty means any repo.'],exclude_user_ids:['Ignore these user ids','Comma separated. Your own id is always ignored when "Ignore my own posts" is on.'],any_author:['Include posts by bots','Off means people only.'],min:['Minutes',''],min_sec:['Seconds waiting',''],max_h:['Ignore after (hours)','Chats waiting longer than this are old news.'],fraction:['Fraction of context used','0.85 means 85 percent.']};
-var WV={built:false,sel:'',draft:null,orig:null,dirty:false,tpls:[],have:{},chan:{},projects:[],lanes:[],cfg:{},test:null,testing:false,shadow:[],fires:[],msg:'',msgErr:false,skipOk:false,confirmDel:false,editorFor:'__none__',loaded:false,link:'',linkMsg:'',firesShown:20,inv:{},invQ:'',chipTarget:'wv-brief',pane:'',termSid:'',termHost:null,optsOpen:false,addOpen:false,spawnsOpen:false};
+var WV={built:false,sel:'',draft:null,orig:null,dirty:false,tpls:[],have:{},chan:{},projects:[],lanes:[],cfg:{},test:null,testing:false,shadow:[],fires:[],msg:'',msgErr:false,skipOk:false,confirmDel:false,editorFor:'__none__',loaded:false,link:'',linkMsg:'',firesShown:20,inv:{},invQ:'',chipTarget:'wv-brief',pane:'',termSid:'',termHost:null,optsOpen:false,addOpen:false,spawnsOpen:false,open:{},moreOpen:false};
 
 /* ---- pure helpers (no DOM; the unit tests run these) ---- */
 function wvClone(o){return JSON.parse(JSON.stringify(o));}
@@ -159,9 +176,28 @@ function wvActLabel(kind){for(var i=0;i<WV_ACT.length;i++)if(WV_ACT[i][0]===kind
 function wvResultPill(e){var m={held_quiet:['warn','Held: quiet hours'],held_cap:['warn','Held: hourly cap'],held_cooldown:['warn','Held: cooldown'],held_capacity:['warn','Held: no free window']};if(m[e.decision])return m[e.decision];var r={started:['ok','Started'],sent:['ok','Sent'],notified:['ok','Notified'],told:['ok','Told orchestrator'],queued:['warn','Queued'],failed:['err','Failed']};if(r[e.result])return r[e.result];return e.decision==='would_fire'?['rev','Would fire']:['',e.decision];}
 function wvAgo(ms,now){if(!ms)return '';var s=Math.max(0,Math.round((now-ms)/1000));if(s<60)return 'just now';var m=Math.round(s/60);if(m<60)return m+' min ago';var h=Math.round(m/60);if(h<48)return h+' h ago';return Math.round(h/24)+' d ago';}
 function wvPollText(w,now){if(!w.enabled)return 'Off';if(!w.last_poll_at)return 'Not polled yet';return 'Polled '+wvAgo(w.last_poll_at,now);}
+function wvEvery(ms){if(!ms)return '';if(ms<60000)return 'every '+Math.round(ms/1000)+' s';return 'every '+Math.round(ms/60000)+' min';}
+var WV_SRCNAME={slack:'Slack',chats:'Chats',prs:'Pull requests',work:'Findings endpoint'};
+/* The list row's first muted line: "<source kind> · every N min · polled X ago". */
+function wvRowLine1(w,now){var p=[WV_SRCNAME[w.source.kind]||w.source.kind];var e=wvEvery(w.poll_every_ms);if(e)p.push(e);p.push(w.enabled?wvPollText(w,now).toLowerCase():'not polling');return p.join(' · ');}
+/* The second line, only when something wants attention: [class, text] parts. */
+function wvRowLine2(w,dot){var o=[];if(w.shadow_unreviewed>0)o.push(['rev',w.shadow_unreviewed+(w.shadow_unreviewed===1?' match':' matches')+' to review']);if(w.last_error)o.push(['err','Poll error']);if(w.skip_permissions)o.push(['err','Skip permissions']);if(dot==='d-turn')o.push(['turn','Chat waiting on you']);return o;}
+/* The header's muted line: what the action does, e.g. "Standing chat · lane main · /triage". */
+function wvActionLine(d,projects){var a=d.action,p=a.params||{};var inv=p.invoke&&p.invoke.name?'/'+p.invoke.name:'';var o=[];
+  if(a.kind==='start_chat'){o.push(p.standing===true?'Standing chat':'New chat per match');var nm='';(projects||[]).forEach(function(x){if(x.path===p.project_dir)nm=x.name;});if(p.project_dir)o.push(nm||p.project_dir);o.push(p.target&&p.target!=='managed'?'lane '+String(p.target).slice(5):'new managed window');o.push(inv||'brief');}
+  else if(a.kind==='message_chat'){o.push('Messages the matching chat');o.push(inv||'message');}
+  else if(a.kind==='notify')o.push('Mac notification');
+  else o.push('Tells the orchestrator');
+  return o.join(' · ');}
+/* One-line summaries for the collapsed Settings cards. */
+function wvSourceSum(d){var p=d.source.params||{};var k=d.source.kind;if(k==='slack'){var n=p.channel&&WV.chan[p.channel];return (n?'#'+String(n).split('#').join(''):(p.channel||'No channel chosen'))+(p.workspace?' in '+p.workspace:'');}if(k==='chats'){return ((p.projects||[]).length?'Chats in '+p.projects.join(', '):'All chats')+((p.tags||[]).length?', tagged '+p.tags.join(' or '):'');}if(k==='work')return p.url||'No endpoint set';return ((p.repos||[]).length?p.repos.join(', '):'Any repo')+(p.mine_only===false?', any author':', mine only');}
+function wvTriggerSum(d){var t=wvTrigDef(d.source.kind,d.trigger.kind);var o=[t?t.label:d.trigger.kind];var tp=d.trigger.params||{};Object.keys(tp).forEach(function(k){var v=tp[k];var lab=(WV_LABELS[k]||[k])[0];if(Array.isArray(v)){if(v.length)o.push(lab+': '+v.join(', '));}else if(typeof v==='boolean'){if(v)o.push(lab);}else if(v!==''&&v!=null)o.push(lab+': '+(typeof v==='string'?'"'+v+'"':v));});return o.join(' · ');}
+function wvLimitsSum(d){var o=[d.max_per_hour?d.max_per_hour+' per hour':'No hourly cap',d.cooldown_min?d.cooldown_min+' min cooldown':'No cooldown'];o.push(d.quiet_start&&d.quiet_end?'quiet '+d.quiet_start+' to '+d.quiet_end:'no quiet hours');return o.join(' · ');}
+/* The Chat tab's status line after the turn state: "pane blue-vanilla · last batch 20 min ago". */
+function wvChatMeta(L,fires,now){var o=[];if(L&&(L.name||L.pane_id))o.push('pane '+(L.name||L.pane_id));var last=0;(fires||[]).forEach(function(e){if(!last&&(e.result==='started'||e.result==='sent'))last=e.detected_at;});if(last)o.push('last batch '+wvAgo(last,now));return o.join(' · ');}
 /* Does this watcher keep a standing chat (so the editor gets a Chat tab)? */
 function wvHasChat(w,standing){return !!(w&&((w.action&&w.action.kind==='start_chat'&&w.action.params&&w.action.params.standing===true)||(standing&&standing.length)));}
-function wvPaneFor(cur,hasChat){if(cur==='chat'&&!hasChat)return 'activity';if(cur)return cur;return hasChat?'chat':'activity';}
+function wvPaneFor(cur,hasChat){if(cur==='chat'&&!hasChat)return 'history';if(cur)return cur;return hasChat?'chat':'history';}
 /* What the Chat tab shows: the chosen (else the current) standing chat's live pane, or a plain reason there is none. */
 function wvTermPlan(list,sid,live,token){
   if(!list||!list.length)return {msg:'No chat is running for this watcher. Its standing chat starts on the next match it acts on.'};
@@ -204,7 +240,7 @@ function wvLoadEvents(){
   var id=WV.sel;if(!id||id==='new'){WV.shadow=[];WV.fires=[];wvDrawEvents();return Promise.resolve();}
   return Promise.all([wvGet('/api/watchers/events?id='+encodeURIComponent(id)+'&kind=shadow&limit=100'),wvGet('/api/watchers/events?id='+encodeURIComponent(id)+'&kind=fires&limit=200')]).then(function(r){
     if(WV.sel!==id)return;
-    WV.shadow=(r[0]&&r[0].events)||[];WV.fires=(r[1]&&r[1].events)||[];wvDrawEvents();
+    WV.shadow=(r[0]&&r[0].events)||[];WV.fires=(r[1]&&r[1].events)||[];wvDrawEvents();wvStandingSync();
   });
 }
 
@@ -242,7 +278,7 @@ function wvDrawNote(){
 }
 function wvSelect(id){
   if(WV.dirty&&id!==WV.sel){WV.msg='Unsaved changes. Save or Discard them before opening another watcher.';WV.msgErr=true;wvSync();return;}
-  if(id!==WV.sel){WV.pane='';WV.termSid='';}
+  if(id!==WV.sel){WV.pane='';WV.termSid='';WV.open={};WV.moreOpen=false;}
   WV.sel=id;WV.firesShown=20;WV.test=null;WV.msg='';WV.confirmDel=false;WV.skipOk=false;WV.dirty=false;WV.editorFor='__none__';
   if(id==='new'){WV.draft=wvBlank();WV.orig=null;}
   else{var w=wvById(id);WV.draft=w?wvDraftOf(w):null;WV.orig=w?wvDraftOf(w):null;}
@@ -253,21 +289,19 @@ function wvDrawList(){
   var ws=WATCH.watchers||[];var now=Date.now();
   var nb=wvBtn('+ New watcher','',function(){wvSelect('new');});nb.id='wv-new';nb.style.width='100%';nb.style.marginBottom='4px';left.appendChild(nb);
   if(!ws.length&&WV.sel!=='new')left.appendChild(wvEl('div','wvempty','No watchers yet. Add one, or start from a template.'));
-  var order=[['slack','Slack channels'],['chats','Chats'],['prs','Pull requests'],['work','Findings endpoints']];
-  order.forEach(function(g){var gl=ws.filter(function(w){return w.source.kind===g[0];});if(!gl.length)return;left.appendChild(wvEl('div','wvgrp sub2',g[1]));gl.forEach(wvRow);});
+  ws.forEach(wvRow);
+  // One compact row: the standing chat's status dot, label, Live/Shadow, On/Off; then one or two muted lines.
   function wvRow(w){
-    var b=wvEl('button','wvli'+(w.id===WV.sel?' sel':''));b.type='button';b.setAttribute('data-wid',w.id);
-    var l1=wvEl('span','l1');var on=wvEl('span','wvon'+(w.enabled?' y':''));on.title=w.enabled?'On':'Off';l1.appendChild(on);l1.appendChild(wvEl('b','',w.label));
-    var st=wvStandingOf(w.id);if(st.length&&typeof dotCls==='function'){var cls=dotCls(st[0].chat);var sd=wvEl('span','sdot '+cls);sd.setAttribute('data-standing','1');sd.title='Standing chat: '+((typeof DOT_LABEL!=='undefined'&&DOT_LABEL[cls])||'running');l1.appendChild(sd);}
+    var b=wvEl('button','wvli'+(w.id===WV.sel?' sel':'')+(w.enabled?'':' off'));b.type='button';b.setAttribute('data-wid',w.id);
+    var st=wvStandingOf(w.id);var cls=st.length&&typeof dotCls==='function'?dotCls(st[0].chat):'';
+    var l1=wvEl('span','l1');var sd=wvEl('span','sdot '+(cls||'d-none'));if(cls){sd.setAttribute('data-standing','1');sd.title='Standing chat: '+((typeof DOT_LABEL!=='undefined'&&DOT_LABEL[cls])||'running');}else sd.title='No standing chat';l1.appendChild(sd);
+    l1.appendChild(wvEl('b','',w.label));
+    l1.appendChild(wvEl('span','wvpill '+(w.run_mode==='shadow'?'warn':'ok'),w.run_mode==='shadow'?'Shadow':'Live'));
+    l1.appendChild(wvEl('span','wvpill '+(w.enabled?'ok':''),w.enabled?'On':'Off'));
     b.appendChild(l1);
-    b.appendChild(wvEl('span','sub',wvWatches(w)));
-    var pl=wvEl('span','pl');
-    pl.appendChild(wvEl('span','wvpill '+(w.run_mode==='shadow'?'warn':'ok'),w.run_mode==='shadow'?'Shadow':'Live'));
-    if(w.shadow_unreviewed>0)pl.appendChild(wvEl('span','wvpill rev',w.shadow_unreviewed+' to review'));
-    if(w.last_error)pl.appendChild(wvEl('span','wvpill err','Poll error'));
-    if(w.skip_permissions)pl.appendChild(wvEl('span','wvpill err','Skip permissions'));
-    pl.appendChild(wvEl('span','wvago',wvPollText(w,now)));
-    b.appendChild(pl);b.onclick=function(){wvSelect(w.id);};left.appendChild(b);
+    b.appendChild(wvEl('span','sub',wvRowLine1(w,now)));
+    var l2=wvRowLine2(w,cls);if(l2.length){var s2=wvEl('span','sub l2');l2.forEach(function(x,i){if(i)s2.appendChild(wvEl('span','',' · '));s2.appendChild(wvEl('span',x[0],x[1]));});b.appendChild(s2);}
+    b.onclick=function(){wvSelect(w.id);};left.appendChild(b);
   }
   var fold=wvBtn('','',function(){WV.addOpen=!WV.addOpen;wvDrawList();});fold.className='wvfold'+(WV.addOpen?' open':'');fold.id='wv-addfold';fold.appendChild(wvEl('span','car','>'));fold.appendChild(wvEl('span','','Other ways to add a watcher'));left.appendChild(fold);
   if(!WV.addOpen)return;
@@ -298,7 +332,8 @@ function wvSync(){
   var m=document.getElementById('wv-msg');if(m){m.textContent=WV.msg;m.className='wvmsg'+(WV.msg?(WV.msgErr?' err':' ok'):'');}
   var sv=document.getElementById('wv-save');var dc=document.getElementById('wv-discard');var dp=document.getElementById('wv-dirty');
   if(sv){var need=WV.draft&&wvNeedsSkipConfirm(WV.draft,WV.orig)&&!WV.skipOk;sv.disabled=!(WV.dirty||WV.sel==='new')||need;}
-  if(dc)dc.disabled=!WV.dirty;
+  if(dc)dc.style.display=WV.dirty||WV.sel==='new'?'':'none';
+  if(sv)sv.style.display=WV.dirty||WV.sel==='new'?'':'none';
   if(dp)dp.textContent=WV.dirty?'Unsaved changes':'';
 }
 function wvSave(onFail){
@@ -316,54 +351,74 @@ function wvDrawEditor(){
   var d=WV.draft;
   right.textContent='';WV.editorFor=WV.sel;
   if(!d){
-    var e=wvEl('div','wvcard');e.appendChild(wvEl('div','wvempty',(WATCH.watchers||[]).length?'Choose a watcher on the left to edit it.':'Add a watcher, or start from a template. A watcher is Source, then Trigger, then Action.'));right.appendChild(e);return;
+    var e=wvEl('div','wvcard');e.appendChild(wvEl('div','wvempty',(WATCH.watchers||[]).length?'Choose a watcher on the left.':'Add a watcher, or start from a template. A watcher is Source, then Trigger, then Action.'));right.appendChild(e);wvTermSync();return;
   }
   var isNew=WV.sel==='new';
   var w0=isNew?null:wvById(WV.sel);
-  // header card: name, save state and the main actions; status and the rarer actions on the line below
-  var hc=wvEl('div','wvcard');var hr=wvEl('div','wvrow');
-  var nm=wvText(function(){return d.label;},function(v){d.label=v;});nm.className='wvname';nm.id='wv-name';hr.appendChild(nm);
+  // Header: label, mode, what it does; Test, Run now, Pause, More, then Discard and Save while there are edits.
+  var hc=wvEl('div','wvcard wvhd');var hr=wvEl('div','wvrow');
+  hr.appendChild(wvEl('b','wvtitle',d.label||'New watcher'));
+  if(!isNew){hr.appendChild(wvEl('span','wvpill '+(d.run_mode==='shadow'?'warn':'ok'),d.run_mode==='shadow'?'Shadow':'Live'));if(!d.enabled)hr.appendChild(wvEl('span','wvpill','Paused'));}
   var dirty=wvEl('span','wvdirty');dirty.id='wv-dirty';hr.appendChild(dirty);
-  if(!isNew){var en=wvBtn(d.enabled?'Disable':'Enable','',function(){var was=WV.dirty;d.enabled=!d.enabled;WV.dirty=true;wvSave(function(){d.enabled=!d.enabled;WV.dirty=was;wvDrawEditor();wvSync();});});en.id='wv-enable';hr.appendChild(en);}
+  hr.appendChild(wvEl('span','sp'));
+  if(!isNew){
+    var lab={slack:'Test against the last 200 posts',chats:'Test against current chats',prs:'Test against current pull request state',work:'Test against the endpoint now'}[d.source.kind];
+    var tb=wvBtn(WV.testing?'Testing...':'Test','',function(){wvRunTest();});tb.id='wv-test';tb.title=lab+'. Runs the rule only, on what is saved plus your unsaved edits.';tb.disabled=WV.testing;hr.appendChild(tb);
+    var every=w0&&w0.poll_every_ms;var tickOnly=d.source.kind==='chats'||d.source.kind==='prs';
+    var rn=wvBtn('Run now','',function(){rn.disabled=true;wvPost('/api/watchers/run-now',{id:WV.sel}).then(function(j){rn.disabled=false;WV.msg=j.ok?'Polling on the next check, within '+Math.round((j.within_ms||15000)/1000)+' seconds.':(j.detail||'could not run it');WV.msgErr=!j.ok;wvSync();});});
+    rn.id='wv-runnow';if(!d.enabled){rn.disabled=true;rn.title='Paused. Resume it first.';}else if(tickOnly){rn.disabled=true;rn.title='This source is already checked '+wvEvery(every||15000)+'.';}else rn.title='Poll now instead of waiting for the schedule ('+wvEvery(every)+').';hr.appendChild(rn);
+    var en=wvBtn(d.enabled?'Pause':'Resume','',function(){var was=WV.dirty;d.enabled=!d.enabled;WV.dirty=true;wvSave(function(){d.enabled=!d.enabled;WV.dirty=was;wvDrawEditor();wvSync();});});en.id='wv-enable';en.title=d.enabled?'Stop polling. Nothing is lost.':'Start polling again. Whatever happened while paused is marked seen, not acted on.';hr.appendChild(en);
+    var mw=wvEl('span','wvmorewrap');var mb=wvBtn('More','',function(){WV.moreOpen=!WV.moreOpen;WV.confirmDel=false;wvDrawEditor();});mb.id='wv-morebtn';mw.appendChild(mb);
+    if(WV.moreOpen){var mn=wvEl('div','wvmenu');mn.id='wv-menu';
+      mn.appendChild(wvBtn('Duplicate','',function(){WV.moreOpen=false;wvPost('/api/watchers/duplicate',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not duplicate';WV.msgErr=true;wvSync();return;}wvRefresh().then(function(){WV.dirty=false;wvSelect(j.watcher.id);});});}));
+      var del=wvBtn(WV.confirmDel?'Confirm delete':'Delete','danger',function(){if(!WV.confirmDel){WV.confirmDel=true;wvDrawEditor();return;}WV.moreOpen=false;wvPost('/api/watchers/delete',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not delete';WV.msgErr=true;wvSync();return;}WV.dirty=false;WV.sel='';WV.draft=null;WV.orig=null;wvRefresh().then(function(){var f=(WATCH.watchers||[])[0];if(f)wvSelect(f.id);else{wvDrawList();wvDrawEditor();}});});});del.id='wv-delete';mn.appendChild(del);
+      mw.appendChild(mn);}
+    hr.appendChild(mw);
+  }
   var dis=wvBtn('Discard','',function(){WV.dirty=false;WV.msg='';if(isNew){WV.sel='';WV.draft=null;wvDrawList();wvDrawEditor();return;}var w=wvById(WV.sel);WV.draft=w?wvDraftOf(w):null;WV.orig=w?wvDraftOf(w):null;WV.editorFor='__none__';wvDrawEditor();});dis.id='wv-discard';hr.appendChild(dis);
   var sv=wvBtn('Save','pri',wvSave);sv.id='wv-save';hr.appendChild(sv);
   hc.appendChild(hr);
-  if(!isNew){
-    var h2=wvEl('div','wvhead2');
-    h2.appendChild(wvEl('span','wvpill '+(d.enabled?'ok':''),d.enabled?'On':'Off'));
-    h2.appendChild(wvEl('span','wvpill '+(d.run_mode==='shadow'?'warn':'ok'),d.run_mode==='shadow'?'Shadow':'Live'));
-    if(w0)h2.appendChild(wvEl('span','wvago',wvWatches(w0)+(w0.enabled?' · '+wvPollText(w0,Date.now()):'')));
-    h2.appendChild(wvEl('span','sp'));
-    h2.appendChild(wvBtn('Duplicate','sm',function(){wvPost('/api/watchers/duplicate',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not duplicate';WV.msgErr=true;wvSync();return;}wvRefresh().then(function(){WV.dirty=false;wvSelect(j.watcher.id);});});}));
-    var del=wvBtn(WV.confirmDel?'Confirm delete':'Delete','danger sm',function(){if(!WV.confirmDel){WV.confirmDel=true;wvDrawEditor();return;}wvPost('/api/watchers/delete',{id:WV.sel}).then(function(j){if(!j.ok){WV.msg=j.detail||'could not delete';WV.msgErr=true;wvSync();return;}WV.dirty=false;WV.sel='';WV.draft=null;WV.orig=null;wvRefresh().then(function(){var f=(WATCH.watchers||[])[0];if(f)wvSelect(f.id);else{wvDrawList();wvDrawEditor();}});});});del.id='wv-delete';h2.appendChild(del);
-    hc.appendChild(h2);
-  }
+  hc.appendChild(wvEl('div','wvsubline',isNew?'Set the source, trigger and action, then Save. It starts paused and in Shadow.':wvActionLine(d,WV.projects)));
   var msg=wvEl('div','wvmsg');msg.id='wv-msg';msg.style.marginTop='6px';hc.appendChild(msg);
   if(w0&&w0.last_error){var le=wvEl('div','wvmsg err','Last poll failed: '+w0.last_error);le.style.marginTop='4px';hc.appendChild(le);}
   right.appendChild(hc);
-  if(isNew){
-    wvDrawSource(right,d);wvDrawTrigger(right,d);wvDrawAction(right,d);wvDrawMode(right,d);wvDrawSafety(right,d);
-    var tc=wvEl('div','wvcard');tc.appendChild(wvEl('h4','','Test'));tc.appendChild(wvEl('div','wvdef','Save the watcher first, then Test it against recent items.'));right.appendChild(tc);
-    wvSync();wvTermSync();return;
-  }
-  // an existing watcher: its standing chat (live terminal), its activity, and its settings, one at a time
+  if(!isNew){var tc=wvEl('div','wvcard');tc.id='wv-testcard';var th=wvEl('div','wvsech');th.appendChild(wvEl('h4','','Test'));th.appendChild(wvEl('span','wvsum','The rule only. Nothing is started, sent or recorded.'));th.appendChild(wvBtn('Close','sm',function(){WV.test=null;wvDrawTestResult();}));tc.appendChild(th);var res=wvEl('div');res.id='wv-testres';res.style.marginTop='10px';tc.appendChild(res);right.appendChild(tc);wvDrawTestResult();}
+  if(isNew){wvDrawSettings(right,d,true);wvSync();wvTermSync();return;}
+  // An existing watcher: its standing chat (live terminal), its settings and its history, one at a time.
   var stand=wvStandingOf(WV.sel);var hasChat=wvHasChat(w0,stand);WV.pane=wvPaneFor(WV.pane,hasChat);
   var tabs=wvEl('div','wvtabs');tabs.id='wv-tabs';
   function tabBtn(k,label,extra){var b=wvEl('button','wvtab'+(WV.pane===k?' on':''));b.type='button';b.setAttribute('data-pane',k);if(extra&&extra.dot)b.appendChild(extra.dot);b.appendChild(wvEl('span','',label));if(extra&&extra.n)b.appendChild(wvEl('span','n',String(extra.n)));b.onclick=function(){if(WV.pane===k)return;WV.pane=k;wvDrawEditor();};tabs.appendChild(b);}
   if(hasChat){var dt=null;if(stand.length&&typeof dotCls==='function')dt=wvEl('span','sdot '+dotCls(stand[0].chat));tabBtn('chat','Chat',{dot:dt});}
-  tabBtn('activity','Activity',{n:w0&&w0.shadow_unreviewed>0?w0.shadow_unreviewed:0});
   tabBtn('settings','Settings');
+  tabBtn('history','History',{n:w0&&w0.shadow_unreviewed>0?w0.shadow_unreviewed:0});
   right.appendChild(tabs);
   function pane(k){var p=wvEl('div');p.id='wv-pane-'+k;if(WV.pane!==k)p.style.display='none';right.appendChild(p);return p;}
   if(hasChat){var cp=pane('chat');var sl=wvEl('div');sl.id='wv-stand';cp.appendChild(sl);var tm=wvEl('div');tm.id='wv-termmsg';tm.style.display='none';cp.appendChild(tm);
     if(!WV.termHost){WV.termHost=wvEl('div');WV.termHost.id='wv-termhost';}WV.termHost.style.display='none';cp.appendChild(WV.termHost);}
-  var ap=pane('activity');wvDrawTest(ap,d);var sh=wvEl('div','wvcard');sh.id='wv-shadow';ap.appendChild(sh);var fi=wvEl('div','wvcard');fi.id='wv-fires';ap.appendChild(fi);
-  var sp=pane('settings');wvDrawSource(sp,d);wvDrawTrigger(sp,d);wvDrawAction(sp,d);wvDrawMode(sp,d);wvDrawSafety(sp,d);
+  wvDrawSettings(pane('settings'),d,false);
+  var hp=pane('history');var sh=wvEl('div','wvcard');sh.id='wv-shadow';hp.appendChild(sh);var fi=wvEl('div','wvcard');fi.id='wv-fires';hp.appendChild(fi);
   wvDrawEvents();wvStandingSync();wvSync();wvTermSync();
 }
-function wvCard(title){var c=wvEl('div','wvcard');c.appendChild(wvEl('h4','',title));return c;}
+/* Settings: the name, then Source / Trigger / Action / Limits as cards showing a one-line summary with Edit,
+   each expanding in place (all open for a new watcher), then Shadow/Live at the bottom. */
+function wvDrawSettings(p,d,all){
+  var nm=wvText(function(){return d.label;},function(v){d.label=v;});nm.className='wvname';nm.id='wv-name';var nf=wvFld('Name',nm);nf.style.marginBottom='12px';p.appendChild(nf);
+  wvSection(p,'source','Source',wvSourceSum(d),function(b){wvDrawSource(b,d);},all);
+  wvSection(p,'trigger','Trigger',wvTriggerSum(d),function(b){wvDrawTrigger(b,d);},all);
+  wvSection(p,'action','Action',wvActionLine(d,WV.projects),function(b){wvDrawAction(b,d);},all);
+  wvSection(p,'limits','Limits',wvLimitsSum(d),function(b){wvDrawSafety(b,d);},all);
+  var mc=wvEl('div','wvcard');mc.id='wv-modecard';mc.appendChild(wvEl('h4','','Run mode'));wvDrawMode(mc,d);p.appendChild(mc);
+}
+function wvSection(parent,key,title,summary,fill,all){
+  var open=all||!!WV.open[key];var c=wvEl('div','wvcard wvsec'+(open?' open':''));c.setAttribute('data-sec',key);
+  var h=wvEl('div','wvsech');h.appendChild(wvEl('h4','',title));h.appendChild(wvEl('span','wvsum',open?'':summary));
+  if(!all){var b=wvBtn(open?'Done':'Edit','sm',function(){WV.open[key]=!open;wvDrawEditor();});b.setAttribute('data-edit',key);h.appendChild(b);}
+  c.appendChild(h);if(open)fill(c);parent.appendChild(c);
+}
+/* The body of a Settings card (wvSection draws the card, title and summary). */
+function wvCard(){return wvEl('div','wvsecb');}
 function wvDrawSource(right,d){
-  var c=wvCard('1 - Source');c.id='wv-source';
+  var c=wvCard();c.id='wv-source';
   c.appendChild(wvSeg(WV_SRC.map(function(x){return [x[0],x[1]];}),d.source.kind,function(k){if(k===d.source.kind)return;wvSetSource(d,k);WV.test=null;WV.dirty=true;wvDrawEditor();}));
   c.lastChild.style.marginBottom='10px';
   var p=d.source.params;
@@ -397,7 +452,7 @@ function wvDrawSource(right,d){
   right.appendChild(c);
 }
 function wvDrawTrigger(right,d){
-  var c=wvCard('2 - Trigger');c.id='wv-trigger';
+  var c=wvCard();c.id='wv-trigger';
   var g=wvEl('div','wvg2');
   var ts=wvSel(wvTrigs(d.source.kind).map(function(t){return [t.kind,t.label];}),d.trigger.kind,function(v){wvSetTrigger(d,v);WV.test=null;},function(){wvDrawEditor();});ts.id='wv-trigger-kind';
   g.appendChild(wvFld('When',ts));c.appendChild(g);
@@ -444,7 +499,7 @@ function wvDrawPayload(c,d,ap,key,rows){
   c.appendChild(wvFld('Extra instructions (optional)',nt,start?'Added after the '+mode+' on a new line.':'Added on the same line after the arguments, because the message is typed as one line.'));
 }
 function wvDrawAction(right,d){
-  var c=wvCard('3 - Action');c.id='wv-action';
+  var c=wvCard();c.id='wv-action';
   var ak=wvSel(WV_ACT.map(function(a){return [a[0],a[1],a[0]==='tell_orch'&&WV.have.orchestrator===false&&d.action.kind!=='tell_orch'];}),d.action.kind,function(v){wvSetAction(d,v);},function(){wvDrawEditor();});ak.id='wv-action-kind';
   c.appendChild(wvFld('Then',ak,d.action.kind==='tell_orch'&&WV.have.orchestrator===false?'The orchestrator is off, so this action fails until it is turned on (Settings, Orchestrator).':''));
   var ap=d.action.params;
@@ -474,25 +529,18 @@ function wvDrawAction(right,d){
   right.appendChild(c);
 }
 function wvDrawMode(right,d){
-  var c=wvCard('4 - Run mode');c.id='wv-mode';
+  var c=wvCard();c.id='wv-mode';
   c.appendChild(wvSeg([['shadow','Shadow'],['live','Live']],d.run_mode,function(m){d.run_mode=m;WV.dirty=true;wvDrawEditor();}));
-  var h=wvEl('div','wvdef');h.style.marginTop='6px';h.textContent='Shadow records what would have fired and takes no action. Live performs the action. Start in Shadow, read the list below, then go Live.';c.appendChild(h);
+  var h=wvEl('div','wvdef');h.style.marginTop='6px';h.textContent='Shadow records what would have fired and takes no action. Live performs the action. Start in Shadow, read History, then go Live.';c.appendChild(h);
   right.appendChild(c);
 }
 function wvDrawSafety(right,d){
-  var c=wvCard('5 - Safety');c.id='wv-safety';var g=wvEl('div','wvg2');
+  var c=wvCard();c.id='wv-safety';var g=wvEl('div','wvg2');
   g.appendChild(wvFld('Max fires per hour',wvText(function(){return String(d.max_per_hour);},function(v){d.max_per_hour=v===''?0:Number(v);},{num:true,min:0,cls:'wvnum'}),'0 means no cap.'));
   g.appendChild(wvFld('Cooldown per subject (minutes)',wvText(function(){return String(d.cooldown_min);},function(v){d.cooldown_min=v===''?0:Number(v);},{num:true,min:0,cls:'wvnum'}),'The same chat, post or pull request will not fire again within this time. 0 means none.'));
   var q=wvEl('div','wvrow');q.appendChild(wvText(function(){return d.quiet_start;},function(v){d.quiet_start=v.trim();},{ph:'22:00',cls:'wvtime'}));q.appendChild(wvEl('span','wvdef','to'));q.appendChild(wvText(function(){return d.quiet_end;},function(v){d.quiet_end=v.trim();},{ph:'07:00',cls:'wvtime'}));
   g.appendChild(wvFld('Quiet hours (local time, no actions)',q,'HH:MM to HH:MM, or leave both empty. Matches in quiet hours are held, not replayed later.'));
   c.appendChild(g);right.appendChild(c);
-}
-function wvDrawTest(right,d){
-  var c=wvCard('Test');c.id='wv-testcard';var r=wvEl('div','wvrow');
-  var lab={slack:'Test against the last 200 posts',chats:'Test against current chats',prs:'Test against current pull request state',work:'Test against the endpoint now'}[d.source.kind];
-  var b=wvBtn(WV.testing?'Testing...':lab,'pri',function(){wvRunTest();});b.id='wv-test';b.disabled=WV.testing;r.appendChild(b);
-  r.appendChild(wvEl('span','wvdef','Runs the rule only, on what is saved plus your unsaved edits. Nothing is started, sent or recorded.'));c.appendChild(r);
-  var res=wvEl('div');res.id='wv-testres';res.style.marginTop='10px';c.appendChild(res);right.appendChild(c);wvDrawTestResult();
 }
 function wvRunTest(){
   var d=WV.draft;if(!d)return;WV.testing=true;WV.test=null;wvDrawTestResult();
@@ -501,7 +549,8 @@ function wvRunTest(){
 }
 function wvDrawTestResult(){
   var res=document.getElementById('wv-testres');if(!res)return;res.textContent='';
-  var b=document.getElementById('wv-test');if(b)b.disabled=WV.testing;
+  var b=document.getElementById('wv-test');if(b){b.disabled=WV.testing;b.textContent=WV.testing?'Testing...':'Test';}
+  var tc=document.getElementById('wv-testcard');if(tc)tc.style.display=WV.testing||WV.test?'':'none';
   if(WV.testing){res.appendChild(wvEl('div','wvmsg','Evaluating...'));return;}
   var j=WV.test;if(!j)return;
   if(!j.ok){res.appendChild(wvEl('div','wvmsg err',j.detail||'The test could not run.'));return;}
@@ -578,6 +627,7 @@ function wvStandingEl(s,shown){
   var dot=wvEl('span','sdot '+cls);dot.title=label;row.appendChild(dot);
   row.appendChild(wvEl('span','t',disp(c)));
   row.appendChild(wvEl('span','wvstl',s.current?label:label+' · earlier chat'));
+  if(shown){var L=(typeof DATA!=='undefined'&&DATA&&DATA.live&&DATA.live[c.agent+':'+c.session_id])||null;var mt=wvChatMeta(L,WV.fires,Date.now());if(mt)row.appendChild(wvEl('span','wvmeta','· '+mt));}
   var ob=wvBtn('Open on Board','sm',function(e){if(e&&e.stopPropagation)e.stopPropagation();wvOpenStanding(c);});ob.setAttribute('data-open','1');row.appendChild(ob);
   row.onclick=function(){if(WV.termSid===c.session_id)return;WV.termSid=c.session_id;wvStandingSync();wvTermSync();};
   return row;

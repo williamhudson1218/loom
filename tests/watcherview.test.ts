@@ -3,8 +3,8 @@ import vm from 'node:vm';
 import Database from 'better-sqlite3';
 import { applySchema } from '../src/schema.ts';
 import { WATCHER_VIEW_CSS, WATCHER_VIEW_HTML, WATCHER_VIEW_JS } from '../src/watcherview.ts';
-import { TRIGGERS, getWatcher, insertWatcher, replaceWatcher, validateDraft, type WatcherDraft } from '../src/watchers/model.ts';
-import { watcherView } from '../src/routes/watchers.ts';
+import { TRIGGERS, getWatcher, insertWatcher, pollNow, replaceWatcher, validateDraft, type WatcherDraft } from '../src/watchers/model.ts';
+import { pollEveryMs, watcherView } from '../src/routes/watchers.ts';
 import { renderDashboard } from '../src/dashboard.ts';
 
 // The page functions that touch no DOM, loaded the way the browser loads them.
@@ -160,7 +160,7 @@ describe('standing chat terminal on the Watchers tab', () => {
     expect(notoken.msg).toContain('Open on Board');
   });
 
-  it('gives a standing watcher a Chat tab, opened first; others open on Activity', () => {
+  it('gives a standing watcher a Chat tab, opened first; others open on History', () => {
     const p = page();
     const standing = { action: { kind: 'start_chat', params: { standing: true } } };
     const oneShot = { action: { kind: 'start_chat', params: { standing: false } } };
@@ -169,8 +169,8 @@ describe('standing chat terminal on the Watchers tab', () => {
     expect(p.wvHasChat(oneShot, list)).toBe(true); // switched off standing, but its chat still runs
     expect(p.wvHasChat({ action: { kind: 'notify', params: {} } }, [])).toBe(false);
     expect(p.wvPaneFor('', true)).toBe('chat');
-    expect(p.wvPaneFor('', false)).toBe('activity');
-    expect(p.wvPaneFor('chat', false)).toBe('activity');
+    expect(p.wvPaneFor('', false)).toBe('history');
+    expect(p.wvPaneFor('chat', false)).toBe('history');
     expect(p.wvPaneFor('settings', true)).toBe('settings');
   });
 
@@ -194,6 +194,82 @@ describe('standing chat terminal on the Watchers tab', () => {
     expect(p.wvPollText({ enabled: true, last_poll_at: now - 5 * 60_000 }, now)).toBe('Polled 5 min ago');
     expect(p.wvAgo(now - 3 * 3_600_000, now)).toBe('3 h ago');
     expect(p.wvAgo(now - 72 * 3_600_000, now)).toBe('3 d ago');
+  });
+});
+
+describe('watchers tab layout text', () => {
+  const W = (o: any) => ({ enabled: true, run_mode: 'live', source: { kind: 'slack', params: {} }, poll_every_ms: 60_000, last_poll_at: 0, shadow_unreviewed: 0, last_error: '', skip_permissions: false, ...o });
+  const now = 10_000_000;
+
+  it('list row: "<source kind> · every N · polled X ago", and a second line only when something wants you', () => {
+    const p = page();
+    expect(p.wvRowLine1(W({ last_poll_at: now - 120_000 }), now)).toBe('Slack · every 1 min · polled 2 min ago');
+    expect(p.wvRowLine1(W({ source: { kind: 'prs', params: {} }, poll_every_ms: 15_000, enabled: false }), now)).toBe('Pull requests · every 15 s · not polling');
+    expect(p.wvRowLine1(W({ source: { kind: 'work', params: {} }, poll_every_ms: 900_000 }), now)).toBe('Findings endpoint · every 15 min · not polled yet');
+    expect(p.wvRowLine2(W({}), 'd-working')).toEqual([]);
+    expect(p.wvRowLine2(W({ shadow_unreviewed: 1, last_error: 'x' }), 'd-turn').map((x: string[]) => x[1])).toEqual(['1 match to review', 'Poll error', 'Chat waiting on you']);
+  });
+
+  it('header line says what the action does: standing chat, lane, skill', () => {
+    const p = page();
+    const d = { action: { kind: 'start_chat', params: { standing: true, project_dir: '/p/web', target: 'lane:main', invoke: { kind: 'skill', name: 'triage', args: '' } } } };
+    expect(p.wvActionLine(d, [{ path: '/p/web', name: 'web' }])).toBe('Standing chat · web · lane main · /triage');
+    expect(p.wvActionLine({ action: { kind: 'start_chat', params: { project_dir: '', target: 'managed' } } }, [])).toBe('New chat per match · new managed window · brief');
+    expect(p.wvActionLine({ action: { kind: 'notify', params: {} } }, [])).toBe('Mac notification');
+  });
+
+  it('Settings cards collapse to a one-line summary', () => {
+    const p = page();
+    p.WV.chan = { C1: 'ops' };
+    const d = p.wvBlank();
+    d.source.params = { channel: 'C1', workspace: 'acme' };
+    d.trigger.params = { needle: 'deploy failed', any_author: true };
+    expect(p.wvSourceSum(d)).toBe('#ops in acme');
+    expect(p.wvTriggerSum(d)).toContain('Phrase: "deploy failed"');
+    expect(p.wvTriggerSum(d)).toContain('Include posts by bots');
+    expect(p.wvLimitsSum(d)).toBe('6 per hour · 60 min cooldown · no quiet hours');
+    d.quiet_start = '22:00'; d.quiet_end = '07:00'; d.max_per_hour = 0;
+    expect(p.wvLimitsSum(d)).toBe('No hourly cap · 60 min cooldown · quiet 22:00 to 07:00');
+  });
+
+  it('Chat status line: pane name and the last batch', () => {
+    const p = page();
+    const fires = [{ result: 'failed', detected_at: now - 60_000 }, { result: 'started', detected_at: now - 20 * 60_000 }];
+    expect(p.wvChatMeta({ pane_id: '%4', name: 'blue-vanilla' }, fires, now)).toBe('pane blue-vanilla · last batch 20 min ago');
+    expect(p.wvChatMeta({ pane_id: '%4' }, [], now)).toBe('pane %4');
+    expect(p.wvChatMeta(null, [], now)).toBe('');
+  });
+
+  it('Run now asks the server to poll on the next tick; delete lives in More', () => {
+    expect(WATCHER_VIEW_JS).toContain("wvPost('/api/watchers/run-now',{id:WV.sel})");
+    expect(WATCHER_VIEW_JS).toContain("mn.id='wv-menu'");
+    expect(WATCHER_VIEW_JS.indexOf("del.id='wv-delete';mn.appendChild(del)")).toBeGreaterThan(0);
+  });
+});
+
+describe('run now', () => {
+  it('clears the schedule of an enabled watcher, refuses a paused one', () => {
+    const db = mem();
+    const id = insertWatcher(db, (validateDraft({ ...base('b'), enabled: true }) as any).draft, 1);
+    db.prepare('UPDATE watchers SET enabled = 1, next_poll_at = 999999 WHERE id = ?').run(id);
+    expect(pollNow(db, id)).toBe('ok');
+    expect((db.prepare('SELECT next_poll_at FROM watchers WHERE id = ?').get(id) as any).next_poll_at).toBe(0);
+    db.prepare('UPDATE watchers SET enabled = 0, next_poll_at = 5 WHERE id = ?').run(id);
+    expect(pollNow(db, id)).toBe('off');
+    expect((db.prepare('SELECT next_poll_at FROM watchers WHERE id = ?').get(id) as any).next_poll_at).toBe(5);
+    expect(pollNow(db, 'nope')).toBe('missing');
+    db.close();
+  });
+
+  it('the page is told how often each source polls', () => {
+    expect(pollEveryMs('slack')).toBe(60_000);
+    expect(pollEveryMs('work')).toBe(15 * 60_000);
+    expect(pollEveryMs('chats')).toBe(15_000);
+    expect(pollEveryMs('prs')).toBe(15_000);
+    const db = mem();
+    const id = insertWatcher(db, (validateDraft(base('b')) as any).draft, 1);
+    expect(watcherView(db, getWatcher(db, id)!).poll_every_ms).toBe(60_000);
+    db.close();
   });
 });
 

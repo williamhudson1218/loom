@@ -7,11 +7,13 @@ import { parseSlackThread } from '../slackref.ts';
 import { conversationsReplies } from '../slackapi.ts';
 import {
   TRIGGERS, deleteWatcher, fromRow, getWatcher, insertWatcher, listWatchers, markReviewed, recentEvents, recentFires, replaceWatcher,
-  setRunMode, shadowUnreviewed, attentionCount, toDraft, unreviewedCounts, validateDraft, type EventRow, type Watcher, type WatcherRow,
+  pollNow, setRunMode, shadowUnreviewed, attentionCount, toDraft, unreviewedCounts, validateDraft, type EventRow, type Watcher, type WatcherRow,
 } from '../watchers/model.ts';
+import { POLL_MS as SLACK_POLL_MS } from '../watchers/sources/slack.ts';
+import { WORK_POLL_MS } from '../watchers/sources/work.ts';
 import { createFromTemplate, templateList } from '../watchers/templates.ts';
 import { discoverInvocables, hasInvocable } from '../watchers/invocables.ts';
-import { isDryRun, runtimeTestDeps, testWatcher } from '../watchers/engine.ts';
+import { isDryRun, runtimeTestDeps, testWatcher, TICK_MS } from '../watchers/engine.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Watchers (§9): list, templates, create / edit / duplicate / delete, run mode,
@@ -67,6 +69,8 @@ export function watcherView(db: Database.Database, w: Watcher, extra: { seen?: n
     last_error: w.poll.last_error,
     error_count: w.poll.error_count,
     next_poll_at: w.poll.next_poll_at,
+    /** How often it polls when healthy: Slack and findings endpoints on their own schedule, chats and PRs every engine tick. */
+    poll_every_ms: pollEveryMs(w.source.kind),
     brief_path: '',
     seen: extra.seen ?? 0,
   };
@@ -206,6 +210,20 @@ export async function runModeHandler({ json, body }: RouteCtx): Promise<void> {
   json(ok ? 200 : 404, ok ? { ok, mode: b.mode } : { ok, detail: 'unknown watcher' });
 }
 
+export function pollEveryMs(kind: string): number {
+  return kind === 'slack' ? SLACK_POLL_MS : kind === 'work' ? WORK_POLL_MS : TICK_MS;
+}
+
+/** Run now (the Watchers tab header): poll on the engine's next tick. */
+export async function runNowHandler({ json, body }: RouteCtx): Promise<void> {
+  const b = await body();
+  if (!b || typeof b.id !== 'string') return json(400, { ok: false, detail: 'id is required' });
+  const r = withDb((db) => pollNow(db, b.id as string));
+  if (r === 'missing') return json(404, { ok: false, detail: 'unknown watcher' });
+  if (r === 'off') return json(409, { ok: false, detail: 'the watcher is paused; resume it first' });
+  json(200, { ok: true, within_ms: TICK_MS });
+}
+
 /** Evaluate a draft (`watcher`) or a saved watcher (`id`) against recent items. Writes nothing, acts on nothing. */
 export async function testHandler({ json, body }: RouteCtx): Promise<void> {
   let b = await body();
@@ -307,6 +325,7 @@ export const routes: RouteDef[] = [
   bc('/api/watchers/delete', deleteHandler),
   b('/api/watchers/duplicate', duplicateHandler),
   bc('/api/watchers/run-mode', runModeHandler),
+  b('/api/watchers/run-now', runNowHandler),
   bc('/api/watchers/test', testHandler),
   b('/api/watchers/review', reviewHandler),
   b('/api/watchers/from-permalink', fromPermalinkHandler),
