@@ -139,9 +139,11 @@ describe('home view wiring', () => {
     expect(HOME_VIEW_JS).not.toMatch(/`|\$\{/);
     expect(HOME_VIEW_HTML).not.toMatch(/`|\$\{/);
   });
-  it('is the first top tab, the launch tab, and mounts the view inside the main area', () => {
+  it('is reached from the logo (no Home tab), is the launch view, and mounts inside the main area', () => {
     expect(html).not.toContain('id="homepin"');
-    expect(html).toContain("const defs=[['home','⌂ Home',0,' hometab'],['board','▦ Board'");
+    expect(html).not.toContain("'⌂ Home'");
+    expect(html).toContain("const defs=[['board','▦ Board'");
+    expect(HOME_VIEW_JS).toContain("wm.addEventListener('click',selectHome)");
     expect(html).toContain("var tab='home';");
     expect(html).toContain('id="homeview"');
     expect(html).toContain('function selectHome(');
