@@ -97,3 +97,25 @@ export function panesMidTurn(paneIds: string[], run: (args: string[]) => string)
   for (const [id, text] of got) if (textIsMidTurn(text)) working.add(id);
   return working;
 }
+
+/** panesMidTurn with an async runner (tmuxAsync), for the polling snapshot. Same retry rules. */
+export async function panesMidTurnAsync(paneIds: string[], run: (args: string[]) => Promise<string>): Promise<Set<string>> {
+  let rest = [...new Set(paneIds.filter(Boolean))];
+  const got = new Map<string, string>();
+  for (let tries = 0; rest.length && tries < 4; tries++) {
+    try {
+      for (const [id, text] of splitBatchCapture(await run(batchCaptureArgs(rest)), rest)) got.set(id, text);
+      break;
+    } catch (e) {
+      const partial = splitBatchCapture(String((e as { stdout?: unknown }).stdout ?? ''), rest);
+      const failed = [...partial.keys()].pop();
+      if (!failed) break;
+      partial.delete(failed);
+      for (const [id, text] of partial) got.set(id, text);
+      rest = rest.slice(rest.indexOf(failed) + 1);
+    }
+  }
+  const working = new Set<string>();
+  for (const [id, text] of got) if (textIsMidTurn(text)) working.add(id);
+  return working;
+}

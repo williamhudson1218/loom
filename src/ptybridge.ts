@@ -8,7 +8,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { VIEW_SESSION_PREFIX, isViewSession, tmux as runTmux, tmuxArgs } from './tmux.ts';
+import { VIEW_SESSION_PREFIX, isViewSession, tmux as runTmux, tmuxArgs, tmuxAsync } from './tmux.ts';
+import { guardTick } from './asyncexec.ts';
 import { pickLog } from './picklog.ts';
 import { agentPaneIds, listTmuxPanes } from './placements.ts';
 import { isTerminalWindow } from './terminals.ts';
@@ -116,6 +117,8 @@ export function checkUpgrade(
 /* ------------------------------------------------------------ view sessions */
 
 export type Tmux = (args: string[]) => string;
+/** The async door (tmuxAsync) for the per-terminal polls. */
+export type TmuxAsync = (args: string[]) => Promise<string>;
 
 export interface LivePane {
   pane_id: string;
@@ -384,6 +387,31 @@ export const noteView = (name: string, open: boolean, kind: ViewKind = 'chat'): 
   else liveViews.delete(name);
 };
 
+/**
+ * The chat-view poll's reads in ONE tmux process, off the main thread: the
+ * pane's window, the view's current window, the view's zoom flag, and the
+ * pane's own zoom/active flags (what reassertZoom checks first). `moved` means
+ * realignView would act. null when tmux failed (a target vanished): the caller
+ * falls back to the synchronous path, which handles every error case.
+ */
+export async function probeChatView(view: string, paneId: string, run: TmuxAsync): Promise<{ moved: boolean; zoomed: boolean; paneZoomedActive: boolean } | null> {
+  if (!isViewSession(view) || !paneId) return null;
+  const zo = zoomOpen.get(view);
+  const zoomPane = zo?.pane ?? paneId;
+  try {
+    const out = await run([
+      'display-message', '-p', '-t', paneId, '#{window_id}', ';',
+      'display-message', '-p', '-t', `=${view}:`, '#{window_id}', ';',
+      'display-message', '-p', '-t', `=${view}:.`, '#{window_zoomed_flag}', ';',
+      'display-message', '-p', '-t', zoomPane, '#{window_zoomed_flag} #{pane_active}',
+    ]);
+    const [want = '', have = '', z = '', za = ''] = out.split('\n').map((l) => l.trim());
+    return { moved: !!want && want !== have, zoomed: z === '1', paneZoomedActive: za === '1 1' };
+  } catch {
+    return null;
+  }
+}
+
 /** Is the view's window zoomed? */
 export function viewZoomed(view: string, tmux: Tmux): boolean {
   try {
@@ -543,6 +571,8 @@ export interface BridgeDeps {
   laneView?: () => LaneView;
   /** Is session:window a terminal window (no chat)? Default: terminals.ts. */
   isTerminal?: (session: string, window: string) => boolean;
+  /** The polls' async tmux. Default: tmuxAsync, or `tmux` wrapped when a test injects one. */
+  tmuxAsync?: TmuxAsync;
 }
 
 // Client -> server frames are JSON text: {t:'i', d:'<keys>'} input, {t:'r', c, r}
@@ -739,7 +769,9 @@ export interface MirrorHooks {
  * The fifo is opened read-write so the open never blocks and never sees EOF
  * before tmux's cat arrives. stop() turns the pipe off and removes the fifo.
  */
-export function startMirror(paneId: string, tmux: Tmux, hooks: MirrorHooks, opts: { dir?: string; pollMs?: number } = {}): Mirror {
+export function startMirror(paneId: string, tmux: Tmux, hooks: MirrorHooks, opts: { dir?: string; pollMs?: number; tmuxAsync?: TmuxAsync } = {}): Mirror {
+  // The size poll runs every second for as long as the mirror is open: off the main thread.
+  const probe: TmuxAsync = opts.tmuxAsync ?? (async (args) => tmux(args));
   const dir = opts.dir ?? MIRROR_DIR;
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const fifo = path.join(dir, `${process.pid}-${randomBytes(6).toString('hex')}`);
@@ -776,22 +808,24 @@ export function startMirror(paneId: string, tmux: Tmux, hooks: MirrorHooks, opts
     tmux(['pipe-pane', '-O', '-t', paneId, `cat >> '${fifo}'`]);
     piped = true;
     let dims = `${snap.cols}x${snap.rows}`;
-    timer = setInterval(() => {
+    const poll = guardTick(async () => {
       let now: string;
       try {
-        now = tmux(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}']).trim();
+        now = (await probe(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}'])).trim();
       } catch {
         stop();
         hooks.gone();
         return;
       }
+      if (stopped) return;
       if (now && now !== dims) {
         snap = snapshotPane(paneId, tmux);
         dims = `${snap.cols}x${snap.rows}`;
         hooks.size(snap.cols, snap.rows);
         hooks.output(Buffer.from(snap.data));
       }
-    }, opts.pollMs ?? 1000);
+    }, () => {});
+    timer = setInterval(() => void poll(), opts.pollMs ?? 1000);
     timer.unref?.();
   } catch (e) {
     stop();
@@ -822,6 +856,7 @@ export function startMirror(paneId: string, tmux: Tmux, hooks: MirrorHooks, opts
 export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () => void {
   const token = deps.token ?? termToken();
   const tmux = deps.tmux ?? ((args: string[]) => runTmux(args));
+  const tmuxA: TmuxAsync = deps.tmuxAsync ?? (deps.tmux ? async (args) => tmux(args) : (args) => tmuxAsync(args));
   const panes = deps.panes ?? listTmuxPanes;
   const spawn = deps.spawn === undefined ? loadNodePty() : deps.spawn;
   const log = deps.log ?? ((m: string) => console.log('[loom] term: ' + m));
@@ -917,7 +952,7 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
           sized = true;
         },
         gone: finish,
-      });
+      }, { tmuxAsync: tmuxA });
     } catch (e) {
       log(`mirror failed: ${(e as Error).message}`);
       sendCtl(ws, { t: 'error', message: 'Could not mirror this pane: ' + (e as Error).message });
@@ -978,15 +1013,23 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
       if (r.moved || r.error) pickLog().write('-', 'view-realigned', { why, view, pane: paneId, from: r.from, to: r.to, error: r.error });
     };
     if (kind === 'chat') {
-      const poll = setInterval(() => {
-        align('poll');
-        if (mode === 'zoom') reassertZoom(view, tmux);
-        const z = viewZoomed(view, tmux);
+      // Every 2 s per open chat view: one batched async read says whether anything
+      // is off; the (synchronous) fixers run only when it is, or when the read failed.
+      const check = guardTick(async () => {
+        const p = await probeChatView(view, paneId, tmuxA);
+        let acted = !p;
+        if (!p || p.moved) {
+          align('poll');
+          acted = true;
+        }
+        if (mode === 'zoom' && (!p || p.moved || !p.paneZoomedActive) && reassertZoom(view, tmux)) acted = true;
+        const z = acted || !p ? viewZoomed(view, tmux) : p.zoomed;
         if (z !== zoomed) {
           zoomed = z;
           sendCtl(ws, { t: 'zoom', zoomed });
         }
-      }, 2000);
+      }, () => {});
+      const poll = setInterval(() => void check(), 2000);
       poll.unref?.();
       ws.on('close', () => clearInterval(poll));
     }

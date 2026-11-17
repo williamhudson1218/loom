@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { closeDraft, readOutbox, reconcileLive, OUTBOX_PATH, type Draft, type StoreOpts } from './outbox.ts';
+import { closeDraft, readOutbox, readOutboxShared, reconcileLive, OUTBOX_PATH, type Draft, type StoreOpts } from './outbox.ts';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
 
 // Noticing that a chat posted a draft itself. When Will types "send" in the
@@ -243,7 +243,7 @@ export class OutboxWatch {
 
   /** One pass: scan the owning chats' transcripts, update states, mark what landed. */
   async tick(): Promise<void> {
-    const pending = Object.values(readOutbox(this.store())).filter((d) => d.status === 'pending' && d.messages?.length);
+    const pending = Object.values(readOutboxShared(this.store())).filter((d) => d.status === 'pending' && d.messages?.length);
     const bySession = new Map<string, Draft[]>();
     for (const d of pending) (bySession.get(d.session_id) ?? bySession.set(d.session_id, []).get(d.session_id)!).push(d);
     const next = new Map<string, SendState>();

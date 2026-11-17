@@ -122,11 +122,45 @@ function readFile(file: string): Record<string, Draft> {
   }
 }
 
+// The parsed file, kept while its inode, size and mtime are unchanged. The outbox
+// watcher reads it every second and the board every few seconds; it is MBs of JSON
+// that changes a few times an hour. Only readers that never change what they get
+// (readOutboxShared) use it; every read-modify-write still parses its own copy.
+const parsed = new Map<string, { sig: string; drafts: Record<string, Draft> }>();
+
+function fileSig(file: string): string | null {
+  try {
+    const st = fs.statSync(file);
+    return `${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
+function readFileCached(file: string): Readonly<Record<string, Draft>> {
+  const sig = fileSig(file);
+  if (sig === null) {
+    parsed.delete(file);
+    return {};
+  }
+  const hit = parsed.get(file);
+  if (hit && hit.sig === sig) return hit.drafts;
+  const drafts = readFile(file);
+  parsed.set(file, { sig, drafts });
+  return drafts;
+}
+
+/** Test hook: how many parses the shared cache holds. */
+export function outboxCacheSize(): number {
+  return parsed.size;
+}
+
 function writeFile(file: string, drafts: Record<string, Draft>): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify({ drafts }, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, file);
+  parsed.delete(file);
 }
 
 const isDraft = (d: unknown): d is Draft => {
@@ -318,6 +352,21 @@ export function readOutbox(o?: StoreOpts | string): Record<string, Draft> {
     console.error('[loom] outbox: legacy import failed:', (e as Error).message);
   }
   return readFile(s.file);
+}
+
+/**
+ * Every draft, any status, READ-ONLY: the same object is handed to every caller
+ * until the file changes on disk, so nothing may modify it (copy first). For the
+ * polling paths; anything that edits drafts goes through readOutbox / mutateOutbox.
+ */
+export function readOutboxShared(o?: StoreOpts | string): Readonly<Record<string, Readonly<Draft>>> {
+  const s = store(o);
+  try {
+    syncLegacy(s.file, s.legacy);
+  } catch (e) {
+    console.error('[loom] outbox: legacy import failed:', (e as Error).message);
+  }
+  return readFileCached(s.file);
 }
 
 export type Mutation<T> = (drafts: Record<string, Draft>) => { write: boolean; result: T };
@@ -611,7 +660,7 @@ export function pendingDrafts(
   } catch {
     /* unlabeled: the raw destination shows instead */
   }
-  return Object.values(readOutbox({ file, legacy: opts.legacy }))
+  return Object.values(readOutboxShared({ file, legacy: opts.legacy }))
     .filter((d) => d.status === 'pending' && Array.isArray(d.messages) && (d.messages.length || d.review || d.email))
     .map((d) => {
       const reason = opts.liveSessions

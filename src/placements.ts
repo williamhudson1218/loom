@@ -3,7 +3,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { TOOL_DIR } from './paths.ts';
 import type { Agent } from './types.ts';
-import { isViewSession, tmux } from './tmux.ts';
+import { isViewSession, tmux, tmuxAsync } from './tmux.ts';
+import { execText, TtlCache } from './asyncexec.ts';
 
 export const PLACEMENTS_PATH = path.join(TOOL_DIR, 'placements.jsonl');
 
@@ -136,16 +137,30 @@ export interface TmuxPane {
 // layers). This literal string won't appear in a session/command/pane title.
 const SEP = '~|LOOM|~';
 
+const LIST_PANES_FORMAT = `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{pane_current_path}${SEP}#{pane_left}${SEP}#{pane_top}${SEP}#{pane_title}`;
+
 export function listTmuxPanes(): TmuxPane[] {
   let out: string;
   try {
-    out = tmux(
-      ['list-panes', '-a', '-F',
-        `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{pane_current_path}${SEP}#{pane_left}${SEP}#{pane_top}${SEP}#{pane_title}`],
-    );
+    out = tmux(['list-panes', '-a', '-F', LIST_PANES_FORMAT]);
   } catch {
     return []; // tmux not running
   }
+  return parseTmuxPanes(out);
+}
+
+/** listTmuxPanes off the main thread, for polling paths. */
+export async function listTmuxPanesAsync(): Promise<TmuxPane[]> {
+  let out: string;
+  try {
+    out = await tmuxAsync(['list-panes', '-a', '-F', LIST_PANES_FORMAT]);
+  } catch {
+    return []; // tmux not running
+  }
+  return parseTmuxPanes(out);
+}
+
+export function parseTmuxPanes(out: string): TmuxPane[] {
   return out
     .split('\n')
     .filter(Boolean)
@@ -191,15 +206,30 @@ export function attachedSessions(): Set<string> {
 // and the tray, pane topics, EM scan, board poll and terminals list all want it
 // within the same second. One shared copy, kept for PS_TTL_MS; under vitest it is
 // never reused so tests that change the process table see the change.
+// The async path (psTableAsync) also collapses concurrent callers into ONE `ps`,
+// so a burst of ticks landing together never runs it twice.
 const PS_TTL_MS = 2000;
-let psCache: { at: number; out: string } | null = null;
+const PS_ARGS = ['-eo', 'pid=,ppid=,command='];
+const psCache = new TtlCache<string>(PS_TTL_MS);
+const reusePs = () => !process.env.VITEST;
 
-function psTable(): string {
-  const now = Date.now();
-  if (psCache && !process.env.VITEST && now - psCache.at < PS_TTL_MS) return psCache.out;
-  const out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 5_000, killSignal: 'SIGKILL' });
-  psCache = { at: now, out };
+/** The whole-machine `ps -eo pid=,ppid=,command=` table, shared for PS_TTL_MS. Blocks: polling paths use psTableAsync. */
+export function psTable(): string {
+  const hit = reusePs() ? psCache.fresh() : null;
+  if (hit !== null) return hit;
+  const out = execFileSync('ps', PS_ARGS, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 5_000, killSignal: 'SIGKILL' });
+  psCache.set(out);
   return out;
+}
+
+/** The same table off the main thread: TTL-cached, and one `ps` at a time however many ask. */
+export function psTableAsync(run: () => Promise<string> = () => execText('ps', PS_ARGS)): Promise<string> {
+  return psCache.get(run, { reuse: reusePs() });
+}
+
+/** Test hook: forget the cached table. */
+export function resetPsCache(): void {
+  psCache.clear();
 }
 
 export function agentPaneIds(panes: Pick<TmuxPane, 'pane_id' | 'pane_pid'>[]): Map<string, Agent> {
@@ -209,6 +239,21 @@ export function agentPaneIds(panes: Pick<TmuxPane, 'pane_id' | 'pane_pid'>[]): M
   } catch {
     return new Map();
   }
+  return agentPaneIdsFrom(out, panes);
+}
+
+/** agentPaneIds off the main thread. */
+export async function agentPaneIdsAsync(panes: Pick<TmuxPane, 'pane_id' | 'pane_pid'>[]): Promise<Map<string, Agent>> {
+  let out: string;
+  try {
+    out = await psTableAsync();
+  } catch {
+    return new Map();
+  }
+  return agentPaneIdsFrom(out, panes);
+}
+
+export function agentPaneIdsFrom(out: string, panes: Pick<TmuxPane, 'pane_id' | 'pane_pid'>[]): Map<string, Agent> {
   const children = new Map<number, number[]>();
   const agentPids = new Map<number, Agent>();
   for (const line of out.split('\n')) {
@@ -338,4 +383,12 @@ export function liveSessions(opts?: {
 }): Map<string, LiveInfo> {
   const panes = listTmuxPanes();
   return liveSessionsFrom(panes, agentPaneIds(panes), readPlacements(), opts?.titleToSession);
+}
+
+/** liveSessions with list-panes and ps off the main thread, for polling paths. */
+export async function liveSessionsAsync(opts?: {
+  titleToSession?: Map<string, string>;
+}): Promise<Map<string, LiveInfo>> {
+  const panes = await listTmuxPanesAsync();
+  return liveSessionsFrom(panes, await agentPaneIdsAsync(panes), readPlacements(), opts?.titleToSession);
 }

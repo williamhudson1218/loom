@@ -479,6 +479,13 @@ ${PRUNE_VIEW_CSS}
   .sweep { position:absolute; top:0; left:0; right:0; height:3px; border-radius:10px 10px 0 0; overflow:hidden; pointer-events:none; }
   .sweep::after { content:''; position:absolute; top:0; bottom:0; width:38%; background:linear-gradient(90deg,transparent,#e8b84b,#fff3cf,#e8b84b,transparent); animation:streak 1.25s linear infinite; }
   @keyframes streak { 0%{transform:translateX(-120%)} 100%{transform:translateX(330%)} }
+  /* The infinite pulses and the working streak cost GPU frames for as long as they run.
+     Paused while the window is hidden (html.anim-idle, set below), and
+     off for anyone who asked the OS for less motion. */
+  html.anim-idle .working .pin, html.anim-idle .sweep::after, html.anim-idle .pd.running, html.anim-idle .step.running > .si,
+  html.anim-idle .pdot, html.anim-idle .sdot.d-working, html.anim-idle .mpspin, html.anim-idle .mpslack .mpsl-mark path[pathLength],
+  html.anim-idle .mpslack .mpsl-bar i { animation-play-state:paused; }
+  @media (prefers-reduced-motion:reduce) { .working .pin, .pd.running, .step.running > .si, .sdot.d-working { animation:none; } .sweep::after { animation:none; display:none; } }
   .flash { position:absolute; right:14px; top:11px; font-size:11px; padding:2px 8px; border-radius:6px; background:#1f6f3f; color:#fff; }
   .card { position:relative; }
   .chead { display:flex; align-items:flex-start; gap:10px; }
@@ -2494,6 +2501,9 @@ if(!DATA.codexVisible){['#default-agent','#cagent'].forEach(function(id){const o
 setInterval(visOnly(refresh),5000);
 // Shown again (the hotkey raised the window, or Cmd-Tab): catch up now, not on the next tick.
 document.addEventListener('visibilitychange',function(){if(!document.hidden)refresh();});
+// Pause the infinite card animations while the window is hidden (CSS: html.anim-idle).
+// Not on blur: the board often sits visible on another screen, and the streak is the signal.
+(function(){const r=document.documentElement;const sync=function(){r.classList.toggle('anim-idle',document.hidden);};document.addEventListener('visibilitychange',sync);sync();})();
 setInterval(renderStale,5000);renderStale();
 // The header's connections come with /api/data, not the first paint: fetch once now rather than after the first 5 s tick.
 setTimeout(refresh,0);

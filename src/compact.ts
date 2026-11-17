@@ -1,7 +1,7 @@
 import fs from 'node:fs';
-import { isViewSession, tmux } from './tmux.ts';
+import { isViewSession, tmux, tmuxAsync } from './tmux.ts';
 import { COMPACT_LOG_PATH, COMPACT_OFF_PATH, SESSION_PREFIX } from './paths.ts';
-import { agentPaneIds } from './placements.ts';
+import { agentPaneIds, agentPaneIdsAsync } from './placements.ts';
 
 // Lane compaction (issue #1). Workspace sessions numbered `loom-<lane>-<N>` form
 // a lane, and live agent panes are kept packed to the left of it: when a Claude
@@ -234,17 +234,39 @@ export function focusedPaneFrom(run: TmuxRunner): string | null {
   }
 }
 
+const WORLD_FORMAT = `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{@name}${SEP}#{@group}`;
+
 export function readWorld(run: TmuxRunner = defaultRun): WorldState {
   let out: string;
   try {
-    out = run(['list-panes', '-a', '-F',
-      `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{@name}${SEP}#{@group}`]);
+    out = run(['list-panes', '-a', '-F', WORLD_FORMAT]);
   } catch {
     return { panes: [], focused: null }; // tmux not running
   }
-  // A view session (the embedded terminal) repeats its group's panes; skip it.
-  const rows = out.split('\n').filter(Boolean).map((l) => l.split(SEP)).filter((r) => !isViewSession(r[1]));
-  const agents = agentPaneIds(rows.map((r) => ({ pane_id: r[0], pane_pid: r[4] ?? '' })));
+  const rows = worldRows(out);
+  return worldFrom(rows, agentPaneIds(rows.map((r) => ({ pane_id: r[0], pane_pid: r[4] ?? '' }))), focusedPaneFrom(run));
+}
+
+/** readWorld for the 4 s tick: tmux and ps off the main thread. */
+export async function readWorldAsync(run: (args: string[]) => Promise<string> = (args) => tmuxAsync(args)): Promise<WorldState> {
+  let out: string;
+  try {
+    out = await run(['list-panes', '-a', '-F', WORLD_FORMAT]);
+  } catch {
+    return { panes: [], focused: null }; // tmux not running
+  }
+  const rows = worldRows(out);
+  const [agents, focused] = await Promise.all([
+    agentPaneIdsAsync(rows.map((r) => ({ pane_id: r[0], pane_pid: r[4] ?? '' }))),
+    focusedPaneFromAsync(run),
+  ]);
+  return worldFrom(rows, agents, focused);
+}
+
+// A view session (the embedded terminal) repeats its group's panes; skip it.
+const worldRows = (out: string): string[][] => out.split('\n').filter(Boolean).map((l) => l.split(SEP)).filter((r) => !isViewSession(r[1]));
+
+function worldFrom(rows: string[][], agents: Map<string, unknown>, focused: string | null): WorldState {
   return {
     panes: rows.map((r) => ({
       pane_id: r[0],
@@ -256,8 +278,22 @@ export function readWorld(run: TmuxRunner = defaultRun): WorldState {
       group: (r[7] ?? '').trim(),
       agent: agents.has(r[0]),
     })),
-    focused: focusedPaneFrom(run),
+    focused,
   };
+}
+
+async function focusedPaneFromAsync(run: (args: string[]) => Promise<string>): Promise<string | null> {
+  try {
+    let best: { at: number; session: string } | null = null;
+    for (const line of (await run(['list-clients', '-F', '#{client_activity} #{client_session}'])).split('\n')) {
+      const m = line.trim().match(/^(\d+) (.+)$/);
+      if (m && (!best || Number(m[1]) > best.at)) best = { at: Number(m[1]), session: m[2] };
+    }
+    if (!best) return null;
+    return (await run(['display-message', '-p', '-t', best.session, '#{pane_id}'])).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 // ---- Launch targets ----------------------------------------------------------
@@ -407,9 +443,10 @@ export function setCompactEnabled(enabled: boolean, off: string = COMPACT_OFF_PA
 // it has to be made once and called repeatedly. Never throws.
 export function makeCompactor(deps: ExecDeps = { run: defaultRun, read: () => readWorld(defaultRun), log: appendCompactLog }) {
   const idleSince = new Map<string, number>();
-  return (now: number): { applied: number; dissolved: number } => {
+  // `read`: a world the caller already read (asynchronously, see readWorldAsync); default deps.read().
+  return (now: number, read?: WorldState): { applied: number; dissolved: number } => {
     try {
-      const world = deps.read();
+      const world = read ?? deps.read();
       trackIdle(world.panes, idleSince, now);
       if (!compactEnabled()) return { applied: 0, dissolved: 0 };
 

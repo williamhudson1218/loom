@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import { paneHome, tmux } from './tmux.ts';
+import { paneHome, tmux, tmuxAsync } from './tmux.ts';
+import { guardTick } from './asyncexec.ts';
 import { actionAllowed, attachTerminalBridge, checkSnapAuth, isPaneId, snapshotScreen, isLoomHost, isTermAction, termCommand, termToken, viewKind } from './ptybridge.ts';
 import { createTerminalSession, listTerminals } from './terminals.ts';
 import http from 'node:http';
@@ -10,10 +11,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDefaultAgent, loadTmuxSocketSetting, openDb, setDefaultAgent } from './db.ts';
 import { toChatViews, renderDashboard, type ChatView, type LiveLoc } from './dashboard.ts';
-import { liveSessions, listTmuxPanes, attachedSessions } from './placements.ts';
+import { liveSessions, liveSessionsAsync, attachedSessions, type LiveInfo } from './placements.ts';
 import { gotoPane, launchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
-import { readLayout, writeLayout } from './snapshot.ts';
+import { readLayout, writeLayoutAsync } from './snapshot.ts';
 import { lastTurnAtFromTail } from './parser.ts';
 import { existingSessions, restore } from './restore.ts';
 import { autoRestoreGate, sessionsToRestore, type AutoRestoreEvent, type AutoRestoreMode } from './autorestore.ts';
@@ -21,9 +22,9 @@ import { attachGhosttyTabs } from './ghostty.ts';
 import { searchArchive, isValidProjectDir, isValidTranscriptPath, findChatFromSettings, setFindChatBin } from './findchat.ts';
 import { startPluginStateSync } from './pluginmgr.ts';
 import { SESSION_PREFIX, TOOL_DIR } from './paths.ts';
-import { paneNameMap, rememberPaneNames } from './panenames.ts';
-import { paneLabelConfig, realTopicDeps } from './panetopics.ts';
-import { panesMidTurn } from './midturn.ts';
+import { paneNameMap, readPaneNamesAsync, rememberPaneNames } from './panenames.ts';
+import { paneLabelConfig, readPaneRows, readPaneRowsAsync, type PaneRow } from './panetopics.ts';
+import { panesMidTurn, panesMidTurnAsync } from './midturn.ts';
 import { movePane, ungroupPane, defaultGroupDeps, readWorld, laneTargets, nextOpenPane, focusedPaneFrom, defaultRun } from './compact.ts';
 import { agentSessionKey } from './placements.ts';
 import { isLaunchPreference, type Agent, type LaunchPreference } from './types.ts';
@@ -33,7 +34,7 @@ import { buildDetail, lastMessageTail } from './detail.ts';
 import { openThread, readAllThreads, threadOwners } from './slack.ts';
 import { slackCounts } from './slackthreads.ts';
 import { defaultGotoDeps, threadGoto, parseSlackThread } from './slackgoto.ts';
-import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress, setScheduledDrafts, type SendResult } from './outbox.ts';
+import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacyStateDir, draftImage, pendingDrafts as pendingDraftsRaw, readOutbox, readOutboxShared, readStaleMarks, reconcileLive, sendDraft, sendNow, sendProgress, setScheduledDrafts, type SendResult } from './outbox.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
 import { handleCliPath, setCliDeps, tickPendingLinks } from './routes/cli.ts';
@@ -45,6 +46,7 @@ import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
 import { emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
 import { OutboxWatch } from './outboxwatch.ts';
+import { heldCount as heldLinkCount } from './pendinglinks.ts';
 import { buildRedraftPrompt, clearMark, newMark, readMarks, redraftView, setMark } from './redraft.ts';
 import { cachedHead, ghRun, githubPoster, headMoved } from './outboxreview.ts';
 import { cliAdapter, cliRunner, EMAIL_OFF_DETAIL, resolveEmailCli, type EmailAdapter } from './outboxemail.ts';
@@ -230,6 +232,9 @@ const WORKING_MS = 10_000;
 function livePanesMidTurn(paneIds: string[]): Set<string> {
   return panesMidTurn(paneIds, (args) => tmux(args, { timeout: 1000 }));
 }
+function livePanesMidTurnAsync(paneIds: string[]): Promise<Set<string>> {
+  return panesMidTurnAsync(paneIds, (args) => tmuxAsync(args, { timeout: 1000 }));
+}
 
 // path -> the last turn read off the tail at a given mtime, so a 5s poll with
 // twenty live chats reads nothing that has not changed.
@@ -251,16 +256,48 @@ type Snap = { defaultAgent: LaunchPreference; views: ChatView[]; live: Record<st
 // vitest, where tests change tmux between calls.
 const SNAP_TTL_MS = 1500;
 let snapMemo: { at: number; snap: Snap } | null = null;
+// The background ticks refresh the memo with snapshotAsync (tmux and ps off the
+// main thread), so a request landing inside SNAP_TTL_MS of a tick builds nothing.
+let snapPending: Promise<Snap> | null = null;
+// How stale a snapshot a background tick's helpers may reuse rather than block on a rebuild.
+const SNAP_TICK_REUSE_MS = 10_000;
+
+/**
+ * The snapshot for a background tick: a fresh one is built off the main thread
+ * (one build at a time, however many ticks ask), or the memo is reused within
+ * SNAP_TTL_MS.
+ */
+function snapshotAsync(): Promise<Snap> {
+  if (snapMemo && !process.env.VITEST && Date.now() - snapMemo.at < SNAP_TTL_MS) return Promise.resolve(snapMemo.snap);
+  if (snapPending) return snapPending;
+  const p = buildSnapshotAsync()
+    .then((snap) => {
+      snapMemo = { at: Date.now(), snap };
+      return snap;
+    })
+    .finally(() => {
+      if (snapPending === p) snapPending = null;
+    });
+  snapPending = p;
+  return p;
+}
+
+/** For helpers that run inside a tick which already awaited snapshotAsync: the memo if recent, else a (blocking) build. */
+function tickSnapshot(): Snap {
+  if (snapMemo && !process.env.VITEST && Date.now() - snapMemo.at < SNAP_TICK_REUSE_MS) return snapMemo.snap;
+  return snapshot();
+}
 
 // The outbox watcher: notices a chat posting its own draft from the transcript (src/outboxwatch.ts).
 const outboxWatch = new OutboxWatch({
+  // The tick awaits snapshotAsync first, so these reuse it instead of rebuilding on the main thread.
   transcriptOf: (sid) => {
-    const v = snapshot().views.find((x) => x.session_id === sid && x.agent === 'claude');
+    const v = tickSnapshot().views.find((x) => x.session_id === sid && x.agent === 'claude');
     return v?.jsonl_path ?? null;
   },
   // A chat that posts a new top-level message owns the thread it started (a thread another chat owns stays put).
   claimStarted: (ref, sid) => claimStartedThread(ref, sid),
-  liveSessionIds: () => Object.values(snapshot().live).filter((l) => l.agent === 'claude' && l.session_id).map((l) => l.session_id),
+  liveSessionIds: () => Object.values(tickSnapshot().live).filter((l) => l.agent === 'claude' && l.session_id).map((l) => l.session_id),
 });
 
 /** A chat started this thread (its own post, or Loom's Send of its draft): it owns it unless another chat already does. */
@@ -376,7 +413,7 @@ let seenBusy = false;
 /** Record `seen` on drafts added since the last pass (the chat did not pass one): what each target held at add time. */
 async function fillSeenTick(): Promise<void> {
   if (seenBusy) return;
-  const fresh = Object.values(readOutbox()).filter((d) => d.status === 'pending' && !d.seen_tried && Date.now() - (Date.parse(d.created_at) || 0) < 30 * 60_000);
+  const fresh = Object.values(readOutboxShared()).filter((d) => d.status === 'pending' && !d.seen_tried && Date.now() - (Date.parse(d.created_at) || 0) < 30 * 60_000);
   if (!fresh.length) return;
   seenBusy = true;
   try {
@@ -987,7 +1024,45 @@ function snapshot(): Snap {
   return snap;
 }
 
+interface SnapBase {
+  defaultAgent: LaunchPreference;
+  views: ChatView[];
+  mtime: Map<string, number>;
+  now: number;
+}
+
+/** The tmux/ps half of a snapshot: who is live, pane names, stage labels, mid-turn panes. */
+interface SnapLive {
+  liveMap: Map<string, LiveInfo>;
+  names: Map<string, string>;
+  stages: Map<string, PaneRow>;
+  midTurn: Set<string>;
+}
+
 function buildSnapshot(): Snap {
+  const base = snapBase();
+  const liveMap = liveSessions({ titleToSession: titleToSession(base.views) });
+  const names = liveMap.size ? paneNameMap() : new Map<string, string>();
+  // The pane classifier's @stage, trusted only for the session it labelled.
+  const stages = liveMap.size ? new Map(readPaneRows().map((r) => [r.pane_id, r] as const)) : new Map<string, PaneRow>();
+  const midTurn = liveMap.size ? livePanesMidTurn([...liveMap.values()].map((i) => i.pane_id)) : new Set<string>();
+  return assembleSnapshot(base, { liveMap, names, stages, midTurn });
+}
+
+/** buildSnapshot with every tmux and ps call off the main thread. */
+async function buildSnapshotAsync(): Promise<Snap> {
+  const base = snapBase();
+  const liveMap = await liveSessionsAsync({ titleToSession: titleToSession(base.views) });
+  if (!liveMap.size) return assembleSnapshot(base, { liveMap, names: new Map(), stages: new Map(), midTurn: new Set() });
+  const [nameRows, rows, midTurn] = await Promise.all([
+    readPaneNamesAsync(),
+    readPaneRowsAsync(),
+    livePanesMidTurnAsync([...liveMap.values()].map((i) => i.pane_id)),
+  ]);
+  return assembleSnapshot(base, { liveMap, names: paneNameMap(nameRows), stages: new Map(rows.map((r) => [r.pane_id, r] as const)), midTurn });
+}
+
+function snapBase(): SnapBase {
   const db = openDb();
   // The orchestrator is pinned above the list with a view of its own, so it is
   // never a row on the board (nor a chat in its own list_chats).
@@ -1016,12 +1091,11 @@ function buildSnapshot(): Snap {
       /* file gone */
     }
   }
-  const liveMap = liveSessions({ titleToSession: titleToSession(views) });
-  const names = liveMap.size ? paneNameMap() : new Map<string, string>();
-  // The pane classifier's @stage, trusted only for the session it labelled.
-  const stages = liveMap.size ? new Map(realTopicDeps.readPanes().map((r) => [r.pane_id, r] as const)) : new Map();
+  return { defaultAgent, views, mtime, now };
+}
+
+function assembleSnapshot({ defaultAgent, views, mtime, now }: SnapBase, { liveMap, names, stages, midTurn }: SnapLive): Snap {
   const live: Record<string, LiveLoc> = {};
-  const midTurn = liveMap.size ? livePanesMidTurn([...liveMap.values()].map((i) => i.pane_id)) : new Set<string>();
   for (const [key, info] of liveMap) {
     const mt = mtime.get(key) ?? 0;
     const name = names.get(info.pane_id);
@@ -1052,8 +1126,7 @@ function buildSnapshot(): Snap {
     if (n) v.pane_name = n;
   }
   if (process.env.LOOM_DEBUG) {
-    const panes = listTmuxPanes();
-    console.error(`[loom-debug] views=${views.length} panes=${panes.length} live=${Object.keys(live).length}`);
+    console.error(`[loom-debug] views=${views.length} live=${Object.keys(live).length}`);
   }
   return { defaultAgent, views, live };
 }
@@ -2294,13 +2367,13 @@ export function createServer(): http.Server {
  */
 export function startGhTicks(): void {
   // Links handed over with a new session attach to its chat once it is live (src/pendinglinks.ts).
-  setInterval(() => {
-    try {
-      tickPendingLinks();
-    } catch (e) {
-      console.error('[loom] pending links failed:', (e as Error).message);
-    }
-  }, 2_000).unref?.();
+  // Its live map comes from the snapshot, refreshed off the main thread first.
+  const pendingLinks = guardTick(async () => {
+    if (!heldLinkCount()) return;
+    await snapshotAsync();
+    tickPendingLinks();
+  }, (e) => console.error('[loom] pending links failed:', (e as Error).message));
+  setInterval(() => void pendingLinks(), 2_000).unref?.();
 
   // PR pipelines: refresh whatever the board or a panel asked about and is due.
   // Each entry decides its own pace (20s in flight on a live chat, minutes otherwise).
@@ -2319,8 +2392,8 @@ export function startGhTicks(): void {
   // transitions, deliver events and queued relays (src/orchserver.ts).
   // A draft an open send_draft step will send is never superseded by a newer draft to the same place.
   setScheduledDrafts(() => withDbHandle((db) => scheduledDraftIds(db)));
-  const ships = () => {
-    const snap = snapshot();
+  const ships = guardTick(async () => {
+    const snap = await snapshotAsync();
     refreshShipBoards(snap.views, snap.live)
       .then((b) => {
         onShipBoards(b);
@@ -2331,18 +2404,18 @@ export function startGhTicks(): void {
       .catch((e) => console.error('[loom] ship boards failed:', (e as Error).message));
     orchTick(snap);
     void actionTick(snap, Date.now(), actionIo());
-  };
-  setTimeout(ships, 2_000);
-  setInterval(ships, 15_000);
+  }, (e) => console.error('[loom] ship tick failed:', (e as Error).message));
+  setTimeout(() => void ships(), 2_000);
+  setInterval(() => void ships(), 15_000);
 
   // Outbox: a chat posting its own draft shows in its transcript within a second.
   // The 2-minute thread reconcile (read-only) settles drafts posted any other way.
-  let watching = false;
-  setInterval(() => {
-    if (watching) return;
-    watching = true;
-    outboxWatch.tick().catch((e) => console.error('[loom] outbox watch failed:', (e as Error).message)).finally(() => { watching = false; });
-  }, 1_000);
+  // It reads the snapshot (tickSnapshot), so refresh that off the main thread first.
+  const watchOutbox = guardTick(async () => {
+    await snapshotAsync();
+    await outboxWatch.tick();
+  }, (e) => console.error('[loom] outbox watch failed:', (e as Error).message));
+  setInterval(() => void watchOutbox(), 1_000);
   let reconciling = false;
   const reconcile = () => {
     if (reconciling) return;
@@ -2383,20 +2456,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`[loom] server on http://localhost:${choice.port}`);
   });
   // Capture a full tmux-layout snapshot for crash recovery while tmux is healthy.
-  const snap = () => {
+  const snap = guardTick(async () => {
     // Restore before snapshotting, so a session Loom itself starts (a terminal view) is never
     // the first thing written over the saved workspace.
     autoRestoreTick(firstSnap ? 'startup' : 'running');
     firstSnap = false;
     try {
-      writeLayout(Date.now());
+      await writeLayoutAsync(Date.now());
     } catch {
       /* tmux not running */
     }
-  };
+  });
   let firstSnap = true;
-  snap();
-  setInterval(snap, 15_000);
+  void snap();
+  setInterval(() => void snap(), 15_000);
 
   startGhTicks();
   startWatcherTicks();

@@ -1,11 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { LAYOUT_PATH, SESSION_PREFIX } from './paths.ts';
-import { agentPaneIds, listTmuxPanes, liveSessions, type TmuxPane } from './placements.ts';
+import { agentPaneIds, agentPaneIdsFrom, listTmuxPanes, listTmuxPanesAsync, liveSessions, liveSessionsFrom, psTable, psTableAsync, readPlacements, type TmuxPane } from './placements.ts';
 import { readGhosttyWindows, savedWindowsFrom, tabMatchesSession, type SavedGhosttyWindow } from './ghostty.ts';
-import { paneNameMap } from './panenames.ts';
-import { tmux } from './tmux.ts';
+import { paneNameMap, readPaneNamesAsync } from './panenames.ts';
+import { tmux, tmuxAsync } from './tmux.ts';
 import type { Agent } from './types.ts';
 
 const SEP = '~|LOOM|~';
@@ -65,14 +64,19 @@ export interface CaptureLayoutInput {
 }
 
 // session:window -> window_layout (exact pane geometry)
+const LIST_WINDOWS = ['list-windows', '-a', '-F', `#{session_name}${SEP}#{window_index}${SEP}#{window_layout}`];
 function windowLayouts(): Map<string, string> {
-  const m = new Map<string, string>();
   let out: string;
   try {
-    out = tmux(['list-windows', '-a', '-F', `#{session_name}${SEP}#{window_index}${SEP}#{window_layout}`]);
+    out = tmux(LIST_WINDOWS);
   } catch {
-    return m;
+    return new Map();
   }
+  return parseWindowLayouts(out);
+}
+
+function parseWindowLayouts(out: string): Map<string, string> {
+  const m = new Map<string, string>();
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
     const p = line.split(SEP);
@@ -83,14 +87,19 @@ function windowLayouts(): Map<string, string> {
 
 // pane_pid -> full command line of the program running in it (deepest non-shell
 // descendant), so dev-server / editor panes can be reconstructed best-effort.
+// The ps table is the shared one (placements.ts), not a second whole-machine ps.
 function foregroundCommands(panes: TmuxPane[]): Map<string, string> {
-  const m = new Map<string, string>();
   let out: string;
   try {
-    out = execFileSync('ps', ['-eo', 'pid=,ppid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 5_000, killSignal: 'SIGKILL' });
+    out = psTable();
   } catch {
-    return m;
+    return new Map();
   }
+  return foregroundCommandsFrom(out, panes);
+}
+
+function foregroundCommandsFrom(out: string, panes: TmuxPane[]): Map<string, string> {
+  const m = new Map<string, string>();
   const children = new Map<number, number[]>();
   const cmd = new Map<number, string>();
   for (const line of out.split('\n')) {
@@ -184,6 +193,34 @@ export function captureLayout(now: number, prefix: string = SESSION_PREFIX): Lay
   });
 }
 
+/** captureLayout with every tmux and ps call off the main thread (the 15 s snapshot tick). */
+export async function captureLayoutAsync(now: number, prefix: string = SESSION_PREFIX): Promise<Layout> {
+  const all = await listTmuxPanesAsync();
+  const panes = all.filter((p) => p.tmux_session.startsWith(prefix));
+  let ps = '';
+  try {
+    ps = await psTableAsync();
+  } catch {
+    /* no ps: no agents, no foreground commands */
+  }
+  let windows = '';
+  try {
+    windows = await tmuxAsync(LIST_WINDOWS);
+  } catch {
+    /* tmux down */
+  }
+  const names = paneNameMap(await readPaneNamesAsync());
+  return captureLayoutFrom({
+    now,
+    panes,
+    agentPanes: agentPaneIdsFrom(ps, panes),
+    live: liveSessionsFrom(all, agentPaneIdsFrom(ps, all), readPlacements()),
+    layouts: parseWindowLayouts(windows),
+    foreground: foregroundCommandsFrom(ps, panes),
+    names,
+  });
+}
+
 // Reading Ghostty's tab bar means an accessibility round-trip, which is far too
 // slow to do on every 15s snapshot. Tab order changes rarely, so refresh it on
 // its own slow cadence and carry the last reading forward in between.
@@ -221,9 +258,16 @@ export function archiveStaleLayout(prev: Layout | null, now: number, file: strin
 // Only overwrite the saved snapshot when tmux actually has sessions — never clobber
 // a good snapshot with an empty one (e.g. right after a crash before restore).
 export function writeLayout(now: number, opts: WriteLayoutOpts = {}): Layout | null {
+  return saveLayout(captureLayout(now, opts.prefix ?? SESSION_PREFIX), now, opts);
+}
+
+/** writeLayout with the capture off the main thread (the periodic snapshot). */
+export async function writeLayoutAsync(now: number, opts: WriteLayoutOpts = {}): Promise<Layout | null> {
+  return saveLayout(await captureLayoutAsync(now, opts.prefix ?? SESSION_PREFIX), now, opts);
+}
+
+function saveLayout(layout: Layout, now: number, opts: WriteLayoutOpts): Layout | null {
   const file = opts.path ?? LAYOUT_PATH;
-  const prefix = opts.prefix ?? SESSION_PREFIX;
-  const layout = captureLayout(now, prefix);
   if (layout.sessions.length === 0) return null;
 
   const prev = readLayout(file);

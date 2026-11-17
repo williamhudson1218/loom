@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { isViewSession, tmux } from './tmux.ts';
+import { isViewSession, tmux, tmuxAsync, tmuxQuietAsync } from './tmux.ts';
 import { CLAUDE_PROJECTS_DIR, SESSION_PREFIX } from './paths.ts';
 import type { LiveInfo } from './placements.ts';
 import { threadsFor } from './slack.ts';
@@ -48,7 +48,9 @@ export const REFRESH_GROWTH_BYTES = 256 * 1024;
 export const RECLASSIFY_STAGE_MS = 3 * 60 * 1000;
 // A failed or rejected call waits this long before the pane is tried again.
 export const RETRY_MS = 2 * 60 * 1000;
-export const MAX_CONCURRENT = 3;
+// One model call at a time: each `claude -p` boots a whole Claude Code process
+// (hundreds of MB, a second or two of CPU), and three at once is felt on a small Mac.
+export const MAX_CONCURRENT = 1;
 const RECENT_PROMPTS = 8;
 const RECENT_TOOLS = 80;
 // The assistant's own one-line descriptions of its tool calls. When the user's
@@ -57,7 +59,10 @@ const RECENT_DOINGS = 12;
 const DOING_CHARS = 100;
 // Transcripts run to tens of MB; everything the namer needs is near the end.
 const TAIL_BYTES = 2 * 1024 * 1024;
-const FULL_READ_CAP = 64 * 1024 * 1024;
+// When the 2 MB tail holds no prompt (a long autonomous run): a wider tail, then
+// the head, where the launch prompt sits. Bounded and async, never the whole file.
+export const WIDE_TAIL_BYTES = 8 * 1024 * 1024;
+export const HEAD_BYTES = 1024 * 1024;
 const HAIKU_TIMEOUT_MS = 90_000;
 
 export const TOPIC_OPTIONS = ['@topic', '@stage', '@topic_sid', '@topic_at', '@topic_off', '@stage_at', '@stage_size'];
@@ -318,12 +323,12 @@ export interface PaneRow extends PaneLabels {
 }
 
 export interface TopicDeps {
-  readPanes(): PaneRow[];
-  setOpts(paneId: string, opts: Record<string, string>): void;
-  unsetOpts(paneId: string, names: string[]): void;
+  readPanes(): PaneRow[] | Promise<PaneRow[]>;
+  setOpts(paneId: string, opts: Record<string, string>): void | Promise<void>;
+  unsetOpts(paneId: string, names: string[]): void | Promise<void>;
   transcriptPath(sid: string): string | null;
   stat(file: string): { size: number; mtimeMs: number } | null;
-  readRange(file: string, from: number, to: number): string;
+  readRange(file: string, from: number, to: number): string | Promise<string>;
   haiku(ask: string, model?: string): Promise<string>;
   threads(sid: string): string[]; // Slack threads the chat owns, as 'label: root preview'
   log(msg: string): void;
@@ -332,25 +337,28 @@ export interface TopicDeps {
 const SEP = '~|LOOM|~';
 const num = (s: string | undefined) => (s && /^\d+$/.test(s) ? Number(s) : 0);
 
-function tmuxQuiet(args: string[]): void {
+const sidPaths = new Map<string, string>();
+
+const TOPIC_LIST = ['list-panes', '-a', '-F', ['#{pane_id}', '#{session_name}', ...TOPIC_OPTIONS.map((o) => `#{${o}}`)].join(SEP)];
+
+/** Every pane's labels, read synchronously (the request-path snapshot). The tick uses realTopicDeps.readPanes, which is async. */
+export function readPaneRows(): PaneRow[] {
   try {
-    tmux(args, { stdio: 'ignore' });
+    return parsePaneRows(tmux(TOPIC_LIST));
   } catch {
-    /* pane vanished between listing it and writing to it */
+    return [];
   }
 }
 
-const sidPaths = new Map<string, string>();
+export async function readPaneRowsAsync(): Promise<PaneRow[]> {
+  try {
+    return parsePaneRows(await tmuxAsync(TOPIC_LIST));
+  } catch {
+    return [];
+  }
+}
 
-export const realTopicDeps: TopicDeps = {
-  readPanes() {
-    let out: string;
-    try {
-      out = tmux(['list-panes', '-a', '-F',
-        ['#{pane_id}', '#{session_name}', ...TOPIC_OPTIONS.map((o) => `#{${o}}`)].join(SEP)]);
-    } catch {
-      return [];
-    }
+function parsePaneRows(out: string): PaneRow[] {
     return out.split('\n').filter(Boolean).filter((l) => !isViewSession(l.split(SEP)[1])).map((l) => {
       const p = l.split(SEP);
       return {
@@ -358,16 +366,19 @@ export const realTopicDeps: TopicDeps = {
         topicAt: num(p[5]) * 1000, topicOff: num(p[6]), stageAt: num(p[7]) * 1000, stageSize: num(p[8]),
       };
     });
-  },
-  setOpts(paneId, opts) {
+}
+
+export const realTopicDeps: TopicDeps = {
+  readPanes: readPaneRowsAsync,
+  async setOpts(paneId, opts) {
     const args: string[] = [];
     for (const [k, v] of Object.entries(opts)) args.push(...(args.length ? [';'] : []), 'set-option', '-p', '-t', paneId, k, v);
-    if (args.length) tmuxQuiet(args);
+    if (args.length) await tmuxQuietAsync(args);
   },
-  unsetOpts(paneId, names) {
+  async unsetOpts(paneId, names) {
     const args: string[] = [];
     for (const n of names) args.push(...(args.length ? [';'] : []), 'set-option', '-pu', '-t', paneId, n);
-    if (args.length) tmuxQuiet(args);
+    if (args.length) await tmuxQuietAsync(args);
   },
   transcriptPath(sid) {
     const hit = sidPaths.get(sid);
@@ -395,16 +406,16 @@ export const realTopicDeps: TopicDeps = {
       return null;
     }
   },
-  readRange(file, from, to) {
+  async readRange(file, from, to) {
     const len = Math.max(0, to - from);
     if (!len) return '';
-    const fd = fs.openSync(file, 'r');
+    const fh = await fs.promises.open(file, 'r');
     try {
       const buf = Buffer.alloc(len);
-      const n = fs.readSync(fd, buf, 0, len, from);
-      return buf.subarray(0, n).toString('utf-8');
+      const { bytesRead } = await fh.read(buf, 0, len, from);
+      return buf.subarray(0, bytesRead).toString('utf-8');
     } finally {
-      fs.closeSync(fd);
+      await fh.close();
     }
   },
   haiku(ask, model = 'haiku') {
@@ -460,16 +471,16 @@ export class PaneTopics {
 
   // One pass: clear panes whose chat is gone, start namers where a rule fires.
   // Never awaits the namers, so a tick is as cheap as a tmux listing plus a stat per chat.
-  tick(live: Map<string, LiveInfo>, now: number = Date.now()): { started: number; cleared: number } {
+  async tick(live: Map<string, LiveInfo>, now: number = Date.now()): Promise<{ started: number; cleared: number }> {
     const cfg = this.config();
-    const rows = this.deps.readPanes();
+    const rows = await this.deps.readPanes();
     if (!cfg.enabled) {
       // Labels off: no model calls, and whatever was written comes off the borders.
       let off = 0;
       for (const row of rows) {
         if (!row.session_name.startsWith(this.prefix)) continue;
         if (row.sid || row.topic || row.stage) {
-          this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
+          await this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
           this.retryAt.delete(row.pane_id);
           off++;
         }
@@ -489,7 +500,7 @@ export class PaneTopics {
       if (!chat || this.headless.has(chat.session_id)) {
         // Not live any more (pane runs a shell, the chat ended or was never one).
         if (row.sid || row.topic || row.stage) {
-          this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
+          await this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
           this.retryAt.delete(row.pane_id);
           cleared++;
         }
@@ -506,8 +517,8 @@ export class PaneTopics {
       if (plan.kind === 'none') continue;
       let cur: PaneLabels = row;
       if (plan.kind === 'reset') {
-        this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
-        this.deps.setOpts(row.pane_id, { '@topic_sid': chat.session_id });
+        await this.deps.unsetOpts(row.pane_id, TOPIC_OPTIONS);
+        await this.deps.setOpts(row.pane_id, { '@topic_sid': chat.session_id });
         cur = { topic: '', stage: '', sid: chat.session_id, topicAt: 0, topicOff: 0, stageAt: 0, stageSize: 0 };
       }
       this.inflight.add(row.pane_id);
@@ -521,12 +532,14 @@ export class PaneTopics {
     paneId: string, sid: string, file: string, st: { size: number; mtimeMs: number }, cur: PaneLabels, now: number, model: string,
   ): Promise<void> {
     try {
-      const tail = this.deps.readRange(file, Math.max(0, st.size - TAIL_BYTES), st.size);
+      const tail = await this.deps.readRange(file, Math.max(0, st.size - TAIL_BYTES), st.size);
       if (isHeadless(tail)) {
         this.headless.add(sid);
         return;
       }
-      const sinceOff = cur.topic ? this.deps.readRange(file, Math.min(cur.topicOff, st.size), st.size) : '';
+      // Prompts since the naming are counted, so only a bounded window is read for it.
+      const sinceFrom = Math.max(Math.min(cur.topicOff, st.size), st.size - WIDE_TAIL_BYTES);
+      const sinceOff = cur.topic ? await this.deps.readRange(file, sinceFrom, st.size) : '';
       const wantTopic = topicRefreshDue(cur, cur.topic ? userPrompts(sinceOff).length : 0, now, st.size - cur.topicOff);
       const stageDue = now - cur.stageAt >= RECLASSIFY_STAGE_MS && st.size !== cur.stageSize;
       if (!wantTopic && !stageDue) {
@@ -536,10 +549,14 @@ export class PaneTopics {
       }
 
       // A long autonomous run can push every prompt out of the tail (one launch
-      // prompt, then megabytes of tool calls): fall back to the whole file once.
+      // prompt, then megabytes of tool calls): look further back, then at the head,
+      // where the launch prompt is. Both reads are bounded.
       let prompts = userPrompts(tail).slice(-RECENT_PROMPTS);
       if (!prompts.length && st.size > TAIL_BYTES) {
-        prompts = userPrompts(this.deps.readRange(file, 0, Math.min(st.size, FULL_READ_CAP))).slice(-RECENT_PROMPTS);
+        prompts = userPrompts(await this.deps.readRange(file, Math.max(0, st.size - WIDE_TAIL_BYTES), st.size - TAIL_BYTES)).slice(-RECENT_PROMPTS);
+      }
+      if (!prompts.length && st.size > WIDE_TAIL_BYTES) {
+        prompts = userPrompts(await this.deps.readRange(file, 0, Math.min(HEAD_BYTES, st.size - WIDE_TAIL_BYTES))).slice(-RECENT_PROMPTS);
       }
       if (!prompts.length) {
         this.retryAt.set(paneId, now + 15_000); // nothing said yet; wait for the first prompt
@@ -565,7 +582,7 @@ export class PaneTopics {
       }
 
       // The session may have ended or been replaced while haiku thought.
-      const still = this.deps.readPanes().find((r) => r.pane_id === paneId);
+      const still = (await this.deps.readPanes()).find((r) => r.pane_id === paneId);
       if (!still || still.sid !== sid) return;
 
       const done = Date.now();
@@ -582,7 +599,7 @@ export class PaneTopics {
       opts['@stage_at'] = sec(done);
       opts['@stage_size'] = String(st.size);
       if (got.stage) opts['@stage'] = got.stage;
-      this.deps.setOpts(paneId, opts);
+      await this.deps.setOpts(paneId, opts);
       if (opts['@topic'] && opts['@topic'] !== cur.topic) this.deps.log(`${paneId}: ${cur.topic || '(none)'} -> ${opts['@topic']}`);
     } catch (e) {
       this.retryAt.set(paneId, Date.now() + RETRY_MS);

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { toolBin } from './toolpath.ts';
 import { TOOL_DIR } from './paths.ts';
 import { bounded, Breaker, breakerError, isTimeout, SYNC_TIMEOUT_MS } from './synctimeout.ts';
+import { execText } from './asyncexec.ts';
 
 // The one door every tmux call goes through.
 //
@@ -139,6 +140,32 @@ export function tmux(args: string[], opts: Omit<ExecFileSyncOptions, 'encoding'>
 export function tmuxQuiet(args: string[]): void {
   try {
     runTmux(args, () => execFileSync(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), bounded({ stdio: 'ignore' as const }, tmuxTimeoutFor(args))));
+  } catch {
+    /* gone */
+  }
+}
+
+/**
+ * The async door, for polling paths on the main thread: same socket, config,
+ * timeout and breaker as tmux(), but the child runs off-thread. Resolves to stdout.
+ */
+export async function tmuxAsync(args: string[], opts: { timeout?: number } = {}): Promise<string> {
+  if (tmuxBreaker.isOpen(Date.now())) throw breakerError('tmux');
+  const timeout = opts.timeout ?? tmuxTimeoutFor(args);
+  try {
+    return await execText(toolBin('tmux'), tmuxArgs(args, { startsServer: startsServer(args) }), { timeout });
+  } catch (e) {
+    if (isTimeout(e) && tmuxBreaker.trip(Date.now())) {
+      console.error(`[loom] tmux ${args[0] ?? ''} timed out after ${timeout}ms; tmux calls fail fast for ${TMUX_COOLDOWN_MS / 1000}s`);
+    }
+    throw e;
+  }
+}
+
+/** tmuxAsync, swallowing failure. */
+export async function tmuxQuietAsync(args: string[]): Promise<void> {
+  try {
+    await tmuxAsync(args);
   } catch {
     /* gone */
   }

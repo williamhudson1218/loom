@@ -145,7 +145,7 @@ const TODAY: Record<string, unknown> = {
 
 // A new install (settings_schema = 2) with nothing stored: design §3 "New".
 const NEW_USER: Record<string, unknown> = {
-  default_agent: 'claude', summary_model: 'haiku', analyze_cap: 10, analyze_concurrency: 2, active_window_days: 7, new_thread_dir: 'last',
+  default_agent: 'claude', summary_model: 'haiku', analyze_cap: 10, analyze_concurrency: 1, active_window_days: 7, new_thread_dir: 'last',
   notify_sound: 'system', claude_bin: '', extra_path: [], codex_visible: 'auto',
   terminal: 'inside', launch_target: 'managed', lane_view: 'zoom', auto_restore: true, ghostty_rehome: false, ghostty_attach_cmd: 'tmux attach -t', pane_labels: true,
   pane_label_model: 'haiku', pane_tint: false, pane_tint_base: '#1e1e2e',

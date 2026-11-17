@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
+import { githubRemotesOf, pickPrUrl, prUrlsIn } from './prpick.ts';
 import type { ParsedChat } from './types.ts';
 
 export function localDay(ts: number): string {
@@ -79,7 +80,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
   let message_count = 0;
   let first_message = '';
   let claude_auto_title = '';
-  let pr_url = '';
+  const prUrls = new Map<string, true>(); // insertion order = last seen
   const activity: Record<string, number> = {};
   const files = new Set<string>();
   const written = new Set<string>();
@@ -90,10 +91,11 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
   for await (const line of rl) {
     if (!line.trim()) continue;
     // Cheap scan of the raw line for GitHub PR URLs (anywhere: prose, gh output,
-    // tool results). Last one in the transcript wins — usually the relevant PR.
-    if (line.includes('/pull/')) {
-      const m = line.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g);
-      if (m) pr_url = m[m.length - 1];
+    // tool results), last-seen order. The pick at the end keeps only the chat's
+    // own repo's PRs (src/prpick.ts), so a quoted example URL is never its PR.
+    for (const u of prUrlsIn(line)) {
+      prUrls.delete(u);
+      prUrls.set(u, true);
     }
     let obj: any;
     try {
@@ -163,7 +165,7 @@ export async function parseJsonlFile(jsonlPath: string): Promise<ParsedChat> {
     files_written: Array.from(written),
     first_message,
     claude_auto_title,
-    pr_url,
+    pr_url: pickPrUrl([...prUrls.keys()], prUrls.size ? githubRemotesOf(project_dir) : null),
   };
 }
 

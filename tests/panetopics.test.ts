@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  PaneTopics, LABEL_SYSTEM, buildAsk, isHeadless, parseReply, planPane, recentActivity, topicRefreshDue, userPrompts,
+  WIDE_TAIL_BYTES, PaneTopics, LABEL_SYSTEM, buildAsk, isHeadless, parseReply, planPane, recentActivity, topicRefreshDue, userPrompts,
   REFRESH_TOPIC_MS, REFRESH_GROWTH_BYTES, RECLASSIFY_STAGE_MS, TOPIC_OPTIONS, type PaneLabels, type PaneRow, type TopicDeps,
 } from '../src/panetopics.ts';
 import { agentSessionKey, type LiveInfo } from '../src/placements.ts';
@@ -183,7 +183,7 @@ function fakeDeps(transcript: string, reply = '{"topic":"Pane Topics","stage":"i
   const panes: [string, string][] = [['%1', 'loom-tp-2'], ['%2', 'other']];
   const deps: TopicDeps = {
     readPanes: () => panes.map(([p, s]) => row(p, s)),
-    setOpts: (p, o) => opts.set(p, { ...(opts.get(p) ?? {}), ...o }),
+    setOpts: (p, o) => void opts.set(p, { ...(opts.get(p) ?? {}), ...o }),
     unsetOpts: (p, names) => {
       const o = { ...(opts.get(p) ?? {}) };
       for (const n of names) delete o[n];
@@ -208,20 +208,20 @@ describe('PaneTopics', () => {
   it('names a live workspace chat once, with topic and stage', async () => {
     const { deps, opts, calls } = fakeDeps([user('build pane topics'), tool('Edit')].join('\n'));
     const t = new PaneTopics(deps, 'loom-');
-    expect(t.tick(live('%1', 's1')).started).toBe(1);
+    expect((await t.tick(live('%1', 's1'))).started).toBe(1);
     await settle();
     expect(opts.get('%1')).toMatchObject({ '@topic': 'Pane Topics', '@stage': 'implementation', '@topic_sid': 's1' });
     // Nothing grew: the next tick is free.
-    expect(t.tick(live('%1', 's1')).started).toBe(0);
+    expect((await t.tick(live('%1', 's1'))).started).toBe(0);
     expect(calls).toHaveLength(1);
   });
 
   it('renames at once when a new session takes the pane', async () => {
     const { deps, opts } = fakeDeps(user('hi'));
     const t = new PaneTopics(deps, 'loom-');
-    t.tick(live('%1', 's1'));
+    await t.tick(live('%1', 's1'));
     await settle();
-    t.tick(live('%1', 's2'));
+    await t.tick(live('%1', 's2'));
     expect(opts.get('%1')?.['@topic']).toBeUndefined();
     await settle();
     expect(opts.get('%1')).toMatchObject({ '@topic_sid': 's2', '@topic': 'Pane Topics' });
@@ -230,17 +230,17 @@ describe('PaneTopics', () => {
   it('clears every option when the chat is no longer live', async () => {
     const { deps, opts } = fakeDeps(user('hi'));
     const t = new PaneTopics(deps, 'loom-');
-    t.tick(live('%1', 's1'));
+    await t.tick(live('%1', 's1'));
     await settle();
-    expect(t.tick(new Map()).cleared).toBe(1);
+    expect((await t.tick(new Map())).cleared).toBe(1);
     for (const o of TOPIC_OPTIONS) expect(opts.get('%1')?.[o]).toBeUndefined();
   });
 
   it('ignores panes outside the prefix and headless sessions', async () => {
     const { deps, calls } = fakeDeps(user('hi', { entrypoint: 'sdk-cli' }));
     const t = new PaneTopics(deps, 'loom-');
-    t.tick(live('%2', 's9', 'other'));
-    t.tick(live('%1', 's1'));
+    await t.tick(live('%2', 's9', 'other'));
+    await t.tick(live('%1', 's1'));
     await settle();
     expect(calls).toHaveLength(0);
   });
@@ -253,7 +253,7 @@ describe('PaneTopics', () => {
       '@topic_off': '0', '@stage_at': String(Math.floor((now - RECLASSIFY_STAGE_MS) / 1000) - 1), '@stage_size': '1',
     });
     const t = new PaneTopics(deps, 'loom-');
-    expect(t.tick(live('%1', 's1'), now).started).toBe(1);
+    expect((await t.tick(live('%1', 's1'), now)).started).toBe(1);
     await settle();
     expect(opts.get('%1')).toMatchObject({ '@topic': 'Kept', '@stage': 'thread' });
   });
@@ -267,7 +267,7 @@ describe('PaneTopics on a chat opened from a link', () => {
       ["#ops: @Sam KS SIT can't be created"],
     );
     const t = new PaneTopics(deps, 'loom-');
-    t.tick(live('%1', 's1'));
+    await t.tick(live('%1', 's1'));
     await settle();
     expect(calls[0]).toContain("KS SIT can't be created");
     expect(calls[0]).toContain('Read the linked Slack thread');
@@ -285,7 +285,7 @@ describe('PaneTopics on a chat opened from a link', () => {
       '@stage_at': String(Math.floor(now / 1000)), '@stage_size': String(transcript.length),
     });
     const t = new PaneTopics(deps, 'loom-');
-    expect(t.tick(live('%1', 's1'), now).started).toBe(1);
+    expect((await t.tick(live('%1', 's1'), now)).started).toBe(1);
     await settle();
     expect(calls[0]).toContain("Current topic: 'Slack Thread Link'");
     expect(opts.get('%1')?.['@topic']).toBe('Filing Batch 2311');
@@ -293,11 +293,30 @@ describe('PaneTopics on a chat opened from a link', () => {
 });
 
 describe('PaneTopics on a long run', () => {
+  it('reads only bounded windows, finding the launch prompt in the head', async () => {
+    const filler = Array.from({ length: 70000 }, () => tool('Read', { file_path: '/a/very/long/path/to/some/file.ts' })).join('\n');
+    const transcript = [user('author KSKCNS100'), filler].join('\n');
+    expect(transcript.length).toBeGreaterThan(WIDE_TAIL_BYTES);
+    const { deps, calls } = fakeDeps(transcript);
+    const reads: number[] = [];
+    const read = deps.readRange;
+    deps.readRange = async (f, from, to) => {
+      reads.push(to - from);
+      return read(f, from, to);
+    };
+    const t = new PaneTopics(deps, 'loom-');
+    await t.tick(live('%1', 's1'));
+    await settle();
+    expect(calls[0]).toContain('author KSKCNS100');
+    expect(Math.max(...reads)).toBeLessThanOrEqual(WIDE_TAIL_BYTES);
+  });
+
+
   it('finds the launch prompt when the tail holds only tool calls', async () => {
     const filler = Array.from({ length: 30000 }, () => tool('Read', { file_path: '/a/very/long/path/to/some/file.ts' })).join('\n');
     const { deps, opts, calls } = fakeDeps([user('author KSKCNS100'), filler].join('\n'));
     const t = new PaneTopics(deps, 'loom-');
-    t.tick(live('%1', 's1'));
+    await t.tick(live('%1', 's1'));
     await settle();
     expect(calls[0]).toContain('author KSKCNS100');
     expect(opts.get('%1')?.['@topic']).toBe('Pane Topics');

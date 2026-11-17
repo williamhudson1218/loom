@@ -23,7 +23,7 @@ import { parseSlackThread, findOwner, defaultGotoDeps } from '../src/slackgoto.t
 import { getChannelProjects } from '../src/slackowner.ts';
 import { channelLabels, cachedRoot, setSlackOpenedHook } from '../src/slack.ts';
 import { runPass } from '../src/cli.ts';
-import { writeLayout } from '../src/snapshot.ts';
+import { writeLayoutAsync } from '../src/snapshot.ts';
 import { restore } from '../src/restore.ts';
 import { attachGhosttyTabs } from '../src/ghostty.ts';
 import { currentTerminal, setInsideLoading, setInsideRaiser } from '../src/terminal.ts';
@@ -31,27 +31,31 @@ import { LOOM_SCHEME, parseLoomUrl, raiseLoom, setConnectRaiser } from '../src/c
 import { SESSION_PREFIX, TOOL_DIR } from '../src/paths.ts';
 import { trayIcon } from './trayIcon.ts';
 import {
-  liveSessions,
+  liveSessionsAsync,
   liveSessionsFrom,
   listTmuxPanes,
+  listTmuxPanesAsync,
   agentPaneIds,
+  agentPaneIdsAsync,
   readPlacements,
+  type TmuxPane,
   agentSessionKey,
   attachedSessions,
 } from '../src/placements.ts';
 import { makeTmuxWatcher, noteTmuxState } from '../src/tmuxwatch.ts';
 import { toChatViews } from '../src/dashboard.ts';
 import { PaneTints, desiredTints } from '../src/panetint.ts';
-import { nameNewPanes } from '../src/panenames.ts';
+import { nameNewPanesAsync } from '../src/panenames.ts';
 import { PaneTopics, paneLabelConfig } from '../src/panetopics.ts';
-import { makeCompactor, compactEnabled, setCompactEnabled } from '../src/compact.ts';
+import { makeCompactor, compactEnabled, readWorldAsync, setCompactEnabled } from '../src/compact.ts';
 import { defaultRunner } from '../src/analyzer.ts';
 import { startWatcherTicks } from '../src/watchers/engine.ts';
 import { startManagedTicks } from '../src/managed.ts';
 import { LiveIndexer, indexedMtimes } from '../src/liveindex.ts';
-import { isOrchestratorRef } from '../src/orchsession.ts';
+import { isOrchestratorRef, ORCH_ROLE } from '../src/orchsession.ts';
 import { orchSessionId } from '../src/orchserver.ts';
-import { tmux } from '../src/tmux.ts';
+import { tmuxAsync } from '../src/tmux.ts';
+import { guardTick } from '../src/asyncexec.ts';
 import { configureOrchestrator } from '../src/orchserver.ts';
 import { setOrchNotifier, orchSettings } from '../src/orchestrator.ts';
 import { notifyUser, setAppNotifier, type NotifyTarget } from '../src/notify.ts';
@@ -309,17 +313,37 @@ function readSetting<K extends 'ghostty_attach_cmd' | 'pane_tint' | 'pane_tint_b
   }
 }
 
-function trayTick(): { live: number; working: number; yourTurn: number } {
+type TrayCounts = { live: number; working: number; yourTurn: number };
+
+// liveSessions() inlined so the pane list it builds can be reused for the tint
+// reconciliation, rather than shelling out to tmux a second time. The 4 s tick
+// reads the panes asynchronously (trayTickAsync); a menu rebuild reads them here.
+function trayTick(): TrayCounts {
+  let panes: TmuxPane[];
+  try {
+    panes = listTmuxPanes();
+    return trayTickFrom(panes, agentPaneIds(panes));
+  } catch {
+    return { live: 0, working: 0, yourTurn: 0 };
+  }
+}
+
+async function trayTickAsync(): Promise<TrayCounts> {
+  try {
+    const panes = await listTmuxPanesAsync();
+    return trayTickFrom(panes, await agentPaneIdsAsync(panes));
+  } catch {
+    return { live: 0, working: 0, yourTurn: 0 };
+  }
+}
+
+function trayTickFrom(panes: TmuxPane[], agents: ReturnType<typeof agentPaneIds>): TrayCounts {
   try {
     const db = openDb();
     const views = toChatViews(db);
     db.close();
     const now = Date.now();
-
-    // liveSessions() inlined so the pane list it builds can be reused below for
-    // the tint reconciliation, rather than shelling out to tmux a second time.
-    const panes = listTmuxPanes();
-    const live = liveSessionsFrom(panes, agentPaneIds(panes), readPlacements());
+    const live = liveSessionsFrom(panes, agents, readPlacements());
 
     // Keyed by agent:session_id, which is what liveSessionsFrom emits. Keying this
     // by the bare session_id silently matched nothing, so working/yourTurn were
@@ -363,7 +387,14 @@ function trayTick(): { live: number; working: number; yourTurn: number } {
 }
 
 function updateTray(): void {
-  const c = trayTick();
+  showTrayCounts(trayTick());
+}
+
+async function updateTrayAsync(): Promise<void> {
+  showTrayCounts(await trayTickAsync());
+}
+
+function showTrayCounts(c: TrayCounts): void {
   if (!tray) return;
   const parts: string[] = [];
   if (c.working) parts.push(`⚡${c.working}`);
@@ -372,6 +403,16 @@ function updateTray(): void {
   tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn`);
   const compactItem = trayMenu?.getMenuItemById('compact');
   if (compactItem) compactItem.checked = compactEnabled();
+}
+
+/** Pane ids whose @loom_role marks them the orchestrator's (what isOrchPane checks one pane at a time). */
+async function orchestratorPanes(): Promise<Set<string>> {
+  try {
+    const out = await tmuxAsync(['list-panes', '-a', '-F', '#{pane_id} #{@loom_role}']);
+    return new Set(out.split('\n').map((l) => l.trim().split(' ')).filter(([, role]) => role === ORCH_ROLE).map(([id]) => id));
+  } catch {
+    return new Set();
+  }
 }
 
 function clearPaneTints(): void {
@@ -1055,26 +1096,30 @@ app.whenReady().then(() => {
   setInterval(() => void runOnce(), 10 * 60 * 1000);
   noteTmuxState(Date.now(), 'loom-start');
   const watchTmux = makeTmuxWatcher();
-  setInterval(() => {
+  const layoutTick = guardTick(async () => {
     watchTmux(Date.now(), 'tmux-server-changed');
     try {
-      writeLayout(Date.now());
+      await writeLayoutAsync(Date.now());
     } catch {
       /* tmux down */
     }
-  }, 15 * 1000);
+  });
+  setInterval(() => void layoutTick(), 15 * 1000);
   // Name new workspace panes on the fast tick, so a pane opened a moment ago is
   // addressable by name within seconds; once at startup for whatever is open.
-  nameNewPanes(SESSION_PREFIX);
+  void nameNewPanesAsync(SESSION_PREFIX);
   // Lane compaction rides the same tick: slide live agent panes left into the
   // holes finished sessions leave behind (see src/compact.ts). Naming first, so
   // a pane swapped this tick already carries its name into compact.log.
+  // Every read on this tick (list-panes, ps, list-clients) runs off the main thread;
+  // only the writes a tick decides on (a name, a swap, a tint) are synchronous.
   const compact = makeCompactor();
-  setInterval(() => {
-    nameNewPanes(SESSION_PREFIX);
-    compact(Date.now());
-    updateTray();
-  }, 4 * 1000);
+  const fastTick = guardTick(async () => {
+    await nameNewPanesAsync(SESSION_PREFIX);
+    compact(Date.now(), await readWorldAsync());
+    await updateTrayAsync();
+  }, (e) => console.error('[loom] pane tick failed:', (e as Error).message));
+  setInterval(() => void fastTick(), 4 * 1000);
 
   // Topic + stage labels for every live chat pane (see src/panetopics.ts). The
   // tick is a tmux listing and a stat per chat; haiku is only called when a rule
@@ -1090,27 +1135,23 @@ app.whenReady().then(() => {
   // Index a live session the moment it appears (and keep its row fresh), rather
   // than waiting for the 10-minute full pass. One transcript at a time.
   const liveIndexer = new LiveIndexer();
-  setInterval(() => {
+  const liveIndexTick = guardTick(async () => {
+    const live = await liveSessionsAsync();
+    // The orchestrator's pane, by its @loom_role: one listing, not a display-message per chat.
+    const orchPanes = live.size ? await orchestratorPanes() : new Set<string>();
+    const db = openDb();
+    let indexed: Map<string, number>;
     try {
-      const live = liveSessions();
-      const db = openDb();
-      let indexed: Map<string, number>;
-      try {
-        indexed = indexedMtimes(db);
-      } finally {
-        db.close();
-      }
-      const orchSid = orchSessionId();
-      liveIndexer.tick([...live.values()], indexed, Date.now(), (l) => isOrchestratorRef(l, orchSid, { run: tmux }));
-    } catch (e) {
-      console.error('[loom] live index failed:', (e as Error).message);
+      indexed = indexedMtimes(db);
+    } finally {
+      db.close();
     }
-  }, 5 * 1000);
-  setInterval(() => {
-    try {
-      paneTopics.tick(liveSessions());
-    } catch (e) {
-      console.error('[loom] pane topics failed:', (e as Error).message);
-    }
-  }, 5 * 1000);
+    const orchSid = orchSessionId();
+    liveIndexer.tick([...live.values()], indexed, Date.now(), (l) => isOrchestratorRef(l, orchSid) || (!!l.pane_id && orchPanes.has(l.pane_id)));
+  }, (e) => console.error('[loom] live index failed:', (e as Error).message));
+  setInterval(() => void liveIndexTick(), 5 * 1000);
+  const paneTopicsTick = guardTick(async () => {
+    await paneTopics.tick(await liveSessionsAsync());
+  }, (e) => console.error('[loom] pane topics failed:', (e as Error).message));
+  setInterval(() => void paneTopicsTick(), 5 * 1000);
 });

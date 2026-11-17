@@ -219,7 +219,7 @@ export const SETTINGS = [
   }),
   intDef(1, 6, {
     key: 'analyze_concurrency', section: 'general', label: 'Summaries at once', help: 'How many summary calls run at the same time.',
-    defaultNew: 2, legacyUnset: 3, restart: false,
+    defaultNew: 1, legacyUnset: 3, restart: false,
   }),
   intDef(1, 60, {
     key: 'active_window_days', section: 'general', label: 'Days shown', help: 'Chats active within this many days are indexed and listed.',

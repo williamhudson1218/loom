@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { defaultGh, type GhRunner } from './detail.ts';
 import { parsePrRef } from './prref.ts';
+import { SingleFlight } from './asyncexec.ts';
 import type { PrFact } from './orchsweep.ts';
 
 // A PR's whole road to prod, as steps: checks → review → merged → deploy (per
@@ -396,7 +397,22 @@ async function runJobs(repo: string, run: RunRow, gh: GhRunner): Promise<any[]> 
   return jobs;
 }
 
-export async function fetchPipeline(repo: string, number: number, gh: GhRunner = defaultGh, now: number = Date.now()): Promise<Pipeline> {
+// Identical gh calls in flight at once share one process. Two PRs whose deploys
+// were folded into one run (the first run cancelled, replaced by the next merge's)
+// both pick that run, and the tick's two workers asked `gh run view <same id>`
+// side by side on every pass. Per runner, so tests with their own fakes never share.
+const ghFlights = new WeakMap<GhRunner, SingleFlight<string>>();
+
+/** `gh` with concurrent identical calls (same args, same cwd) collapsed into one. */
+export function dedupedGh(gh: GhRunner): GhRunner {
+  let f = ghFlights.get(gh);
+  if (!f) ghFlights.set(gh, (f = new SingleFlight<string>()));
+  const flights = f;
+  return (args, cwd) => flights.run(`${cwd}\0${args.join('\0')}`, () => gh(args, cwd));
+}
+
+export async function fetchPipeline(repo: string, number: number, ghRaw: GhRunner = defaultGh, now: number = Date.now()): Promise<Pipeline> {
+  const gh = dedupedGh(ghRaw);
   const pr = JSON.parse(await gh(['pr', 'view', String(number), '--repo', repo, '--json', PR_FIELDS], os.homedir()));
   let run: PipelineInputs['run'] = null;
   let jobs: any[] | undefined;

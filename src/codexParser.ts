@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
+import { githubRemotesOf, pickPrUrl, prUrlsIn } from './prpick.ts';
 import { cleanText, localDay } from './parser.ts';
 import type { ParsedChat } from './types.ts';
 
@@ -11,7 +12,7 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
   let last_turn_at = 0;
   let message_count = 0;
   let first_message = '';
-  let pr_url = '';
+  const prUrls = new Map<string, true>(); // insertion order = last seen
   const activity: Record<string, number> = {};
 
   const stream = fs.createReadStream(jsonlPath, { encoding: 'utf-8' });
@@ -19,9 +20,9 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
 
   for await (const line of rl) {
     if (!line.trim()) continue;
-    if (line.includes('/pull/')) {
-      const m = line.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g);
-      if (m) pr_url = m[m.length - 1];
+    for (const u of prUrlsIn(line)) {
+      prUrls.delete(u);
+      prUrls.set(u, true);
     }
     let obj: any;
     try {
@@ -74,6 +75,6 @@ export async function parseCodexJsonlFile(jsonlPath: string): Promise<ParsedChat
     files_written: [],
     first_message,
     claude_auto_title: '',
-    pr_url,
+    pr_url: pickPrUrl([...prUrls.keys()], prUrls.size ? githubRemotesOf(project_dir) : null),
   };
 }

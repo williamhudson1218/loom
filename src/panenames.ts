@@ -1,4 +1,4 @@
-import { isViewSession, tmux } from './tmux.ts';
+import { isViewSession, tmux, tmuxAsync, tmuxQuietAsync } from './tmux.ts';
 import { SESSION_PREFIX } from './paths.ts';
 
 // Every workspace pane gets a short, sayable name ("blue-vanilla") so it can be
@@ -169,13 +169,28 @@ export function assignNames(
 
 const SEP = '~|LOOM|~';
 
+const NAMES_FORMAT = `#{pane_id}${SEP}#{session_name}${SEP}#{@name}`;
+
 export function readPaneNames(): PaneNameRow[] {
   let out: string;
   try {
-    out = tmux(['list-panes', '-a', '-F', `#{pane_id}${SEP}#{session_name}${SEP}#{@name}`]);
+    out = tmux(['list-panes', '-a', '-F', NAMES_FORMAT]);
   } catch {
     return []; // tmux not running
   }
+  return parsePaneNames(out);
+}
+
+/** readPaneNames off the main thread. */
+export async function readPaneNamesAsync(): Promise<PaneNameRow[]> {
+  try {
+    return parsePaneNames(await tmuxAsync(['list-panes', '-a', '-F', NAMES_FORMAT]));
+  } catch {
+    return []; // tmux not running
+  }
+}
+
+function parsePaneNames(out: string): PaneNameRow[] {
   return out
     .split('\n')
     .filter(Boolean)
@@ -205,6 +220,17 @@ export function nameNewPanes(prefix: string = SESSION_PREFIX): number {
   try {
     const fresh = assignNames(readPaneNames(), prefix);
     for (const [paneId, name] of fresh) setPaneName(paneId, name);
+    return fresh.size;
+  } catch {
+    return 0;
+  }
+}
+
+/** nameNewPanes for the 4 s tick: the listing and the (rare) writes run off the main thread. */
+export async function nameNewPanesAsync(prefix: string = SESSION_PREFIX): Promise<number> {
+  try {
+    const fresh = assignNames(await readPaneNamesAsync(), prefix);
+    for (const [paneId, name] of fresh) await tmuxQuietAsync(['set-option', '-p', '-t', paneId, '@name', name]);
     return fresh.size;
   } catch {
     return 0;

@@ -25,9 +25,9 @@ function fresh(newInstall = true): Database.Database {
 afterEach(() => { while (dbs.length) dbs.pop()!.close(); });
 
 describe('summary_model, caps and window', () => {
-  it('new install defaults: haiku, 10, 2, 7', () => {
+  it('new install defaults: haiku, 10, 1, 7', () => {
     const c = analyzerConfig(fresh());
-    expect(c).toMatchObject({ summaryModel: 'haiku', cap: 10, concurrency: 2, windowDays: 7 });
+    expect(c).toMatchObject({ summaryModel: 'haiku', cap: 10, concurrency: 1, windowDays: 7 });
   });
   it('migrated install keeps 25 / 3 and no model flag', () => {
     const c = analyzerConfig(fresh(false));
@@ -89,7 +89,7 @@ function topicDeps() {
 }
 
 describe('pane labels toggle and model', () => {
-  it('settings: on / haiku for a new install; off clears borders and makes no model call', () => {
+  it('settings: on / haiku for a new install; off clears borders and makes no model call', async () => {
     const db = fresh();
     expect(paneLabelConfig(db)).toEqual({ enabled: true, model: 'haiku' });
     setSetting(db, 'pane_labels', false);
@@ -98,7 +98,7 @@ describe('pane labels toggle and model', () => {
     expect(cfg).toEqual({ enabled: false, model: 'sonnet' });
     const { deps, calls, unset } = topicDeps();
     const t = new PaneTopics(deps, 'loom-', () => paneLabelConfig(db));
-    const r = t.tick(new Map<string, LiveInfo>());
+    const r = await t.tick(new Map<string, LiveInfo>());
     expect(r).toEqual({ started: 0, cleared: 1 });
     expect(unset).toEqual(['%1']);
     expect(calls).toEqual([]);
