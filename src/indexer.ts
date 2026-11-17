@@ -9,7 +9,7 @@ import {
   TOOL_DIR,
   encodeProjectDir,
 } from './paths.ts';
-import { parseJsonlFile } from './parser.ts';
+import { parseJsonlFileCached } from './parser.ts';
 import { parseCodexJsonlFile } from './codexParser.ts';
 import type { ParsedChat } from './types.ts';
 import { claimFromFirstMessage } from './slackowner.ts';
@@ -187,7 +187,7 @@ export async function refresh(
   const now = opts.now ?? Date.now();
   const cutoff = windowCutoff(now, opts.windowDays);
   const sources = [
-    { files: listProjectJsonls(projectsDir), parse: parseJsonlFile },
+    { files: listProjectJsonls(projectsDir), parse: parseJsonlFileCached },
     { files: listCodexSessionJsonls(codexSessionsDir), parse: parseCodexJsonlFile },
   ];
   const scanned = sources.reduce((total, source) => total + source.files.length, 0);

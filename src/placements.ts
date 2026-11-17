@@ -41,12 +41,17 @@ function placementKey(agent: Agent | null, sessionId: string): string {
 // and the byte offset it has read to, and a later call parses only the lines
 // appended since. A file that shrank, was replaced (new inode) or changed
 // without growing is read again from the start.
-interface PlacementsCache { ino: number; size: number; mtimeMs: number; offset: number; map: Map<string, Placement> }
+//
+// The map is handed out as is (read-only), not copied: every caller reads it
+// synchronously, and a copy per snapshot was the main cost left.
+interface PlacementsCache { ino: number; size: number; mtimeMs: number; offset: number; lines: number; map: Map<string, Placement> }
 const placementsCache = new Map<string, PlacementsCache>();
 
-function parsePlacementLines(text: string, map: Map<string, Placement>): void {
+function parsePlacementLines(text: string, map: Map<string, Placement>): number {
+  let lines = 0;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
+    lines++;
     try {
       const p = JSON.parse(line) as Partial<Placement>;
       if (p.session_id && p.pane_id) {
@@ -58,6 +63,7 @@ function parsePlacementLines(text: string, map: Map<string, Placement>): void {
       /* skip malformed */
     }
   }
+  return lines;
 }
 
 function readBytes(file: string, from: number, to: number): Buffer {
@@ -76,7 +82,7 @@ function readBytes(file: string, from: number, to: number): Buffer {
   }
 }
 
-export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Placement> {
+export function readPlacements(file: string = PLACEMENTS_PATH): ReadonlyMap<string, Placement> {
   let st: fs.Stats;
   try {
     st = fs.statSync(file);
@@ -87,7 +93,7 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
   let c = placementsCache.get(file);
   const unchanged = c && c.ino === st.ino && c.size === st.size && c.mtimeMs === st.mtimeMs;
   const grew = c && c.ino === st.ino && st.size > c.size;
-  if (!c || (!unchanged && !grew)) c = { ino: st.ino, size: 0, mtimeMs: 0, offset: 0, map: new Map() };
+  if (!c || (!unchanged && !grew)) c = { ino: st.ino, size: 0, mtimeMs: 0, offset: 0, lines: 0, map: new Map() };
   if (!unchanged) {
     try {
       const buf = readBytes(file, c.offset, st.size);
@@ -102,7 +108,7 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
           /* still being written */
         }
       }
-      parsePlacementLines(buf.subarray(0, end).toString('utf-8'), c.map);
+      c.lines += parsePlacementLines(buf.subarray(0, end).toString('utf-8'), c.map);
       c.offset += end;
       c.size = st.size;
       c.mtimeMs = st.mtimeMs;
@@ -112,8 +118,83 @@ export function readPlacements(file: string = PLACEMENTS_PATH): Map<string, Plac
     }
     placementsCache.set(file, c);
   }
-  // A copy: callers may hold or change what they get without touching the cache.
-  return new Map(c.map);
+  return c.map;
+}
+
+// Compaction. The log is append-only and only its last row per (agent, session)
+// is ever read, so it grows without bound (48k rows, 11 MB, for ~2.7k sessions).
+// Once it is big and mostly superseded rows, it is rewritten to the rows
+// readPlacements keeps, in the order it keeps them, so reading the compacted
+// file gives the identical map.
+//
+// Writers: the record-placement hook (a shell `>>`) and recordPlacement (an
+// appendFileSync), both O_APPEND, both unlocked. The rewrite goes to a temp file
+// renamed over the log. A row appended to the old file while that happens is
+// not lost: the old file stays open, and anything past what was copied is
+// copied into the temp file before the rename and into the new file after it.
+export const COMPACT_MIN_BYTES = 2 * 1024 * 1024;
+export const COMPACT_MIN_RATIO = 4;
+
+export function compactPlacements(
+  file: string = PLACEMENTS_PATH,
+  opts: { minBytes?: number; minRatio?: number; beforeRename?: () => void } = {},
+): { before: number; after: number } | null {
+  const minBytes = opts.minBytes ?? COMPACT_MIN_BYTES;
+  const minRatio = opts.minRatio ?? COMPACT_MIN_RATIO;
+  let fd: number;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return null;
+  }
+  const tmp = `${file}.compact-${process.pid}`;
+  try {
+    const st = fs.fstatSync(fd);
+    if (st.size < minBytes) return null;
+    // A fresh parse of this exact inode (not the cache: it may lag the file).
+    const whole = readFd(fd, 0, st.size);
+    const end = whole.lastIndexOf(0x0a) + 1; // a line still being written is carried over below
+    const map = new Map<string, Placement>();
+    const lines = parsePlacementLines(whole.subarray(0, end).toString('utf-8'), map);
+    if (lines < map.size * minRatio) return null;
+    let body = '';
+    for (const p of map.values()) body += JSON.stringify(p) + '\n';
+    fs.writeFileSync(tmp, body, 'utf-8');
+    let copied = end;
+    const catchUp = (target: string): void => {
+      const size = fs.fstatSync(fd).size;
+      if (size <= copied) return;
+      fs.appendFileSync(target, readFd(fd, copied, size));
+      copied = size;
+    };
+    catchUp(tmp);
+    opts.beforeRename?.();
+    catchUp(tmp);
+    fs.renameSync(tmp, file);
+    catchUp(file);
+    placementsCache.delete(file);
+    return { before: st.size, after: fs.statSync(file).size };
+  } catch {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* never written */
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readFd(fd: number, from: number, to: number): Buffer {
+  const buf = Buffer.alloc(to - from);
+  let got = 0;
+  while (got < buf.length) {
+    const n = fs.readSync(fd, buf, got, buf.length - got, from + got);
+    if (!n) break;
+    got += n;
+  }
+  return buf.subarray(0, got);
 }
 
 export function recordPlacement(placement: Placement, file: string = PLACEMENTS_PATH): void {
@@ -326,7 +407,7 @@ export function cleanPaneTitle(t: string): string {
 export function liveSessionsFrom(
   panes: TmuxPane[],
   agentPanes: Map<string, Agent>,
-  placements: Map<string, Placement>,
+  placements: ReadonlyMap<string, Placement>,
   titleToSession?: Map<string, string>,
 ): Map<string, LiveInfo> {
   const byId = new Map(panes.map((p) => [p.pane_id, p]));

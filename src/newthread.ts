@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CLAUDE_PROJECTS_DIR, TOOL_DIR, encodeProjectDir } from './paths.ts';
 import { openDb } from './db.ts';
-import { parseJsonlFile } from './parser.ts';
+import { parseJsonlFileCached } from './parser.ts';
 import { upsertChat } from './indexer.ts';
 import { defaultRun, laneTargets, nextOpenPane, parseLane, readWorld, type TmuxRunner, type WorldState } from './compact.ts';
 import { launchInPane, type GotoResult } from './goto.ts';
@@ -267,7 +267,7 @@ export function indexFreshLaunches(
       continue;
     }
     indexing.add(hit.session_id);
-    parseJsonlFile(file)
+    parseJsonlFileCached(file)
       .then((parsed) => {
         if (!parsed.session_id) return;
         const db = openDb();

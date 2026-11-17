@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { paneHome, tmux, tmuxAsync } from './tmux.ts';
 import { guardTick } from './asyncexec.ts';
@@ -15,7 +16,7 @@ import { liveSessions, liveSessionsAsync, attachedSessions, type LiveInfo } from
 import { gotoPane, launchInPane, closeSession, sendToPane } from './goto.ts';
 import { readTranscript } from './transcript.ts';
 import { readLayout, writeLayoutAsync } from './snapshot.ts';
-import { lastTurnAtFromTail } from './parser.ts';
+import { lastTurnAtFromTail, lastTurnAtFromTailAsync } from './parser.ts';
 import { existingSessions, restore } from './restore.ts';
 import { autoRestoreGate, sessionsToRestore, type AutoRestoreEvent, type AutoRestoreMode } from './autorestore.ts';
 import { attachGhosttyTabs } from './ghostty.ts';
@@ -1049,9 +1050,9 @@ function buildSnapshot(): Snap {
   return assembleSnapshot(base, { liveMap, names, stages, midTurn });
 }
 
-/** buildSnapshot with every tmux and ps call off the main thread. */
+/** buildSnapshot with every tmux and ps call, and the per-chat stats, off the main thread. */
 async function buildSnapshotAsync(): Promise<Snap> {
-  const base = snapBase();
+  const base = await snapBaseAsync();
   const liveMap = await liveSessionsAsync({ titleToSession: titleToSession(base.views) });
   if (!liveMap.size) return assembleSnapshot(base, { liveMap, names: new Map(), stages: new Map(), midTurn: new Set() });
   const [nameRows, rows, midTurn] = await Promise.all([
@@ -1062,7 +1063,7 @@ async function buildSnapshotAsync(): Promise<Snap> {
   return assembleSnapshot(base, { liveMap, names: paneNameMap(nameRows), stages: new Map(rows.map((r) => [r.pane_id, r] as const)), midTurn });
 }
 
-function snapBase(): SnapBase {
+function snapViews(): { defaultAgent: LaunchPreference; views: ChatView[] } {
   const db = openDb();
   // The orchestrator is pinned above the list with a view of its own, so it is
   // never a row on the board (nor a chat in its own list_chats).
@@ -1071,26 +1072,59 @@ function snapBase(): SnapBase {
   const views = toChatViews(db).filter((v) => !isOrchestratorRef(v, orchSid));
   const defaultAgent = getDefaultAgent(db);
   db.close();
+  return { defaultAgent, views };
+}
+
+// The DB's last_active_at only refreshes on a summarizer pass (minutes of lag).
+// The transcript file's mtime is the true last-activity time — read it live so
+// "X ago" is accurate every poll, and reuse it for the working flag.
+function noteMtime(v: ChatView, mt: number, mtime: Map<string, number>, tailAt: (mt: number) => number): void {
+  mtime.set(agentSessionKey(v.agent, v.session_id), mt);
+  if (mt > v.last_active_at) {
+    v.last_active_at = mt;
+    // The file moved since the index pass: the last TURN may have too, and
+    // that is what the board orders by. Read it off the tail, once per
+    // mtime; a tail with no turn in it keeps the indexed value.
+    v.last_turn_at = Math.max(v.last_turn_at, tailAt(mt));
+  }
+}
+
+function snapBase(): SnapBase {
+  const { defaultAgent, views } = snapViews();
   const now = Date.now();
-  // The DB's last_active_at only refreshes on a summarizer pass (minutes of lag).
-  // The transcript file's mtime is the true last-activity time — read it live so
-  // "X ago" is accurate every poll, and reuse it for the working flag.
   const mtime = new Map<string, number>();
   for (const v of views) {
     try {
-      const mt = fs.statSync(v.jsonl_path).mtimeMs;
-      mtime.set(agentSessionKey(v.agent, v.session_id), mt);
-      if (mt > v.last_active_at) {
-        v.last_active_at = mt;
-        // The file moved since the index pass: the last TURN may have too, and
-        // that is what the board orders by. Read it off the tail, once per
-        // mtime; a tail with no turn in it keeps the indexed value.
-        v.last_turn_at = Math.max(v.last_turn_at, tailTurnAt(v.jsonl_path, mt));
-      }
+      noteMtime(v, fs.statSync(v.jsonl_path).mtimeMs, mtime, (mt) => tailTurnAt(v.jsonl_path, mt));
     } catch {
       /* file gone */
     }
   }
+  return { defaultAgent, views, mtime, now };
+}
+
+/** snapBase with the stats and tail reads on the libuv pool instead of the main thread. */
+async function snapBaseAsync(): Promise<SnapBase> {
+  const { defaultAgent, views } = snapViews();
+  const now = Date.now();
+  const stats = await Promise.all(views.map((v) => fs.promises.stat(v.jsonl_path).then((st) => st.mtimeMs, () => null)));
+  // Tails of the files that moved, read before any view is touched.
+  const tails = new Map<string, number>();
+  await Promise.all(
+    views.map(async (v, i) => {
+      const mt = stats[i];
+      if (mt === null || mt <= v.last_active_at) return;
+      const hit = tailTurns.get(v.jsonl_path);
+      const at = hit && hit.mtime === mt ? hit.at : await lastTurnAtFromTailAsync(v.jsonl_path);
+      tailTurns.set(v.jsonl_path, { mtime: mt, at });
+      tails.set(v.jsonl_path, at);
+    }),
+  );
+  const mtime = new Map<string, number>();
+  views.forEach((v, i) => {
+    const mt = stats[i];
+    if (mt !== null) noteMtime(v, mt, mtime, () => tails.get(v.jsonl_path) ?? 0);
+  });
   return { defaultAgent, views, mtime, now };
 }
 
@@ -1138,6 +1172,31 @@ function listTerminalsCached(): ReturnType<typeof listTerminals> {
   const v = listTerminals();
   termMemo = { at: Date.now(), v };
   return v;
+}
+
+/**
+ * The board poll's reply. The payload is ~500 KB and polled every 5 s, and on an
+ * idle board it is identical poll after poll, so it carries an ETag (a hash of
+ * the body, which leaves out the per-response generatedAt): a page that sends
+ * it back in If-None-Match gets a bodiless 304 and skips parsing and
+ * re-processing. A version counter would also skip the build, but the payload
+ * draws on two dozen sources (DB, tmux, outbox, gh, git, Slack) with no common
+ * change signal, so the hash is the honest cut.
+ */
+export function boardDataEtag(body: string): string {
+  return '"' + createHash('sha1').update(body).digest('base64url') + '"';
+}
+
+export function sendBoardData(req: http.IncomingMessage, res: http.ServerResponse, body: string): void {
+  const etag = boardDataEtag(body);
+  const inm = req.headers['if-none-match'];
+  if (typeof inm === 'string' && inm.split(',').some((t) => t.trim() === etag)) {
+    res.writeHead(304, { etag, 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  res.writeHead(200, { 'content-type': 'application/json', etag, 'cache-control': 'no-store' });
+  res.end(`{"generatedAt":${Date.now()},${body.slice(1)}`);
 }
 
 function send(res: http.ServerResponse, code: number, type: string, body: string) {
@@ -1397,7 +1456,7 @@ export function createServer(): http.Server {
       // Standing watcher chats ride separately, for the Watchers tab, never as board rows.
       const { board, standing, refs } = boardSplit(views, live);
       const chats = [...board, ...provisionalForLive(views, live, refs)];
-      return send(res, 200, 'application/json', JSON.stringify({ generatedAt: Date.now(), defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return sendBoardData(req, res, JSON.stringify({ defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately

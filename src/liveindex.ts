@@ -10,7 +10,7 @@ import type Database from 'better-sqlite3';
 import { CLAUDE_PROJECTS_DIR, encodeProjectDir } from './paths.ts';
 import { openDb } from './db.ts';
 import { upsertChat } from './indexer.ts';
-import { parseJsonlFile } from './parser.ts';
+import { parseJsonlFileCached } from './parser.ts';
 import type { ChatView } from './dashboard.ts';
 import type { ParsedChat } from './types.ts';
 
@@ -58,7 +58,7 @@ const realDeps: LiveIndexerDeps = {
     }
   },
   index: async (file, mtime, now) => {
-    const parsed: ParsedChat = await parseJsonlFile(file);
+    const parsed: ParsedChat = await parseJsonlFileCached(file);
     if (!parsed.session_id) return;
     const db = openDb();
     try {

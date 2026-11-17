@@ -5,8 +5,9 @@
 //                /api/term/snap and painted while the pty is still attaching.
 //                The first live byte resets the terminal and carries on, in the
 //                same write queue as the reset, so no blank frame shows between.
-//   WarmPool   — the last few opened chat views, kept attached and hidden so
-//                switching back is instant. LRU; parking returns the evicted.
+//   WarmPool   — the most recently left chat view(s), kept attached and hidden
+//                so switching back is instant. LRU; parking returns the evicted.
+//                The board keeps one, rendered without WebGL while hidden.
 //   SnapCache  — hover prefetch and click share one fetch per pane.
 //
 // Only views that never touched the window's zoom are parked (an 'attach' view of

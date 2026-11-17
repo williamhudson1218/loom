@@ -98,7 +98,7 @@ function tourFetch(input,init){
   if(!TOUR.sample)return TOUR.prevFetch(input,init);
   var p=url.pathname,sid=url.searchParams.get('session')||'',fx=TOUR.fx;
   if(p==='/api/data'){
-    return TOUR.prevFetch(input,init).then(function(r){return r.json();}).then(function(d){
+    return TOUR.prevFetch(url.pathname,{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
       d=Object.assign({},d);d.chats=fx.chats;d.live=fx.live;d.drafts=fx.drafts;d.slackOwners=fx.slackOwners;d.slackCounts=fx.slackCounts;
       d.ships=fx.ships;d.gitMarks=fx.gitMarks;d.parked=fx.parked;d.pipes=fx.pipes;d.chatPr=fx.chatPr;d.slackStarts=[];d.launches=[];d.standing=[];d.slackMode=TOUR.sampleSlackMode;return tourJson(d);});
   }

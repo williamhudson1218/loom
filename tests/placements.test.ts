@@ -105,12 +105,13 @@ describe('readPlacements', () => {
     expect([...map.keys()]).toEqual([agentSessionKey('claude', 's9')]);
   });
 
-  it('hands out a copy, so a caller cannot change the cached map', () => {
+  it('hands out the cached map itself (read-only), not a copy per call', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-pl-'));
     const file = path.join(dir, 'placements.jsonl');
     fs.writeFileSync(file, JSON.stringify({ agent: 'claude', session_id: 's1', pane_id: '%1', ts: 1 }) + '\n');
-    readPlacements(file).clear();
-    expect(readPlacements(file).size).toBe(1);
+    const a = readPlacements(file);
+    expect(readPlacements(file)).toBe(a);
+    expect(a.size).toBe(1);
   });
 });
 

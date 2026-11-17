@@ -38,6 +38,7 @@ import {
   agentPaneIds,
   agentPaneIdsAsync,
   readPlacements,
+  compactPlacements,
   type TmuxPane,
   agentSessionKey,
   attachedSessions,
@@ -447,6 +448,9 @@ async function runOnce(): Promise<void> {
   if (passRunning) return;
   passRunning = true;
   try {
+    // placements.jsonl only grows; rewrite it to its live rows once it is big
+    // and mostly superseded (a stat and nothing else otherwise).
+    compactPlacements();
     const db = openDb();
     await runPass(db, defaultRunner);
     db.close();

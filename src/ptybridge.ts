@@ -144,13 +144,20 @@ interface ZoomRow {
   window: string;
 }
 
+const ZOOM_ROWS_ARGS = ['list-panes', '-a', '-F', ['#{pane_id}', `#{${ZOOM_MARK}}`, '#{window_zoomed_flag}', '#{pane_active}', '#{window_id}'].join(ZSEP)];
+const VIEW_WINDOWS_ARGS = ['list-sessions', '-F', `#{session_name}${ZSEP}#{window_id}`];
+
 function zoomRows(tmux: Tmux): ZoomRow[] {
   let out: string;
   try {
-    out = tmux(['list-panes', '-a', '-F', ['#{pane_id}', `#{${ZOOM_MARK}}`, '#{window_zoomed_flag}', '#{pane_active}', '#{window_id}'].join(ZSEP)]);
+    out = tmux(ZOOM_ROWS_ARGS);
   } catch {
     return [];
   }
+  return parseZoomRows(out);
+}
+
+function parseZoomRows(out: string): ZoomRow[] {
   const seen = new Map<string, ZoomRow>();
   for (const l of out.split('\n')) {
     if (!l.trim()) continue;
@@ -162,14 +169,18 @@ function zoomRows(tmux: Tmux): ZoomRow[] {
 
 /** view session -> its current window id. */
 function viewWindows(tmux: Tmux): Map<string, string> {
-  const m = new Map<string, string>();
   try {
-    for (const l of tmux(['list-sessions', '-F', `#{session_name}${ZSEP}#{window_id}`]).split('\n')) {
-      const [s, w = ''] = l.trim().split(ZSEP);
-      if (isViewSession(s)) m.set(s, w);
-    }
+    return parseViewWindows(tmux(VIEW_WINDOWS_ARGS));
   } catch {
-    /* no server */
+    return new Map(); // no server
+  }
+}
+
+function parseViewWindows(out: string): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const l of out.split('\n')) {
+    const [s, w = ''] = l.trim().split(ZSEP);
+    if (isViewSession(s)) m.set(s, w);
   }
   return m;
 }
@@ -213,9 +224,28 @@ export function releaseZoom(name: string, tmux: Tmux): void {
  * Returns how many marks it cleared.
  */
 export function syncZoomMarks(tmux: Tmux): number {
-  const views = viewWindows(tmux);
+  return applyZoomSync(zoomRows(tmux), viewWindows(tmux), tmux);
+}
+
+/**
+ * syncZoomMarks for the 5 s sweep: the two listings run off the main thread, and
+ * only the writes it decides on (rare: a mark to clear or a zoom to undo) are
+ * synchronous. A tmux that cannot answer clears nothing.
+ */
+export async function syncZoomMarksAsync(tmuxA: TmuxAsync, tmux: Tmux): Promise<number> {
+  let rowsOut: string;
+  let viewsOut: string;
+  try {
+    [rowsOut, viewsOut] = await Promise.all([tmuxA(ZOOM_ROWS_ARGS), tmuxA(VIEW_WINDOWS_ARGS)]);
+  } catch {
+    return 0; // no server
+  }
+  return applyZoomSync(parseZoomRows(rowsOut), parseViewWindows(viewsOut), tmux);
+}
+
+function applyZoomSync(rows: ZoomRow[], views: Map<string, string>, tmux: Tmux): number {
   let n = 0;
-  for (const r of zoomRows(tmux)) {
+  for (const r of rows) {
     if (!r.mark) continue;
     if (!views.has(r.mark)) {
       unzoom(r, tmux);
@@ -866,13 +896,10 @@ export function attachTerminalBridge(server: http.Server, deps: BridgeDeps): () 
   const laneView = deps.laneView ?? storedLaneView;
   const reaped = reapViews(tmux);
   if (reaped) log(`reaped ${reaped} stale view session(s)`);
-  const sweep = setInterval(() => {
-    try {
-      syncZoomMarks(tmux);
-    } catch {
-      /* no server */
-    }
-  }, 5000);
+  const sweepTick = guardTick(() => syncZoomMarksAsync(tmuxA, tmux), () => {
+    /* no server */
+  });
+  const sweep = setInterval(() => void sweepTick(), 5000);
   sweep.unref?.();
 
   server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
