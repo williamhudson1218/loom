@@ -150,6 +150,15 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .fr-items .fr-at { color:#8a90a2; }
   .fr-items a { color:#9cc0ff; }
   .fr-pass { padding:8px 12px; border-top:1px solid #1d2a4a; }
+  .sall { border:1px solid #2c3a63; border-radius:10px; background:#121a2e; overflow:hidden; }
+  .sall-row { display:flex; align-items:center; gap:8px; padding:8px 12px; flex-wrap:wrap; }
+  .sall .arow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .sall.dconf { border-top:1px solid #2c3a63; }
+  .sall-t { font-size:12.5px; font-weight:600; color:#e4e7ee; }
+  .sall-list { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:8px; font-size:12.5px; color:#c4ccdc; }
+  .sall-list li { display:flex; flex-direction:column; gap:4px; }
+  .sall-first { color:#8a90a2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sall .dsend { border-top:0; }
   @keyframes dspin { to { transform:rotate(360deg); } }
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
@@ -252,6 +261,44 @@ function redraftState(d,items,local){
   if(items.filter(function(i){return done.indexOf(i.id)<0;}).length)return 'offer';
   return d&&d.redraft&&d.redraft.kept?'kept':'asked';
 }
+// ---- Send all: every sendable draft in one chat, one confirm, posted one at a time oldest first
+// Sendable = what a card's own Send would open a confirm for: pending, not being posted (by the chat,
+// by Loom, or fading out), not mid-redraft, not held by a send_draft step, and every message has text or files.
+// busy: {sending:SENDING, local:SEND_LOCAL, leaving:LEAVING, redraft:REDRAFT_LOCAL}.
+function draftSendable(d,texts,busy){busy=busy||{};if(!d||(d.status!=null&&d.status!=='pending'))return false;
+  if(d.send_state==='sending'||d.scheduled)return false;
+  if((busy.sending||{})[d.id]||(busy.local||{})[d.id]||(busy.leaving||{})[d.id])return false;
+  if(redraftState(d,[],(busy.redraft||{})[d.id])==='active')return false;
+  texts=texts||[];if(!texts.length&&!(d.review&&!d.review_posted)&&!d.email)return false;
+  return !texts.some(function(t,i){return !String(t||'').trim()&&!draftFilesOf(d,i).length;});}
+function sendAllBatch(ds,textsOf,busy){return sortDrafts((ds||[]).filter(function(d){return draftSendable(d,textsOf(d),busy);}));}
+// Where a draft posts, as keys two drafts share when they land in the same place (the server's destKey, per part).
+function draftDestKeys(d){if(d.email)return ['mail:'+(d.email.account||'')+'|'+(d.email.threadId||String(d.email.subject||'').toLowerCase())];
+  var k=[];if(d.review&&!d.review_posted)k.push('gh:'+d.review.repo+'#'+d.review.pr);
+  if((d.messages||[]).length&&d.channel)k.push('slack:'+d.channel+'|'+(d.thread_ts||''));return k;}
+function destKind(k){return k.indexOf('mail:')===0?'the same email thread':k.indexOf('gh:')===0?'the same PR':/[|]$/.test(k)?'the same channel':'the same thread';}
+// Drafts in the batch (numbered #1.. in send order) that post to the same place: a later one may be a rewrite of an earlier one.
+function batchOverlaps(ds){var g={},order=[];(ds||[]).forEach(function(d,i){draftDestKeys(d).forEach(function(k){if(!g[k]){g[k]=[];order.push(k);}if(g[k].indexOf(i+1)<0)g[k].push(i+1);});});
+  var seen={};return order.filter(function(k){return g[k].length>1;}).map(function(k){var n=g[k];var last=n[n.length-1];var head=n.slice(0,-1).map(function(x){return '#'+x;}).join(', ');
+    return {nums:n,kind:destKind(k),text:head+' and #'+last+' post to '+destKind(k)+' — #'+last+' may be a rewrite of '+(n.length>2?'the earlier ones':'#'+n[0])};})
+    .filter(function(o){var s=o.nums.join(',');if(seen[s])return false;seen[s]=1;return true;});}
+// What still warns about a draft in the batch: everything draftStaleReason says except 'newer draft in this chat', which Send all acknowledges.
+function batchStaleNote(d,now){if(!d)return '';if(d.stale&&d.stale_reason)return d.stale_reason;var t=draftDate(d);return t&&now-t>86400000?'over 24h old':'';}
+// The first line the confirm quotes for a draft.
+function draftFirstLine(d,texts){var src=(texts||[]).filter(function(t){return String(t||'').trim();})[0]||(d.email&&d.email.subject)||(d.review&&d.review.body)||'';
+  var l=String(src).split('\n').filter(function(x){return x.trim();})[0]||'';l=l.trim();return l?(l.length>140?l.slice(0,139)+'…':l):(d.review?'(review only)':'(images only)');}
+// Post the batch one draft at a time, in order. Only the last draft still sendable carries the park/close choice;
+// a draft no longer sendable when its turn comes is skipped (never sent twice); the first refusal stops the run
+// and leaves the rest untouched. io: {ready(item), send(item,after)->Promise<json>, progress?(item,sent,n), done?(item,json,after)}.
+function runSendAll(items,after,io){var sent=0,skipped=0;
+  function step(i){while(i<items.length&&!io.ready(items[i])){skipped++;i++;}
+    if(i>=items.length)return Promise.resolve({sent:sent,skipped:skipped,total:items.length,stopped:null});
+    var it=items[i];var a=items.slice(i+1).some(io.ready)?'none':after;
+    if(io.progress)io.progress(it,sent,items.length-skipped);
+    var res=function(x){return Object.assign({sent:sent,skipped:skipped,total:items.length,stopped:it,index:i,after:a},x);};
+    return Promise.resolve().then(function(){return io.send(it,a);}).then(function(j){
+      if(!j||!j.ok)return res({result:j||{}});sent++;if(io.done)io.done(it,j,a);return step(i+1);},function(e){return res({error:e||'failed'});});}
+  return step(0);}
 `;
 
 export const OUTBOX_VIEW_JS = String.raw`
@@ -359,6 +406,54 @@ function parkWhyNot(d){return canPark(d)?'':(d.review?'a review with no Slack me
 function draftsBusy(box){return !!(box&&box.querySelector('textarea:focus'));}
 // ---- the rail
 function railDrafts(){if(homeSel||orchSel||tsel||!sel||sel.arch)return [];const c=selChat();return c?draftsFor(c):[];}
+// ---- Send all (one chat's drafts): BATCH is the open confirm {phase:'confirm',sid,ids} or the run {phase:'sending',sid,ids,k,n}.
+var BATCH=null,BATCH_NOTE={};
+function batchBusy(){return {sending:SENDING,local:SEND_LOCAL,leaving:LEAVING,redraft:REDRAFT_LOCAL};}
+function batchOf(ds){return sendAllBatch(ds,draftTexts,batchBusy());}
+function batchRunning(){return !!(BATCH&&BATCH.phase==='sending');}
+function sendAllHtml(ds,now){const sid=ds.length?ds[0].session_id:'';const note=BATCH_NOTE[sid]?'<span class="dsub">'+esc(BATCH_NOTE[sid])+'</span>':'';
+  if(BATCH&&BATCH.sid===sid&&BATCH.phase==='sending')return '<div class="sall"><div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending '+BATCH.k+' of '+BATCH.n+'…</div></div>';
+  const b=batchOf(ds);
+  if(BATCH&&BATCH.sid===sid&&BATCH.phase==='confirm'){const list=b.filter(function(d){return BATCH.ids.indexOf(d.id)>=0;});if(list.length)return sendAllConfirmHtml(list,now);}
+  if(b.length<2)return note?'<div class="sall"><div class="sall-row">'+note+'</div></div>':'';
+  return '<div class="sall"><div class="sall-row"><button type="button" class="send" data-sall="open" title="Post every draft below, oldest first, after one confirm">Send all ('+b.length+')</button>'+note+'</div></div>';}
+// One confirm for the batch: each draft in send order with where it posts, its first line and its own warnings.
+function sendAllConfirmHtml(list,now){const last=list[list.length-1];const park=canPark(last);let warned=false;
+  const rows=list.map(function(d,i){const texts=draftTexts(d);const w=sendWarnings(d);if(hasWarnings(w))warned=true;const st=batchStaleNote(d,now);
+    return '<li><div><b>#'+(i+1)+'</b> '+esc(confirmWhat(d,texts))+'</div><div class="sall-first">'+esc(draftFirstLine(d,texts))+'</div>'+(st?'<div class="fr-warn">Stale: '+esc(st)+'</div>':'')+(w.head?staleWarnHtml(d):'')+freshWarnHtml(w)+'</li>';}).join('');
+  const ov=batchOverlaps(list).map(function(o){return '<div class="fr-warn" role="alert">'+esc(o.text)+'</div>';}).join('');
+  const anyway=warned?'Send all anyway':'Send all';
+  return '<div class="sall dconf" data-sallconf="1"><div class="sall-t">Send '+list.length+' drafts, one at a time, oldest first</div>'+ov+'<ol class="sall-list">'+rows+'</ol>'
+    +'<div class="arow"><button class="send" data-sall="post-none" title="'+(warned?'Send past the warnings above. ':'')+'Post them all. The chat stays as it is.">'+anyway+'</button><button class="send park" data-sall="post-park"'+(park?' title="Post them all; after the last, close the pane and list this chat under Waiting on others"':' disabled title="'+esc(parkWhyNot(last))+'"')+'>'+anyway+' &amp; park</button><button class="send close" data-sall="post-close" title="Post them all; after the last, close the pane and take this chat off the board">'+anyway+' &amp; close</button><button data-sall="cancel">Cancel</button></div>'
+    +'<div class="dsub dkeys">Enter send all · ⌥Enter send all &amp; park · ⇧Enter send all &amp; close · Esc cancel'+(park?'':' · park: '+esc(parkWhyNot(last)))+'</div></div>';}
+function sendAllAction(act){if(batchRunning())return;const ds=railDrafts();const sid=ds.length?ds[0].session_id:'';if(!sid)return;
+  if(act==='open'){const b=batchOf(ds);if(b.length<2)return;BATCH={phase:'confirm',sid:sid,ids:b.map(function(d){return d.id;})};draftConfirm=null;draftArmDiscard=null;delete BATCH_NOTE[sid];renderOutbox();return;}
+  if(act==='cancel'){BATCH=null;renderOutbox();return;}
+  if(act.indexOf('post-')!==0||!BATCH||BATCH.phase!=='confirm'||BATCH.sid!==sid)return;
+  const after=act.slice(5);const list=batchOf(ds).filter(function(d){return BATCH.ids.indexOf(d.id)>=0;});
+  if(!list.length){BATCH=null;renderOutbox();return;}
+  if(after==='park'&&!canPark(list[list.length-1]))return;
+  // Acknowledge, per draft, exactly the warnings the confirm showed (as a card's Send anyway does); new items still stop it.
+  const items=list.map(function(d){const w=sendWarnings(d);return {id:d.id,ack_stale:w.head,ack_fresh:w.error?true:w.items.map(function(i){return i.id;})};});
+  const navC=after==='none'?null:(DATA.chats||[]).find(function(x){return x.session_id===sid;});const nav=navC?closeNavPlan(navC):null;
+  const find=function(id){return (DATA.drafts||[]).find(function(x){return x.id===id;});};
+  BATCH={phase:'sending',sid:sid,ids:items.map(function(i){return i.id;}),k:1,n:items.length};renderOutbox();
+  runSendAll(items,after,{
+    ready:function(it){const d=find(it.id);return !!d&&draftSendable(d,draftTexts(d),batchBusy());},
+    progress:function(it,sent,n){BATCH.k=sent+1;BATCH.n=n;SEND_LOCAL[it.id]=1;draftMsg[it.id]='';renderOutbox();},
+    send:function(it,a){const d=find(it.id);if(!d){delete SEND_LOCAL[it.id];return Promise.resolve({ok:false,detail:'draft is gone'});}
+      return outboxSendReq(it.id,draftTexts(d),a,it.ack_stale,it.ack_fresh).then(function(j){delete SEND_LOCAL[it.id];delete SENDING[it.id];return j;},function(e){delete SEND_LOCAL[it.id];throw e;});},
+    done:function(it,j,a){delete BLOCK[it.id];if(j.dry){draftMsg[it.id]='dry run, nothing posted';return;}setDrafts((DATA.drafts||[]).filter(function(x){return x.id!==it.id;}));if(a!=='none'&&(j.done||j.parked))closeNavGo(nav);}
+  }).then(function(r){BATCH=null;const out=r.sent+' of '+r.total+' sent';
+    if(r.stopped){const id=r.stopped.id;const j=r.result||{};const at='#'+(r.index+1);
+      if(r.error){draftMsg[id]='server off';BATCH_NOTE[sid]=out+'; stopped at '+at+': server off';}
+      else if(j.stale_head||j.stale_thread||j.fresh_error){if(j.stale_head)REVIEW_HEAD[id]={at:Date.now(),stale:true,head:j.stale_head};BLOCK[id]={items:j.stale_thread||[],error:j.fresh_error||''};draftConfirm=id;draftMsg[id]='';BATCH_NOTE[sid]=out+'; stopped at '+at+': it needs another look (its confirm is open below)';}
+      else{draftMsg[id]=j.detail||'failed';BATCH_NOTE[sid]=out+'; stopped at '+at+': '+(j.detail||'failed');}
+      toast(BATCH_NOTE[sid]);}
+    else{if(r.skipped)BATCH_NOTE[sid]=out+' ('+r.skipped+' skipped: no longer sendable)';toast(out+(r.after==='park'?', chat parked':r.after==='close'?', chat closed':''));}
+    renderOutbox();setTimeout(refresh,800);});}
+// The one request both a card's Send and Send all make.
+function outboxSendReq(id,texts,after,ack_stale,ack_fresh){return fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after,ack_stale,ack_fresh})}).then(r=>r.json());}
 function railLoad(k){try{return Number(localStorage.getItem(railStoreKey(k)))||0;}catch(e){return 0;}}
 function railCollapsed(k,ds){return railShut(railLoad(k),ds);}
 function railSave(k,collapsed){try{if(collapsed)localStorage.setItem(railStoreKey(k),String(newestDraftAt(railDrafts())||Date.now()));else localStorage.removeItem(railStoreKey(k));}catch(e){}}
@@ -379,10 +474,11 @@ function railRender(){const rail=$('#outrail'),wrap=$('#chatwrap');if(!rail||!wr
     const dest=draftDestLabel(ds[ds.length-1]);
     rail._sig=null;rail.innerHTML='<button type="button" class="orailtab" data-rail="open" title="Open the outbox ('+ds.length+' pending, '+esc(dest)+')" aria-label="Open the outbox, '+ds.length+' pending"><span class="oglyph" aria-hidden="true">\u2709</span><span class="obadge">'+ds.length+'</span><span class="odest">'+esc(destInitial(dest))+'</span></button>';return;}
   const now=Date.now();const tab=actTab(ds,as);
-  const body=tab==='actions'?actionsBodyHtml(as,ACT_CWD[actSid()]):'<div id="outcards">'+(ds.length?ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join(''):'<div class="act-empty">No drafts waiting.</div>')+'</div>';
+  const body=tab==='actions'?actionsBodyHtml(as,ACT_CWD[actSid()]):'<div id="outcards">'+(ds.length?sendAllHtml(ds,now)+ds.map(d=>draftCardHtml(d,{stale:draftStaleReason(d,ds,now)})).join(''):'<div class="act-empty">No drafts waiting.</div>')+'</div>';
   railPatch(rail,railHeadHtml(tab,ds,as)+body);focusConfirm();}
 // Keep keyboard focus inside the open confirm (Send is the default), also after a re-render replaced the buttons.
-function focusConfirm(){if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
+function focusConfirm(){if(BATCH&&BATCH.phase==='confirm'){const c=document.querySelector('#outcards [data-sallconf]');if(c&&!c.contains(document.activeElement)){const b=c.querySelector('[data-sall="post-none"]');if(b)b.focus();}return;}
+  if(!draftConfirm)return;const card=document.querySelector('#outcards .draft[data-id="'+draftConfirm+'"]');if(!card||card.contains(document.activeElement))return;const b=card.querySelector('[data-dact="post-none"]');if(b)b.focus();}
 function reduceMotion(){return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);}
 // New draft list from the server (or after a local send/discard). A card that is gone while it
 // is on screen fades and collapses out first (~280 ms); the rail closes after the last one.
@@ -409,15 +505,15 @@ function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if
     fetch('/api/outbox/redraft',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{delete REDRAFT_LOCAL[id];draftMsg[id]=j.ok?'':('Redraft failed: '+(j.detail||'unknown error'));renderOutbox();pollOutbox();}).catch(()=>{delete REDRAFT_LOCAL[id];draftMsg[id]='Redraft failed: server off';renderOutbox();});return;}
   if(act==='redraft-cancel'){delete REDRAFT_LOCAL[id];if(d.redraft)d.redraft.active=false;renderOutbox();
     fetch('/api/outbox/redraft-cancel',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(()=>pollOutbox()).catch(()=>{});return;}
-  if(act==='send'){if(redraftState(d,[],REDRAFT_LOCAL[id])==='active')return;if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
+  if(act==='send'){if(batchRunning()&&BATCH.ids.indexOf(id)>=0)return;if(BATCH&&BATCH.phase==='confirm')BATCH=null;if(redraftState(d,[],REDRAFT_LOCAL[id])==='active')return;if(draftTexts(d).some((t,i)=>!t.trim()&&!draftFilesOf(d,i).length)){draftMsg[id]='every message needs text';renderOutbox();return;}draftConfirm=id;draftArmDiscard=null;draftMsg[id]='';renderOutbox();return;}
   if(act==='cancel'){draftConfirm=null;delete BLOCK[id];renderOutbox();return;}
   if(act==='unschedule'){const sid=d.scheduled&&d.scheduled.step_id;if(!sid)return;
     postJ('/api/actions/remove',{id:sid}).then(j=>{draftMsg[id]=j.ok?'':('Unschedule failed: '+(j.detail||'unknown error'));if(j.ok)delete d.scheduled;renderOutbox();setTimeout(refresh,300);}).catch(()=>{draftMsg[id]='Unschedule failed: server off';renderOutbox();});return;}
   if(act==='sendnow'){fetch('/api/outbox/send-now',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(()=>pollOutbox()).catch(()=>{});return;}
   if(act.indexOf('post-')===0){const after=act.slice(5);if(after==='park'&&!canPark(d))return;const texts=draftTexts(d);
     // The confirm showed these warnings and Send anyway was pressed: acknowledge exactly what was shown (new items still stop it).
-    const navC=after==='none'?null:(DATA.chats||[]).find(function(x){return x.session_id===d.session_id;});const nav=navC?closeNavPlan(navC):null;const w=sendWarnings(d);const ack_stale=w.head;const ack_fresh=w.error?true:w.items.map(function(i){return i.id;});draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
-    fetch('/api/outbox/send',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id,messages:texts,after,ack_stale,ack_fresh})}).then(r=>r.json()).then(j=>{
+    const navC=after==='none'?null:(DATA.chats||[]).find(function(x){return x.session_id===d.session_id;});const nav=navC?closeNavPlan(navC):null;const w=sendWarnings(d);const ack_stale=w.head;const ack_fresh=w.error?true:w.items.map(function(i){return i.id;});if(batchRunning()&&BATCH.ids.indexOf(id)>=0)return;if(SEND_LOCAL[id]||SENDING[id])return;draftConfirm=null;SEND_LOCAL[id]=1;renderOutbox();pollOutbox();
+    outboxSendReq(id,texts,after,ack_stale,ack_fresh).then(j=>{
       delete SEND_LOCAL[id];delete SENDING[id];draftConfirm=null;delete BLOCK[id];draftMsg[id]=j.ok?(j.dry?'dry run, nothing posted':(j.detail==='posted'?'posted':j.detail)):(j.detail||'failed');
       // The PR moved since the review was drafted: reopen the confirm with the warning; Send anyway is the second click.
       // Refused before anything went out (the PR moved, someone wrote in the thread, or the check failed): reopen the confirm with every warning; one Send anyway sends.
@@ -428,8 +524,15 @@ function draftAction(act,id,btn){const d=(DATA.drafts||[]).find(x=>x.id===id);if
     draftArmDiscard=null;fetch('/api/outbox/discard',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':(typeof TERM_TOKEN==='string'?TERM_TOKEN:'')},body:JSON.stringify({id})}).then(r=>r.json()).then(j=>{draftMsg[id]=j.ok?'':(j.detail||'failed');if(j.ok){setDrafts((DATA.drafts||[]).filter(x=>x.id!==id));}renderOutbox();setTimeout(refresh,300);}).catch(()=>{});}}
 function wireOutbox(){['#outrail'].forEach(q=>{const box=$(q);
   box.addEventListener('click',e=>{const r=e.target.closest('button[data-rail]');if(r){outCollapsed=r.dataset.rail==='close';if(outRailKey)railSave(outRailKey,outCollapsed);railRender();return;}
+    const sa=e.target.closest('[data-sall]');if(sa){if(!sa.disabled)sendAllAction(sa.dataset.sall);return;}
     const b=e.target.closest('[data-dact]');if(!b)return;const card=b.closest('.draft');if(card)draftAction(b.dataset.dact,card.dataset.id,b);});
-  box.addEventListener('keydown',e=>{if(!draftConfirm)return;const card=e.target.closest&&e.target.closest('.draft');if(!card||card.dataset.id!==draftConfirm)return;
+  box.addEventListener('keydown',e=>{const sc=BATCH&&BATCH.phase==='confirm'&&e.target.closest&&e.target.closest('[data-sallconf]');
+    if(sc){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();sendAllAction('cancel');return;}
+      if(e.key!=='Enter'||e.isComposing)return;
+      if(e.target.tagName==='BUTTON'&&!e.altKey&&!e.shiftKey&&e.target.dataset.sall!=='post-none')return;
+      const which=e.altKey?'post-park':(e.shiftKey?'post-close':'post-none');const sb=sc.querySelector('[data-sall="'+which+'"]');
+      e.preventDefault();if(sb&&!sb.disabled)sendAllAction(which);return;}
+    if(!draftConfirm)return;const card=e.target.closest&&e.target.closest('.draft');if(!card||card.dataset.id!==draftConfirm)return;
     if(e.key==='Escape'){e.preventDefault();e.stopPropagation();delete BLOCK[draftConfirm];draftConfirm=null;renderOutbox();return;}
     if(e.key!=='Enter'||e.isComposing)return;
     const onOther=e.target.tagName==='BUTTON'&&!e.altKey&&!e.shiftKey&&e.target.dataset.dact!=='post-none';if(onOther)return;
