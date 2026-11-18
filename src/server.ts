@@ -72,7 +72,7 @@ import { refreshShipBoards, shipBoards, type ShipBoard } from './ships.ts';
 import { gitMarks, refreshGitMarks } from './gitmarks.ts';
 import { onShipBoards } from './prune.ts';
 import { gatherShipDetail, isShipRepo, safeRepoPath, shipFileDiff, startShipSession } from './shipdetail.ts';
-import { addProject, listProjects, removeProject, seedProjects, updateProject } from './projects.ts';
+import { addProject, defaultProjectDir, listProjects, removeProject, seedProjects, updateProject } from './projects.ts';
 import { trustedFolders } from './orchstart.ts';
 import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
@@ -1271,6 +1271,20 @@ function projectList(includeHidden = false): (ReturnType<typeof listProjects>[nu
   }
 }
 
+/** The default project folder (new_thread_dir), for the composer; null means "the last one used". */
+function defaultProjectSafe(): string | null {
+  try {
+    const db = openDb();
+    try {
+      return defaultProjectDir(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Remember where a chat was last started: the Slack auto-start's fallback project. */
 function rememberProject(dir: string): void {
   try {
@@ -1508,7 +1522,7 @@ export function createServer(): http.Server {
       // Standing watcher chats ride separately, for the Watchers tab, never as board rows.
       const { board, standing, refs } = boardSplit(views, live);
       const chats = [...board, ...provisionalForLive(views, live, refs)];
-      return sendBoardData(req, res, JSON.stringify({ defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return sendBoardData(req, res, JSON.stringify({ defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), defaultProject: defaultProjectSafe(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately

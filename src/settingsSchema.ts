@@ -226,8 +226,8 @@ export const SETTINGS = [
     defaultNew: 7, legacyUnset: 7, restart: false,
   }),
   strDef((s) => (s === 'last' || s === 'home' || absOrHome(s) ? null : 'must be last, home or an absolute path'), {
-    key: 'new_thread_dir', section: 'general', label: 'New thread folder',
-    help: 'Where New thread starts: the last folder used, your home folder, or a fixed path.',
+    key: 'new_thread_dir', section: 'general', label: 'Default project',
+    help: 'The project New thread and Slack auto-start pick: a fixed folder, your home folder, or the last one used.',
     defaultNew: 'last', legacyUnset: 'last', restart: false,
   }),
   enumDef(['off', 'system', ...MAC_SOUNDS] as const, {

@@ -377,10 +377,10 @@ function draftHeadHtml(d,stale){if(d.email){const e=d.email;const tl=e.threadId&
   const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
   return '<div class="dhd"><span class="dh-ch">'+(d.review&&!d.channel&&!d.thread_ts?'':brandIcon('slack'))+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':threadsUnder(d)&&(d.messages||[]).length>1?'<span class="dh-th">New post + '+((d.messages||[]).length-1)+' in its thread</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
 // The message exactly as Slack lays it out: one sender header, then a bubble per message.
-function filesHtml(d,i,text){const fl=draftFilesOf(d,i);if(!fl.length)return '';const w=fileWhere(d,i,text);
+function draftFilesHtml(d,i,text){const fl=draftFilesOf(d,i);if(!fl.length)return '';const w=fileWhere(d,i,text);
   return '<div class="slk-files"><div class="slk-fwhere '+(w==='thread'?'thr':'top')+'">'+esc(filesLabel(d,i,text))+' \u00b7 '+fl.length+(fl.length===1?' file':' files')+'</div><div class="slk-fthumbs">'+fl.map(function(f,j){
     return fileIsImage(f)?'<img class="slk-thumb" alt="'+esc(f.split('/').pop())+'" src="/api/outbox/file?id='+encodeURIComponent(d.id)+'&m='+i+'&f='+j+'">':'<span class="slk-fchip">'+esc(f.split('/').pop())+'</span>';}).join('')+'</div></div>';}
-function msgExtras(d,texts){return texts.map(function(t,i){return filesHtml(d,i,t);});}
+function msgExtras(d,texts){return texts.map(function(t,i){return draftFilesHtml(d,i,t);});}
 function slkRowHtml(d,texts,extras){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts.map(function(x){return x.trim()?x:'_(images only)_';}),slkCtx(),t?hhmm(t):'',extras)+'</div></div>';}
 function threadHead(n){return '<div class="slk-thead">Thread \u00b7 '+n+(n===1?' reply':' replies')+'</div>';}
 // A new channel post shows as Slack will: message 1 in the channel, the rest indented as the thread under it.
@@ -397,7 +397,7 @@ function sendingBodyHtml(d,texts,p){const t=draftDate(d);const ctx=slkCtx();
     else if(cur)st='<span class="slk-st now">\u25cf Sending\u2026</span>';
     else st='<span class="slk-st">Queued</span>';
     const thr=threadsUnder(d)&&texts.length>1;
-    return (thr&&i===1?'<div class="slk-thread">'+threadHead(texts.length-1):'')+'<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+filesHtml(d,i,m)+'</div>'+(thr&&i===texts.length-1?'</div>':'');}).join('')+'</div></div></div>';}
+    return (thr&&i===1?'<div class="slk-thread">'+threadHead(texts.length-1):'')+'<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+draftFilesHtml(d,i,m)+'</div>'+(thr&&i===texts.length-1?'</div>':'');}).join('')+'</div></div></div>';}
 function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total&&prog.phase!=='review');const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;
   loadFresh(d);
   const slackBody=d.email?emailHtml(d,texts,editing):!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>(threadsUnder(d)&&texts.length>1?'<div class="slk-elbl'+(i?' thr':'')+'">'+(i?'Reply '+i+' in the thread':'Message 1 \u00b7 new post in the channel')+'</div>':'')+'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';

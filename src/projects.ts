@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import type Database from 'better-sqlite3';
+import { getSetting } from './settingsSchema.ts';
 
 // The folders a chat can be started in. The table is seeded from the project
 // dirs of indexed chats (insert-if-missing, so a rename or hide survives a
@@ -255,4 +257,22 @@ export function updateShipProject(
 /** Deletes the row only; labels and the folder stay. */
 export function removeShipProject(db: Database.Database, dir: string): boolean {
   return db.prepare(`DELETE FROM ship_projects WHERE project_dir = ?`).run(dir).changes > 0;
+}
+
+/* ------------------------------------------------------------- Default project */
+// new_thread_dir names the default project: a fixed folder (set from the composer's
+// "Make default"), the home folder, or 'last' for no default (the last one used).
+
+/** The default project folder, or null when the setting is 'last'. */
+export function defaultProjectDir(db: Database.Database, home: string = os.homedir()): string | null {
+  let v = '';
+  try {
+    v = String(getSetting(db, 'new_thread_dir') ?? '').trim();
+  } catch {
+    return null;
+  }
+  if (!v || v === 'last') return null;
+  if (v === 'home' || v === '~') return home;
+  if (v.startsWith('~/')) return path.join(home, v.slice(2));
+  return path.isAbsolute(v) ? v : null;
 }

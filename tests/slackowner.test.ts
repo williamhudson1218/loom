@@ -153,6 +153,13 @@ describe('auto-start project resolution', () => {
     expect(resolveStartProject('C2', { ...src, last: null })).toEqual({ dir: '/ok/recent', source: 'recent' });
   });
 
+  it('prefers the default project over the last one used, after a channel mapping', () => {
+    const src = { mapping: { C1: '/ok/mapped' }, default: '/ok/default', last: '/ok/last', recent: '/ok/recent', valid };
+    expect(resolveStartProject('C1', src)).toEqual({ dir: '/ok/mapped', source: 'channel' });
+    expect(resolveStartProject('C2', src)).toEqual({ dir: '/ok/default', source: 'default' });
+    expect(resolveStartProject('C2', { ...src, default: '/gone' })).toEqual({ dir: '/ok/last', source: 'last' });
+  });
+
   it('skips a candidate that is no longer a directory, falling through', () => {
     expect(resolveStartProject('C1', { mapping: { C1: '/gone' }, last: '/ok/last', recent: null, valid })).toEqual({ dir: '/ok/last', source: 'last' });
     expect(resolveStartProject('C1', { mapping: {}, last: '/gone', recent: '/gone2', valid })).toBeNull();

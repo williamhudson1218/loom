@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lastUsedProject, touchProject } from './projects.ts';
+import { defaultProjectDir, lastUsedProject, touchProject } from './projects.ts';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { parseSlackThread, type ThreadRef } from './slackref.ts';
@@ -304,26 +304,27 @@ export function mostRecentProject(db: Database.Database): string | null {
 
 /* ------------------------------------------------------------ auto-start */
 
-export type ProjectSource = 'channel' | 'last' | 'recent';
+export type ProjectSource = 'channel' | 'default' | 'last' | 'recent';
 
 /**
  * Where a chat for an unowned thread starts: the channel's mapped project, else
- * the project the user last started a chat in, else that of the newest chat on
+ * the default project (new_thread_dir), else the project the user last started a
+ * chat in, else that of the newest chat on
  * the board. A candidate that is not a usable directory is skipped, so a stale
  * mapping falls through instead of failing the start.
  */
 export function resolveStartProject(
   channel: string,
-  src: { mapping: Record<string, string>; last: string | null; recent: string | null; valid: (dir: string) => boolean },
+  src: { mapping: Record<string, string>; default?: string | null; last: string | null; recent: string | null; valid: (dir: string) => boolean },
 ): { dir: string; source: ProjectSource } | null {
-  const tries: [string | null | undefined, ProjectSource][] = [[src.mapping[channel], 'channel'], [src.last, 'last'], [src.recent, 'recent']];
+  const tries: [string | null | undefined, ProjectSource][] = [[src.mapping[channel], 'channel'], [src.default, 'default'], [src.last, 'last'], [src.recent, 'recent']];
   for (const [dir, source] of tries) if (dir && src.valid(dir)) return { dir, source };
   return null;
 }
 
 /** Where autoStartThread would start this thread's chat, without starting anything. */
 export function startProjectFor(db: Database.Database, channel: string, valid: (dir: string) => boolean): { dir: string; source: ProjectSource } | null {
-  return resolveStartProject(channel, { mapping: getChannelProjects(db), last: getLastProject(db), recent: mostRecentProject(db), valid });
+  return resolveStartProject(channel, { mapping: getChannelProjects(db), default: defaultProjectDir(db), last: getLastProject(db), recent: mostRecentProject(db), valid });
 }
 
 /**
@@ -394,6 +395,7 @@ export async function autoStartThread(ref: ThreadRef, picked: PickedText, deps: 
     else
       project = resolveStartProject(ref.channel, {
         mapping: getChannelProjects(db),
+        default: defaultProjectDir(db),
         last: getLastProject(db),
         recent: mostRecentProject(db),
         valid: deps.validDir,

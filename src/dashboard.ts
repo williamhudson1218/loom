@@ -1181,7 +1181,7 @@ ${SHIPMODAL_HTML}
     <textarea id="cprompt" placeholder="What should it work on? Paste or drop screenshots here."></textarea>
     <div id="cthumbs"></div>
     <div class="crow">
-      <label>Project <select id="cproj"></select></label>
+      <label>Project <select id="cproj"></select></label><a id="cprojdef" href="#" hidden title="New thread and Slack auto-start pick this project until you change it">Make default</a>
       <span id="cpathrow" hidden><input id="cpath" placeholder="/absolute/path/to/folder" style="width:260px"/> <button id="cpathgo" type="button">Add</button></span>
       <label>Target <select id="ctarget"></select></label>
       <label>Agent <select id="cagent"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
@@ -1686,7 +1686,7 @@ ${PRUNE_VIEW_JS}
 // The newest start opens in the main area with this banner over it; the chat is
 // not on the board until it is indexed, so the selection waits for it.
 var SLK_SEEN=null,SLK_PENDING=null,SLK_OPEN='';
-var SLK_SRC={channel:'mapped from this channel',last:'the project you last started a chat in',recent:'the project of your most recent chat'};
+var SLK_SRC={channel:'mapped from this channel',default:'your default project',last:'the project you last started a chat in',recent:'the project of your most recent chat'};
 function postJ(u,o){return fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(o)}).then(r=>r.json());}
 function slackStartFor(c){return (DATA.slackStarts||[]).find(s=>s.agent===c.agent&&((s.session_id&&s.session_id===c.session_id)||(!s.session_id&&(DATA.live[chatKey(c)]||{}).pane_id===s.pane_id)))||null;}
 function checkSlackStarts(){const S=DATA.slackStarts||[];
@@ -2015,7 +2015,7 @@ function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMen
 // The board poll sends back the last ETag; an unchanged board is a bodiless 304 and nothing is re-processed.
 // Any write the page makes (POST etc.) drops the ETag, so local optimistic edits are always reconciled by a full reply.
 var dataEtag='';(function(){const f=window.fetch;window.fetch=function(i,o){if(o&&o.method&&String(o.method).toUpperCase()!=='GET')dataEtag='';return f.apply(this,arguments);};})();
-function refresh(){return fetch('/api/data',{cache:'no-store',headers:dataEtag?{'if-none-match':dataEtag}:{}}).then(r=>{if(r.status===304)return null;dataEtag=r.headers.get('etag')||'';return r.json();}).then(d=>{if(!d){pollFailed=false;DATA.generatedAt=Date.now();renderStale();if(Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();return;}pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.standing=d.standing||[];DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){return fetch('/api/data',{cache:'no-store',headers:dataEtag?{'if-none-match':dataEtag}:{}}).then(r=>{if(r.status===304)return null;dataEtag=r.headers.get('etag')||'';return r.json();}).then(d=>{if(!d){pollFailed=false;DATA.generatedAt=Date.now();renderStale();if(Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();return;}pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.standing=d.standing||[];DATA.tags=d.tags||DATA.tags||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.defaultProject=d.defaultProject||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();}).catch(()=>{pollFailed=true;renderStale();if(homeSel)homeClock();});}
@@ -2453,7 +2453,9 @@ function composerProjects(){if(DATA.projects)return DATA.projects.map(p=>p.path)
 function openComposer(prefill){if(composerOpen)return;composerOpen=true;const m=$('#composer');m.hidden=false;
   const seed=prefill&&typeof prefill.prompt==='string'?prefill:null;
   let projs=composerProjects();if(seed&&seed.project&&projs.indexOf(seed.project)<0)projs=[seed.project].concat(projs);
-  const last=seed&&seed.project?seed.project:lsGet('loom.lastProject');const def=projs.indexOf(last)>=0?last:(projs[0]||'');
+  // The default project (Settings > New thread folder, or Make default here) wins over the last one used.
+  const dp=DATA.defaultProject;if(!seed&&dp&&projs.indexOf(dp)<0)projs=[dp].concat(projs);
+  const last=seed&&seed.project?seed.project:(dp||lsGet('loom.lastProject'));const def=projs.indexOf(last)>=0?last:(projs[0]||'');
   fillCproj(projs,def);
   if(seed)$('#cprompt').value=seed.prompt;else if(!$('#cprompt').value)$('#cprompt').value=lsGet('loom.draft');
   $('#cagent').value=DATA.defaultAgent==='codex'?'codex':'claude';syncTrust();
@@ -2462,14 +2464,19 @@ function openComposer(prefill){if(composerOpen)return;composerOpen=true;const m=
   $('#cmsg').textContent='';renderThumbs();updateRestore();setTimeout(()=>$('#cprompt').focus(),0);}
 // Offer to trust a folder Claude Code has not been trusted in (the server reports it per project).
 function syncTrust(){const v=$('#cproj').value,x=(DATA.projects||[]).find(q=>q.path===v)||(DATA.allProjects||[]).find(q=>q.path===v);$('#ctrustrow').hidden=!(x&&x.trusted===false&&$('#cagent').value==='claude');}
-function projLabel(p){const x=(DATA.projects||[]).find(q=>q.path===p);return x?x.name+'  \u2014  '+shortPath(p):shortPath(p);}
-function fillCproj(projs,sel){$('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===sel?' selected':'')+'>'+esc(projLabel(p))+'</option>').join('')+'<option value="__add__">Add project\u2026</option>';$('#cpathrow').hidden=true;syncTrust();}
+function projLabel(p){const x=(DATA.projects||[]).find(q=>q.path===p);return (x?x.name+'  \u2014  '+shortPath(p):shortPath(p))+(p===DATA.defaultProject?'  (default)':'');}
+// Make default: shown when the picked project is not the default; saves it as new_thread_dir.
+function syncProjDefault(){const v=$('#cproj').value;$('#cprojdef').hidden=!v||v==='__add__'||v===DATA.defaultProject;}
+function makeProjectDefault(){const v=$('#cproj').value;if(!v||v==='__add__')return;$('#cprojdef').hidden=true;
+  fetch('/api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({new_thread_dir:v})}).then(r=>r.json()).then(j=>{if(!j.ok){$('#cmsg').textContent='\u2715 '+(j.detail||'could not save the default');syncProjDefault();return;}DATA.defaultProject=v;fillCproj(composerProjects(),v);$('#cmsg').textContent='Default project saved.';}).catch(()=>{$('#cmsg').textContent='\u2715 could not save the default';syncProjDefault();});}
+$('#cprojdef').onclick=e=>{e.preventDefault();makeProjectDefault();};
+function fillCproj(projs,sel){$('#cproj').innerHTML=projs.map(p=>'<option value="'+esc(p)+'"'+(p===sel?' selected':'')+'>'+esc(projLabel(p))+'</option>').join('')+'<option value="__add__">Add project\u2026</option>';$('#cpathrow').hidden=true;syncTrust();syncProjDefault();}
 function addProjectPath(p){return fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json','x-loom-term-token':TERM_TOKEN},body:JSON.stringify({path:p})}).then(r=>r.json());}
 function reloadProjects(){return fetch('/api/projects?all=1').then(r=>r.json()).then(j=>{if(j.ok){DATA.projects=j.projects.filter(p=>!p.hidden);DATA.allProjects=j.projects;projects();}});}
 // Native folder picker inside Electron; elsewhere a typed path the server validates.
 function pickProject(inputEl){const nat=window.loomNative&&window.loomNative.pickFolder;if(nat)return nat().then(p=>p?addProjectPath(p):null);const v=(inputEl&&inputEl.value||'').trim();return addProjectPath(v);}
-function onCprojChange(){const sel=$('#cproj');syncTrust();if(sel.value!=='__add__'){$('#cpathrow').hidden=true;return;}
-  if(window.loomNative&&window.loomNative.pickFolder){pickProject().then(j=>{if(!j){fillCproj(composerProjects(),lsGet('loom.lastProject'));return;}if(!j.ok){$('#cmsg').textContent='\u2715 '+j.detail;fillCproj(composerProjects(),lsGet('loom.lastProject'));return;}reloadProjects().then(()=>fillCproj(composerProjects(),j.project.path));});}
+function onCprojChange(){const sel=$('#cproj');syncTrust();syncProjDefault();if(sel.value!=='__add__'){$('#cpathrow').hidden=true;return;}
+  if(window.loomNative&&window.loomNative.pickFolder){pickProject().then(j=>{if(!j){fillCproj(composerProjects(),DATA.defaultProject||lsGet('loom.lastProject'));return;}if(!j.ok){$('#cmsg').textContent='\u2715 '+j.detail;fillCproj(composerProjects(),DATA.defaultProject||lsGet('loom.lastProject'));return;}reloadProjects().then(()=>fillCproj(composerProjects(),j.project.path));});}
   else{$('#cpathrow').hidden=false;$('#cpath').focus();}}
 function addTypedProject(){addProjectPath($('#cpath').value.trim()).then(j=>{if(!j.ok){$('#cmsg').textContent='\u2715 '+j.detail;return;}$('#cmsg').textContent='';$('#cpath').value='';reloadProjects().then(()=>fillCproj(composerProjects(),j.project.path));});}
 function closeComposer(){composerOpen=false;$('#composer').hidden=true;}

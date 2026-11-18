@@ -221,7 +221,7 @@ function sxGeneral(){var cv=DATA.codexVisible;var aopts=cv||sxv('default_agent')
    sxKey('active_window_days',{title:'Index window',help:'Chats older than this move to archive search.',unit:'days',min:1,max:60})+
    sxKey('codex_visible',{kind:'seg',title:'Show Codex',help:'Whether Codex appears in agent pickers.',labels:{auto:'Automatic',on:'Always',off:'Never'}})+
    sxGrp('Defaults')+
-   sxChoice('new_thread_dir',[['last','Last folder you used'],['home','Home folder']],{title:'New thread starts in',help:'Where the New thread composer begins. Falls back to your home folder.',customLabel:'A fixed folder…',ph:'/absolute/path',defTxt:'Last folder you used'})+
+   sxChoice('new_thread_dir',[['last','Last folder you used'],['home','Home folder']],{title:'Default project',help:'The project New thread and Slack auto-start pick. Make default in the New thread window sets it too.',customLabel:'A fixed folder…',ph:'/absolute/path',defTxt:'Last folder you used'})+
    sxKey('notify_sound',{kind:'select',title:'Notification sound',help:'Played when a parked thread gets a reply.',labels:{off:'Off',system:'System default'},after:sxBtn('snd','▶ Preview')})+
    sxGrp('Tools Loom runs')+
    sxKey('claude_bin',{title:'Claude Code binary',help:'Detected through your shell when empty. Set it if Claude lives somewhere unusual, such as an nvm global.',note:sxDetected('claude'),ph:sxPr('claude')||'Detected automatically',mono:true,noDef:true,after:sxBtn('detect','Detect')})+
