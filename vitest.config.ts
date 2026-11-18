@@ -19,9 +19,15 @@ const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-test-home-'));
 // such call an empty server of its own; tests that want one start it with -L.
 const testTmux = fs.mkdtempSync('/tmp/loom-tmux-');
 
+// And for Claude Code: a test that reaches a real `claude` (the plugin manager's
+// tool lookup can find one) would otherwise register its throwaway marketplace in
+// the developer's own ~/.claude. That happened: loom-local pointed at a deleted
+// test dir for a week and every new hook silently never shipped.
+const testClaude = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-test-claude-'));
+
 export default defineConfig({
   test: {
-    env: { LOOM_HOME: testHome, TMUX_TMPDIR: testTmux },
+    env: { LOOM_HOME: testHome, TMUX_TMPDIR: testTmux, CLAUDE_CONFIG_DIR: testClaude },
     setupFiles: ['tests/setup-env.ts'],
   },
 });

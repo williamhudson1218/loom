@@ -8,6 +8,8 @@ import { getSetting, setSetting } from '../src/settingsSchema.ts';
 import {
   PluginManager,
   PLUGIN_ID,
+  MARKETPLACE_NAME,
+  pluginStamp,
   bundledPluginDir,
   compareVersions,
   installFiles,
@@ -46,6 +48,8 @@ case "$*" in
   "plugin marketplace add"*) f=plugin-marketplace-add ;;
   "plugin marketplace list"*) f=plugin-marketplace-list ;;
   "plugin marketplace remove"*) f=plugin-marketplace-remove ;;
+  "plugin marketplace update"*) f=plugin-marketplace-update ;;
+  "plugin update"*) f=plugin-update ;;
   "plugin install"*) f=plugin-install ;;
   "plugin uninstall"*) f=plugin-uninstall ;;
   "plugin list"*) f=plugin-list ;;
@@ -270,9 +274,40 @@ describe('status', () => {
     expect(s.status).toBe('update_available');
     expect(s.installedVersion).toBe('0.0.1');
     const u = await mgr().update();
+    expect(u.detail).toBeUndefined();
     expect(u.ok).toBe(true);
     expect(u.status.status).toBe('installed');
-    expect(u.steps).toEqual([]);
+    // Claude runs the plugin from its own cache: the update has to reach it, not just the files.
+    expect(argv().filter((a) => !/^plugin (marketplace )?list/.test(a)).slice(-2)).toEqual([`plugin marketplace update ${MARKETPLACE_NAME}`, `plugin update ${PLUGIN_ID} --scope user`]);
+    expect(u.steps.length).toBe(2);
+  });
+  it('update re-registers a marketplace that points at another directory', async () => {
+    await mgr({ appVersion: '0.0.1' }).install();
+    fs.writeFileSync(path.join(tmp, 'mlist.json'), JSON.stringify([{ name: MARKETPLACE_NAME, installLocation: '/var/folders/x/T/old-test-dir/plugin-marketplace' }]));
+    const u = await mgr().update();
+    expect(u.ok).toBe(true);
+    const dir = marketplaceDir(home);
+    expect(argv().filter((a) => !/^plugin (marketplace )?list/.test(a)).slice(-3)).toEqual([`plugin marketplace remove ${MARKETPLACE_NAME}`, `plugin marketplace add ${dir} --scope user --json`, `plugin install ${PLUGIN_ID} --scope user --json`]);
+  });
+  it('updateIfStale updates only when this build ships different plugin files', async () => {
+    expect(await mgr().updateIfStale()).toBeNull(); // not installed
+    await mgr().install();
+    expect(await mgr().updateIfStale()).toBeNull(); // installed from this build
+    setSetting(db, 'plugin_state', { installed_version: '0.1.0' });
+    const r = await mgr().updateIfStale();
+    expect(r?.ok).toBe(true);
+    expect((getSetting(db, 'plugin_state') as { installed_version?: string }).installed_version).toBe(pluginStamp(SRC));
+  });
+  it('the stamp follows the plugin files, not the manifest', () => {
+    const copy = path.join(tmp, 'src-copy');
+    fs.cpSync(SRC, copy, { recursive: true });
+    const a = pluginStamp(copy);
+    expect(a).toMatch(/^0\.1\.0-[0-9a-f]{8}$/);
+    const manifest = path.join(copy, 'loom', '.claude-plugin', 'plugin.json');
+    fs.writeFileSync(manifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifest, 'utf8')), description: 'x' }));
+    expect(pluginStamp(copy)).toBe(a);
+    fs.writeFileSync(path.join(copy, 'loom', 'hooks', 'new-hook.py'), 'print(1)\n');
+    expect(pluginStamp(copy)).not.toBe(a);
   });
   it('disabled when Claude lists it disabled', async () => {
     listed({ id: PLUGIN_ID, version: '0.1.0', enabled: false });

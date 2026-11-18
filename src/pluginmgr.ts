@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -120,6 +121,34 @@ export function bundledVersion(bundledDir: string | null): string | null {
   if (!bundledDir) return null;
   const v = readJson(path.join(bundledDir, PLUGIN_NAME, '.claude-plugin', 'plugin.json'))?.version;
   return typeof v === 'string' && v ? v : null;
+}
+
+/**
+ * The version the plugin is installed as: plugin.json's version plus a hash of the
+ * files that ship. Claude Code caches a plugin per version and `claude plugin update`
+ * only re-copies on a new one, so any change to a hook has to change this, and a
+ * release that leaves the plugin alone keeps it (no needless update).
+ */
+export function pluginStamp(bundledDir: string | null): string | null {
+  const base = bundledVersion(bundledDir);
+  if (!bundledDir || !base) return base;
+  const h = createHash('sha256');
+  const walk = (dir: string, rel: string): void => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      if (SKIP.has(ent.name) || ent.name.endsWith('.pyc')) continue;
+      const r = rel ? `${rel}/${ent.name}` : ent.name;
+      // plugin.json carries the stamp itself once installed; hashing it would never settle.
+      if (r === `${PLUGIN_NAME}/.claude-plugin/plugin.json`) continue;
+      if (ent.isDirectory()) walk(path.join(dir, ent.name), r);
+      else if (ent.isFile()) h.update(r).update('\0').update(fs.readFileSync(path.join(dir, ent.name))).update('\0');
+    }
+  };
+  try {
+    walk(bundledDir, '');
+  } catch {
+    return base;
+  }
+  return `${base}-${h.digest('hex').slice(0, 8)}`;
 }
 
 /** Numeric dotted compare; non-numeric parts compare as strings. >0 when a is newer. */
@@ -336,6 +365,8 @@ function refreshPluginStateOnStart(openDb: () => Database.Database, loomHome: st
  */
 export function startPluginStateSync(openDb: () => Database.Database, loomHome: string = TOOL_DIR): () => void {
   refreshPluginStateOnStart(openDb, loomHome);
+  // A Loom update can ship new hooks; Claude only sees them once the plugin is updated.
+  setTimeout(() => void autoUpdatePlugin(openDb, loomHome), 20_000).unref?.();
   return onSettingChanged((c) => {
     if (c.key !== 'slack_mode' && c.key !== 'outbox_chat_drafts') return;
     const db = openDb();
@@ -345,6 +376,21 @@ export function startPluginStateSync(openDb: () => Database.Database, loomHome: 
       db.close();
     }
   });
+}
+
+/** Update the installed plugin when this build's differs. Never throws. */
+export async function autoUpdatePlugin(openDb: () => Database.Database, loomHome: string = TOOL_DIR): Promise<void> {
+  let db: Database.Database | null = null;
+  try {
+    db = openDb();
+    const r = await new PluginManager({ db, loomHome }).updateIfStale();
+    if (r && !r.ok) console.error('[loom] plugin update:', r.detail);
+    else if (r) console.log('[loom] plugin updated to', r.status.installedVersion);
+  } catch (e) {
+    console.error('[loom] plugin update:', (e as Error).message);
+  } finally {
+    db?.close();
+  }
 }
 
 // ---------- the manager ----------
@@ -359,6 +405,9 @@ export const pluginArgv = (dir: string, caps: Partial<ClaudeCaps> = FULL_CAPS) =
   install: ['plugin', 'install', PLUGIN_ID, ...(caps.installScope ? ['--scope', 'user'] : []), ...(caps.installJson ? ['--json'] : [])],
   uninstall: ['plugin', 'uninstall', PLUGIN_ID, ...(caps.uninstallJson ? ['--json'] : [])],
   removeMarketplace: ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME],
+  // Re-read the marketplace directory, then move Claude's cached copy to the new version.
+  updateMarketplace: ['plugin', 'marketplace', 'update', MARKETPLACE_NAME],
+  update: ['plugin', 'update', PLUGIN_ID, ...(caps.installScope ? ['--scope', 'user'] : [])],
 });
 const previewCommands = (dir: string, claude = 'claude', caps?: ClaudeCaps | null) => {
   const a = pluginArgv(dir, caps ?? FULL_CAPS);
@@ -482,7 +531,7 @@ export class PluginManager {
   async status(): Promise<PluginStatus> {
     await this.caps(); // so the preview shows the flags this claude takes
     const st = this.state();
-    const bundled = this.d.appVersion ?? bundledVersion(this.bundledDir);
+    const bundled = this.stamp() ?? null;
     const base = {
       installedVersion: st.installed_version ?? null,
       bundledVersion: bundled,
@@ -500,7 +549,8 @@ export class PluginManager {
     if (!entry) return { ...base, status: 'not_installed' };
     const installedVersion = st.installed_version ?? (typeof entry.version === 'string' ? entry.version : null);
     if (entry.enabled === false) return { ...base, installedVersion, status: 'disabled' };
-    const newer = bundled && installedVersion && compareVersions(bundled, installedVersion) > 0;
+    // The app ships the plugin, so any difference from what is installed is an update.
+    const newer = bundled && installedVersion && bundled !== installedVersion;
     return { ...base, installedVersion, status: newer ? 'update_available' : 'installed' };
   }
 
@@ -509,7 +559,7 @@ export class PluginManager {
   }
 
   private stamp(): string | undefined {
-    return this.d.appVersion ?? bundledVersion(this.bundledDir) ?? undefined;
+    return this.d.appVersion ?? pluginStamp(this.bundledDir) ?? undefined;
   }
 
   private remember(version: string | undefined): void {
@@ -553,14 +603,53 @@ export class PluginManager {
     return this.result(true, steps);
   }
 
-  /** Swap in the bundled files. Running chats pick them up at their next start or /reload-plugins. */
+  /**
+   * Swap in the bundled files, then have Claude Code take them: it runs the plugin
+   * from its own cache, not from the marketplace directory, so swapping the files
+   * alone changes nothing. Running chats pick them up at their next start or
+   * /reload-plugins.
+   */
   async update(): Promise<ActionResult> {
     if (!this.bundledDir) return this.result(false, [], 'The plugin files are missing from this build.');
     if (!this.state().installed_version) return this.result(false, [], 'The plugin is not installed.');
+    const caps = await this.caps();
+    if (!caps.plugins) return this.result(false, [], tooOldDetail(caps.version));
+    const argv = pluginArgv(marketplaceDir(this.loomHome), caps);
     installFiles(this.bundledDir, this.loomHome, this.stamp());
+    const steps: StepResult[] = [];
+    // The marketplace may still point somewhere else (a copy from an older install): re-register it here.
+    const ml = await this.marketplaces(caps);
+    if (ml.missing) return this.result(false, [ml.step], this.missingDetail());
+    const dir = marketplaceDir(this.loomHome);
+    const mine = ml.list.find((m) => m?.name === MARKETPLACE_NAME);
+    if (mine?.installLocation && path.resolve(mine.installLocation) !== path.resolve(dir)) {
+      const rm = await this.run(argv.removeMarketplace);
+      steps.push(rm);
+      const add = await this.run(argv.add);
+      steps.push(add);
+      if (add.code !== 0) return this.result(false, steps, add.output.slice(0, 300) || 'claude plugin marketplace add failed');
+      const inst = await this.run(argv.install);
+      steps.push(inst);
+      if (inst.code !== 0) return this.result(false, steps, inst.output.slice(0, 300) || 'claude plugin install failed');
+    } else {
+      const mu = await this.run(argv.updateMarketplace);
+      steps.push(mu);
+      if (mu.code !== 0) return this.result(false, steps, mu.output.slice(0, 300) || 'claude plugin marketplace update failed');
+      const up = await this.run(argv.update);
+      steps.push(up);
+      if (up.code !== 0) return this.result(false, steps, up.output.slice(0, 300) || 'claude plugin update failed');
+    }
     this.remember(this.stamp());
     writePluginStateFile(this.d.db, this.loomHome);
-    return this.result(true, []);
+    return this.result(true, steps);
+  }
+
+  /** At startup: when the plugin is installed and this build ships different files, update it. */
+  async updateIfStale(): Promise<ActionResult | null> {
+    const st = this.state();
+    const want = this.stamp();
+    if (!st.installed_version || !want || st.installed_version === want || !this.bundledDir) return null;
+    return this.update();
   }
 
   async remove(): Promise<ActionResult> {
