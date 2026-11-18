@@ -1,3 +1,4 @@
+import { addChatNote, sentNote } from './chatnotes.ts';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { paneHome, tmux, tmuxAsync } from './tmux.ts';
@@ -410,7 +411,14 @@ function sendOpts(dry: boolean, ackStale = false, ackFresh: boolean | string[] =
     onStarted: claimStartedThread,
     checkPosted: async (x: string) => (await reconcileLive({}, [x])).includes(x),
     onSent: learnFromSend,
+    onDelivered: tellChatSent,
   };
+}
+
+/** A draft Loom sent: the chat that wrote it hears so on its next prompt or tool call (src/chatnotes.ts). */
+function tellChatSent(d: Draft, sent: string[], permalink: string): void {
+  const label = d.label || slackNames()[d.channel] || getDirectory().channels[d.channel] || '';
+  addChatNote(d.session_id, sentNote(d, sent, permalink, label));
 }
 
 /** voice_learn_from_edits: a draft the person edited before sending teaches their voice skill. */

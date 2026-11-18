@@ -69,7 +69,7 @@ describe('files on a draft', () => {
 });
 
 describe('sending files', () => {
-  it('uploads each message’s files in order, text as the comment, and an images-only message threads under message 1', async () => {
+  it('a new channel post: message 1 top-level with its files, every later message a reply in its thread', async () => {
     const f = store();
     const a = png('a.png'), b = png('b.png'), c = png('c.png');
     add(f, { messages: ['top', 'then', ''], files: [[a], [], [b, c]] });
@@ -78,10 +78,32 @@ describe('sending files', () => {
     expect(r.ok).toBe(true);
     expect(st.calls).toEqual([
       { kind: 'upload', thread_ts: undefined, text: 'top', paths: [a] },
-      { kind: 'post', thread_ts: undefined, text: 'then' },
+      { kind: 'post', thread_ts: '1793990000.000001', text: 'then' },
       { kind: 'upload', thread_ts: '1793990000.000001', text: undefined, paths: [b, c] },
     ]);
     expect(readOutbox(f).x.status).toBe('sent');
+  });
+
+  it('a DM burst stays top-level; only an images-only follow-up threads under message 1', async () => {
+    const f = store();
+    const b = png('b.png');
+    add(f, { channel: 'D0TESTDM001', messages: ['top', 'then', ''], files: [[], [], [b]] });
+    const st = stub();
+    await sendDraft('x', ['top', 'then', ''], { file: f, slack: st.slack });
+    expect(st.calls.map((c) => c.thread_ts)).toEqual([undefined, undefined, '1793990000.000001']);
+  });
+
+  it('tells the chat once the draft is out, with what was actually sent', async () => {
+    const f = store();
+    add(f, { messages: ['top', 'then'] });
+    const told: [string, string[], string][] = [];
+    await sendDraft('x', ['top', 'then (edited)'], { file: f, slack: stub().slack, onDelivered: (d, sent, link) => told.push([d.id, sent, link]) });
+    expect(told).toEqual([['x', ['top', 'then (edited)'], 'https://acme.slack.com/archives/C0TESTOUT01/p1793990000000001']]);
+    const g = store();
+    add(g, { messages: ['top'] });
+    const none: string[] = [];
+    await sendDraft('x', ['top'], { file: g, slack: stub(0).slack, onDelivered: (d) => none.push(d.id) });
+    expect(none).toEqual([]); // a failed send tells nobody
   });
 
   it('in a thread draft every message and its files stay in that thread', async () => {
@@ -107,8 +129,8 @@ describe('sending files', () => {
     const r2 = await sendDraft('x', ['two', ''], { file: f, slack: good.slack });
     expect(r2.ok).toBe(true);
     expect(good.calls.map((c) => c.kind)).toEqual(['post', 'upload']);
-    // the images-only message still threads under message 1 (posted in the first attempt)
-    expect(good.calls[1].thread_ts).toBe(readOutbox(f).x.sent_parts![0].ts);
+    // the rest still thread under message 1 (posted in the first attempt)
+    expect(good.calls.map((c) => c.thread_ts)).toEqual([readOutbox(f).x.sent_parts![0].ts, readOutbox(f).x.sent_parts![0].ts]);
   });
 
   it('a failed first upload leaves the draft whole and pending', async () => {
@@ -152,7 +174,7 @@ describe('sending files', () => {
 });
 
 describe('the card shows where files land', () => {
-  const lib = new Function(`${OUTBOX_PURE_JS}; return { fileWhere, filesLabel };`)() as any;
+  const lib = new Function(`${OUTBOX_PURE_JS}; return { fileWhere, filesLabel, threadsUnder };`)() as any;
   const html = (draft: object) =>
     new Function(
       'DATA', 'esc', 'rel', 'hhmm', 'NL',
@@ -175,8 +197,22 @@ describe('the card shows where files land', () => {
   });
   it('an in-thread draft labels its files as the thread', () => {
     expect(html({ id: 'd2', session_id: 's', created_at: '2026-11-09T10:00:00Z', channel: 'C1', thread_ts: '1.2', messages: ['r'], files: [['/x/1.png']] })).toContain('Posts in the thread');
-    expect(lib.fileWhere({ files: [[], ['/a.png']] }, 1, '')).toBe('thread');
-    expect(lib.fileWhere({ files: [[], ['/a.png']] }, 1, 'text')).toBe('channel');
+    expect(lib.fileWhere({ channel: 'D1', files: [[], ['/a.png']] }, 1, '')).toBe('thread');
+    expect(lib.fileWhere({ channel: 'D1', files: [[], ['/a.png']] }, 1, 'text')).toBe('channel');
+    expect(lib.fileWhere({ channel: 'C1', files: [[], ['/a.png']] }, 1, 'text')).toBe('thread');
+    expect(lib.fileWhere({ channel: 'C1', files: [['/a.png']] }, 0, 'text')).toBe('channel');
+  });
+  it('a new channel post shows message 1 in the channel and the rest as its thread', () => {
+    expect([lib.threadsUnder({ channel: 'C1' }), lib.threadsUnder({ channel: '#eng' }), lib.threadsUnder({ channel: 'D1' }), lib.threadsUnder({ channel: '@sam' }), lib.threadsUnder({ channel: 'C1', thread_ts: '1.2' })]).toEqual([true, true, false, false, false]);
+    const out = html({ id: 'd3', session_id: 's', created_at: '2026-11-09T10:00:00Z', channel: 'C1', messages: ['headline', 'detail one', 'detail two'] });
+    const top = out.indexOf('headline'), thr = out.indexOf('class="slk-thread"');
+    expect(top).toBeGreaterThan(-1);
+    expect(thr).toBeGreaterThan(top);
+    expect(out.indexOf('detail one')).toBeGreaterThan(thr);
+    expect(out).toContain('Thread \u00b7 2 replies');
+    expect(out).toContain('New post + 2 in its thread');
+    const dm = html({ id: 'd4', session_id: 's', created_at: '2026-11-09T10:00:00Z', channel: 'D1', messages: ['a', 'b'] });
+    expect(dm).not.toContain('slk-thread');
   });
   it('an images-only message still passes the Send guard in the page script', () => {
     expect(OUTBOX_VIEW_JS).toContain('!t.trim()&&!draftFilesOf(d,i).length');

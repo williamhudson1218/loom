@@ -169,6 +169,13 @@ const isDraft = (d: unknown): d is Draft => {
     && Array.isArray(x.messages) && typeof x.status === 'string' && typeof x.created_at === 'string';
 };
 
+/**
+ * A new top-level post in a channel (not a DM): message 1 goes to the channel and every
+ * later message is a reply in the thread it starts. Mirrored in the card (outboxview.ts).
+ */
+export const threadsUnderFirst = (d: Pick<Draft, 'channel' | 'thread_ts' | 'email'>): boolean =>
+  !d.thread_ts && !d.email && !!d.channel && !/^[D@]/.test(d.channel);
+
 /** Where a draft goes: its PR when it carries a review (one pending review per PR), else its Slack destination. */
 const destKey = (d: Pick<Draft, 'channel' | 'thread_ts' | 'review' | 'email'>): string =>
   d.email ? `mail:${d.email.account ?? ''}|${d.email.threadId || d.email.subject.toLowerCase()}`
@@ -876,6 +883,8 @@ export interface SendOpts extends StoreOpts {
   emailOff?: string;
   /** A Slack draft went out in full: the draft as Claude last recorded it, and the text actually sent. */
   onSent?: (draft: Draft, sent: string[]) => void;
+  /** Any draft (Slack, review, email) went out in full and was marked sent: tell the chat that wrote it. */
+  onDelivered?: (draft: Draft, sent: string[], permalink: string) => void;
 }
 
 /**
@@ -1020,11 +1029,12 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
           entry.skip = null;
           entry.p.next_at = null;
         }
-        // A top-level draft's images-only message is the thread reply under message 1; text messages stay where they are today.
+        // A new post in a channel: message 1 is the top-level post and every later message is a reply in its thread.
+        // In a DM only an images-only follow-up threads under message 1; text messages stay where they are.
         let thread = d.thread_ts;
-        if (!thread && !text && files[i].length && (i > 0 || d.sent_parts?.length)) {
+        if (!thread && (i > 0 || d.sent_parts?.length) && (threadsUnderFirst(d) || (!text && files[i].length))) {
           thread = d.sent_parts?.[0]?.ts || sent[0]?.ts;
-          if (!thread) throw new Error('message 1 went out but Slack did not report its timestamp, so the images cannot be threaded under it');
+          if (!thread) throw new Error('message 1 went out but Slack did not report its timestamp, so the rest cannot be threaded under it');
         }
         const dest = { channel, ...(thread ? { thread_ts: thread } : {}) };
         // Text and images are ONE Slack message (the text rides on the upload), so a retry never re-uploads what is out.
@@ -1083,6 +1093,7 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
         /* learning from the edit is a nicety; the post went out */
       }
     }
+    if (marked.ok) delivered(opts, d, clean, permalink || reviewUrl);
     if (!d.thread_ts && opts.onStarted && sent[0]?.ts) {
       const ref = parseSlackThread(permalink) ?? { key: `${channel}/${sent[0].ts}`, url: '', channel, ts: sent[0].ts, linkTs: sent[0].ts };
       if (ref.ts === ref.linkTs && !ref.channel.startsWith('D')) {
@@ -1101,6 +1112,14 @@ export async function sendDraft(id: string, messages: string[], opts: SendOpts =
   } finally {
     progress.delete(id);
     sendingNow.delete(id);
+  }
+}
+
+function delivered(opts: SendOpts, d: Draft, sent: string[], permalink: string): void {
+  try {
+    opts.onDelivered?.(d, sent, permalink);
+  } catch {
+    /* telling the chat is a nicety; the post went out */
   }
 }
 
@@ -1186,6 +1205,7 @@ async function sendEmailDraft(d: Draft, messages: string[], opts: SendOpts): Pro
       return { write: true, result: null };
     });
     const marked = closeDraft(id, 'sent', { by: 'loom', permalink, bySend: true, at: now() }, opts);
+    if (marked.ok) delivered(opts, d, [body], permalink);
     const extra = { email_id: res.messageId, email_thread: res.threadId || e.threadId || '', ...(permalink ? { permalink } : {}) };
     if (!marked.ok) return { ok: true, ...extra, detail: 'sent, but marking it sent failed: ' + marked.detail };
     return { ok: true, ...extra, detail: 'sent' };

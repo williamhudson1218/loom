@@ -230,7 +230,12 @@ def draft_matches(call, d):
     elif ch and dch and not SLACK_ID.match(ch) and not SLACK_ID.match(dch):
         checks.append(ch.lstrip("#@").lower() == dch.lstrip("#@").lower())
     th = call.get("thread_ts") or ""
-    if th and TS.match(th):
+    if th and TS.match(th) and not d.get("thread_ts") and len(d.get("messages") or []) > 1:
+        # A new channel post: message 1 starts a thread and the rest are replies in it, at a ts only
+        # known once message 1 is out. So a reply is covered when its text is one of messages 2..n.
+        rest = _text_ok(call.get("texts"), dict(d, messages=(d.get("messages") or [])[1:]))
+        checks.append(rest is True)
+    elif th and TS.match(th):
         checks.append(th == (d.get("thread_ts") or ""))
     elif call.get("parsed") and ch and not th and SLACK_ID.match(ch) and SLACK_ID.match(dch):
         # A parsed payload with no thread_ts posts top-level: a thread draft is not this message.

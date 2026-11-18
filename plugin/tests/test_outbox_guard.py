@@ -149,6 +149,17 @@ class Decide(unittest.TestCase):
         d = draft("d1", channel="#pay-and-file-eng", thread_ts=None, messages=["Release notes are up"])
         self.assertIsNone(guard.decide(call, {"d1": d}, "sess-1"))
 
+    def test_new_post_replies_in_its_thread_are_covered(self):
+        # A new channel post: message 1 top-level, the rest replies in the thread it starts.
+        d = draft("d1", thread_ts=None, messages=["Heads up: the CT file is late this week.", "Details: the agency moved the window."])
+        top = guard.extract("mcp__x_slack_send_message", {"channel_id": CH, "message": "Heads up: the CT file is late this week."})
+        reply = guard.extract("mcp__x_slack_send_message", {"channel_id": CH, "thread_ts": TS, "message": "Details: the agency moved the window."})
+        self.assertIsNone(guard.decide(top, {"d1": d}, "sess-1"))
+        self.assertIsNone(guard.decide(reply, {"d1": d}, "sess-1"))
+        # Message 1 is not a reply, and text that is not in the draft is not covered.
+        self.assertTrue(guard.decide(guard.extract("mcp__x_slack_send_message", {"channel_id": CH, "thread_ts": TS, "message": "Heads up: the CT file is late this week."}), {"d1": d}, "sess-1"))
+        self.assertTrue(guard.decide(guard.extract("mcp__x_slack_send_message", {"channel_id": CH, "thread_ts": TS, "message": "Something else entirely here"}), {"d1": d}, "sess-1"))
+
 
 class Store(HomeCase):
     def write_outbox(self, *drafts):

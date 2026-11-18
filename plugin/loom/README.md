@@ -5,7 +5,8 @@ Settings > Helpers through Claude Code's own `claude plugin` commands; nothing e
 
 - **Hooks:** `record-placement.sh` (which tmux pane a chat lives in), `thread-ownership.py` (a pasted Slack thread belongs
   to one chat), `outbox-recording.py` (a draft shown in chat must be recorded), `outbox-guard.py` (a Slack post is
-  denied unless this chat's outbox already holds a matching draft), `ship-labels.py` (staged work needs a label).
+  denied unless this chat's outbox already holds a matching draft), `ship-labels.py` (staged work needs a label),
+  `chat-notes.py` (Loom's notes for this chat, such as "your draft was sent", handed over on its next prompt or command).
   Each reads `$LOOM_HOME/plugin-state.json` and does nothing when its feature is off.
 - **CLI:** `bin/loom` (python3, stdlib only). Writes are atomic event files in `$LOOM_HOME/events/`; reads and Slack actions go
   to Loom over HTTP on 127.0.0.1 with the token in `$LOOM_HOME/cli-token`. The Slack token never leaves Loom.

@@ -23,13 +23,15 @@ A Slack message is written in the user's name, so it is **drafted, shown, record
    ```
 
    - A reply in a thread **must** use `--thread <url>`, not `--channel`: Loom needs the thread to watch it for the answer.
-   - Several `--text-file` flags are one burst, sent in order.
+   - Several `--text-file` flags are one burst, sent in order. In a thread they are all replies in that thread.
+     **A new post in a channel** (`--channel`, not a DM) goes out as message 1 top-level and every later message as a
+     reply in the thread message 1 starts, and the card shows it that way. So put the headline in message 1 and the
+     detail in the rest. A DM burst stays top-level.
    - **Images:** `--file <absolute-or-relative path>` (repeatable) attaches a file to the message it follows, so
      `--text-file m1.md --file shot1.png --text-file m2.md` puts the image on message 1. The file must exist when you
      record the draft. Loom shows a thumbnail under that message and Send uploads it as part of that message
      (the text becomes the upload's comment). A message that is only images, with no text, is `--images-only --file a.png`:
-     on a top-level draft it posts as a thread reply under message 1; in a thread draft it posts in that thread.
-     Text messages after the first stay where the draft posts. `update` keeps attachments when you omit `--file` and the
+     on a top-level draft it posts as a thread reply under message 1; in a thread draft it posts in that thread. `update` keeps attachments when you omit `--file` and the
      message count is unchanged, replaces them when you pass `--file`, and `--clear-files` drops them.
    - The command prints the draft id. Mention it in one line under the draft.
 5. **Revise in place.** When the user asks for changes, edit and re-record: `loom outbox update <id> --text-file m1.md`,
@@ -39,7 +41,9 @@ A Slack message is written in the user's name, so it is **drafted, shown, record
    **A "redraft <id>" message from Loom** means the thread got new messages after you drafted: re-read the thread, then
    `loom outbox update <id> ...` if the draft must change, or `loom outbox keep <id>` (and one line on why) if it stands.
 7. **Sending is the user's.** They send from Loom, or tell you to send. Do not post, react, or reply in Slack yourself from this skill.
-   After a send is confirmed, say what was sent; do not show it again as a draft.
+   After a send is confirmed, say what was sent; do not show it again as a draft. When the user sends from Loom,
+   a "Loom outbox: the user sent your draft <id>" note reaches this chat on its next prompt or command, with the
+   link and, if they edited it, the text that actually went out. Take that as what was said.
    A Slack post from a chat is denied by Loom's `outbox-guard.py` hook unless this chat's outbox holds a pending
    draft for that destination with the same text. If it denies one, record or update the draft, show it, and wait.
 

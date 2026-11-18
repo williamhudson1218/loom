@@ -57,6 +57,10 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .slk-msg { overflow-wrap:anywhere; }
   .slk-msg + .slk-msg { margin-top:2px; }
   .slk-gap { height:.7em; }
+  .slk-thread { margin:10px 0 0 18px; padding-left:12px; border-left:2px solid #4a6aa8; }
+  .slk-thead { font-size:11px; font-weight:700; letter-spacing:.04em; color:#9cc0ff; margin-bottom:6px; }
+  .slk-elbl { font-size:11px; font-weight:700; letter-spacing:.04em; color:#8a90a2; margin:2px 0 4px; }
+  .slk-elbl.thr { color:#9cc0ff; }
   .slk-burst { margin-top:8px !important; padding:6px 10px 8px; border:1px solid rgba(255,255,255,.1); border-left:3px solid #4a6aa8; border-radius:8px; background:rgba(255,255,255,.035); }
   .slk-bh { display:flex; align-items:center; gap:8px; margin-bottom:3px; font-size:11px; color:#8a90a2; }
   .slk-mark { font-weight:700; letter-spacing:.04em; color:#9cc0ff; }
@@ -180,8 +184,10 @@ function draftDate(d){var t=Date.parse((d&&d.created_at)||'');return isNaN(t)?0:
 function sortDrafts(ds){return ds.slice().sort(function(a,b){return draftDate(a)-draftDate(b)||(a.id<b.id?-1:a.id>b.id?1:0);});}
 // A draft is stale when a newer one exists for the same chat, or it is over a day old.
 function draftFilesOf(d,i){return (d&&d.files&&d.files[i])||[];}
-// Where a message's files land: in the draft's thread; in the thread under message 1 (a top-level draft's images-only message); or at the top level.
-function fileWhere(d,i,text){if(d&&d.thread_ts)return 'thread';if(i>0&&!String(text||'').trim()&&draftFilesOf(d,i).length)return 'thread';return 'channel';}
+// A new post in a channel (not a DM): message 1 goes top-level and every later message is a reply in its thread (src/outbox.ts threadsUnderFirst).
+function threadsUnder(d){return !!d&&!d.thread_ts&&!d.email&&!!d.channel&&!/^[D@]/.test(d.channel);}
+// Where a message lands: in the draft's thread; in the thread under message 1 (a new channel post's later messages, or a DM's images-only follow-up); or at the top level.
+function fileWhere(d,i,text){if(d&&d.thread_ts)return 'thread';if(i>0&&(threadsUnder(d)||(!String(text||'').trim()&&draftFilesOf(d,i).length)))return 'thread';return 'channel';}
 function fileIsImage(p){return /[.](png|jpe?g|gif|webp)$/i.test(p||'');}
 function filesLabel(d,i,text){var w=fileWhere(d,i,text);return w==='thread'?(d.thread_ts?'Posts in the thread':'Posts as a thread reply under message 1'):'Posts top-level in the channel';}
 function draftStaleReason(d,all,now){
@@ -361,7 +367,7 @@ function reviewHtml(d){const r=d.review;if(!r)return '';loadReviewHead(d);const 
 // What the confirm says it will do, in send order.
 function confirmWhat(d,texts){if(d.email){const e=d.email;const n=(e.cc||[]).length+(e.bcc||[]).length;return 'Send the email'+(e.threadId?' as a reply in the thread':'')+' to '+(e.to||[]).join(', ')+(n?' (+'+n+' cc/bcc)':'')+(e.account?' from the '+e.account+' account':'')+((e.attachments||[]).length?' with '+e.attachments.length+' attachment(s)':'');}
   const parts=[];if(d.review&&!d.review_posted){const b=reviewBadge(d.review.event);const n=(d.review.comments||[]).length;parts.push('post the review ('+b.label+(n?', '+n+' comment'+(n===1?'':'s'):'')+') on '+reviewPrLabel(d.review));}
-  if(texts.length){const nf=(d.files||[]).reduce(function(n,f){return n+f.length;},0);parts.push('post as '+senderName()+' to '+draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'')+(texts.length>1?' ('+texts.length+' messages)':'')+(nf?' with '+nf+' file(s)':''));}
+  if(texts.length){const nf=(d.files||[]).reduce(function(n,f){return n+f.length;},0);parts.push('post as '+senderName()+' to '+draftDestLabel(d)+(d.thread_ts?' (reply in thread)':'')+(threadsUnder(d)&&texts.length>1?' (message 1 as a new post, '+(texts.length-1)+(texts.length===2?' reply':' replies')+' in its thread)':texts.length>1?' ('+texts.length+' messages)':'')+(nf?' with '+nf+' file(s)':''));}
   const nr=(d.reactions||[]).reduce(function(n,r){return n+(r.add||[]).length+(r.remove||[]).length;},0);if(nr)parts.push('apply '+nr+' reaction change'+(nr===1?'':'s'));
   const s=parts.join(', then ');return s.charAt(0).toUpperCase()+s.slice(1)+(d.review_posted?' (the review is already posted)':'');}
 function senderName(){return (SLK_DIR&&SLK_DIR.me&&SLK_DIR.me.name)||'You';}
@@ -369,13 +375,17 @@ function avatarHtml(){const m=(SLK_DIR&&SLK_DIR.me)||{};const n=senderName();if(
 function draftHeadHtml(d,stale){if(d.email){const e=d.email;const tl=e.threadId&&/^[0-9a-f]+$/i.test(e.threadId)?' <a href="https://mail.google.com/mail/#all/'+esc(e.threadId)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
     return '<div class="dhd"><span class="dh-mail">'+brandIcon('gmail')+'Email</span><span class="dh-ch">'+esc(emailDest(e))+'</span>'+(e.threadId?'<span class="dh-th">Reply in thread: '+esc(e.thread_subject||e.subject)+tl+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
   const lbl=draftDestLabel(d);const link=/^https?:[/][/]/.test(d.thread_url||'')?' <a href="'+esc(d.thread_url)+'" target="_blank" rel="noopener noreferrer">view thread</a>':'';
-  return '<div class="dhd"><span class="dh-ch">'+(d.review&&!d.channel&&!d.thread_ts?'':brandIcon('slack'))+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
+  return '<div class="dhd"><span class="dh-ch">'+(d.review&&!d.channel&&!d.thread_ts?'':brandIcon('slack'))+esc(lbl)+'</span>'+(d.thread_ts?'<span class="dh-th">Reply in thread'+link+'</span>':threadsUnder(d)&&(d.messages||[]).length>1?'<span class="dh-th">New post + '+((d.messages||[]).length-1)+' in its thread</span>':'')+(stale?'<span class="dstale" title="'+esc(stale)+'">stale</span>':'')+'<span class="dh-ago">'+esc(rel(draftDate(d)))+'</span></div>';}
 // The message exactly as Slack lays it out: one sender header, then a bubble per message.
 function filesHtml(d,i,text){const fl=draftFilesOf(d,i);if(!fl.length)return '';const w=fileWhere(d,i,text);
   return '<div class="slk-files"><div class="slk-fwhere '+(w==='thread'?'thr':'top')+'">'+esc(filesLabel(d,i,text))+' \u00b7 '+fl.length+(fl.length===1?' file':' files')+'</div><div class="slk-fthumbs">'+fl.map(function(f,j){
     return fileIsImage(f)?'<img class="slk-thumb" alt="'+esc(f.split('/').pop())+'" src="/api/outbox/file?id='+encodeURIComponent(d.id)+'&m='+i+'&f='+j+'">':'<span class="slk-fchip">'+esc(f.split('/').pop())+'</span>';}).join('')+'</div></div>';}
 function msgExtras(d,texts){return texts.map(function(t,i){return filesHtml(d,i,t);});}
-function slackPreviewHtml(d,texts){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts.map(function(x,i){return x.trim()?x:'_(images only)_';}),slkCtx(),t?hhmm(t):'',msgExtras(d,texts))+'</div></div>';}
+function slkRowHtml(d,texts,extras){const t=draftDate(d);return '<div class="slk-row">'+avatarHtml()+'<div class="slk-main"><div class="slk-meta"><b>'+esc(senderName())+'</b><span>'+esc(t?hhmm(t):'')+'</span></div>'+slkBubbles(texts.map(function(x){return x.trim()?x:'_(images only)_';}),slkCtx(),t?hhmm(t):'',extras)+'</div></div>';}
+function threadHead(n){return '<div class="slk-thead">Thread \u00b7 '+n+(n===1?' reply':' replies')+'</div>';}
+// A new channel post shows as Slack will: message 1 in the channel, the rest indented as the thread under it.
+function slackPreviewHtml(d,texts){const ex=msgExtras(d,texts);if(!threadsUnder(d)||texts.length<2)return slkRowHtml(d,texts,ex);
+  return slkRowHtml(d,texts.slice(0,1),ex.slice(0,1))+'<div class="slk-thread">'+threadHead(texts.length-1)+slkRowHtml(d,texts.slice(1),ex.slice(1))+'</div>';}
 // A draft Loom is posting: each message shows sent / sending / a countdown with Send now / queued.
 function sendProgressOf(d,texts){return SENDING[d.id]||(SEND_LOCAL[d.id]?{total:texts.length,sent:0,next_at:null}:null);}
 function sendEtaText(at){return 'in '+Math.max(0,Math.ceil((at-Date.now())/1000))+'s';}
@@ -386,10 +396,11 @@ function sendingBodyHtml(d,texts,p){const t=draftDate(d);const ctx=slkCtx();
     else if(cur&&p.next_at&&p.next_at>Date.now())st='<span class="slk-st now"><span data-eta="'+p.next_at+'">'+sendEtaText(p.next_at)+'</span><button type="button" data-dact="sendnow" title="Skip the wait and post this message now">Send now</button></span>';
     else if(cur)st='<span class="slk-st now">\u25cf Sending\u2026</span>';
     else st='<span class="slk-st">Queued</span>';
-    return '<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+filesHtml(d,i,m)+'</div>';}).join('')+'</div></div></div>';}
+    const thr=threadsUnder(d)&&texts.length>1;
+    return (thr&&i===1?'<div class="slk-thread">'+threadHead(texts.length-1):'')+'<div class="slk-msg slk-burst'+(done||cur?'':' queued')+'"><div class="slk-bh"><span class="slk-mark">'+(i+1)+'/'+texts.length+'</span>'+st+'</div>'+slkRender(m.trim()?m:'_(images only)_',ctx)+filesHtml(d,i,m)+'</div>'+(thr&&i===texts.length-1?'</div>':'');}).join('')+'</div></div></div>';}
 function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const texts=draftTexts(d);const prog=sending?null:sendProgressOf(d,texts);const burstSend=!!(prog&&prog.total>1&&texts.length===prog.total&&prog.phase!=='review');const conf=draftConfirm===d.id&&!prog;const editing=!!DRAFT_EDIT_ON[d.id]&&!conf&&!prog;
   loadFresh(d);
-  const slackBody=d.email?emailHtml(d,texts,editing):!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
+  const slackBody=d.email?emailHtml(d,texts,editing):!texts.length?'':burstSend?sendingBodyHtml(d,texts,prog):editing?'<div class="dbody">'+texts.map((t,i)=>(threadsUnder(d)&&texts.length>1?'<div class="slk-elbl'+(i?' thr':'')+'">'+(i?'Reply '+i+' in the thread':'Message 1 \u00b7 new post in the channel')+'</div>':'')+'<textarea class="dtext" data-i="'+i+'" rows="'+Math.min(10,Math.max(3,t.split(NL).length+1))+'">'+esc(t)+'</textarea>').join('')+'</div>':'<div class="dbody">'+slackPreviewHtml(d,texts)+'</div>';
   const body=reviewHtml(d)+slackBody+reactionsHtml(d);const warn=sendWarnings(d);const warned=hasWarnings(warn);const anyway=warned?'Send anyway':'Send';
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
   const rdSt=redraftState(d,warn.items,REDRAFT_LOCAL[d.id]);const rdOn=rdSt==='active';
