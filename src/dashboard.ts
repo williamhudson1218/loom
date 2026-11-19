@@ -207,10 +207,10 @@ ${WELCOME_BOOT_CSS}
   .actions { display:flex; gap:8px; align-items:center; flex:none; }
   .actions button { height:32px; box-sizing:border-box; border-radius:8px; padding:0 12px; }
   .brand { display:flex; align-items:center; gap:10px; flex:none; }
-  /* The wordmark: the logo's ribbon l (no tile) stands in for the L, then 'oom' in the ribbon's amber to blue, centred on the l (top nudges the x-height's middle level with it). */
+  /* The wordmark: the logo's ribbon l (no tile) stands in for the L, then 'oom' in the ribbon's amber to blue, centred on the l's box: its foot then sits level with the l's, halfway between baseline alignment (too low) and true centring of the ink (too high). */
   .brand h1.wordmark { display:flex; align-items:center; gap:0; line-height:1;
     background:none; -webkit-background-clip:border-box; background-clip:border-box; color:inherit; }
-  .brand h1.wordmark span { background:linear-gradient(90deg,#ffb238,#5ec8ff); -webkit-background-clip:text; background-clip:text; color:transparent; position:relative; top:-1.4px; }
+  .brand h1.wordmark span { background:linear-gradient(90deg,#ffb238,#5ec8ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
   .brand h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.3px;
     background:linear-gradient(90deg,#79b1ff,#7ee0a0); -webkit-background-clip:text; background-clip:text; color:transparent; }
   .brand .sub { color:#8b93a7; font-size:12px; }
