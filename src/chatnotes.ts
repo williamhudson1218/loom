@@ -52,3 +52,71 @@ export function sentNote(d: Draft, sent: string[], permalink: string, label = ''
   if (edited && sent.length) lines.push('The user edited it before sending. What went out:\n' + sent.map(quote).join('\n\n'));
   return lines.join('\n');
 }
+
+/** Is a note still waiting for this chat (the hook has not taken it yet)? */
+export function hasChatNote(sessionId: string, dir: string = CHAT_NOTES_DIR): boolean {
+  return SID_RE.test(sessionId) && fs.existsSync(path.join(dir, `${sessionId}.jsonl`));
+}
+
+/** Take a chat's waiting notes directly (for a chat with no hook to take them, e.g. Codex). Oldest first. */
+export function takeChatNotes(sessionId: string, dir: string = CHAT_NOTES_DIR): string[] {
+  if (!SID_RE.test(sessionId)) return [];
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  const claimed = `${file}.${process.pid}.taking`;
+  try {
+    fs.renameSync(file, claimed);
+  } catch {
+    return [];
+  }
+  try {
+    return fs.readFileSync(claimed, 'utf8').split('\n').flatMap((l) => {
+      try {
+        const n = JSON.parse(l) as { text?: unknown };
+        return typeof n?.text === 'string' && n.text.trim() ? [n.text] : [];
+      } catch {
+        return [];
+      }
+    });
+  } finally {
+    fs.rmSync(claimed, { force: true });
+  }
+}
+
+/**
+ * The line Loom types into an idle chat so it hears now, not on some later turn. Typing it is a
+ * prompt, so the chat-notes hook hands over the full note with it. A chat waiting at its prompt
+ * after Loom sends its draft would otherwise never take the note: nothing runs there to deliver it.
+ */
+export const NUDGE_TEXT = '[Loom outbox] Your draft was sent from Loom; the details are attached to this message. Treat it as said and carry on.';
+
+export type NudgeState = 'gone' | 'not-live' | 'hold' | 'ready';
+export interface NudgeIo {
+  hasNote: () => boolean;
+  /** 'not-live' (no pane), 'hold' (working, focused, or at a prompt or menu), else 'ready'. */
+  pane: () => Exclude<NudgeState, 'gone'>;
+  type: () => boolean;
+  later: (fn: () => void, ms: number) => void;
+}
+
+export const NUDGE_EVERY_MS = 15_000;
+export const NUDGE_TRIES = 120; // half an hour of 15 s looks
+
+/**
+ * Nudge the chat once its pane is free. A chat that is working takes the note on its next Bash
+ * call or prompt by itself, so each look first checks the note is still there. A chat with no
+ * live pane keeps the note for when it is resumed. Gives up quietly after NUDGE_TRIES looks.
+ */
+export function nudgeWhenFree(io: NudgeIo, tries: number = NUDGE_TRIES, every: number = NUDGE_EVERY_MS): void {
+  const look = (left: number) => {
+    try {
+      if (!io.hasNote()) return;
+      const s = io.pane();
+      if (s === 'not-live') return;
+      if (s === 'ready' && io.type()) return;
+    } catch {
+      /* a nudge is a nicety; try again */
+    }
+    if (left > 1) io.later(() => look(left - 1), every);
+  };
+  look(tries);
+}

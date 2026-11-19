@@ -1,4 +1,4 @@
-import { addChatNote, sentNote } from './chatnotes.ts';
+import { addChatNote, hasChatNote, nudgeWhenFree, NUDGE_TEXT, sentNote, takeChatNotes } from './chatnotes.ts';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { paneHome, tmux, tmuxAsync } from './tmux.ts';
@@ -77,7 +77,7 @@ import { trustedFolders } from './orchstart.ts';
 import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
 import { handleOrchRoute, orchSummary, orchTick } from './orchserver.ts';
-import { actionTick, scheduledDraftIds, scheduledDrafts, type ActionIo } from './actionserver.ts';
+import { actionTick, deliveryHold, scheduledDraftIds, scheduledDrafts, type ActionIo } from './actionserver.ts';
 import { PRESEND_SYSTEM, PreSendWork, dbPreSendStore } from './actionsend.ts';
 import { JUDGE, askModel } from './orchjudge.ts';
 import { actionSummary } from './routes/actions.ts';
@@ -415,10 +415,41 @@ function sendOpts(dry: boolean, ackStale = false, ackFresh: boolean | string[] =
   };
 }
 
-/** A draft Loom sent: the chat that wrote it hears so on its next prompt or tool call (src/chatnotes.ts). */
+/**
+ * A draft Loom sent: the chat that wrote it hears so (src/chatnotes.ts). The note waits for the chat's next
+ * prompt or Bash call; a chat sitting idle at its prompt gets a typed nudge so it hears now. The nudge waits
+ * while the chat is working, the user is in its pane, or a prompt or menu is open (a typed Enter would answer it).
+ */
 function tellChatSent(d: Draft, sent: string[], permalink: string): void {
   const label = d.label || slackNames()[d.channel] || getDirectory().channels[d.channel] || '';
-  addChatNote(d.session_id, sentNote(d, sent, permalink, label));
+  const sid = d.session_id;
+  if (!addChatNote(sid, sentNote(d, sent, permalink, label))) return;
+  const live = () => {
+    const snap = snapshot();
+    for (const agent of ['claude', 'codex'] as Agent[]) {
+      const L = snap.live[agentSessionKey(agent, sid)];
+      if (L) return { snap, agent, L };
+    }
+    return null;
+  };
+  // A few seconds first: Send & close closes the pane right after the send, and the board catches up.
+  setTimeout(() => nudgeWhenFree({
+    hasNote: () => hasChatNote(sid),
+    pane: () => {
+      const x = live();
+      if (!x) return 'not-live';
+      if (x.L.working !== false) return 'hold';
+      return deliveryHold(x.snap, sid, x.agent, { focused: () => focusedPaneFrom(defaultRun), openTool: (j) => readPendingTool(j) > 0 }) ? 'hold' : 'ready';
+    },
+    type: () => {
+      const x = live();
+      if (!x) return false;
+      // Codex has no hook to attach the note, so it gets the note itself.
+      const text = x.agent === 'codex' ? takeChatNotes(sid).join(' ') : NUDGE_TEXT;
+      return !!text && sendToPane(x.L.pane_id, text, x.agent).ok;
+    },
+    later: (fn, ms) => void setTimeout(fn, ms).unref?.(),
+  }), 4_000).unref?.();
 }
 
 /** voice_learn_from_edits: a draft the person edited before sending teaches their voice skill. */
