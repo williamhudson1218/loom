@@ -800,6 +800,10 @@ ${GITMARK_CSS}
   .shipbody .sh b { color:#e6e9ef; }
   .srow { display:flex; gap:10px; align-items:flex-start; margin:0 8px 2px; padding:9px 10px; border-radius:8px; border:1px solid transparent; cursor:pointer; position:relative; }
   .srow:hover { background:#151925; }
+  .dnd-src { opacity:.45; }
+  .srow.dnd-over, .sgrp.dnd-over { background:#1a2748; box-shadow:inset 0 0 0 1px #3b5bdb; }
+  .sgrp.dnd-before, .srow.dnd-before { box-shadow:inset 0 2px 0 #5b7cfa; }
+  .sgrp.dnd-after, .srow.dnd-after, .sidehint.dnd-after { box-shadow:inset 0 -2px 0 #5b7cfa; }
   .srow.sel { background:#1a2033; border-color:#34406a; }
   .srow.arch { opacity:.85; }
   .srow.age-today { background:#16150f; }
@@ -1397,7 +1401,7 @@ function wireSideTop(){$('#sort').value=sortMode;
     render();});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const h=e.target.closest&&e.target.closest('.sgrp[data-gk]');if(!h||e.target!==h)return;e.preventDefault();h.click();});}
 function matchFilter(c){if(fDraft&&!hasDrafts(c))return false;if(fIssue){const s=st(c);if(!(s==='warning'||s==='error'))return false;}return true;}
-function render(){if(tab!=='watch'&&typeof wvLeave==='function')wvLeave();syncHomeTab();renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='sched'){renderSched();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
+function render(){if(tab!=='watch'&&typeof wvLeave==='function')wvLeave();syncHomeTab();renderTabs();if(typeof syncQClear==='function')syncQClear();renderOrchPin();syncControls();if(tab==='trees'){renderTrees();return;}if(tab==='watch'){renderWatch();return;}if(tab==='sched'){renderSched();return;}if(tab==='settings'){renderSettings();return;}renderTagBtn();if(dnd){dndPending=true;return;}const q=$('#q').value.toLowerCase();const proj=$('#proj').value;const sv=sortModeOf($('#sort').value);if(sv!==sortMode){sortMode=sv;lsSet('loom.sort',sortMode);lastOrder={};}renderFilterChips();
 // On the Saved tab "Most recent" means most-recently-saved; elsewhere, last active.
 const searching=searchActive();const fl=c=>matchFilter(c)&&(!proj||c.project===proj)&&matchTagFilter(c)&&(!q||searchHay(c,(DATA.live[chatKey(c)]||{}).name).includes(q));
 let rows=(shipFilter!==null&&tab==='board'?DATA.chats.filter(inShipFilter):searching?DATA.chats.filter(c=>!isSaved(c)):scoped()).filter(fl);
@@ -1439,7 +1443,7 @@ function subLine(c){const st=(flatList()&&!c.arch?'<span class="sstate '+dotCls(
   return '<span class="ssub named"">'+(st?'<span class="ssl">'+st.trim()+'&nbsp;</span>':'')+nm.html+'</span>';}
 function srow(c){const prn=chatPrNum(c);const a=c.arch?' data-jsonl="'+esc(c.arch.jsonl)+'"':'';
 const chips=(prn?'<span class="chp pr" title="'+esc(chatPrUrl(c))+'">PR #'+esc(prn)+'</span>':'')+(parkedOf(c)&&parkedOf(c).state==='replied'?'<span class="chp rp" title="someone replied in the thread">replied</span>':'')+(c.arch?'':homeChipHtml(c))+(ownsSlack(c)?'<span class="chp sl">Slack'+(slackCountOf(c)>1?' '+slackCountOf(c):'')+'</span>':'')+(c.arch?'':rowTagChips(c))+(c.arch?'':actChip(c))+(c.arch?'':(draftsFor(c).length?'<span class="chp dr'+(draftsFor(c).every(d=>d.stale)?' stl" title="stale: '+esc(draftsFor(c)[0].stale_reason||''):'')+'">Draft</span>':'')+pipeCard(c)+shipCardChips(c));
-return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+'>'+
+return '<div class="srow'+(isSel(c)?' sel':'')+(c.arch?' arch':'')+ageClass(c)+'" data-tour="row" role="button" tabindex="0" aria-haspopup="menu" data-sid="'+esc(c.session_id)+'" data-agent="'+esc(c.agent)+'"'+a+(c.arch?'':' draggable="true"')+'>'+
 '<span class="sdot '+dotCls(c)+'" title="'+esc(DOT_LABEL[dotCls(c)])+'"></span>'+
 '<span class="sbody"><span class="shead"><span class="stitle" title="'+esc(disp(c))+'">'+(c.arch?'':shipMark(c))+(c.provisional?'<span class="badge info" title="not indexed yet">new</span> ':'')+esc(disp(c))+'</span><span class="sage" title="'+esc(ageTip(c))+'">'+esc(agoShort(rowAgeMs(c)))+'</span></span>'+'<span class="sline">'+subLine(c)+(chips?'<span class="schips">'+chips+'</span>':'')+'</span></span></div>';}
 // Tags: names live on each chat, colours in DATA.tags. Filter and group-by persist.
@@ -1473,7 +1477,7 @@ function staleSection(stale,selKey){if(!stale.length||(onlyGroup&&onlyGroup!=='S
 // rows are ordered by the same comparator and the same orderRows hold as the main list, and a
 // chat in one stays there even when it goes stale (Stale only takes ungrouped chats).
 function userGroupSection(g,selKey){if(onlyGroup&&onlyGroup!==g.name)return '';const gk='ugrp:'+g.id,closed=collapsed.indexOf(gk)>=0;
-  return '<div class="sgrp ugrp'+(closed?' closed':'')+'" data-tour="group" role="button" tabindex="0" aria-expanded="'+!closed+'" data-gk="'+gk+'" data-gn="'+esc(g.name)+'" data-gid="'+g.id+'" title="Click to collapse or expand. Right-click to rename or delete the group."><span><span class="car">▾</span>'+esc(g.name)+'</span><span class="cnt">'+g.rows.length+'</span></div>'+(closed?'':(g.rows.length?orderRows(gk,g.rows,selKey).map(srow).join(''):'<p class="meta sidehint">Empty. Use Move to group on a chat.</p>'));}
+  return '<div class="sgrp ugrp'+(closed?' closed':'')+'" data-tour="group" role="button" tabindex="0" aria-expanded="'+!closed+'" data-gk="'+gk+'" data-gn="'+esc(g.name)+'" data-gid="'+g.id+'" draggable="true" title="Click to collapse or expand. Drag to reorder. Right-click to rename or delete the group."><span><span class="car">▾</span>'+esc(g.name)+'</span><span class="cnt">'+g.rows.length+'</span></div>'+(closed?'':(g.rows.length?orderRows(gk,g.rows,selKey).map(srow).join(''):'<p class="meta sidehint">Empty. Drag a chat here, or use Move to group.</p>'));}
 function sidebarRows(rows,noStale){let h=ghostRows();const selKey=sel?sel.agent+':'+sel.sid:'';let stale=[],hasUg=false;
   if(!noStale&&tab==='board'){const q=$('#q');const narrowed=!!((q&&q.value)||$('#proj').value||tagSel.length||fDraft||fIssue||shipFilter!==null);
     const ug=splitUserGroups(rows,DATA.groups||[],c=>c.group?c.group.id:0,!narrowed);rows=ug.rest;hasUg=ug.groups.length>0;h+=ug.groups.map(g=>userGroupSection(g,selKey)).join('');}
@@ -1499,7 +1503,34 @@ function wireSidebar(){const sl=$('#sidelist');
   $('#list').addEventListener('keydown',e=>{const r=e.target.closest&&e.target.closest('.tsrow');if(r&&e.key==='Enter'){e.preventDefault();selectTerminal(r.dataset.term,r.dataset.win);}});
   sl.addEventListener('click',e=>{const la=e.target.closest('[data-lact]');if(la){e.stopPropagation();const row=la.closest('[data-lid]');if(row)launchAct(la.dataset.lact,row.dataset.lid,la);return;}const hm=e.target.closest('[data-home]');if(hm){e.stopPropagation();testOpen(hm.dataset.home);return;}const cn=e.target.closest('[data-copyname]');if(cn){e.stopPropagation();copyName(cn.dataset.copyname);return;}const r=e.target.closest('.srow[data-sid]');if(!r||e.target.closest('button,a'))return;const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
   sl.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const r=e.target.closest&&e.target.closest('.srow[data-sid]');if(!r||e.target!==r)return;e.preventDefault();const c=rowChat(r);if(c)selectChat(c.session_id,c.agent,c.arch||null);});
-  sl.addEventListener('contextmenu',e=>{const gh=e.target.closest('.sgrp[data-gid]');if(gh){const g=(DATA.groups||[]).find(x=>String(x.id)===gh.dataset.gid);if(g){e.preventDefault();openGroupCtx(g,e.clientX,e.clientY);}return;}const r=e.target.closest('.srow[data-sid]');if(!r)return;const c=rowChat(r);if(!c)return;e.preventDefault();openCtx(c,e.clientX,e.clientY,null);});}
+  sl.addEventListener('contextmenu',e=>{const gh=e.target.closest('.sgrp[data-gid]');if(gh){const g=(DATA.groups||[]).find(x=>String(x.id)===gh.dataset.gid);if(g){e.preventDefault();openGroupCtx(g,e.clientX,e.clientY);}return;}const r=e.target.closest('.srow[data-sid]');if(!r)return;const c=rowChat(r);if(!c)return;e.preventDefault();openCtx(c,e.clientX,e.clientY,null);});wireDnd(sl);}
+// Drag and drop (HTML5). A chat row dropped anywhere in a group's section moves into it, in the
+// ungrouped / Stale sections takes it out; a group header dropped on another group reorders them.
+// While a drag is live render() only notes that it was asked (dndPending): rebuilding the list
+// would delete the dragged node and cancel the drag. dragend replays the render.
+var dnd=null, dndPending=false;
+function dndHeader(el){let n=el&&el.closest?el.closest('.srow,.sgrp'):null;while(n&&!n.classList.contains('sgrp'))n=n.previousElementSibling;return n;}
+function dndSection(h){const out=[h];let n=h.nextElementSibling;while(n&&!n.classList.contains('sgrp')){out.push(n);n=n.nextElementSibling;}return out;}
+function dndClear(sl){sl.querySelectorAll('.dnd-over,.dnd-before,.dnd-after').forEach(n=>n.classList.remove('dnd-over','dnd-before','dnd-after'));}
+function dndEnd(sl){dnd=null;dndClear(sl);sl.querySelectorAll('.dnd-src').forEach(n=>n.classList.remove('dnd-src'));if(dndPending){dndPending=false;render();}}
+function dndPlan(e,sl){const h=dndHeader(e.target);if(!h||!dnd)return null;const gid=dropGroupOf(h.dataset.gid);
+  if(dnd.kind==='chat'){if(gid===dnd.cur)return null;return {h,gid};}
+  if(!gid||gid===dnd.gid)return null;const els=dndSection(h),r1=h.getBoundingClientRect(),r2=els[els.length-1].getBoundingClientRect();
+  return {h,gid,els,after:e.clientY>(r1.top+r2.bottom)/2};}
+function wireDnd(sl){if(sl._dnd)return;sl._dnd=true;
+  sl.addEventListener('dragstart',e=>{const g=e.target.closest&&e.target.closest('.sgrp[data-gid]');const r=!g&&e.target.closest&&e.target.closest('.srow[data-sid]');
+    if(g){dnd={kind:'group',gid:Number(g.dataset.gid)};g.classList.add('dnd-src');}
+    else if(r&&!r.dataset.jsonl){const c=rowChat(r);if(!c){e.preventDefault();return;}dnd={kind:'chat',agent:c.agent,sid:c.session_id,cur:c.group?c.group.id:0};r.classList.add('dnd-src');}
+    else return;
+    e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',dnd.kind);}catch(x){}});
+  sl.addEventListener('dragover',e=>{if(!dnd)return;const p=dndPlan(e,sl);dndClear(sl);if(!p)return;e.preventDefault();e.dataTransfer.dropEffect='move';
+    if(dnd.kind==='chat')dndSection(p.h).forEach(n=>n.classList.add('dnd-over'));else p.els[p.after?p.els.length-1:0].classList.add(p.after?'dnd-after':'dnd-before');});
+  sl.addEventListener('dragleave',e=>{if(!sl.contains(e.relatedTarget))dndClear(sl);});
+  sl.addEventListener('drop',e=>{if(!dnd)return;const p=dndPlan(e,sl),d=dnd;dndClear(sl);if(!p)return;e.preventDefault();dnd=null;
+    if(d.kind==='chat'){const c=DATA.chats.find(x=>x.agent===d.agent&&x.session_id===d.sid);if(c)setChatGroupTo(c,p.gid||null);}
+    else{const gs=DATA.groups||[],ids=reorderIds(gs.map(g=>g.id),d.gid,p.gid,p.after);DATA.groups=ids.map(i=>gs.find(g=>g.id===i));
+      grpPost('/api/groups/order',{ids}).then(j=>{if(!grpDone(j))refresh();}).catch(()=>{toast('server off','#8a2b2e');refresh();});}});
+  sl.addEventListener('dragend',()=>dndEnd(sl));}
 function doSave(sid,agent,el){const nav=tab==='saved'?null:closeNavPlan(DATA.chats.find(x=>x.agent===agent&&x.session_id===sid));flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved, pane freed':'saved'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');if(j.ok){markSaved(sid,agent,true);closeNavGo(nav);}setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function doUnsave(sid,agent,el){flash(el,'removing…','#7a6a1a');fetch('/unsave?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?'unsaved':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok)markSaved(sid,agent,false);setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function markSaved(sid,agent,v){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);if(c){c.saved=v;c.saved_at=v?Date.now():0;render();}}
@@ -2040,7 +2071,7 @@ $('#tbcancel').onclick=closeTermBox;$('#tbgo').onclick=createTermSession;
 $('#termbox').addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();closeTermBox();}else if(e.key==='Enter'){e.preventDefault();createTermSession();}});
 loadTerminals();setInterval(visOnly(loadTerminals),5000);
 var lastRenderAt=0;
-function dataSig(){return DATA.defaultAgent+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')+':'+(c.group?c.group.id:'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.gitMarks||{})+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+JSON.stringify(DATA.groups||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{})+'##'+(DATA.standing||[]).map(x=>x.watcher_id+'='+chatKey(x.chat)+':'+(x.chat.state||'')+':'+(x.chat.title||'')).join(',');}
+function dataSig(){return DATA.defaultAgent+'##'+(DATA.groups||[]).map(g=>g.id+g.name).join(',')+'##'+DATA.chats.map(c=>chatKey(c)+':'+(c.state||'')+':'+(c.summary_pending?'p':'')+':'+(c.saved?'s':'')+':'+(c.tags||[]).join(',')+':'+(c.group?c.group.id:'')).sort().join('|')+'##'+Object.keys(DATA.live).sort().map(k=>k+(DATA.live[k].working?'⚡':'')).join(',')+'##'+(DATA.slackOwners||[]).slice().sort().join(',')+JSON.stringify(DATA.slackCounts||{})+'##'+(DATA.slackStarts||[]).map(x=>x.key+'@'+x.at).join(',')+'##'+(DATA.drafts||[]).map(x=>x.id+(x.stale?'~':'')).join(',')+'##'+(DATA.parked||[]).map(x=>x.session_id+x.state+x.label).join(',')+'##'+(DATA.launches||[]).map(x=>x.id+(x.status||'')).join(',')+'##'+pipeSig()+'##'+shipSig()+'##'+JSON.stringify(DATA.gitMarks||{})+'##'+JSON.stringify(DATA.orch||null)+'##'+JSON.stringify(DATA.tags||[])+JSON.stringify(DATA.groups||[])+'##'+JSON.stringify(DATA.testLinks||{})+'##'+JSON.stringify(DATA.actions||{})+'##'+(DATA.standing||[]).map(x=>x.watcher_id+'='+chatKey(x.chat)+':'+(x.chat.state||'')+':'+(x.chat.title||'')).join(',');}
 function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMenuSync();}
 // The board poll sends back the last ETag; an unchanged board is a bodiless 304 and nothing is re-processed.
 // Any write the page makes (POST etc.) drops the ETag, so local optimistic edits are always reconciled by a full reply.

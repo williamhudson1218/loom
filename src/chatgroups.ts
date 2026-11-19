@@ -24,7 +24,7 @@ export function cleanGroupName(v: unknown): string {
 
 export function listGroups(db: Database.Database): GroupInfo[] {
   return db
-    .prepare(`SELECT g.id, g.name, (SELECT COUNT(*) FROM chat_group_members m WHERE m.group_id = g.id) AS count FROM chat_groups g ORDER BY g.id`)
+    .prepare(`SELECT g.id, g.name, (SELECT COUNT(*) FROM chat_group_members m WHERE m.group_id = g.id) AS count FROM chat_groups g ORDER BY g.position, g.id`)
     .all() as GroupInfo[];
 }
 
@@ -32,7 +32,7 @@ export function createGroup(db: Database.Database, nameIn: unknown, now = Date.n
   const name = cleanGroupName(nameIn);
   if (!name) return bad('a group needs a name');
   if (db.prepare(`SELECT 1 FROM chat_groups WHERE name = ?`).get(name)) return bad('a group with that name exists', 409);
-  const id = Number(db.prepare(`INSERT INTO chat_groups (name, created_at) VALUES (?, ?)`).run(name, now).lastInsertRowid);
+  const id = Number(db.prepare(`INSERT INTO chat_groups (name, created_at, position) VALUES (?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM chat_groups))`).run(name, now).lastInsertRowid);
   return { ok: true, group: { id, name } };
 }
 
@@ -55,6 +55,18 @@ export function deleteGroup(db: Database.Database, id: unknown): GroupResult {
     db.prepare(`DELETE FROM chat_group_members WHERE group_id = ?`).run(gid);
     db.prepare(`DELETE FROM chat_groups WHERE id = ?`).run(gid);
   })();
+  return { ok: true };
+}
+
+/** Rewrite the display order: ids must be exactly the existing groups, each once. One transaction. */
+export function reorderGroups(db: Database.Database, ids: unknown): GroupResult {
+  if (!Array.isArray(ids) || !ids.every((v) => Number.isInteger(v))) return bad('ids must be a list of group ids');
+  const want = ids as number[];
+  const have = (db.prepare(`SELECT id FROM chat_groups`).all() as { id: number }[]).map((r) => r.id);
+  if (new Set(want).size !== want.length) return bad('duplicate group id');
+  if (want.length !== have.length || !want.every((i) => have.includes(i))) return bad('ids must list every group exactly once');
+  const set = db.prepare(`UPDATE chat_groups SET position = ? WHERE id = ?`);
+  db.transaction(() => want.forEach((id, i) => set.run(i + 1, id)))();
   return { ok: true };
 }
 

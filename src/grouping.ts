@@ -20,6 +20,15 @@ function splitUserGroups(rows,groups,groupOf,keepEmpty){
   var out=[];groups.forEach(function(g){if(by[g.id]||keepEmpty)out.push({id:g.id,name:g.name,rows:by[g.id]||[]});});
   return {groups:out,rest:rest};
 }
+// Drag and drop in the sidebar. reorderIds moves one group id next to another (after=true puts it
+// below) and returns a new list; unknown ids or a drop on itself return the list unchanged.
+// dropGroupOf reads the group id off a section header's data-gid (none = the ungrouped sections).
+function reorderIds(ids,dragId,targetId,after){
+  var di=ids.indexOf(dragId);if(di<0||dragId===targetId||ids.indexOf(targetId)<0)return ids.slice();
+  var rest=ids.filter(function(x){return x!==dragId;});var ti=rest.indexOf(targetId);
+  rest.splice(ti+(after?1:0),0,dragId);return rest;
+}
+function dropGroupOf(gid){var n=Number(gid);return n>0?n:0;}
 var STATUS_GROUPS=['Working','Your turn','Waiting on others','Saved for later','Recent','Closed'];
 function statusGroupOf(c,f){var pk=f.parked?f.parked(c):'';if(pk==='waiting')return 'Waiting on others';if(pk==='replied')return 'Your turn';if(f.saved(c))return 'Saved for later';if(f.done&&f.done(c))return 'Closed';if(f.working(c))return 'Working';if(f.live(c)&&f.turn(c))return 'Your turn';return 'Recent';}
 function groupChats(rows,mode,f){

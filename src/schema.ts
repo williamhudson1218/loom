@@ -206,11 +206,13 @@ CREATE TABLE IF NOT EXISTS chat_tags (
   PRIMARY KEY (agent, session_id, tag_id)
 );
 CREATE INDEX IF NOT EXISTS chat_tags_tag_idx ON chat_tags(tag_id);
--- Sidebar chat groups: user-named, ordered by id (creation order). A chat is in at most one.
+-- Sidebar chat groups: user-named, shown in position order (new ones last; dragging a
+-- header rewrites it). A chat is in at most one.
 CREATE TABLE IF NOT EXISTS chat_groups (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  created_at  INTEGER NOT NULL
+  created_at  INTEGER NOT NULL,
+  position    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS chat_group_members (
   agent       TEXT NOT NULL,
@@ -241,6 +243,14 @@ CREATE TABLE IF NOT EXISTS chat_hidden (
 function ensureOrchestratorColumns(db: Database.Database): void {
   const have = new Set((db.prepare(`PRAGMA table_info(orchestrator_items)`).all() as { name: string }[]).map((c) => c.name));
   if (!have.has('resolved_why')) db.exec(`ALTER TABLE orchestrator_items ADD COLUMN resolved_why TEXT NOT NULL DEFAULT ''`);
+}
+
+/** position came after the table: an existing install gets it here, backfilled in id (creation) order. */
+export function ensureChatGroupColumns(db: Database.Database): void {
+  const have = new Set((db.prepare(`PRAGMA table_info(chat_groups)`).all() as { name: string }[]).map((c) => c.name));
+  if (have.has('position')) return;
+  db.exec(`ALTER TABLE chat_groups ADD COLUMN position INTEGER NOT NULL DEFAULT 0`);
+  db.exec(`UPDATE chat_groups SET position = id`);
 }
 
 export const ORCHESTRATOR_SCHEMA_SQL = `
@@ -492,6 +502,7 @@ export function applySchema(db: Database.Database): void {
   db.exec(SLACK_THREADS_SCHEMA_SQL);
   db.exec(ORCHESTRATOR_SCHEMA_SQL);
   ensureOrchestratorColumns(db);
+  ensureChatGroupColumns(db);
   db.exec(PARKED_SCHEMA_SQL);
   db.exec(TEST_LINKS_SCHEMA_SQL);
   db.exec(ACTIONS_SCHEMA_SQL);

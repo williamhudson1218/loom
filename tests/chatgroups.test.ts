@@ -8,7 +8,7 @@ import { upsertChat } from '../src/indexer.ts';
 import { toChatViews, renderDashboard } from '../src/dashboard.ts';
 import { GROUPING_JS } from '../src/grouping.ts';
 import { SIDESORT_JS } from '../src/sidesort.ts';
-import { chatGroupMap, createGroup, deleteGroup, listGroups, renameGroup, setChatGroup } from '../src/chatgroups.ts';
+import { chatGroupMap, createGroup, deleteGroup, listGroups, renameGroup, reorderGroups, setChatGroup } from '../src/chatgroups.ts';
 
 const FIX = path.join(__dirname, 'fixtures', 'sample-chat.jsonl');
 async function seeded(file = ':memory:') {
@@ -115,5 +115,63 @@ describe('sidebar wiring', () => {
   });
   it('keeps Stale to ungrouped chats: the stale split runs on what the groups left over', () => {
     expect(html.indexOf('splitUserGroups(rows')).toBeLessThan(html.indexOf('splitStale(rows,chatKey'));
+  });
+});
+
+describe('chat group order', () => {
+  const ids = (db: any) => listGroups(db).map((g) => g.name);
+  it('reorders in one go, new groups land last, and rejects bad id lists', async () => {
+    const { db } = await seeded();
+    const a = (createGroup(db, 'A') as any).group.id;
+    const b = (createGroup(db, 'B') as any).group.id;
+    const c = (createGroup(db, 'C') as any).group.id;
+    expect(reorderGroups(db, [c, a, b])).toEqual({ ok: true });
+    expect(ids(db)).toEqual(['C', 'A', 'B']);
+    createGroup(db, 'D');
+    expect(ids(db)).toEqual(['C', 'A', 'B', 'D']);
+    expect(reorderGroups(db, [a, b])).toMatchObject({ ok: false, code: 400 });
+    expect(reorderGroups(db, [a, a, b, c])).toMatchObject({ ok: false, code: 400 });
+    expect(reorderGroups(db, [a, b, c, 999])).toMatchObject({ ok: false, code: 400 });
+    expect(reorderGroups(db, 'x')).toMatchObject({ ok: false, code: 400 });
+    expect(ids(db)).toEqual(['C', 'A', 'B', 'D']);
+    deleteGroup(db, c);
+    createGroup(db, 'E');
+    expect(ids(db)).toEqual(['A', 'B', 'D', 'E']);
+    db.close();
+  });
+
+  it('backfills positions in id order for a database made before the column', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-groups-'));
+    const file = path.join(dir, 'loom.db');
+    try {
+      const first = await seeded(file);
+      createGroup(first.db, 'One');
+      createGroup(first.db, 'Two');
+      first.db.exec(`ALTER TABLE chat_groups DROP COLUMN position`);
+      first.db.close();
+      const db = openDb(file);
+      expect(ids(db)).toEqual(['One', 'Two']);
+      expect((db.prepare(`SELECT position FROM chat_groups ORDER BY id`).all() as any[]).map((r) => r.position)).toEqual([1, 2]);
+      db.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('drag helpers', () => {
+  const lib = new Function(`${GROUPING_JS}; return { reorderIds, dropGroupOf };`)() as any;
+  it('reorderIds places the dragged id before or after the target', () => {
+    expect(lib.reorderIds([1, 2, 3], 3, 1, false)).toEqual([3, 1, 2]);
+    expect(lib.reorderIds([1, 2, 3], 1, 3, true)).toEqual([2, 3, 1]);
+    expect(lib.reorderIds([1, 2, 3], 1, 2, true)).toEqual([2, 1, 3]);
+    expect(lib.reorderIds([1, 2, 3], 2, 2, true)).toEqual([1, 2, 3]);
+    expect(lib.reorderIds([1, 2, 3], 9, 2, true)).toEqual([1, 2, 3]);
+    expect(lib.reorderIds([1, 2, 3], 1, 9, true)).toEqual([1, 2, 3]);
+  });
+  it('dropGroupOf is 0 for ungrouped sections', () => {
+    expect(lib.dropGroupOf('7')).toBe(7);
+    expect(lib.dropGroupOf(undefined)).toBe(0);
+    expect(lib.dropGroupOf('')).toBe(0);
   });
 });
