@@ -148,8 +148,7 @@ export const WIZARD_VIEW_CSS = String.raw`
   @keyframes wzpl { 50% { opacity:.25; } }
   #wz .sumgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:8px; }
   #wz .log { max-height:120px; overflow:auto; font-size:11px; }
-  #wz .spin { display:inline-block; width:12px; height:12px; border:2px solid var(--wz-ctl-line); border-top-color:var(--wz-accent); border-radius:50%; animation:wzsp .8s linear infinite; vertical-align:-2px; margin-right:6px; }
-  @keyframes wzsp { to { transform:rotate(360deg); } }
+  #wz .lmk { margin-right:6px; }
   #wzresume { position:fixed; right:18px; bottom:18px; z-index:80; display:none; align-items:center; gap:10px; padding:8px 8px 8px 14px; border-radius:12px; border:1px solid #34406a; background:#161a24; color:#e6e6e6; font:13px -apple-system,Segoe UI,Roboto,sans-serif; box-shadow:0 10px 30px rgba(0,0,0,.5); }
   #wzresume.on { display:flex; }
   #wzresume button { height:28px; padding:0 12px; border-radius:8px; border:1px solid #6ea2ff; background:#6ea2ff; color:#08101f; font-weight:600; font:inherit; font-weight:600; cursor:pointer; }
@@ -416,7 +415,7 @@ WZ_STEPS.welcome = function (c) {
 /* -- requirements -- */
 function wzReqRows() {
   var r = WZ.req;
-  if (!r) return '<div class="def"><span class="spin"></span>Checking this Mac...</div>';
+  if (!r) return '<div class="def">'+loadingMark(14)+'Checking this Mac...</div>';
   return r.rows.map(function (row) {
     var mark = row.ok ? '<span class="st y">&#10003;</span>' : row.required ? '<span class="st n">&#10007;</span>' : '<span class="st o">&ndash;</span>';
     var btn = '';
@@ -440,7 +439,7 @@ function wzReqDraw() {
   var lg = wzEl('wz-reqlog');
   if (lg) {
     var j = WZ.job;
-    lg.innerHTML = j ? '<div class="note ' + (j.status === 'failed' ? 'err' : j.status === 'done' ? 'ok' : '') + '"><b>brew install ' + wzEsc(j.tool) + '</b> ' + (j.status === 'running' ? '<span class="spin"></span>running' : j.status === 'done' ? 'finished' : 'failed (exit ' + wzEsc(j.code) + ')') + '<pre class="log">' + wzEsc(j.log || '') + '</pre>' + (j.status === 'failed' ? lerrCopyBtn({ what: 'brew install ' + j.tool, message: 'exit ' + j.code, output: j.log || '' }) : '') + '</div>' : '';
+    lg.innerHTML = j ? '<div class="note ' + (j.status === 'failed' ? 'err' : j.status === 'done' ? 'ok' : '') + '"><b>brew install ' + wzEsc(j.tool) + '</b> ' + (j.status === 'running' ? ''+loadingMark(14)+'running' : j.status === 'done' ? 'finished' : 'failed (exit ' + wzEsc(j.code) + ')') + '<pre class="log">' + wzEsc(j.log || '') + '</pre>' + (j.status === 'failed' ? lerrCopyBtn({ what: 'brew install ' + j.tool, message: 'exit ' + j.code, output: j.log || '' }) : '') + '</div>' : '';
   }
   var lo = wzEl('wz-reqlogin');
   if (lo) {
@@ -565,7 +564,7 @@ function wzPluginDraw() {
   var el = wzEl('wz-plugin');
   if (!el) return;
   var s = WZ.plugin;
-  if (!s) { el.innerHTML = '<div class="def"><span class="spin"></span>Checking...</div>'; return; }
+  if (!s) { el.innerHTML = '<div class="def">'+loadingMark(14)+'Checking...</div>'; return; }
   var pill = { not_installed: ['off', 'Not installed'], installed: ['ok', 'Installed v' + (s.installedVersion || '')], update_available: ['warn', 'Update available'], disabled: ['warn', 'Disabled in Claude'], error: ['err', 'Error'] }[s.status] || ['off', s.status];
   var cmds = ((s.preview && s.preview.install) || []).map(function (c) { return c.display; }).join(String.fromCharCode(10));
   var legacy = (s.legacy || []).length ? '<div class="note warn"><b>' + s.legacy.length + ' older Loom hook entr' + (s.legacy.length === 1 ? 'y' : 'ies') + ' found in your Claude settings.</b> They do nothing once the plugin is installed and are safe to remove by hand. Loom never edits that file.</div>' : '';
@@ -630,7 +629,7 @@ function wzSlackDraw() {
       var viaConnect = connected && s.origin === 'connect';
       sub += '<div class="stack"><div class="lrow"><span class="st ' + (viaConnect ? 'y' : 'w') + '">' + (viaConnect ? '&#10003;' : '!') + '</span><div class="t"><b>Connect Slack</b><span>Slack opens in your browser. Approve there and Loom stores your own token in the Keychain. Posts are sent as you. If your workspace restricts apps, an admin approves Loom once.</span></div>'
         + (oa ? '<button class="btn sm" data-wz-oauthcancel="1">Cancel</button>' : '<button class="btn pri" data-wz-oauth="1">' + (viaConnect ? 'Connect again' : s.reconnect ? 'Reconnect Slack' : 'Connect Slack') + '</button>') + '</div>'
-        + (oa ? '<div class="def"><span class="spin"></span>Waiting for you to approve in Slack. <a href="' + wzEsc(oa.url) + '" target="_blank" rel="noopener">Open the Slack page</a> if it did not open.</div>' : '')
+        + (oa ? '<div class="def">'+loadingMark(14)+'Waiting for you to approve in Slack. <a href="' + wzEsc(oa.url) + '" target="_blank" rel="noopener">Open the Slack page</a> if it did not open.</div>' : '')
         + (WZ.oauthMsg ? '<div class="note ' + (WZ.oauthMsg.ok ? 'ok' : 'err') + '">' + wzEsc(WZ.oauthMsg.text) + '</div>' : '')
 
         + (WZ.ownApp ? '' : '<div><button class="btn sm" data-wz-ownapp="1">Use your own app instead</button></div>') + '</div>';
@@ -663,7 +662,7 @@ function wzSlackDraw() {
   } else if (ch === 'mcp') {
     var m = s && s.mcp;
     sub += '<div class="stack">'
-      + (WZ.slackBusy || !s ? '<div class="def"><span class="spin"></span>Looking for the Claude Slack connector...</div>'
+      + (WZ.slackBusy || !s ? '<div class="def">'+loadingMark(14)+'Looking for the Claude Slack connector...</div>'
         : m && m.found ? '<div class="lrow"><span class="st y">&#10003;</span><div class="t"><b>Claude Slack connector detected</b><span>Found &quot;' + wzEsc(m.name || 'Slack') + '&quot; in your Claude Code MCP servers.</span></div><span class="pill ok">' + (m.connected ? 'Connected' : 'Found') + '</span></div>'
         : '<div class="lrow"><span class="st n">&#10007;</span><div class="t"><b>No Slack connector found</b><span>Nothing Slack-like in <code>claude mcp list</code>. Add the Slack connector in Claude Code, then check again, or choose another option.</span></div><button class="btn sm" data-wz-slackrecheck="1">Check again</button></div>')
       + '<div class="note warn"><b>These Loom features stay off with MCP only</b>, because Loom itself has no token to call Slack with:<ul style="margin:5px 0 0;padding-left:18px"><li>Slack watchers (no way to poll channels)</li><li>Parked-thread reply detection and the &quot;reply received&quot; notification</li><li>Send, Send and park and Send and close from Loom&#39;s Outbox. Chats can still post through the connector themselves.</li><li>Channel #names, people names and custom emoji in the sidebar and previews</li><li>Thread previews and unread counts</li></ul><div style="margin-top:6px">Still works: chats that read or post to Slack through the connector, and the shortcut that starts or jumps to a chat for a thread.</div></div></div>';
@@ -690,7 +689,7 @@ function wzSlackStatus() {
 function wzSlackRes() {
   var m = WZ.slackMsg;
   if (!m) return '';
-  if (m.busy) return '<div class="def"><span class="spin"></span>Testing...</div>';
+  if (m.busy) return '<div class="def">'+loadingMark(14)+'Testing...</div>';
   if (!m.ok) return wzErrHtml(m.hint || m.error || 'The test failed.', 'Test the Slack connection', m.error && m.hint ? m.error : '');
   var sc = m.scopes || {};
   return '<div class="note ok"><span class="st y">&#10003;</span> Connected as ' + wzEsc((m.identity && m.identity.user) || '') + ' in ' + wzEsc((m.identity && m.identity.team) || '') + '. ' + wzEsc(sc.text || '') + (m.token ? ' Token ' + wzEsc(m.token) + '.' : '') + '</div>'
@@ -924,7 +923,7 @@ function wzShipLoad() {
 function wzShipDraw() {
   var el = wzEl('wz-shiptbl'), rows = WZ.S.ship;
   if (!el) return;
-  if (!rows) { el.innerHTML = '<div class="def"><span class="spin"></span>Reading your projects...</div>'; return; }
+  if (!rows) { el.innerHTML = '<div class="def">'+loadingMark(14)+'Reading your projects...</div>'; return; }
   if (!rows.length) { el.innerHTML = '<div class="note">None of your projects has a GitHub remote, so there is nothing to ship from yet. Add a project in the Projects step, or add repos later in Settings &rsaquo; Ship.</div>'; return; }
   el.innerHTML = '<div class="tblw"><table><tr><th>Project</th><th>Repo</th><th>Base branch</th><th>Ship command</th><th>Label staged work</th><th>Ship</th></tr>'
     + rows.map(function (r, i) {
@@ -964,7 +963,7 @@ function wzTplDraw() {
   var el = wzEl('wz-tpl');
   if (!el) return;
   var T = WZ.tpl;
-  if (!T) { el.innerHTML = '<div class="def"><span class="spin"></span>Loading templates...</div>'; return; }
+  if (!T) { el.innerHTML = '<div class="def">'+loadingMark(14)+'Loading templates...</div>'; return; }
   var groups = [['slack', 'Slack channel', 'needs the Direct Slack app'], ['chats', 'Chats', 'your live sessions, starts in Shadow'], ['prs', 'Pull requests', 'needs gh, logged in'], ['work', 'Findings endpoint', 'needs an endpoint and a Keychain token']];
   var n = 0;
   var html = groups.map(function (g) {
@@ -986,7 +985,7 @@ WZ_STEPS.watchers = function (c) {
 
 /* -- done -- */
 WZ_STEPS.done = function (c) {
-  c.innerHTML = '<div class="stack"><div class="sumgrid" id="wz-sum"><div class="def"><span class="spin"></span>Summing up...</div></div>'
+  c.innerHTML = '<div class="stack"><div class="sumgrid" id="wz-sum"><div class="def">'+loadingMark(14)+'Summing up...</div></div>'
     + '<div class="def">Everything above can be changed in Settings (the gear, top right). The tour takes about a minute and covers the sidebar, chats, the Outbox, Ship and the Slack shortcut. Choose Not now to skip it; it stays in Settings &rsaquo; Help.</div></div>';
   var go = function (ax) {
     wzGet('/api/wizard/summary?ax=' + (ax ? '1' : '0')).then(function (r) {

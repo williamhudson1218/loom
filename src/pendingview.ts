@@ -43,7 +43,7 @@ function renderPending(){let el=$('#mpending');const err=!!PENDING&&PENDING.stat
   if(err&&typeof loomErrorHtml==='function'){
     el.innerHTML='<div class="mpcard mperr" role="alert"><div style="flex:1;min-width:0">'+loomErrorHtml({title:PENDING.label||'',message:PENDING.detail||'',output:PENDING.output||'',what:PENDING.label||'Open a chat'})+acts+'</div></div>';
   }else{
-    el.innerHTML='<div class="mpcard" role="status" aria-live="polite">'+(err?'':'<span class="mpspin"></span>')+'<div style="flex:1;min-width:0"><b>'+esc(PENDING.label||'')+'</b>'+(PENDING.detail?'<span class="mpd">'+esc(PENDING.detail)+'</span>':'')+acts+'</div>'+(err?'':'<button type="button" class="mbtn" id="mpclose" title="Stop waiting (Esc)">Cancel</button>')+'</div>';
+    el.innerHTML='<div class="mpcard" role="status" aria-live="polite">'+(err?'':loadingMark(18))+'<div style="flex:1;min-width:0"><b>'+esc(PENDING.label||'')+'</b>'+(PENDING.detail?'<span class="mpd">'+esc(PENDING.detail)+'</span>':'')+acts+'</div>'+(err?'':'<button type="button" class="mbtn" id="mpclose" title="Stop waiting (Esc)">Cancel</button>')+'</div>';
   }
   const b=$('#mpclose');if(b)b.onclick=()=>setPending(null);
   const g=$('#mppane');if(g)g.onclick=()=>pendingShowPane(PENDING&&PENDING.pane);}

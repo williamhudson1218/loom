@@ -1,3 +1,4 @@
+import { LOADING_MARK_JS } from '../src/logo.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { PENDING_VIEW_JS } from '../src/pendingview.ts';
 import { renderDashboard } from '../src/dashboard.ts';
@@ -37,7 +38,7 @@ function page(chats: { agent: string; session_id: string }[] = [], extraDoc: Rec
   let refreshes = 0;
   const lib = new Function(
     '$', 'document', 'fetch', 'DATA', 'esc', 'chatKey', 'refresh', 'renderMain', 'flash', 'launchVerb', 'openInBoard', 'setTimeout', 'window',
-    `var mtab='transcript', TERM_TOKEN='tok', onlyGroup=null;${PENDING_VIEW_JS}
+    `var mtab='transcript', TERM_TOKEN='tok', onlyGroup=null;${LOADING_MARK_JS}${PENDING_VIEW_JS}
      return { doLaunch, setPending, pendingLiveFor, get mtab(){return mtab;}, get pending(){return PENDING;}, PENDING_LIVE };`,
   )(
     $, doc, fetchStub, DATA, (s: string) => String(s), (c: { agent: string; session_id: string }) => c.agent + ':' + c.session_id,
@@ -61,7 +62,7 @@ describe('Resume on the board', () => {
     expect(p.calls).toHaveLength(1);
     expect(p.calls[0].url).toMatch(/^\/resume\?session=s1&agent=claude&lane=&trace=r[a-z0-9]+$/);
     expect(p.els['#mpending'].innerHTML).toContain('Resuming…');
-    expect(p.els['#mpending'].innerHTML).toContain('mpspin');
+    expect(p.els['#mpending'].innerHTML).toContain('lmk');
     expect(p.beacons.map((b) => b.event)).toEqual(['resume-click']);
   });
   it('opens the terminal on the pane the reply names, without waiting for the board to see it live', async () => {

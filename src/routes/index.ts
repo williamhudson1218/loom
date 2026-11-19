@@ -19,6 +19,7 @@ import { routes as githubRoutes } from './github.ts';
 import { routes as updateRoutes } from './update.ts';
 import { routes as diagnosticsRoutes } from './diagnostics.ts';
 import { routes as actionsRoutes } from './actions.ts';
+import { routes as groupsRoutes } from './groups.ts';
 
 // ---- The route table and the one write guard (§13) --------------------------
 //
@@ -160,6 +161,7 @@ export const MODULE_ROUTES: RouteDef[] = [
   ...updateRoutes,
   ...diagnosticsRoutes,
   ...actionsRoutes,
+  ...groupsRoutes,
 ];
 
 export const ROUTES: RouteDef[] = [...CORE_ROUTES, ...MODULE_ROUTES];

@@ -1,3 +1,4 @@
+import { LOADING_MARK_JS } from '../src/logo.ts';
 import { describe, it, expect } from 'vitest';
 import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import { OUTBOX_PURE_JS, OUTBOX_VIEW_JS } from '../src/outboxview.ts';
@@ -147,7 +148,7 @@ describe('send all: the rail', () => {
       'DATA', 'esc', 'rel', 'hhmm', 'NL',
       `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
        var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};
-       ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+       ${BRAND_ICONS_JS}${LOADING_MARK_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
        FRESH={b:{at:Date.now(),items:[{id:'m1',author:'Dana',snippet:'any news?',at:1}]}};
        BATCH=${JSON.stringify(batch)};
        return sendAllHtml(DATA.drafts,${NOW});`,

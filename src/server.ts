@@ -76,6 +76,7 @@ import { addProject, defaultProjectDir, listProjects, removeProject, seedProject
 import { trustedFolders } from './orchstart.ts';
 import { MAX_LABEL, setOverride, setShipLabel } from './shipview.ts';
 import { createTag, deleteTag, listTags, setChatTags, updateTag } from './tags.ts';
+import { listGroups } from './chatgroups.ts';
 import { handleOrchRoute, orchSummary, orchTick } from './orchserver.ts';
 import { actionTick, deliveryHold, scheduledDraftIds, scheduledDrafts, type ActionIo } from './actionserver.ts';
 import { PRESEND_SYSTEM, PreSendWork, dbPreSendStore } from './actionsend.ts';
@@ -1442,6 +1443,15 @@ function vendorFile(name: string): { body: Buffer; type: string } | null {
   return { body, type: v.type };
 }
 
+function groupList() {
+  const db = openDb();
+  try {
+    return listGroups(db);
+  } finally {
+    db.close();
+  }
+}
+
 function tagList() {
   const db = openDb();
   try {
@@ -1553,7 +1563,7 @@ export function createServer(): http.Server {
       // Standing watcher chats ride separately, for the Watchers tab, never as board rows.
       const { board, standing, refs } = boardSplit(views, live);
       const chats = [...board, ...provisionalForLive(views, live, refs)];
-      return sendBoardData(req, res, JSON.stringify({ defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), defaultProject: defaultProjectSafe(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
+      return sendBoardData(req, res, JSON.stringify({ defaultAgent, slackMode: slackModeSafe(), connections: connectionsSafe(), archiveSearch: findChatBin !== null, port: { actual: serverPort(), base: preferredPort() }, codexVisible: codexVisibleSafe(), chats, standing, live, slackOwners: threadOwners(), slackCounts: slackCountsFor(), testLinks: testLinksForBoard(), slackStarts: recentStarts(), drafts: pendingDrafts(), actions: actionsForBoard(), parked: parkedForBoard(), launches, pipes, chatPr, ships: shipBoards(), gitMarks: gitMarks(), projects: projectList(), defaultProject: defaultProjectSafe(), orch: orchSummary(live), watchersUnreviewed: watchersUnreviewedSafe(), autoRestore: lastAutoRestore, tags: tagList(), groups: groupList(), terminal: { kind: currentTerminal(), label: terminalLabel(currentTerminal()) }, focus: insideFocusState() }));
     }
 
     // The detail panel: git, gh and a transcript scan for ONE chat. Deliberately
@@ -2501,7 +2511,7 @@ export function createServer(): http.Server {
       // Read fresh, never from the snapshot memo: Enter on the welcome screen
       // must not be followed by a reload that shows it again.
       const boot = (() => { const db = openDb(); try { return firstPaint(db); } catch { return { welcome: false }; } finally { db.close(); } })();
-      const html = renderDashboard(boardSplit(views, live).board, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList(), boot);
+      const html = renderDashboard(boardSplit(views, live).board, Date.now(), live, defaultAgent, threadOwners(), pendingDrafts(), token, orchSummary(live), tagList(), boot, groupList());
       return send(res, 200, 'text/html; charset=utf-8', withClientFetch(html));
     }
 

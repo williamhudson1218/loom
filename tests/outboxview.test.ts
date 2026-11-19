@@ -1,3 +1,4 @@
+import { LOADING_MARK_JS } from '../src/logo.ts';
 import { describe, it, expect } from 'vitest';
 import { BRAND_ICONS_JS } from '../src/brandicons.ts';
 import { OUTBOX_PURE_JS, OUTBOX_VIEW_JS } from '../src/outboxview.ts';
@@ -165,7 +166,7 @@ describe('burst send progress rendering', () => {
         'DATA', 'esc', 'rel', 'hhmm', 'NL', 'canParkStub',
         `var TERM_TOKEN='t',SENDING=${JSON.stringify(SENDING)},SEND_LOCAL=${local ? '{"d1":1}' : '{}'},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
          var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};
-         ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+         ${BRAND_ICONS_JS}${LOADING_MARK_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
          return draftCardHtml(DATA.drafts[0],{});`,
       );
       return f({ drafts: [{ id: 'd1', session_id: 's', created_at: '2026-11-09T10:00:00Z', messages: ['one', 'two', 'three'], channel: 'C1' }] }, (x: string) => x, () => '', () => '10:00', '\n', null) as string;
@@ -195,7 +196,7 @@ describe('a scheduled draft card', () => {
       'DATA', 'esc', 'rel', 'hhmm', 'NL',
       `var TERM_TOKEN='t',SENDING={},SEND_LOCAL={},LEAVING={},DRAFT_EDITS={},DRAFT_EDIT_ON={},draftConfirm=null,draftArmDiscard=null,draftMsg={},SLK_DIR=null,SLK_EMOJI=null;
        var slkCtx=function(){return {users:{},channels:{},emoji:{},custom:{}};};var slkRender=function(m){return '<p>'+esc(m)+'</p>';};var slkBubbles=function(){return '';};
-       ${BRAND_ICONS_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
+       ${BRAND_ICONS_JS}${LOADING_MARK_JS}${OUTBOX_PURE_JS}${OUTBOX_VIEW_JS.slice(OUTBOX_VIEW_JS.indexOf('function draftTexts'))}
        return draftCardHtml(DATA.drafts[0],{});`,
     )({ drafts: [{ id: 'd1', session_id: 's', created_at: '2026-11-09T10:00:00Z', messages: ['one'], channel: 'C1', ...d }] }, (x: string) => x, () => '', () => '10:00', '\n') as string;
   it('shows the Scheduled line, Send now and Unschedule', () => {

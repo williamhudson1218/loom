@@ -95,9 +95,6 @@ export const SHIPMODAL_CSS = `
   .smsteps li.sdone .i { background:rgba(46,160,67,.14); border-color:transparent; color:#56d364; }
   .smsteps li.snow .i { border-color:var(--sm-accent); color:var(--sm-accent); } .smsteps li.snow { color:var(--sm-text); }
   .smsteps li.slater { opacity:.6; }
-  .smspin { display:inline-block; width:10px; height:10px; border:2px solid var(--sm-accent); border-right-color:transparent; border-radius:50%; animation:smspin 1s linear infinite; }
-  @keyframes smspin { to { transform:rotate(360deg); } }
-  @media (prefers-reduced-motion:reduce) { .smspin { animation:none; } }
   .smok { width:34px; height:34px; border-radius:50%; background:rgba(46,160,67,.14); color:#56d364; display:grid; place-items:center; font-size:17px; flex:none; }
   .smerr { color:#ff7b72; font-size:12.5px; }
 `;
@@ -183,7 +180,7 @@ function smSumHtml(d){const rows=d.chats.map(c=>{const a=c.staged.reduce((n,f)=>
   const un=d.unattributed.filter(f=>f.state==='staged'||f.state==='partial');
   if(un.length)rows.push('<div class="r"><span class="l">Files no chat claims</span><span class="m">'+smPlural(un.length,'file','files')+' · <span class="a">+'+un.reduce((n,f)=>n+f.added,0)+'</span> <span class="d">−'+un.reduce((n,f)=>n+f.deleted,0)+'</span></span></div>');
   return '<div class="smsum">'+rows.join('')+'</div>';}
-function smStepsHtml(items){return '<ol class="smsteps">'+items.map((s,i)=>'<li class="'+(s[0]||'')+'"><span class="i">'+(s[0]==='sdone'?'✓':s[0]==='snow'?'<span class="smspin"></span>':(i+1))+'</span><span>'+s[1]+(s[2]?'<small>'+s[2]+'</small>':'')+'</span></li>').join('')+'</ol>';}
+function smStepsHtml(items){return '<ol class="smsteps">'+items.map((s,i)=>'<li class="'+(s[0]||'')+'"><span class="i">'+(s[0]==='sdone'?'✓':s[0]==='snow'?''+loadingMark(12)+'':(i+1))+'</span><span>'+s[1]+(s[2]?'<small>'+s[2]+'</small>':'')+'</span></li>').join('')+'</ol>';}
 function smBodyHtml(d){
   if(!d)return '<div class="smempty">'+(SM.failed?esc(SM.failed):'Loading…')+'</div>';
   if(SM.view==='started')return smStepsHtml([['sdone','Session launched',smPlural(d.totals.staged,'staged file','staged files')+' locked for this ship.'],['snow','Committing and opening the pull request','Watch it in the ship session.'],['slater','Merge when CI and review are green']])+'<div class="smnote">Other chats can keep working. New staged files wait for the next ship.</div>';

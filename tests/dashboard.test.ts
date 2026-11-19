@@ -316,12 +316,12 @@ describe('per-chat action menu', () => {
 
   it('keeps the design order, ending on the danger item', () => {
     expect(chatMenuItems(base).map((i) => i.key)).toEqual([
-      'open', 'external', 'branch', 'pr', 'slack', 'save', 'tags', 'unpark', 'restore', 'copyResume', 'copyId', 'rename', 'orchestrator', 'close',
+      'open', 'external', 'branch', 'pr', 'slack', 'save', 'tags', 'group', 'unpark', 'restore', 'copyResume', 'copyId', 'rename', 'orchestrator', 'close',
     ]);
     const labels = chatMenuItems({ ...base, prNum: '4231', prState: 'draft', hasSlack: true }).map((i) => i.label);
     expect(labels).toEqual([
       'Open terminal', 'Open in external terminal', 'Branch into a new window', 'Open PR #4231', 'Open Slack thread',
-      'Save for later', 'Tags', 'Unpark', 'Restore to board', 'Copy resume command', 'Copy session ID', 'Rename', 'Ask the orchestrator about this', 'Close chat',
+      'Save for later', 'Tags', 'Move to group', 'Unpark', 'Restore to board', 'Copy resume command', 'Copy session ID', 'Rename', 'Ask the orchestrator about this', 'Close chat',
     ]);
     const last = chatMenuItems(base).at(-1)!;
     expect(last.danger).toBe(true);
@@ -330,7 +330,7 @@ describe('per-chat action menu', () => {
 
   it('disables, never hides, the PR and Slack items when the chat has neither', () => {
     const items = chatMenuItems(base);
-    expect(items).toHaveLength(14);
+    expect(items).toHaveLength(15);
     expect(items.find((i) => i.key === 'pr')).toMatchObject({ label: 'Open PR', disabled: true, hint: 'none' });
     expect(items.find((i) => i.key === 'slack')).toMatchObject({ label: 'Open Slack thread', disabled: true, hint: 'none' });
     const withBoth = chatMenuItems({ ...base, prNum: '4231', prState: 'review', hasSlack: true });

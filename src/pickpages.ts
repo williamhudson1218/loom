@@ -1,3 +1,5 @@
+import { LOADING_MARK_CSS, loadingMark } from './logo.ts';
+
 // The pick overlay's pages (app/picker.ts loads each as a data: URL). Kept free
 // of Electron so tests can parse them.
 
@@ -12,10 +14,9 @@ export const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
     font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:rgba(20,22,30,0.88);pointer-events:none;
     display:flex;align-items:center;gap:8px}
   #hint.err{background:rgba(138,43,46,0.95)}
-  #spin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;
-    animation:spin .7s linear infinite}
-  #hint.busy #spin{display:inline-block}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  #spin{display:none}
+  #hint.busy #spin{display:inline-flex}
+  ${LOADING_MARK_CSS}
   /* After "Open in Slack": the landed message, outlined like a hover, pulsed once and faded. */
   .fl{position:fixed;display:none;border:2px solid #4c8dff;border-radius:6px;background:rgba(76,141,255,0.14);
     box-shadow:0 0 0 1px rgba(0,0,0,0.35),0 0 0 4px rgba(76,141,255,0.35);pointer-events:none;opacity:0}
@@ -23,7 +24,7 @@ export const OVERLAY_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
   @keyframes loomflash{0%{opacity:0}12%{opacity:1}38%{opacity:.45}60%{opacity:1}100%{opacity:0}}
   body.flashing{cursor:default}
   body.flashing #hint,body.flashing #box{display:none !important}
-</style></head><body><div id="box"></div><div id="fl0" class="fl"></div><div id="fl1" class="fl"></div><div id="hint"><span id="spin"></span><span id="msg"></span></div><script>
+</style></head><body><div id="box"></div><div id="fl0" class="fl"></div><div id="fl1" class="fl"></div><div id="hint"><span id="spin">${loadingMark(14, 'pk')}</span><span id="msg"></span></div><script>
   const { ipcRenderer } = require('electron');
   const origin = JSON.parse(decodeURIComponent(location.hash.slice(1)));
   const box = document.getElementById('box'), hint = document.getElementById('hint'), msg = document.getElementById('msg');

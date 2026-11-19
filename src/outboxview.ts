@@ -89,7 +89,6 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .dconf button.send.close { background:#3b2a1d; color:#f0c9a0; border-color:#5a4029; }
   .dacts button.park, .dconf button.park { background:#1d3b2c; color:#a6e8c0; border-color:#2c5a43; }
   .dsend { display:flex; align-items:center; gap:8px; padding:9px 12px; border-top:1px solid #1d2a4a; font-size:12.5px; color:#e8b84b; }
-  .dsend .spin { width:12px; height:12px; border-radius:50%; border:2px solid rgba(232,184,75,.3); border-top-color:#e8b84b; animation:dspin .8s linear infinite; }
   .dfail { color:#ff8d8d; }
   .slk-st { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; color:#8a90a2; }
   .slk-st.sent { color:#7fd6a0; }
@@ -144,7 +143,7 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .dacts button.redraft { background:#d4a72c; color:#1a1405; border-color:#d4a72c; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
   .dacts button.redraft:hover:not(:disabled) { background:#e8b84b; }
   .dacts button.redraft:disabled { opacity:.8; cursor:default; }
-  .dacts button.redraft .spin { width:11px; height:11px; border-radius:50%; border:2px solid rgba(26,20,5,.3); border-top-color:#1a1405; animation:dspin .8s linear infinite; }
+  .dacts button.redraft .lmk { filter:brightness(0) opacity(.75); }
   .dacts button.lnk { background:transparent; border:0; color:#9cc0ff; padding:0 2px; font-size:12px; text-decoration:underline; }
   .dacts button.send.demoted { background:#1b2233; color:#c4ccdc; border-color:#2b3040; }
   .dacts button.send:disabled { opacity:.45; cursor:not-allowed; }
@@ -163,11 +162,9 @@ export const OUTBOX_VIEW_CSS = String.raw`
   .sall-list li { display:flex; flex-direction:column; gap:4px; }
   .sall-first { color:#8a90a2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sall .dsend { border-top:0; }
-  @keyframes dspin { to { transform:rotate(360deg); } }
   #outrail.closing { flex-basis:0 !important; width:0 !important; border-left-width:0; transition:flex-basis .25s ease, width .25s ease; }
   @media (prefers-reduced-motion: reduce) {
     .draft.sdraft.leaving, #outrail.closing { transition:none; }
-    .dsend .spin, .redraft .spin { animation:none; }
   }
   @media (max-width:900px) {
     #chatwrap { flex-direction:column; }
@@ -339,7 +336,7 @@ function hasWarnings(w){return !!(w.head||w.items.length||w.error);}
 function freshItemsHtml(items){return '<ul class="fr-items">'+items.slice(0,8).map(function(i){const link=/^https:[/][/]/.test(i.url||'')?' <a href="'+esc(i.url)+'" target="_blank" rel="noopener noreferrer">open</a>':'';
     return '<li><span class="fr-who">'+esc(i.author||'someone')+'</span> <span class="fr-at">'+esc(i.at?rel(i.at):'')+'</span><br>'+esc(i.snippet||'')+link+'</li>';}).join('')+(items.length>8?'<li>and '+(items.length-8)+' more</li>':'')+'</ul>';}
 function redraftCtl(d,items){const st=redraftState(d,items,REDRAFT_LOCAL[d.id]);
-  if(st==='active')return '<button type="button" class="redraft" disabled data-dact="redraft-busy"><span class="spin" aria-hidden="true"></span>Redrafting\u2026</button><button type="button" class="lnk" data-dact="redraft-cancel" title="Stop waiting for the chat. Send works again.">Cancel redraft</button>';
+  if(st==='active')return '<button type="button" class="redraft" disabled data-dact="redraft-busy">'+loadingMark(14)+'Redrafting\u2026</button><button type="button" class="lnk" data-dact="redraft-cancel" title="Stop waiting for the chat. Send works again.">Cancel redraft</button>';
   if(st==='offer')return '<button type="button" class="redraft" data-dact="redraft" title="Ask the chat to re-read the thread and update this draft">Redraft</button>';
   if(st==='kept')return '<span class="dsub">The chat kept this draft as written</span>';
   if(st==='asked')return '<span class="dsub">Redraft requested</span>';
@@ -405,8 +402,8 @@ function draftCardHtml(d,o){o=o||{};const sending=d.send_state==='sending';const
   const msg=draftMsg[d.id]?'<span class="dsub">'+esc(draftMsg[d.id])+'</span>':'';
   const rdSt=redraftState(d,warn.items,REDRAFT_LOCAL[d.id]);const rdOn=rdSt==='active';
   const passive=!conf&&!prog&&!sending&&warn.items.length?'<div class="fr-pass">'+freshWarnHtml({items:warn.items,error:''})+'</div>':'';
-  const acts=prog?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>'+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':prog.phase==='email'?'Sending the email\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
-    :sending?'<div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending\u2026 <span class="dsub">posted from the chat</span></div>'
+  const acts=prog?'<div class="dsend" role="status">'+loadingMark(14)+''+(prog.phase==='review'?'Posting the review\u2026':prog.phase==='reactions'?'Applying reactions\u2026':prog.phase==='email'?'Sending the email\u2026':burstSend?'Sending '+Math.min(prog.sent+1,prog.total)+' of '+prog.total+'\u2026':'Sending\u2026')+'</div>'
+    :sending?'<div class="dsend" role="status">'+loadingMark(14)+'Sending\u2026 <span class="dsub">posted from the chat</span></div>'
     :conf?'<div class="dconf">'+(warn.head?staleWarnHtml(d):'')+freshWarnHtml(warn)+'<div class="dsub">'+esc(confirmWhat(d,texts))+'</div><div class="arow"><button class="send" data-dact="post-none" title="'+(warned?'Send it past the warning above. ':'')+'Post it. The chat stays as it is.">'+anyway+(!warned&&d.review&&!d.review_posted&&texts.length?' all':'')+'</button><button class="send park" data-dact="post-park"'+(canPark(d)?' title="Post, close the pane and list this chat under Waiting on others until someone replies"':' disabled title="'+esc(parkWhyNot(d))+'"')+'>'+anyway+' &amp; park</button><button class="send close" data-dact="post-close" title="Post, close the pane and take this chat off the board. It stays in All history; Resume still works.">'+anyway+' &amp; close</button><button data-dact="cancel">Cancel</button>'+msg+'</div><div class="dsub dkeys">Enter send · ⌥Enter send &amp; park · ⇧Enter send &amp; close · Esc cancel'+(canPark(d)?'':' · park: '+esc(parkWhyNot(d)))+'</div></div>'
     :schedHtml(d)+'<div class="dacts"><button class="send'+(rdSt==='offer'||rdOn?' demoted':'')+'" data-dact="send"'+(rdOn?' disabled title="Redrafting: the chat is rewriting this. Cancel the redraft to send as is."':d.scheduled?' title="Send it now instead of waiting. The step is marked done."':'')+'>'+(d.scheduled?'Send now':'Send')+'</button>'+(d.scheduled?'<button data-dact="unschedule" title="Remove the step that would send this. The draft stays.">Unschedule</button>':'')+redraftCtl(d,warn.items)+'<button data-dact="edit">'+(editing?'Done':'Edit')+'</button><button data-dact="copy">Copy</button><span class="spacer"></span><button class="closebtn'+(draftArmDiscard===d.id?' arm':'')+'" data-dact="discard">'+(draftArmDiscard===d.id?'✕ discard?':'Discard')+'</button>'+(d.send_state==='failed'?'<span class="dsub dfail">'+esc(d.send_note||'Send failed in chat')+'</span>':'')+msg+'</div>';
   return '<div class="draft sdraft'+((sending||prog)?' sending':'')+(o.stale?' dim':'')+(LEAVING[d.id]?' leaving':'')+'" data-id="'+esc(d.id)+'">'+draftHeadHtml(d,o.stale)+body+passive+acts+'</div>';}
@@ -423,7 +420,7 @@ function batchBusy(){return {sending:SENDING,local:SEND_LOCAL,leaving:LEAVING,re
 function batchOf(ds){return sendAllBatch(ds,draftTexts,batchBusy());}
 function batchRunning(){return !!(BATCH&&BATCH.phase==='sending');}
 function sendAllHtml(ds,now){const sid=ds.length?ds[0].session_id:'';const note=BATCH_NOTE[sid]?'<span class="dsub">'+esc(BATCH_NOTE[sid])+'</span>':'';
-  if(BATCH&&BATCH.sid===sid&&BATCH.phase==='sending')return '<div class="sall"><div class="dsend" role="status"><span class="spin" aria-hidden="true"></span>Sending '+BATCH.k+' of '+BATCH.n+'…</div></div>';
+  if(BATCH&&BATCH.sid===sid&&BATCH.phase==='sending')return '<div class="sall"><div class="dsend" role="status">'+loadingMark(14)+'Sending '+BATCH.k+' of '+BATCH.n+'…</div></div>';
   const b=batchOf(ds);
   if(BATCH&&BATCH.sid===sid&&BATCH.phase==='confirm'){const list=b.filter(function(d){return BATCH.ids.indexOf(d.id)>=0;});if(list.length)return sendAllConfirmHtml(list,now);}
   if(b.length<2)return note?'<div class="sall"><div class="sall-row">'+note+'</div></div>':'';

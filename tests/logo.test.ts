@@ -30,3 +30,26 @@ describe('the Loom mark', () => {
     expect(SETTINGS_VIEW_JS).toContain("var SX_LOGO='<svg width=\"40\"");
   });
 });
+
+describe('the loading mark', () => {
+  it('is the thread mark with ids of its own, and no character that breaks a template literal', async () => {
+    const { loadingMark, LOADING_MARK_CSS, LOADING_MARK_JS } = await import('../src/logo.ts');
+    const a = loadingMark(14, 'a');
+    expect(a).toMatch(/^<svg class="lmk" width="14" height="14" viewBox/);
+    expect(a).toContain('<mask id="a-m"');
+    expect(loadingMark(14, 'b')).not.toContain('id="a-');
+    expect(LOADING_MARK_CSS).toContain('prefers-reduced-motion');
+    expect(LOADING_MARK_CSS).toContain('lmk-pulse');
+    for (const s of [LOADING_MARK_CSS, LOADING_MARK_JS.replace(/\\"/g, '"')]) expect(s).not.toMatch(/`|\$\{|\\/);
+  });
+  it('the page-side helper hands out a fresh id and size per call', async () => {
+    const { LOADING_MARK_JS } = await import('../src/logo.ts');
+    const loadingMark = new Function(LOADING_MARK_JS + '; return loadingMark;')() as (px: number) => string;
+    const a = loadingMark(12), b = loadingMark(18);
+    expect(a).toContain('width="12"');
+    expect(b).toContain('width="18"');
+    expect(a).toContain('id="lmk1-m"');
+    expect(b).toContain('id="lmk2-m"');
+    expect(a).not.toContain('@');
+  });
+});

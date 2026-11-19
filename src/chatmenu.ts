@@ -9,7 +9,8 @@
 // external terminal's name, '' when the terminal is Loom's own window),
 // done (Send & close ended it: enables Restore to board),
 // parked (Send & park is waiting on a reply: enables Unpark),
-// tagCount (how many tags the chat carries; the item opens a checkbox submenu).
+// tagCount (how many tags the chat carries; the item opens a checkbox submenu),
+// groupName (the sidebar group the chat sits in, '' when none; the item opens the group submenu).
 // Items that do not apply are disabled, never hidden, so the menu keeps one shape.
 export const CHAT_MENU_JS = `
 function chatMenuItems(x){
@@ -22,6 +23,7 @@ function chatMenuItems(x){
     {key:'slack',label:'Open Slack thread',hint:(x.slackCount||0)>1?x.slackCount+' ▸':(x.hasSlack?'':'none'),disabled:!x.hasSlack,submenu:(x.slackCount||0)>1},
     {key:'save',label:x.saved?'Unsave':'Save for later',hint:x.saved?'':(live?'closes pane':''),disabled:arch,divider:true},
     {key:'tags',label:'Tags',hint:x.tagCount?String(x.tagCount):'▸',disabled:arch},
+    {key:'group',label:'Move to group',hint:x.groupName||'▸',disabled:arch,tip:'Put this chat in its own collapsible sidebar group'},
     {key:'unpark',label:'Unpark',hint:x.parked?'':'not parked',disabled:!x.parked,tip:x.parked?'Stop waiting on the reply and put this chat back in Recent':''},
     {key:'restore',label:'Restore to board',hint:x.done?'':'not closed',disabled:!x.done,tip:x.done?'Undo Send & close: put this chat back on the board':''},
     {key:'copyResume',label:'Copy resume command',hint:''},

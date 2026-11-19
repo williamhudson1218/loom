@@ -206,6 +206,19 @@ CREATE TABLE IF NOT EXISTS chat_tags (
   PRIMARY KEY (agent, session_id, tag_id)
 );
 CREATE INDEX IF NOT EXISTS chat_tags_tag_idx ON chat_tags(tag_id);
+-- Sidebar chat groups: user-named, ordered by id (creation order). A chat is in at most one.
+CREATE TABLE IF NOT EXISTS chat_groups (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_group_members (
+  agent       TEXT NOT NULL,
+  session_id  TEXT NOT NULL,
+  group_id    INTEGER NOT NULL,
+  PRIMARY KEY (agent, session_id)
+);
+CREATE INDEX IF NOT EXISTS chat_group_members_group_idx ON chat_group_members(group_id);
 CREATE TABLE IF NOT EXISTS chat_hidden (
   agent       TEXT NOT NULL,
   session_id  TEXT NOT NULL,
