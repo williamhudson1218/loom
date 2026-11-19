@@ -76,3 +76,14 @@ describe('takeChatNotes / hasChatNote', () => {
     expect(takeChatNotes('s1', dir)).toEqual([]);
   });
 });
+
+import { nudgeLine } from '../src/chatnotes.ts';
+describe('the typed nudge', () => {
+  it('carries the notes themselves on one line, capped', () => {
+    expect(nudgeLine(['Loom outbox: sent d1.\nIt is posted.', 'second'])).toBe('[Loom outbox] Loom outbox: sent d1. It is posted. | second');
+    expect(nudgeLine([])).toBe('');
+    const long = nudgeLine(['x'.repeat(5000)]);
+    expect(long.length).toBeLessThanOrEqual(2500);
+    expect(long.endsWith('…(cut short)')).toBe(true);
+  });
+});

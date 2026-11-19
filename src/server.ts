@@ -1,4 +1,4 @@
-import { addChatNote, hasChatNote, nudgeWhenFree, NUDGE_TEXT, sentNote, takeChatNotes } from './chatnotes.ts';
+import { addChatNote, hasChatNote, nudgeLine, nudgeWhenFree, sentNote, takeChatNotes } from './chatnotes.ts';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { paneHome, tmux, tmuxAsync } from './tmux.ts';
@@ -445,9 +445,13 @@ function tellChatSent(d: Draft, sent: string[], permalink: string): void {
     type: () => {
       const x = live();
       if (!x) return false;
-      // Codex has no hook to attach the note, so it gets the note itself.
-      const text = x.agent === 'codex' ? takeChatNotes(sid).join(' ') : NUDGE_TEXT;
-      return !!text && sendToPane(x.L.pane_id, text, x.agent).ok;
+      // The note itself, typed in: Codex has no hook, and a Claude process older than the hook never runs it.
+      const notes = takeChatNotes(sid);
+      const text = nudgeLine(notes);
+      if (!text) return false;
+      if (sendToPane(x.L.pane_id, text, x.agent).ok) return true;
+      for (const n of notes) addChatNote(sid, n); // not delivered: keep them for the hook or the next look
+      return false;
     },
     later: (fn, ms) => void setTimeout(fn, ms).unref?.(),
   }), 4_000).unref?.();

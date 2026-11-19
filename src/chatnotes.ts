@@ -48,6 +48,7 @@ export function sentNote(d: Draft, sent: string[], permalink: string, label = ''
   const lines = [
     `Loom outbox: the user sent your draft ${d.id} from Loom: ${where.join(', then ') || 'it'}.` + (permalink ? ` Link: ${permalink}` : ''),
     'It is posted. Do not send, re-record or show it again as a draft; treat it as what was said.',
+    `\`loom outbox show ${d.id}\` shows it in full.`,
   ];
   if (edited && sent.length) lines.push('The user edited it before sending. What went out:\n' + sent.map(quote).join('\n\n'));
   return lines.join('\n');
@@ -82,12 +83,20 @@ export function takeChatNotes(sessionId: string, dir: string = CHAT_NOTES_DIR): 
   }
 }
 
+
+const NUDGE_MAX = 2500;
+
 /**
- * The line Loom types into an idle chat so it hears now, not on some later turn. Typing it is a
- * prompt, so the chat-notes hook hands over the full note with it. A chat waiting at its prompt
- * after Loom sends its draft would otherwise never take the note: nothing runs there to deliver it.
+ * The line Loom types into an idle chat: the waiting notes themselves, flattened to one line
+ * (a typed Enter submits). Typed in full, not as a pointer for the hook to fill in: a Claude
+ * process started before the plugin had the chat-notes hook never runs it, even after /clear.
  */
-export const NUDGE_TEXT = '[Loom outbox] Your draft was sent from Loom; the details are attached to this message. Treat it as said and carry on.';
+export function nudgeLine(notes: string[]): string {
+  const flat = notes.map((n) => n.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | ');
+  if (!flat) return '';
+  const line = '[Loom outbox] ' + flat;
+  return line.length > NUDGE_MAX ? line.slice(0, NUDGE_MAX - 13).trimEnd() + ' …(cut short)' : line;
+}
 
 export type NudgeState = 'gone' | 'not-live' | 'hold' | 'ready';
 export interface NudgeIo {
