@@ -113,6 +113,19 @@ describe('windowCutoff / pruneOld', () => {
     db.close();
   });
 
+  it('keeps a row whose file is still being written, even when its last record is old', async () => {
+    // A live pane idle for weeks: Claude Code appends untimestamped records, so the
+    // mtime is fresh (refresh() admits it) while last_active_at is past the cutoff.
+    const db = openDb(':memory:');
+    const now = 100 * 86_400_000;
+    const cutoff = windowCutoff(now, 7);
+    upsertChat(db, await parseJsonlFile(FIX), 99 * 86_400_000, now);
+    db.prepare(`UPDATE chats SET last_active_at=? WHERE session_id=?`).run(80 * 86_400_000, 'sess-abc');
+    expect(pruneOld(db, cutoff)).toBe(0);
+    expect(db.prepare(`SELECT COUNT(*) n FROM chats`).get()).toEqual({ n: 1 });
+    db.close();
+  });
+
   it('exempts saved chats from the window prune', async () => {
     const db = openDb(':memory:');
     const parsed = await parseJsonlFile(FIX);

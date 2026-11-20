@@ -38,9 +38,17 @@ export function windowCutoff(now: number, days: number = ACTIVE_WINDOW_DAYS): nu
  * Drop rows for chats last active before the cutoff. Returns rows removed.
  * Saved chats are durable bookmarks — exempt from the window prune so they stay
  * on the board until explicitly unsaved (see the Saved section on the dashboard).
+ *
+ * The file's mtime must also be out of the window, because refresh() admits a file by its
+ * mtime. Claude Code keeps appending untimestamped records (session-owner, atis-latch)
+ * to a live chat's transcript, so a pane idle for weeks has a fresh mtime but an old
+ * last_active_at. Pruning on last_active_at alone deleted that row on every pass and
+ * re-inserted it on the next one (a full re-parse, summary_dirty again). In between, the
+ * live pane had no row and showed as a provisional "new" chat stamped with the
+ * misleading mtime.
  */
 export function pruneOld(db: Database.Database, cutoff: number): number {
-  return db.prepare(`DELETE FROM chats WHERE last_active_at < ? AND saved = 0`).run(cutoff).changes;
+  return db.prepare(`DELETE FROM chats WHERE last_active_at < ? AND jsonl_mtime < ? AND saved = 0`).run(cutoff, cutoff).changes;
 }
 
 export function listProjectJsonls(projectsDir: string): string[] {
