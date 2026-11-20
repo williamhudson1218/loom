@@ -7,6 +7,7 @@ import { assignNames, type PaneNameRow } from './panenames.ts';
 import { isViewSession } from './tmux.ts';
 import { openDb } from './db.ts';
 import { getSetting } from './settingsSchema.ts';
+import { sweepOrphanShells } from './orphans.ts';
 import { explainTmuxFailure, ptyRefusal, ptyUsage, type PtyUsage } from './ptys.ts';
 
 // Loom-managed panes (design §4). When there are no `loom-<lane>-<n>` sessions,
@@ -370,4 +371,6 @@ export function startManagedTicks(everyMs = 60_000, saved: () => Set<string> = s
     }
     reapManaged({ saved: ids, ttlMs });
   }, everyMs);
+  // Shells left behind by panes that hung at birth hold a pty forever (src/orphans.ts).
+  setInterval(() => sweepOrphanShells(), 5 * 60_000).unref?.();
 }
