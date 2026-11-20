@@ -1508,6 +1508,11 @@ export function createServer(): http.Server {
     chats: () => snapshot().views.filter((v) => v.agent === 'claude').map((v) => ({ session_id: v.session_id, title: v.title, jsonl_path: v.jsonl_path, project_dir: v.project_dir })),
     live: () => Object.values(snapshot().live).map((l) => ({ session_id: l.session_id, pane_id: l.pane_id, cwd: l.cwd })),
     legacyThreads: legacyThreadState,
+    startThread: ({ prompt, projectDir, lane }) =>
+      startThreadAsync({ prompt, projectDir, agent: 'claude', lane }, undefined, { liveByPane: () => snapshot().live }).then((r) => {
+        if (r.ok) rememberProject(projectDir);
+        return r;
+      }),
   });
   return http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://localhost');

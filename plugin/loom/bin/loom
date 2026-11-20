@@ -26,6 +26,8 @@
   loom ship-label "<label>" [--repo <path>] | --show | --clear
   loom ship-lock acquire | release | status | wait [repo]   (<repo>'s git common dir, default the cwd's; no Loom needed)
   loom route list | send <name> <text...>
+  loom route new [--project <dir>] [--lane <lane>] (--prompt-file <p> | <text...>)   start a new chat (a fresh
+                                                     agent) the way the composer's New thread does; prints its pane
   loom test-links add <url> [--label "<what to check>"] | list [--json] | clear [<url>]
   loom action add --title "<step>" --when <trigger> --then <action> [--ask-first]   append a step to this chat's chain
   loom action done <id> | fail <id> --why "<reason>" | remove <id> | close-when-done on|off | list [--json]
@@ -55,6 +57,7 @@ import json
 import os
 import random
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1034,8 +1037,82 @@ def cmd_route(args):
         except c.LoomError as e:
             die(str(e), 4)
         print(r.get("detail") or "delivered")
+    elif sub == "new":
+        route_new(args[1:])
     else:
-        die("usage: loom route list | send <name> <text...>", 2)
+        die("usage: loom route list | send <name> <text...> | new [--project <dir>] [--lane <lane>] (--prompt-file <p> | <text...>)", 2)
+
+
+def _git_root(d):
+    try:
+        out = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else d
+    except Exception:
+        return d
+
+
+def route_new(args):
+    project, lane, prompt_file, words = "", "", "", []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--project", "--lane", "--prompt-file") and i + 1 < len(args):
+            if a == "--project":
+                project = args[i + 1]
+            elif a == "--lane":
+                lane = args[i + 1]
+            else:
+                prompt_file = args[i + 1]
+            i += 2
+            continue
+        words.append(a)
+        i += 1
+    if prompt_file:
+        try:
+            prompt = open(os.path.expanduser(prompt_file)).read().strip()
+        except OSError as e:
+            die("cannot read %s: %s" % (prompt_file, e), 2)
+    else:
+        prompt = " ".join(words).strip()
+    if not prompt:
+        die("usage: loom route new [--project <dir>] [--lane <lane>] (--prompt-file <p> | <text...>)", 2)
+    project = os.path.realpath(os.path.expanduser(project)) if project else _git_root(os.getcwd())
+    if not os.path.isdir(project):
+        die("no such project directory: %s" % project, 2)
+    try:
+        r = c.http("POST", "/api/cli/route/new", {"prompt": prompt, "project": project, "lane": lane}, timeout=60.0)
+        print(r.get("detail") or "started")
+        if r.get("pane_id"):
+            print("pane %s; message it with: loom route send <its name> <text>  (loom route list shows the name)" % r["pane_id"])
+        return
+    except c.LoomUnavailable as e:
+        die("Loom is not reachable (%s). Is it running?" % e, 3)
+    except c.LoomError as e:
+        # An older Loom without the route answers 404: fall back to a detached loom-* session.
+        if getattr(e, "status", None) != 404:
+            die(str(e), 4)
+    route_new_tmux(prompt, project)
+
+
+def route_new_tmux(prompt, project):
+    """Fallback for a Loom without /api/cli/route/new: a detached `loom-new-<n>` tmux
+    session in the project with Claude started on the prompt. The loom- prefix is
+    what Loom indexes (and what its layout snapshot keeps)."""
+    base = "loom-new-" + time.strftime("%m%d%H%M%S")
+    pdir = os.path.join(os.path.expanduser("~/.loom"), "inbox")
+    os.makedirs(pdir, exist_ok=True)
+    pfile = os.path.join(pdir, base + ".prompt.md")
+    with open(pfile, "w") as f:
+        f.write(prompt + "\n")
+    try:
+        subprocess.run(["tmux", "new-session", "-d", "-s", base, "-c", project], check=True, timeout=10)
+        pane = subprocess.run(["tmux", "display", "-p", "-t", base, "#{pane_id}"], capture_output=True, text=True, timeout=5).stdout.strip()
+        # The prompt rides in a file so no shell quoting touches it.
+        subprocess.run(["tmux", "send-keys", "-t", pane, "-l", "claude \"$(cat %s)\"" % shlex.quote(pfile)], check=True, timeout=5)
+        subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True, timeout=5)
+    except Exception as e:
+        die("tmux launch failed: %s" % e, 4)
+    print("started in tmux session %s (pane %s); this Loom has no /api/cli/route/new yet, so it was launched directly" % (base, pane))
 
 
 def temp_roots():

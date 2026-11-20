@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createServer, notifyScript } from '../src/server.ts';
 import { ensureCliToken, readCliToken } from '../src/routes/index.ts';
-import { setCliDeps, tmuxNamedPanes, tmuxDeliver, ROUTE_MAX, type NamedPane } from '../src/routes/cli.ts';
+import { setCliDeps, tmuxNamedPanes, tmuxDeliver, ROUTE_MAX, NEW_PROMPT_MAX, type NamedPane } from '../src/routes/cli.ts';
 import { applySchema } from '../src/schema.ts';
 import { applyEvent } from '../src/events.ts';
 import { addDraft, readOutbox } from '../src/outbox.ts';
@@ -68,6 +68,11 @@ beforeAll(async () => {
     legacyThreads: () => ({ 'C0TESTCHAN9/1793800000.000001': { url: 'https://acme.slack.com/archives/C0TESTCHAN9/p1793800000000001', session_id: 'legacy-sid', cwd: '/old' } }),
     slackOn: () => slackOn,
     slack: { token: 'xoxp-test-token', fetchImpl },
+    dirExists: (d) => d === '/tmp/a',
+    startThread: async (input) => {
+      started.push(input);
+      return { ok: true, pane_id: '%7', where: 'loom-a:1.2' };
+    },
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   port = (server.address() as { port: number }).port;
@@ -154,6 +159,26 @@ describe('/api/cli reads', () => {
     expect(me.body).toMatchObject({ name: 'blue-vanilla', pane_id: '%1', session: SID, project: '/tmp/a' });
     const bySession = await call('GET', `/api/cli/whoami?pane=&session=${SID}`);
     expect(bySession.body).toMatchObject({ name: 'blue-vanilla', pane_id: '%1' });
+  });
+});
+
+const started: { prompt: string; projectDir: string; lane: string }[] = [];
+
+describe('/api/cli/route/new', () => {
+  it('starts a chat in the project with the prompt, and says where', async () => {
+    started.length = 0;
+    const r = await call('POST', '/api/cli/route/new', { prompt: '  Read brief.md  ', project: '/tmp/a', lane: 'tp' });
+    expect(r).toMatchObject({ status: 200, body: { ok: true, pane_id: '%7', where: 'loom-a:1.2' } });
+    expect(started).toEqual([{ prompt: 'Read brief.md', projectDir: '/tmp/a', lane: 'tp' }]);
+  });
+
+  it('refuses an empty prompt, a missing or relative project, and an over-long prompt', async () => {
+    started.length = 0;
+    expect((await call('POST', '/api/cli/route/new', { prompt: ' ', project: '/tmp/a' })).status).toBe(400);
+    expect((await call('POST', '/api/cli/route/new', { prompt: 'x', project: '/nope' })).status).toBe(400);
+    expect((await call('POST', '/api/cli/route/new', { prompt: 'x', project: 'tmp/a' })).status).toBe(400);
+    expect((await call('POST', '/api/cli/route/new', { prompt: 'y'.repeat(NEW_PROMPT_MAX + 1), project: '/tmp/a' })).status).toBe(400);
+    expect(started).toEqual([]);
   });
 });
 

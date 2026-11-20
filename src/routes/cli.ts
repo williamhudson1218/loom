@@ -62,6 +62,8 @@ export interface CliDeps {
   /** Give any unnamed workspace pane its @name. */
   namePanes(): void;
   dirExists(dir: string): boolean;
+  /** Start a new chat the way the composer's New thread does (server.ts wires startThreadAsync). */
+  startThread(input: { prompt: string; projectDir: string; lane: string }): Promise<{ ok: boolean; detail?: string; pane_id?: string; where?: string }>;
 }
 
 export interface NamedPane {
@@ -128,6 +130,7 @@ let deps: CliDeps = {
   loading: () => (inTests || currentTerminal() !== 'inside' ? null : insideLoading()),
   pretrust: (d) => void pretrustFolder(d),
   namePanes: () => void nameNewPanes(),
+  startThread: async () => ({ ok: false, detail: 'starting chats is off under tests' }),
   dirExists: (d) => {
     try {
       return fs.statSync(d).isDirectory();
@@ -279,6 +282,27 @@ async function postRouteSend(ctx: RouteCtx): Promise<void> {
   if (!isClaude(p.command) && !isShell(p.command)) return ctx.json(409, { ok: false, detail: `${to} is running ${p.command}; not typing into it` });
   const r = deps.deliver(p.pane_id, text);
   ctx.json(r.ok ? 200 : 500, { ok: r.ok, detail: r.ok ? `delivered to ${to} (${p.pane_id})` : r.detail });
+}
+
+/** The longest prompt `loom route new` takes inline; a longer brief goes in a file the prompt points at. */
+export const NEW_PROMPT_MAX = 20000;
+
+/**
+ * `loom route new`: a local agent starts a new chat, the same launch as the
+ * composer's New thread (a free pane in the lane, the agent typed in, the pane
+ * named). The composer route is browser-only (Origin + launch token), so this is
+ * the cli-guarded twin, like `route send` is for typing into an existing pane.
+ */
+async function postRouteNew(ctx: RouteCtx): Promise<void> {
+  const b = await ctx.body();
+  const prompt = typeof b?.prompt === 'string' ? b.prompt.trim() : '';
+  const projectDir = typeof b?.project === 'string' ? b.project : '';
+  const lane = typeof b?.lane === 'string' ? b.lane : '';
+  if (!prompt) return ctx.json(400, { ok: false, detail: 'prompt is required' });
+  if (prompt.length > NEW_PROMPT_MAX) return ctx.json(400, { ok: false, detail: `prompt is over ${NEW_PROMPT_MAX} characters; write it to a file and point the prompt at it` });
+  if (!projectDir || !path.isAbsolute(projectDir) || !deps.dirExists(projectDir)) return ctx.json(400, { ok: false, detail: `project must be an existing absolute directory: ${projectDir || '(none)'}` });
+  const r = await deps.startThread({ prompt, projectDir, lane });
+  ctx.json(r.ok ? 200 : 409, r.ok ? { ok: true, pane_id: r.pane_id ?? '', where: r.where ?? '', detail: `started in ${r.where || r.pane_id || 'a new pane'}` } : { ok: false, detail: r.detail || 'launch failed' });
 }
 
 function getWhoami(ctx: RouteCtx): void {
@@ -527,6 +551,7 @@ export const routes: RouteDef[] = [
   { method: 'GET', path: '/api/cli/actions', kind: 'cli', handler: getActions },
   { method: 'GET', path: '/api/cli/route', kind: 'cli', handler: getRoute },
   { method: 'POST', path: '/api/cli/route/send', kind: 'cli', handler: postRouteSend },
+  { method: 'POST', path: '/api/cli/route/new', kind: 'cli', handler: postRouteNew },
   { method: 'GET', path: '/api/cli/whoami', kind: 'cli', handler: getWhoami },
   { method: 'POST', path: '/api/cli/slack/react', kind: 'cli', handler: postReact },
   { method: 'POST', path: '/api/cli/slack/reply', kind: 'cli', handler: postReply },

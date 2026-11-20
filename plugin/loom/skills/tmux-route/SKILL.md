@@ -1,6 +1,6 @@
 ---
 name: tmux-route
-description: Use when the user refers to another worker by its pane name ("talk to blue-vanilla", "ask cozy-donut what it found", "hand this off to hungry-hippo"), asks what this worker is called, or when a message arrives starting `[to <name> from <name>]`. Resolves a Loom pane name to its pane and delivers a message or handoff brief into it.
+description: Use when the user refers to another worker by its pane name ("talk to blue-vanilla", "ask cozy-donut what it found", "hand this off to hungry-hippo"), asks to give work to a new agent or start a new chat for it, asks what this worker is called, or when a message arrives starting `[to <name> from <name>]`. Resolves a Loom pane name to its pane and delivers a message or handoff brief into it.
 ---
 
 # Routing to a named worker
@@ -58,6 +58,21 @@ current turn, which is fine.
 The recipient has not seen your transcript. Write a self-contained brief to a file: goal, repo/branch/worktree, what is
 done (with paths), what is left, decisions already made and why, how to verify. Deliver a pointer to it as above. Then
 tell the user what you handed off and stop working that task, because two workers on one task collide in a shared git index.
+
+## A new worker ("give this to a new agent", "spin up a chat for this")
+
+No existing pane to hand to: start one, the way the composer's New thread does.
+
+1. Write the self-contained brief to a file (as for a handoff, below the inline limit or not).
+2. `loom route new --prompt-file <brief>` (or `loom route new "Read <brief> and do what it says."`).
+   It starts Claude in a free pane of the project (default: the git root of your cwd; `--project <dir>` to pick
+   another, `--lane <lane>` for a lane), names the pane, and prints where. `loom route list` then shows its name,
+   and `loom route send <name> ...` reaches it later.
+3. Tell the user its name and what it was given, then stop working that task.
+
+On a Loom older than this command, it falls back to a detached `loom-new-<timestamp>` tmux session in the project
+with `claude` started on the prompt, and says so. It does not call the composer's `/api/new-thread`, which is for
+the browser only.
 
 ## Receiving a message
 
