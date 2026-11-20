@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+    "postinstall": "node ../scripts/patch-node-pty.cjs node_modules/node-pty && chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "rebuild": "electron-rebuild -f -w better-sqlite3,node-pty",
     "start": "yarn build && electron .",
     "dist": "yarn build && node dist.mjs"

@@ -61,7 +61,8 @@ import { execFile } from 'node:child_process';
 import { notifyScript, notifyUser } from './notify.ts';
 import { enteringNeeds, needText, watcherNeeds } from './watchers/attention.ts';
 import { EMOJI_MAP } from './emojimap.ts';
-import { confirmLaunches, dismissLaunch, indexFreshLaunches, launchById, launchView, recentLaunches, startThread, waitForShellReady, waitForShellReadyAsync } from './newthread.ts';
+import { PTY_WARN_RATIO, ptyRefusal, ptyUsage } from './ptys.ts';
+import { confirmLaunches, dismissLaunch, indexFreshLaunches, launchById, launchView, recentLaunches, startThread, startThreadAsync, waitForShellReady, waitForShellReadyAsync } from './newthread.ts';
 import { pickLog } from './picklog.ts';
 import { acquireManagedPane, pickStrategy, startManagedTicks } from './managed.ts';
 import { readThreads } from './slack.ts';
@@ -1548,6 +1549,12 @@ export function createServer(): http.Server {
       return send(res, 200, 'application/json', JSON.stringify({ ok: true, pid: process.pid, at: Date.now() }));
     }
 
+    // Pseudo-terminals in use against kern.tty.ptmx_max: the header's terminal chip.
+    if (url.pathname === '/api/ptys') {
+      const u = ptyUsage();
+      return send(res, 200, 'application/json', JSON.stringify({ ...u, warn: u.ratio >= PTY_WARN_RATIO, full: !!ptyRefusal(u) }));
+    }
+
     if (url.pathname === '/api/live') {
       const { live } = snapshot();
       return send(res, 200, 'application/json', JSON.stringify(live));
@@ -2162,7 +2169,7 @@ export function createServer(): http.Server {
           return json(res, 400, { ok: false, detail: 'invalid body' });
         }
         const images = Array.isArray(b.images) ? b.images.filter((i: any) => i && typeof i.type === 'string' && typeof i.data === 'string') : [];
-        const r = startThread({
+        void startThreadAsync({
           prompt: typeof b.prompt === 'string' ? b.prompt : '',
           projectDir: typeof b.project === 'string' ? b.project : '',
           agent: b.agent === 'codex' ? 'codex' : 'claude',
@@ -2171,9 +2178,12 @@ export function createServer(): http.Server {
           focus: b.focus === true,
           images,
           trust: b.trust === true,
-        }, undefined, { liveByPane: () => snapshot().live });
-        if (r.ok) rememberProject(typeof b.project === 'string' ? b.project : '');
-        return json(res, r.ok ? 200 : 409, r);
+        }, undefined, { liveByPane: () => snapshot().live })
+          .then((r) => {
+            if (r.ok) rememberProject(typeof b.project === 'string' ? b.project : '');
+            json(res, r.ok ? 200 : 409, r);
+          })
+          .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });
       return;
     }
@@ -2193,9 +2203,12 @@ export function createServer(): http.Server {
         const l = launchById(id);
         if (!l || l.status !== 'failed') return json(res, 404, { ok: false, detail: 'no such failed launch' });
         if (url.pathname.endsWith('/dismiss')) return json(res, 200, { ok: dismissLaunch(id), detail: 'dismissed' });
-        const r = startThread({ prompt: l.fullPrompt ?? l.prompt, projectDir: l.projectDir, agent: l.agent, exclude: [l.pane_id] }, undefined, { liveByPane: () => snapshot().live });
-        if (r.ok) dismissLaunch(id);
-        return json(res, r.ok ? 200 : 409, r);
+        void startThreadAsync({ prompt: l.fullPrompt ?? l.prompt, projectDir: l.projectDir, agent: l.agent, exclude: [l.pane_id] }, undefined, { liveByPane: () => snapshot().live })
+          .then((r) => {
+            if (r.ok) dismissLaunch(id);
+            json(res, r.ok ? 200 : 409, r);
+          })
+          .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });
       return;
     }

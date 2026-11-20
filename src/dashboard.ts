@@ -216,6 +216,9 @@ ${WELCOME_BOOT_CSS}
   .brand .sub { color:#8b93a7; font-size:12px; }
   .stalechip { color:#e0b050 !important; }
   .stalechip.bad { color:#ee7b7b !important; }
+  .ptychip { margin-left:8px; font-variant-numeric:tabular-nums; cursor:default; }
+  .ptychip.warn { color:#e0b050 !important; }
+  .ptychip.bad { color:#ee7b7b !important; font-weight:600; }
   /* Primary view switch — a segmented control, kept distinct from the filters below */
   .tabs { display:inline-flex; flex:none; height:32px; box-sizing:border-box; background:#141826; border:1px solid #2b3040; border-radius:8px; padding:2px; gap:2px; }
   .tab { height:26px; background:transparent; border:0; color:#8b93a7; border-radius:6px; padding:0 14px; cursor:pointer; font-size:13px; font-weight:600; transition:background .15s, color .15s; }
@@ -1070,7 +1073,7 @@ ${welcomeFirst ? welcomeHtml(true) : ''}
 <header>
   <div class="topbar">
     <div class="hleft">
-    <div class="brand"><h1 class="wordmark" aria-label="${APP_NAME}">${WORDMARK_L_SVG}<span aria-hidden="true">${APP_NAME.slice(1)}</span></h1><span class="sub stalechip" id="stale" hidden></span></div>
+    <div class="brand"><h1 class="wordmark" aria-label="${APP_NAME}">${WORDMARK_L_SVG}<span aria-hidden="true">${APP_NAME.slice(1)}</span></h1><span class="sub stalechip" id="stale" hidden></span><span class="sub ptychip" id="ptys" hidden></span></div>
       <div class="tabs" id="tabs"></div>
     </div>
     <div class="jumpwrap"><button type="button" id="jumpbtn" class="jumpbtn" aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="Jump to a chat, ticket or command (${'\u2318'}K)" aria-label="Jump to a chat, ticket or command"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><span class="jl">Jump to a chat, ticket or command</span><span class="kbd">\u2318K</span></button></div>
@@ -2591,6 +2594,11 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden)refr
 // Not on blur: the board often sits visible on another screen, and the streak is the signal.
 (function(){const r=document.documentElement;const sync=function(){r.classList.toggle('anim-idle',document.hidden);};document.addEventListener('visibilitychange',sync);sync();})();
 setInterval(renderStale,5000);renderStale();
+function renderPtys(){fetch('/api/ptys',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(p=>{const el=$('#ptys');if(!el||!p||!p.max)return;
+  el.textContent=(p.full?'Out of terminals ':'Terminals ')+p.used+'/'+p.max;el.className='sub ptychip'+(p.full?' bad':p.warn?' warn':'');
+  el.title=p.used+' of '+p.max+' pseudo-terminals (kern.tty.ptmx_max) in use on this Mac. Every tmux pane, Loom terminal and Ghostty tab holds one; at the limit no new chat can start.'+(p.warn?' Close panes or tabs you no longer need.':'');
+  el.hidden=false;}).catch(()=>{});}
+setInterval(renderPtys,15000);renderPtys();
 // The header's connections come with /api/data, not the first paint: fetch once now rather than after the first 5 s tick.
 setTimeout(refresh,0);
 setInterval(visOnly(function(){refreshTrees(false);}),300000);

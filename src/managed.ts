@@ -7,6 +7,7 @@ import { assignNames, type PaneNameRow } from './panenames.ts';
 import { isViewSession } from './tmux.ts';
 import { openDb } from './db.ts';
 import { getSetting } from './settingsSchema.ts';
+import { explainTmuxFailure, ptyRefusal, ptyUsage, type PtyUsage } from './ptys.ts';
 
 // Loom-managed panes (design §4). When there are no `loom-<lane>-<n>` sessions,
 // Loom keeps its chats in ONE tmux session of its own, one window per chat,
@@ -230,6 +231,8 @@ export interface CreateOpts {
   resources?: () => Resources;
   limits?: CapacityLimits;
   rand?: () => number;
+  /** Pseudo-terminals in use (src/ptys.ts); a launch with none left is refused up front. */
+  ptys?: () => PtyUsage;
 }
 
 /**
@@ -241,6 +244,8 @@ export function acquireManagedPane(projectDir: string, opts: CreateOpts = {}): M
   const run = opts.run ?? defaultRun;
   const cap = capacityVerdict((opts.resources ?? readResources)(), opts.limits ?? currentLimits());
   if (!cap.ok) return cap;
+  const short = ptyRefusal((opts.ptys ?? ptyUsage)());
+  if (short) return { ok: false, detail: short };
   let paneId: string;
   try {
     if (quiet(run, ['has-session', '-t', `=${MANAGED_SESSION}`])) {
@@ -249,7 +254,9 @@ export function acquireManagedPane(projectDir: string, opts: CreateOpts = {}): M
       paneId = run(['new-session', '-d', '-s', MANAGED_SESSION, '-c', projectDir, '-P', '-F', '#{pane_id}']).trim();
     }
   } catch (e) {
-    return { ok: false, detail: 'could not create a window: ' + (e as Error).message };
+    const msg = (e as Error).message;
+    const why = explainTmuxFailure(msg, opts.ptys);
+    return { ok: false, detail: why === msg ? 'could not create a window: ' + msg : why };
   }
   if (!/^%\d+$/.test(paneId)) return { ok: false, detail: 'tmux did not return a pane id' };
   const name = namePane(paneId, run, opts.rand);

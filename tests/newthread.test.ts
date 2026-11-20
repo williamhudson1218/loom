@@ -220,6 +220,43 @@ describe('launch confirmation', () => {
     return { r, recentLaunches, w };
   };
 
+  it('startThreadAsync waits for the shell without blocking, and types nothing into a shell that never came up', async () => {
+    const { startThreadAsync } = await import('../src/newthread.ts');
+    const w = world('zsh');
+    const typed: string[] = [];
+    const launch = (o: { paneId: string }) => (typed.push(o.paneId), { ok: true, detail: 'started' });
+    const asked: string[] = [];
+    const ok = await startThreadAsync(mk({ prompt: 'async one' }), w.run, { launch, readyAsync: async (id) => (asked.push(id), true) });
+    expect(ok.ok).toBe(true);
+    expect(asked).toEqual(['%1']);
+    expect(typed).toEqual(['%1']);
+    const no = await startThreadAsync(mk({ prompt: 'async two' }), w.run, { launch, readyAsync: async () => false });
+    expect(no.ok).toBe(false);
+    expect(no.detail).toMatch(/no shell ready/);
+    expect(typed).toEqual(['%1']);
+  });
+
+  it('startThreadAsync runs one launch at a time', async () => {
+    const { startThreadAsync } = await import('../src/newthread.ts');
+    const w = world('zsh');
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const first = startThreadAsync(mk({ prompt: 'first' }), w.run, {
+      launch: () => (order.push('first typed'), { ok: true, detail: 'x' }),
+      readyAsync: async () => (order.push('first waiting'), await gate, true),
+    });
+    const second = startThreadAsync(mk({ prompt: 'second' }), w.run, {
+      launch: () => (order.push('second typed'), { ok: true, detail: 'x' }),
+      readyAsync: async () => (order.push('second waiting'), true),
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual(['first waiting']);
+    release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first waiting', 'first typed', 'second waiting', 'second typed']);
+  });
+
   it('keeps the full prompt and marks a typed launch as starting', async () => {
     const { r, recentLaunches } = await startOne();
     expect(r.ok).toBe(true);

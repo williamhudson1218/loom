@@ -10,7 +10,7 @@
     "run": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+    "postinstall": "node scripts/patch-node-pty.cjs node_modules/node-pty && chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

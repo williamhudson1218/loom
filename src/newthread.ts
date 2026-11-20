@@ -11,6 +11,7 @@ import { isViewSession, paneHome } from './tmux.ts';
 import { nameNewPanes } from './panenames.ts';
 import { isValidProjectDir } from './findchat.ts';
 import { acquireManagedPane, pickStrategy } from './managed.ts';
+import { explainTmuxFailure, ptyRefusal, ptyUsage } from './ptys.ts';
 import { currentTerminal } from './terminal.ts';
 import { notifyUser } from './notify.ts';
 import { detectFirstRunPrompt, pretrustFolder } from './orchstart.ts';
@@ -394,11 +395,15 @@ export function acquirePane(
   const target = chooseTarget(exclude.length ? { ...world, panes: world.panes.filter((p) => !exclude.includes(p.pane_id)) } : world, readGeometry(run), lane, prefer);
   if (!target) return { ok: false, detail: lane ? `no loom-${lane}-N session to split` : 'no lane sessions found' };
   if (!target.split) return { ok: true, paneId: target.pane_id, split: false };
+  const short = ptyRefusal(ptyUsage());
+  if (short) return { ok: false, detail: short };
   let paneId: string;
   try {
     paneId = run(['split-window', '-d', target.horizontal ? '-h' : '-v', '-t', target.from, '-c', projectDir, '-P', '-F', '#{pane_id}']).trim();
   } catch (e) {
-    return { ok: false, detail: 'split failed: ' + (e as Error).message };
+    const msg = (e as Error).message;
+    const why = explainTmuxFailure(msg);
+    return { ok: false, detail: why === msg ? 'split failed: ' + msg : why };
   }
   nameNewPanes();
   if (wait) waitForShellReady(paneId, run);
@@ -448,7 +453,7 @@ export async function acquirePaneAutoAsync(
   prefer: string,
   run: TmuxRunner = defaultRun,
   exclude: string[] = [],
-): Promise<AcquiredPane & { readyMs?: number }> {
+): Promise<AcquiredPane & { readyMs?: number; ready?: boolean }> {
   let r: AcquiredPane;
   let fresh = false;
   if (pickStrategy(readWorld(run)) === 'lanes') {
@@ -462,8 +467,8 @@ export async function acquirePaneAutoAsync(
   }
   if (!r.ok || !fresh) return r;
   const t = Date.now();
-  await waitForShellReadyAsync(r.paneId, run);
-  return { ...r, readyMs: Date.now() - t };
+  const ready = await waitForShellReadyAsync(r.paneId, run);
+  return { ...r, readyMs: Date.now() - t, ready };
 }
 
 /**
@@ -498,21 +503,31 @@ export interface StartDeps {
   pretrust?: (dir: string) => unknown;
 }
 
-export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun, deps: StartDeps = {}): GotoResult & { pane_id?: string; where?: string; images?: string[] } {
+type StartResult = GotoResult & { pane_id?: string; where?: string; images?: string[] };
+
+function beginThread(input: NewThreadInput): { ok: true; id: string; images: string[] } | { ok: false; detail: string } {
   if (!isValidProjectDir(input.projectDir)) return { ok: false, detail: 'invalid project dir' };
   if (!input.prompt.trim() && !input.images?.length) return { ok: false, detail: 'empty prompt' };
   const id = newId();
-  let images: string[] = [];
   try {
-    images = saveImages(input.images ?? [], INBOX_DIR, id);
+    return { ok: true, id, images: saveImages(input.images ?? [], INBOX_DIR, id) };
   } catch (e) {
     return { ok: false, detail: (e as Error).message };
   }
-  const pane = acquirePaneAuto(input.projectDir, input.lane ?? '', input.prefer ?? '', run, input.exclude ?? []);
-  if (!pane.ok) return pane;
+}
+
+function finishThread(
+  input: NewThreadInput,
+  pane: { paneId: string; split: boolean; managed: boolean },
+  ready: (paneId: string) => boolean,
+  begun: { id: string; images: string[] },
+  run: TmuxRunner,
+  deps: StartDeps,
+): StartResult {
   const { paneId, split, managed } = pane;
+  const { id, images } = begun;
   const prompt = promptWithImages(input.prompt, images);
-  const prep = prepareForTyping(paneId, run, deps.ready ?? ((id) => waitForShellReady(id, run)));
+  const prep = prepareForTyping(paneId, run, ready);
   if (!prep.ok) return prep;
   // A folder Claude Code has never been trusted in opens on its "do you trust this
   // folder" dialog, which a chat in a background pane waits on forever. The user
@@ -542,4 +557,40 @@ export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun,
   const timer = setTimeout(() => confirmLaunches(deps.liveByPane?.() ?? {}, run), LAUNCH_CONFIRM_MS + 1000);
   timer.unref?.();
   return { ...r, pane_id: paneId, where, images, detail: r.detail + (split ? ' (split a new pane)' : '') };
+}
+
+export function startThread(input: NewThreadInput, run: TmuxRunner = defaultRun, deps: StartDeps = {}): StartResult {
+  const begun = beginThread(input);
+  if (!begun.ok) return begun;
+  const pane = acquirePaneAuto(input.projectDir, input.lane ?? '', input.prefer ?? '', run, input.exclude ?? []);
+  if (!pane.ok) return pane;
+  return finishThread(input, pane, deps.ready ?? ((id) => waitForShellReady(id, run)), begun, run, deps);
+}
+
+/**
+ * startThread for the HTTP routes. Loom's server runs in Electron's main process,
+ * and the sync version's two shell-ready waits (a fresh pane's, then the
+ * typing check's 500 ms of quiet even on a ready shell) froze the whole app for
+ * 0.6-8 s on every New thread. Here both waits are one async wait.
+ */
+let launchChain: Promise<unknown> = Promise.resolve();
+
+export function startThreadAsync(
+  input: NewThreadInput,
+  run: TmuxRunner = defaultRun,
+  deps: StartDeps & { readyAsync?: (paneId: string) => Promise<boolean> } = {},
+): Promise<StartResult> {
+  // One at a time, as the blocking version was: two launches in flight would both pick the same idle pane.
+  const next = launchChain.then(() => startThreadNow(input, run, deps));
+  launchChain = next.catch(() => {});
+  return next;
+}
+
+async function startThreadNow(input: NewThreadInput, run: TmuxRunner, deps: StartDeps & { readyAsync?: (paneId: string) => Promise<boolean> }): Promise<StartResult> {
+  const begun = beginThread(input);
+  if (!begun.ok) return begun;
+  const pane = await acquirePaneAutoAsync(input.projectDir, input.lane ?? '', input.prefer ?? '', run, input.exclude ?? []);
+  if (!pane.ok) return pane;
+  const ready = pane.ready ?? (await (deps.readyAsync ?? ((id: string) => waitForShellReadyAsync(id, run)))(pane.paneId));
+  return finishThread(input, pane, () => ready, begun, run, deps);
 }
