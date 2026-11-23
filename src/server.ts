@@ -45,9 +45,10 @@ import { firstPaint } from './routes/wizard.ts';
 import { connectionsSafe } from './connections.ts';
 import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmode.ts';
 import { authTest, conversationsReplies } from './slackapi.ts';
+import { ghDetailVia, ghNotificationsVia } from './watchers/sources/activity.ts';
 import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
-import { boardParkedFields, emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
+import { boardParkedFields, emailRepliesVia, followupLabel, getParked, reopenForFollowup, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
 import { OutboxWatch } from './outboxwatch.ts';
 import { heldCount as heldLinkCount } from './pendinglinks.ts';
 import { buildRedraftPrompt, clearMark, newMark, readMarks, redraftView, setMark } from './redraft.ts';
@@ -1018,6 +1019,23 @@ function watcherEngineDeps(): EngineDeps {
     dryRun: isDryRun(),
     briefsDir: WATCHER_BRIEFS_DIR,
     selfPane: process.env.TMUX_PANE,
+    activity: {
+      ghNotifications: (since) => ghNotificationsVia(ghRun, since),
+      ghDetail: (n) => ghDetailVia(ghRun, n),
+      slackReplies: async (channel, ts) => {
+        if (!slackFeatureOn('watchers')) throw new Error('Slack is not connected');
+        return conversationsReplies(channel, ts, { limit: 200 });
+      },
+      isLive: (agent, sid) => !!snapshot().live[`${agent}:${sid}`],
+      reopenChat: (f) => {
+        // A Slack follow-up carries the poster's user id; show their name.
+        const who = slackNames()[f.who] ?? f.who;
+        const r = withWatcherDb((db) => reopenForFollowup(db, { ...f, who }));
+        if (!r.ok) return { ok: false, detail: r.detail };
+        notifyUser({ title: 'Follow-up', body: followupLabel(f.kind, who), target: { agent: f.agent as Agent, sid: f.sessionId } });
+        return { ok: true, detail: r.reopened ? 'reopened' : 'already reopened; added to it' };
+      },
+    },
   };
 }
 

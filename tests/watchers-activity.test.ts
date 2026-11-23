@@ -6,6 +6,8 @@ import { getWatcher, insertWatcher, validateDraft, type WatcherDraft } from '../
 import { newEngineState, testWatcher, tickWatchers, type ActivityDeps, type EngineDeps, type TestDeps } from '../src/watchers/engine.ts';
 import {
   chatForPr,
+  ghDetailVia,
+  ghNotificationsVia,
   githubMatches,
   markThreadChecked,
   prUrlOf,
@@ -285,5 +287,36 @@ describe('the activity source in the engine', () => {
     const { reopenForFollowup } = await import('../src/parked.ts');
     expect(reopenForFollowup(db, { agent: 'claude', sessionId: 's', kind: 'comment', who: 'ana', text: 'x', url: PR, at: NOW })).toEqual({ ok: true, reopened: true });
     expect(getParked(db, 'claude', 's')?.state).toBe('replied');
+  });
+});
+
+describe('gh adapters', () => {
+  it('ghNotificationsVia reads X-Poll-Interval and the body, and passes since only when set', async () => {
+    const calls: string[][] = [];
+    const run = async (args: string[]) => {
+      calls.push(args);
+      return 'HTTP/2.0 200 OK\r\nX-Poll-Interval: 120\r\nContent-Type: application/json\r\n\r\n' + JSON.stringify([note()]);
+    };
+    expect(await ghNotificationsVia(run, '')).toEqual({ items: [note()], pollAfterMs: 120_000 });
+    await ghNotificationsVia(run, '2027-01-15T08:00:00Z');
+    expect(calls[0]).toEqual(['api', '-i', 'notifications?all=false&per_page=50']);
+    expect(calls[1]).toEqual(['api', '-i', 'notifications?all=false&per_page=50&since=2027-01-15T08%3A00%3A00Z']);
+  });
+  it('ghNotificationsVia treats 304 Not Modified as nothing new', async () => {
+    expect(await ghNotificationsVia(async () => 'HTTP/2.0 304 Not Modified\r\nX-Poll-Interval: 60\r\n\r\n', 'x')).toEqual({ items: [], pollAfterMs: 60_000 });
+  });
+  it('ghDetailVia: a comment gives its author, body and link; the PR gives merged', async () => {
+    const run = async (args: string[]) => {
+      const u = args[1];
+      if (u.endsWith('/pulls/12')) return JSON.stringify({ merged: false, state: 'open', user: { login: 'author' }, html_url: PR });
+      if (u.endsWith('/comments/9')) return JSON.stringify({ user: { login: 'ana' }, body: 'x'.repeat(600), html_url: PR + '#discussion_r9' });
+      throw new Error('unexpected ' + u);
+    };
+    const d = await ghDetailVia(run, note({ reason: 'comment', subject: { ...note().subject, latest_comment_url: 'https://api.github.com/repos/acme/app/pulls/comments/9' } }));
+    expect(d).toEqual({ who: 'ana', text: 'x'.repeat(500), url: PR + '#discussion_r9', merged: false });
+  });
+  it('ghDetailVia: a review request with no comment names the PR author; closed counts as merged', async () => {
+    const run = async () => JSON.stringify({ merged: false, state: 'closed', user: { login: 'author' }, html_url: PR });
+    expect(await ghDetailVia(run, note())).toEqual({ who: 'author', text: '', url: PR, merged: true });
   });
 });

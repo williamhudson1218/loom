@@ -161,3 +161,40 @@ export function slackMatches(t: ThreadDue, msgs: SlackMsg[], me: string): Match[
     };
   });
 }
+
+/* ------------------------------------------------------------ gh adapters */
+
+/** Runs `gh` with args and resolves stdout (outboxreview.ts's ghRun in production, a stub in tests). */
+export type GhRunner = (args: string[]) => Promise<string>;
+
+/**
+ * The notifications feed since `since` (ISO; '' for everything unread), read with
+ * `gh api -i` so GitHub's X-Poll-Interval header comes back too. Read-only: nothing
+ * is marked read.
+ */
+export async function ghNotificationsVia(run: GhRunner, since: string): Promise<{ items: GhNotification[]; pollAfterMs: number }> {
+  const q = 'notifications?all=false&per_page=50' + (since ? `&since=${encodeURIComponent(since)}` : '');
+  const raw = await run(['api', '-i', q]);
+  const cut = raw.search(/\r?\n\r?\n/);
+  const head = cut < 0 ? raw : raw.slice(0, cut);
+  const body = cut < 0 ? '' : raw.slice(cut).trim();
+  const poll = Number(head.match(/^x-poll-interval:\s*(\d+)/im)?.[1] ?? 0) * 1000;
+  if (/^HTTP\/[\d.]+ 304/.test(head) || !body) return { items: [], pollAfterMs: poll };
+  const items = JSON.parse(body) as unknown;
+  return { items: Array.isArray(items) ? (items as GhNotification[]) : [], pollAfterMs: poll };
+}
+
+/**
+ * Who did what on a notification's PR: the latest comment's author, text and link
+ * when there is one, else the PR's author and link (a review request). `merged` is
+ * true for a merged or closed PR, which ends the watch.
+ */
+export async function ghDetailVia(run: GhRunner, n: GhNotification): Promise<GhDetail> {
+  const pr = JSON.parse(await run(['api', n.subject.url])) as { merged?: boolean; state?: string; user?: { login?: string }; html_url?: string };
+  const merged = pr.merged === true || pr.state === 'closed';
+  const c = n.subject.latest_comment_url && n.subject.latest_comment_url !== n.subject.url
+    ? (JSON.parse(await run(['api', n.subject.latest_comment_url])) as { user?: { login?: string }; body?: string; html_url?: string })
+    : null;
+  if (c) return { who: c.user?.login ?? '', text: String(c.body ?? '').slice(0, 500), url: c.html_url ?? pr.html_url ?? '', merged };
+  return { who: pr.user?.login ?? '', text: '', url: pr.html_url ?? '', merged };
+}
