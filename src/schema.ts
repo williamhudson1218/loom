@@ -505,6 +505,8 @@ export function applySchema(db: Database.Database): void {
   ensureChatGroupColumns(db);
   db.exec(PARKED_SCHEMA_SQL);
   ensureParkedColumns(db);
+  // The Follow-ups watcher's per-thread back-off (src/watchers/sources/activity.ts).
+  db.exec(`CREATE TABLE IF NOT EXISTS followup_threads (thread_key TEXT PRIMARY KEY, last_check_at INTEGER NOT NULL)`);
   db.exec(TEST_LINKS_SCHEMA_SQL);
   db.exec(ACTIONS_SCHEMA_SQL);
   ensureActionColumns(db);
