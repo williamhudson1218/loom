@@ -113,6 +113,24 @@ describe('watchers view', () => {
     }
   });
 
+  it('activity offers only reopen_chat and notify, switches to reopen_chat, and round-trips', () => {
+    const p = page();
+    expect(p.wvActsFor('activity').map((a: string[]) => a[0])).toEqual(['reopen_chat', 'notify']);
+    expect(p.wvActsFor('slack').map((a: string[]) => a[0])).not.toContain('reopen_chat');
+    const d = p.wvBlank();
+    p.wvSetSource(d, 'activity');
+    expect(d.action.kind).toBe('reopen_chat');
+    expect(d.source.params).toEqual({ github: true, slack: true, days: 14, max_threads: 40 });
+    for (const a of ['reopen_chat', 'notify']) {
+      p.wvSetAction(d, a);
+      const r: any = validateDraft(JSON.parse(JSON.stringify(d)));
+      expect(r.ok, `activity/${a}: ${r.detail}`).toBe(true);
+    }
+    p.wvSetSource(d, 'slack');
+    expect(d.action.kind).not.toBe('reopen_chat');
+    expect(p.wvSourceSum(Object.assign(p.wvBlank(), { source: { kind: 'activity', params: { github: true, slack: false, days: 7 } } }))).toBe('GitHub, last 7 days');
+  });
+
   it('keeps the brief text when the action kind changes', () => {
     const p = page();
     const d = p.wvBlank();

@@ -13,7 +13,7 @@ export interface WatcherTemplate {
   id: string;
   label: string;
   description: string;
-  group: 'Slack' | 'Chats' | 'Pull requests';
+  group: 'Slack' | 'Chats' | 'Pull requests' | 'Follow-ups';
   /** What must be set up for it to work (the editor shows it, the wizard filters by it). */
   needs: TemplateNeed;
   /** Fields the user must fill before it can be enabled. */
@@ -138,6 +138,10 @@ export const TEMPLATES: WatcherTemplate[] = [
   T('pr-green', 'Pull requests', 'Approved and green', 'One of your PRs is approved with green checks: get a notification.', 'gh', [],
     ['prs', { repos: [], mine_only: true }], ['approved_green', {}],
     ['notify', { template: '{{PR}} is approved and green' }]),
+  // Follow-ups (GitHub through gh; Slack threads when Slack is connected)
+  T('followups', 'Follow-ups', 'Follow-ups on closed chats', 'Someone re-requests your review, mentions you, or replies on the PR or Slack thread of a chat you closed: put that chat back on Your turn.', 'gh', [],
+    ['activity', { github: true, slack: true, days: 14, max_threads: 40 }], ['aimed_at_me', { reasons: ['review_requested', 'mention', 'team_mention', 'comment'] }],
+    ['reopen_chat', {}], { max_per_hour: 0, cooldown_min: 0 }),
 ];
 
 export function getTemplate(id: string): WatcherTemplate | null {

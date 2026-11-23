@@ -164,9 +164,11 @@ export const WATCHER_VIEW_HTML = String.raw`
 
 export const WATCHER_VIEW_JS = String.raw`
 var WV_TRIGGERS=__WV_TRIGGERS__;
-var WV_SRC=[['slack','Slack channel'],['chats','Chats'],['prs','Pull requests'],['work','Findings endpoint']];
-var WV_ACT=[['start_chat','Start a chat with a brief'],['message_chat','Send a message into the matching chat'],['notify','Notify me (Mac notification)'],['tell_orch','Tell the orchestrator']];
-var WV_CHIPS={slack:['WATCHER','TITLE','URL','TEXT','AUTHOR','CHANNEL','PR_URLS'],chats:['WATCHER','CHAT_TITLE','PROJECT','PANE','IDLE_MIN','PERCENT'],prs:['WATCHER','TITLE','PR','PR_TITLE','URL','CHECK'],work:['WATCHER','TITLE','RULE','TICKET','SUBJECT','DETAIL','CLEAR','BATCH_FILE','COUNT']};
+var WV_SRC=[['slack','Slack channel'],['chats','Chats'],['prs','Pull requests'],['work','Findings endpoint'],['activity','Follow-ups']];
+var WV_ACT=[['start_chat','Start a chat with a brief'],['message_chat','Send a message into the matching chat'],['notify','Notify me (Mac notification)'],['tell_orch','Tell the orchestrator'],['reopen_chat','Reopen the chat']];
+/* Reopening needs a closed chat, which only the activity source names; activity can reopen or notify. */
+function wvActsFor(src){if(src==='activity')return ['reopen_chat','notify'].map(function(k){return WV_ACT.filter(function(a){return a[0]===k;})[0];});return WV_ACT.filter(function(a){return a[0]!=='reopen_chat';});}
+var WV_CHIPS={slack:['WATCHER','TITLE','URL','TEXT','AUTHOR','CHANNEL','PR_URLS'],chats:['WATCHER','CHAT_TITLE','PROJECT','PANE','IDLE_MIN','PERCENT'],prs:['WATCHER','TITLE','PR','PR_TITLE','URL','CHECK'],work:['WATCHER','TITLE','RULE','TICKET','SUBJECT','DETAIL','CLEAR','BATCH_FILE','COUNT'],activity:['WATCHER','TITLE','KIND','WHO','TEXT','URL']};
 var WV_LABELS={bot_ids:['Bot ids','Comma separated Slack bot ids (B...).'],user_ids:['User ids','Comma separated Slack user ids (U...).'],needle:['Phrase','Slack bot posts match the exact text; people posts ignore case.'],repos:['Repos','Comma separated owner/name. Empty means any repo.'],exclude_user_ids:['Ignore these user ids','Comma separated. Your own id is always ignored when "Ignore my own posts" is on.'],any_author:['Include posts by bots','Off means people only.'],min:['Minutes',''],min_sec:['Seconds waiting',''],max_h:['Ignore after (hours)','Chats waiting longer than this are old news.'],fraction:['Fraction of context used','0.85 means 85 percent.']};
 var WV={built:false,sel:'',draft:null,orig:null,dirty:false,tpls:[],have:{},chan:{},projects:[],lanes:[],groups:[],newGroup:null,cfg:{},test:null,testing:false,shadow:[],fires:[],msg:'',msgErr:false,skipOk:false,confirmDel:false,editorFor:'__none__',loaded:false,link:'',linkMsg:'',firesShown:20,inv:{},invQ:'',chipTarget:'wv-brief',pane:'',termSid:'',termHost:null,optsOpen:false,addOpen:false,spawnsOpen:false,open:{},moreOpen:false};
 
@@ -179,12 +181,13 @@ function wvListText(a){return (a||[]).join(', ');}
 function wvDraftOf(w){return {label:w.label,enabled:!!w.enabled,run_mode:w.run_mode==='live'?'live':'shadow',source:wvClone(w.source),trigger:{kind:w.trigger.kind,params:wvClone(w.trigger.params||{})},action:wvClone(w.action),max_per_hour:w.max_per_hour,cooldown_min:w.cooldown_min,quiet_start:w.quiet_start||'',quiet_end:w.quiet_end||'',template_id:w.template_id||''};}
 function wvPayload(d){return wvClone(d);}
 function wvBlank(){return {label:'New watcher',enabled:false,run_mode:'shadow',source:{kind:'slack',params:{channel:'',workspace:''}},trigger:{kind:'phrase',params:{needle:'',any_author:false}},action:{kind:'notify',params:{template:'{{TITLE}}'}},max_per_hour:6,cooldown_min:60,quiet_start:'',quiet_end:'',template_id:''};}
-function wvWatches(w){var p=w.source.params||{};var k=w.source.kind;if(k==='slack'){var n=p.channel&&WV.chan[p.channel];return (n?'#'+String(n).split('#').join(''):(p.channel||'no channel chosen'))+' - '+(w.trigger.label||w.trigger.kind);}if(k==='chats'){var pr=(p.projects||[]);return (pr.length?'chats in '+pr.join(', '):'your chats')+' - '+(w.trigger.label||w.trigger.kind);}if(k==='work'){return (p.url?String(p.url).replace('https://','').replace('http://',''):'no endpoint set')+' - '+(w.trigger.label||w.trigger.kind);}var r=(p.repos||[]);return (r.length?r.join(', '):'your pull requests')+' - '+(w.trigger.label||w.trigger.kind);}
+function wvWatches(w){var p=w.source.params||{};var k=w.source.kind;if(k==='slack'){var n=p.channel&&WV.chan[p.channel];return (n?'#'+String(n).split('#').join(''):(p.channel||'no channel chosen'))+' - '+(w.trigger.label||w.trigger.kind);}if(k==='chats'){var pr=(p.projects||[]);return (pr.length?'chats in '+pr.join(', '):'your chats')+' - '+(w.trigger.label||w.trigger.kind);}if(k==='work'){return (p.url?String(p.url).replace('https://','').replace('http://',''):'no endpoint set')+' - '+(w.trigger.label||w.trigger.kind);}if(k==='activity')return 'your GitHub and Slack activity - '+(w.trigger.label||w.trigger.kind);var r=(p.repos||[]);return (r.length?r.join(', '):'your pull requests')+' - '+(w.trigger.label||w.trigger.kind);}
 function wvTrigs(src){return WV_TRIGGERS[src]||[];}
 function wvTrigDef(src,kind){var l=wvTrigs(src);for(var i=0;i<l.length;i++)if(l[i].kind===kind)return l[i];return l[0];}
-function wvSetSource(d,src){var srcDefaults={slack:{channel:'',workspace:''},chats:{projects:[],tags:[]},prs:{repos:[],mine_only:true},work:{url:'',sweep_first:false}};d.source={kind:src,params:srcDefaults[src]};var t=wvTrigs(src)[0];d.trigger={kind:t.kind,params:wvClone(t.defaults)};}
+function wvSetSource(d,src){var srcDefaults={slack:{channel:'',workspace:''},chats:{projects:[],tags:[]},prs:{repos:[],mine_only:true},work:{url:'',sweep_first:false},activity:{github:true,slack:true,days:14,max_threads:40}};d.source={kind:src,params:srcDefaults[src]};var t=wvTrigs(src)[0];d.trigger={kind:t.kind,params:wvClone(t.defaults)};
+  if(src==='activity'){if(d.action.kind!=='reopen_chat')wvSetAction(d,'reopen_chat');}else if(d.action.kind==='reopen_chat')wvSetAction(d,'notify');}
 function wvSetTrigger(d,kind){var t=wvTrigDef(d.source.kind,kind);d.trigger={kind:t.kind,params:wvClone(t.defaults)};}
-function wvSetAction(d,kind){var old=d.action.params||{};var tmpl=old.template!=null?old.template:(old.brief_template||'');if(kind==='start_chat')d.action={kind:kind,params:{project_dir:old.project_dir||'',target:old.target||'managed',brief_template:old.brief_template!=null?old.brief_template:tmpl,perm:old.perm||'inherit',standing:old.standing===true,group_id:old.group_id||0}};else d.action={kind:kind,params:{template:old.template!=null?old.template:tmpl}};wvCarryInvoke(d,old);}
+function wvSetAction(d,kind){var old=d.action.params||{};var tmpl=old.template!=null?old.template:(old.brief_template||'');if(kind==='reopen_chat'){d.action={kind:kind,params:{}};return;}if(kind==='start_chat')d.action={kind:kind,params:{project_dir:old.project_dir||'',target:old.target||'managed',brief_template:old.brief_template!=null?old.brief_template:tmpl,perm:old.perm||'inherit',standing:old.standing===true,group_id:old.group_id||0}};else d.action={kind:kind,params:{template:old.template!=null?old.template:tmpl}};wvCarryInvoke(d,old);}
 function wvCarryInvoke(d,old){var ap=d.action.params;if((d.action.kind==='start_chat'||d.action.kind==='message_chat')&&old.invoke){ap.invoke=wvClone(old.invoke);ap.notes=old.notes||'';}}
 function wvInvMode(ap){return ap.invoke&&ap.invoke.kind?ap.invoke.kind:'brief';}
 function wvSetInvMode(ap,mode){if(mode==='brief'){delete ap.invoke;return;}var cur=ap.invoke||{};ap.invoke={kind:mode,name:cur.kind===mode?cur.name:'',args:cur.args||''};if(ap.notes==null)ap.notes='';}
@@ -198,7 +201,7 @@ function wvResultPill(e){var m={held_quiet:['warn','Held: quiet hours'],held_cap
 function wvAgo(ms,now){if(!ms)return '';var s=Math.max(0,Math.round((now-ms)/1000));if(s<60)return 'just now';var m=Math.round(s/60);if(m<60)return m+' min ago';var h=Math.round(m/60);if(h<48)return h+' h ago';return Math.round(h/24)+' d ago';}
 function wvPollText(w,now){if(!w.enabled)return 'Off';if(!w.last_poll_at)return 'Not polled yet';return 'Polled '+wvAgo(w.last_poll_at,now);}
 function wvEvery(ms){if(!ms)return '';if(ms<60000)return 'every '+Math.round(ms/1000)+' s';return 'every '+Math.round(ms/60000)+' min';}
-var WV_SRCNAME={slack:'Slack',chats:'Chats',prs:'Pull requests',work:'Findings endpoint'};
+var WV_SRCNAME={slack:'Slack',chats:'Chats',prs:'Pull requests',work:'Findings endpoint',activity:'Follow-ups'};
 /* The list row's first muted line: "<source kind> · every N min · polled X ago". */
 function wvRowLine1(w,now){var p=[WV_SRCNAME[w.source.kind]||w.source.kind];var e=wvEvery(w.poll_every_ms);if(e)p.push(e);p.push(w.enabled?wvPollText(w,now).toLowerCase():'not polling');return p.join(' · ');}
 /* The second line, only when something wants attention: [class, text] parts. */
@@ -216,11 +219,12 @@ function wvRowLine2(w,dot){var o=[];var r=wvNeeds(w,dot);wvNeedWords(w,r).forEac
 function wvActionLine(d,projects){var a=d.action,p=a.params||{};var inv=p.invoke&&p.invoke.name?'/'+p.invoke.name:'';var o=[];
   if(a.kind==='start_chat'){o.push(p.standing===true?'Standing chat':'New chat per match');var nm='';(projects||[]).forEach(function(x){if(x.path===p.project_dir)nm=x.name;});if(p.project_dir)o.push(nm||p.project_dir);o.push(p.target&&p.target!=='managed'?'lane '+String(p.target).slice(5):'new managed window');o.push(inv||'brief');var gn='';((typeof WV!=='undefined'&&WV.groups)||[]).forEach(function(g){if(g.id===Number(p.group_id))gn=g.name;});if(gn)o.push('into '+gn);}
   else if(a.kind==='message_chat'){o.push('Messages the matching chat');o.push(inv||'message');}
+  else if(a.kind==='reopen_chat')o.push('Reopens the closed chat');
   else if(a.kind==='notify')o.push('Mac notification');
   else o.push('Tells the orchestrator');
   return o.join(' · ');}
 /* One-line summaries for the collapsed Settings cards. */
-function wvSourceSum(d){var p=d.source.params||{};var k=d.source.kind;if(k==='slack'){var n=p.channel&&WV.chan[p.channel];return (n?'#'+String(n).split('#').join(''):(p.channel||'No channel chosen'))+(p.workspace?' in '+p.workspace:'');}if(k==='chats'){return ((p.projects||[]).length?'Chats in '+p.projects.join(', '):'All chats')+((p.tags||[]).length?', tagged '+p.tags.join(' or '):'');}if(k==='work')return p.url||'No endpoint set';return ((p.repos||[]).length?p.repos.join(', '):'Any repo')+(p.mine_only===false?', any author':', mine only');}
+function wvSourceSum(d){var p=d.source.params||{};var k=d.source.kind;if(k==='slack'){var n=p.channel&&WV.chan[p.channel];return (n?'#'+String(n).split('#').join(''):(p.channel||'No channel chosen'))+(p.workspace?' in '+p.workspace:'');}if(k==='chats'){return ((p.projects||[]).length?'Chats in '+p.projects.join(', '):'All chats')+((p.tags||[]).length?', tagged '+p.tags.join(' or '):'');}if(k==='work')return p.url||'No endpoint set';if(k==='activity'){var fe=[];if(p.github!==false)fe.push('GitHub');if(p.slack!==false)fe.push('Slack');return (fe.length?fe.join(' + '):'Nothing')+', last '+(p.days||14)+' days';}return ((p.repos||[]).length?p.repos.join(', '):'Any repo')+(p.mine_only===false?', any author':', mine only');}
 function wvTriggerSum(d){var t=wvTrigDef(d.source.kind,d.trigger.kind);var o=[t?t.label:d.trigger.kind];var tp=d.trigger.params||{};Object.keys(tp).forEach(function(k){var v=tp[k];var lab=(WV_LABELS[k]||[k])[0];if(Array.isArray(v)){if(v.length)o.push(lab+': '+v.join(', '));}else if(typeof v==='boolean'){if(v)o.push(lab);}else if(v!==''&&v!=null)o.push(lab+': '+(typeof v==='string'?'"'+v+'"':v));});return o.join(' · ');}
 function wvLimitsSum(d){var o=[d.max_per_hour?d.max_per_hour+' per hour':'No hourly cap',d.cooldown_min?d.cooldown_min+' min cooldown':'No cooldown'];o.push(d.quiet_start&&d.quiet_end?'quiet '+d.quiet_start+' to '+d.quiet_end:'no quiet hours');return o.join(' · ');}
 /* The Chat tab's status line after the turn state: "pane blue-vanilla · last batch 20 min ago". */
@@ -351,7 +355,7 @@ function wvDrawList(){
   if(!WV.addOpen)return;
   // from template
   var tf=wvEl('div','wvfld');tf.style.marginTop='8px';tf.appendChild(wvEl('label','','Start from a template'));
-  var groups=['Slack','Chats','Pull requests'];
+  var groups=['Slack','Chats','Pull requests','Follow-ups'];
   var ts=wvEl('select');ts.id='wv-tpl';var o0=wvEl('option','','Choose a template...');o0.value='';ts.appendChild(o0);
   groups.forEach(function(g){var og=wvEl('optgroup');og.label=g;WV.tpls.forEach(function(t){if(t.group!==g)return;var needsSlack=t.needs==='slack_direct'&&!WV.have.slack_direct;var needsOrch=t.needs==='orchestrator'&&!WV.have.orchestrator;var op=wvEl('option','',t.label+(needsSlack?' (needs Slack, Direct)':needsOrch?' (needs the orchestrator)':t.needs==='gh'?' (needs gh)':''));op.value=t.id;op.title=t.description;og.appendChild(op);});ts.appendChild(og);});
   ts.onchange=function(){var id=ts.value;if(!id)return;ts.disabled=true;wvPost('/api/watchers/from-template',{template_id:id}).then(function(j){ts.disabled=false;ts.value='';if(!j.ok){WV.msg=j.detail||'could not create it';WV.msgErr=true;wvSync();return;}return wvRefresh().then(function(){WV.dirty=false;wvSelect(j.watcher.id);WV.msg='Created from the template, switched off and in Shadow. Fill it in, Test it, then enable it.';WV.msgErr=false;wvSync();});});};
@@ -489,6 +493,14 @@ function wvDrawSource(right,d){
     g2.appendChild(wvFld('Projects',wvText(function(){return wvListText(p.projects);},function(v){p.projects=wvList(v);},{ph:'All projects'}),'Comma separated project folder names or paths. Empty means every project.'));
     g2.appendChild(wvFld('Tags',wvText(function(){return wvListText(p.tags);},function(v){p.tags=wvList(v);},{ph:'Any tag'}),'Comma separated. A chat with any one of them matches.'));
     c.appendChild(g2);c.appendChild(wvEl('div','wvdef','Reads the live chats Loom already tracks: state, last output time and context use.'));
+  }else if(d.source.kind==='activity'){
+    var g5=wvEl('div','wvg2');
+    var gh=wvEl('label','wvtog');var ghc=wvEl('input');ghc.type='checkbox';ghc.id='wv-act-gh';ghc.checked=p.github!==false;ghc.onchange=function(){p.github=ghc.checked;wvDirty();};gh.appendChild(ghc);gh.appendChild(wvEl('span','','GitHub notifications (review requests, mentions, replies)'));g5.appendChild(gh);
+    var sl2=wvEl('label','wvtog');var slc=wvEl('input');slc.type='checkbox';slc.id='wv-act-slack';slc.checked=p.slack!==false;slc.onchange=function(){p.slack=slc.checked;wvDirty();};sl2.appendChild(slc);sl2.appendChild(wvEl('span','','Slack threads of closed chats'));g5.appendChild(sl2);
+    g5.appendChild(wvFld('Look back (days)',wvText(function(){return String(p.days==null?14:p.days);},function(v){var n=parseInt(v,10);p.days=isNaN(n)?14:n;},{ph:'14'}),'Chats last active longer ago than this are not watched.'));
+    g5.appendChild(wvFld('Most threads per poll',wvText(function(){return String(p.max_threads==null?40:p.max_threads);},function(v){var n=parseInt(v,10);p.max_threads=isNaN(n)?40:n;},{ph:'40'}),'Slack threads read per poll, newest chats first.'));
+    c.appendChild(g5);
+    c.appendChild(wvEl('div','wvdef','Polls every 3 minutes. GitHub is read with gh (one call for the notifications feed); Slack threads are read from the chats that own them. Live chats and chats Send & park is waiting on are left alone, and a merged or closed PR ends its watch.'));
   }else if(d.source.kind==='work'){
     var g4=wvEl('div','wvg2');
     g4.appendChild(wvFld('Endpoint URL',wvText(function(){return p.url;},function(v){p.url=v.trim();},{ph:'https://findings.example.com/api/audit'}),'Polled every 15 minutes. The bearer token is read from the Keychain.'));
@@ -567,7 +579,7 @@ function wvGroupPick(ap){
 }
 function wvDrawAction(right,d){
   var c=wvCard();c.id='wv-action';
-  var ak=wvSel(WV_ACT.map(function(a){return [a[0],a[1],a[0]==='tell_orch'&&WV.have.orchestrator===false&&d.action.kind!=='tell_orch'];}),d.action.kind,function(v){wvSetAction(d,v);},function(){wvDrawEditor();});ak.id='wv-action-kind';
+  var ak=wvSel(wvActsFor(d.source.kind).map(function(a){return [a[0],a[1],a[0]==='tell_orch'&&WV.have.orchestrator===false&&d.action.kind!=='tell_orch'];}),d.action.kind,function(v){wvSetAction(d,v);},function(){wvDrawEditor();});ak.id='wv-action-kind';
   c.appendChild(wvFld('Then',ak,d.action.kind==='tell_orch'&&WV.have.orchestrator===false?'The orchestrator is off, so this action fails until it is turned on (Settings, Orchestrator).':''));
   var ap=d.action.params;
   if(d.action.kind==='start_chat'){
@@ -586,6 +598,8 @@ function wvDrawAction(right,d){
     c.appendChild(wvFld('Put new chats in',wvGroupPick(ap),'A sidebar group. Its chats stay there until you move them.'));
     var sl=wvEl('label','wvtog');sl.style.margin='0 0 10px';var sc=wvEl('input');sc.type='checkbox';sc.id='wv-standing';sc.checked=ap.standing===true;sc.onchange=function(){ap.standing=sc.checked;wvSync();};sl.appendChild(sc);sl.appendChild(wvEl('span','','Keep one chat for this watcher: later matches are sent to it, and everything from one poll goes out as one batch.'));c.appendChild(sl);
     wvDrawPayload(c,d,ap,'brief_template',9);
+  }else if(d.action.kind==='reopen_chat'){
+    c.appendChild(wvEl('div','wvdef','Puts the chat back on Your turn with a follow-up badge naming who did what, in its sidebar group. Its pane is not relaunched: press Resume to pick it up.'));
   }else{
     if(d.action.kind==='message_chat')wvDrawPayload(c,d,ap,'template',4);
     else{var lab={notify:'Notification text',tell_orch:'What to tell the orchestrator'}[d.action.kind];

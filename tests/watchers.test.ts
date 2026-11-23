@@ -747,9 +747,9 @@ describe('Test (POST /api/watchers/test) writes nothing', () => {
 });
 
 describe('templates', () => {
-  it('there are 11, all generic: no person, workspace, repo, channel or house skill', () => {
-    expect(TEMPLATES).toHaveLength(11);
-    expect(templateList().map((t) => t.group)).toEqual(['Slack', 'Slack', 'Slack', 'Chats', 'Chats', 'Chats', 'Chats', 'Chats', 'Pull requests', 'Pull requests', 'Pull requests']);
+  it('there are 12, all generic: no person, workspace, repo, channel or house skill', () => {
+    expect(TEMPLATES).toHaveLength(12);
+    expect(templateList().map((t) => t.group)).toEqual(['Slack', 'Slack', 'Slack', 'Chats', 'Chats', 'Chats', 'Chats', 'Chats', 'Pull requests', 'Pull requests', 'Pull requests', 'Follow-ups']);
     const text = JSON.stringify(TEMPLATES);
     for (const bad of ['Will', 'tax-pilot', 'Tax Pilot', 'will-voice', 'review-pr', 'query-prod-db', 'handling-slack-threads', 'slack-threads.py', 'loom-tp', '~/dev', 'C0B']) expect(text).not.toContain(bad);
     expect(text).toContain('{{REVIEW_SKILL}}');
@@ -765,6 +765,12 @@ describe('templates', () => {
     const ok = createFromTemplate(db, 'slack-pr-posts', { enabled: true, source_params: { channel: 'C0ABCDEF' }, trigger_params: { repos: ['acme/app'] }, action_params: { project_dir: '/work/app' } });
     expect(ok.ok).toBe(true);
     expect(createFromTemplate(db, 'nope').ok).toBe(false);
+  });
+  it('the Follow-ups template enables with nothing to fill, in Shadow, reopening chats', () => {
+    const r = createFromTemplate(db, 'followups', { enabled: true }, NOW);
+    expect(r.ok).toBe(true);
+    const w = getWatcher(db, (r as { id: string }).id)!;
+    expect([w.enabled, w.run_mode, w.source.kind, w.trigger.kind, w.action.kind, w.max_per_hour, w.cooldown_min]).toEqual([true, 'shadow', 'activity', 'aimed_at_me', 'reopen_chat', 0, 0]);
   });
   it('a fresh DB has zero watchers (no built-in seeding)', () => {
     expect(listWatchers(db)).toEqual([]);
