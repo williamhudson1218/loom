@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { TERMWARM_JS } from '../src/termwarm.ts';
 import { checkSnapAuth, parseSnapshotOut, snapshotArgs, snapshotData, snapshotScreen } from '../src/ptybridge.ts';
 
-const w = new Function(`${TERMWARM_JS}; return { createHandoff, snapPaint, livePaint, fitSnap, WarmPool, SnapCache };`)() as any;
+const w = new Function(`${TERMWARM_JS}; return { createHandoff, snapPaint, livePaint, fitSnap, WarmPool, SnapCache, glLost };`)() as any;
 
 describe('snapshot -> live handoff', () => {
   it('paints the snapshot, then resets once on the first live byte only', () => {
@@ -118,5 +118,24 @@ describe('server snapshot', () => {
     expect(checkSnapAuth({ host: 'evil.com' }, 'tok', o).ok).toBe(false);
     expect(checkSnapAuth({ ...h, origin: 'http://evil.com' }, 'tok', o).ok).toBe(false);
     expect(checkSnapAuth({ ...h, origin: 'http://localhost:4317' }, 'tok', o).ok).toBe(true);
+  });
+});
+
+// Sleep/wake loses the WebGL context; dropping the addon swaps in the DOM renderer, whose cells are wider
+// (WebGL floors the cell to device pixels, DOM does not), and the element's size never changed, so no
+// ResizeObserver fires. Without a refit the old cols overflow the frame and the cursor sits outside it.
+describe('WebGL context loss', () => {
+  it('drops the addon first, then refits the view to the new renderer', () => {
+    const calls: string[] = [];
+    const e = { parked: false, destroyed: false, layout: () => calls.push('layout') };
+    w.glLost(e, () => calls.push('drop'));
+    expect(calls).toEqual(['drop', 'layout']);
+  });
+  it('does not lay out a parked or destroyed view', () => {
+    for (const st of [{ parked: true }, { destroyed: true }]) {
+      const calls: string[] = [];
+      w.glLost({ parked: false, destroyed: false, layout: () => calls.push('layout'), ...st }, () => calls.push('drop'));
+      expect(calls).toEqual(['drop']);
+    }
   });
 });

@@ -42,4 +42,8 @@ function SnapCache(fetcher,ttl){this.f=fetcher;this.ttl=ttl;this.m=new Map();}
 SnapCache.prototype.get=function(k,now){now=now===undefined?Date.now():now;const hit=this.m.get(k);if(hit&&now-hit.at<this.ttl)return hit.p;
   const p=this.f(k);const self=this;this.m.set(k,{at:now,p:p});p.then(r=>{if(!r&&self.m.get(k)&&self.m.get(k).p===p)self.m.delete(k);},()=>{if(self.m.get(k)&&self.m.get(k).p===p)self.m.delete(k);});
   if(this.m.size>32){for(const kk of this.m.keys()){this.m.delete(kk);break;}}return p;};
+// A lost WebGL context (sleep/wake, GPU reset): drop(e) disposes the addon, which swaps in the DOM renderer.
+// Its cells are wider (WebGL floors them to device pixels) but the element's size is unchanged, so no
+// ResizeObserver fires: re-run the view's layout, or the old cols overflow the frame and the cursor sits outside it.
+function glLost(e,drop){drop(e);if(e.layout&&!e.parked&&!e.destroyed)e.layout();}
 `;
