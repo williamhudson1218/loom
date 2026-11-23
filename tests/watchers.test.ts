@@ -393,17 +393,50 @@ describe('start_chat drain', () => {
     expect(await drainQueue(db, getWatcher(db, w.id)!, busy)).toEqual({ started: 0, waiting: 1 });
     expect(db.prepare(`SELECT result, detail FROM watcher_events`).get()).toEqual({ result: 'queued', detail: 'waiting for a free loom-tp pane' });
 
-    const free = deps({ panes: [pane('%12', 'loom-tp-3', 1)], launchSettings: () => LEGACY_LAUNCH_SETTINGS });
+    const free = deps({ panes: [pane('%12', 'loom-tp-3', 1)], launchSettings: () => LEGACY_LAUNCH_SETTINGS, newSessionId: () => 'sid-1' });
     expect(await drainQueue(db, getWatcher(db, w.id)!, free)).toEqual({ started: 1, waiting: 0 });
-    const row = db.prepare(`SELECT decision, result, pane_id, pane_name, pane_where, brief_path FROM watcher_events`).get() as Record<string, string>;
-    expect(row).toMatchObject({ decision: 'fired', result: 'started', pane_id: '%12', pane_name: 'name-12', pane_where: 'loom-tp-3:1.1' });
+    const row = db.prepare(`SELECT decision, result, pane_id, pane_name, pane_where, brief_path, session_id FROM watcher_events`).get() as Record<string, string>;
+    expect(row).toMatchObject({ decision: 'fired', result: 'started', pane_id: '%12', pane_name: 'name-12', pane_where: 'loom-tp-3:1.1', session_id: 'sid-1' });
     expect(row.brief_path).toBe(path.join(tmp, 'briefs', `${w.id}-1700000005-000500.md`));
     expect(fs.readFileSync(row.brief_path, 'utf-8')).toBe(`Look at #5 Payroll export broken\nhttps://acme.slack.com/archives/${CH}/p1700000005000500\nDo NOT react.`);
-    expect(free.launches[0]).toEqual(['%12', launchCommand('/work/app', row.brief_path, 'name-12', LEGACY_LAUNCH_SETTINGS)]);
+    expect(free.launches[0]).toEqual(['%12', launchCommand('/work/app', row.brief_path, 'name-12', LEGACY_LAUNCH_SETTINGS, 'sid-1')]);
+    // No group set: the chat lands in the main list.
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM chat_group_members`).get()).toEqual({ n: 0 });
 
     // A just-launched pane is not reused on the next drain, even if it still looks idle.
     decide(db, getWatcher(db, w.id)!, { key: '1700000006.000000', subject: 's', title: 't', permalink: '', vars: {} }, { now: NOW });
     expect(await drainQueue(db, getWatcher(db, w.id)!, deps({ panes: [pane('%12', 'loom-tp-3', 1)] }))).toEqual({ started: 0, waiting: 1 });
+  });
+  it('files each started chat into the watcher group, by the session id it launched with', async () => {
+    const gid = Number(db.prepare(`INSERT INTO chat_groups (name, created_at, position) VALUES ('PR reviews', 0, 1)`).run().lastInsertRowid);
+    const w = add(db, slackDraft({ action: { kind: 'start_chat', params: { project_dir: '/p', target: 'lane:tp', brief_template: 'b', perm: 'inherit', group_id: gid } } }));
+    await queue(w, '1.000001', '2.000002');
+    let n = 0;
+    const d = deps({ panes: [pane('%20', 'loom-tp-2', 0), pane('%21', 'loom-tp-2', 1)], newSessionId: () => `sid-${++n}` });
+    expect(await drainQueue(db, getWatcher(db, w.id)!, d)).toEqual({ started: 2, waiting: 0 });
+    expect(d.launches.map((l) => l[1].includes('sid-1') || l[1].includes('sid-2'))).toEqual([true, true]);
+    expect(db.prepare(`SELECT agent, session_id, group_id FROM chat_group_members ORDER BY session_id`).all()).toEqual([
+      { agent: 'claude', session_id: 'sid-1', group_id: gid },
+      { agent: 'claude', session_id: 'sid-2', group_id: gid },
+    ]);
+  });
+  it('a deleted group, a failed launch or a dry run files nothing', async () => {
+    const w = add(db, slackDraft({ action: { kind: 'start_chat', params: { project_dir: '/p', target: 'lane:tp', brief_template: 'b', perm: 'inherit', group_id: 99 } } }));
+    await queue(w, '1.000001');
+    await drainQueue(db, getWatcher(db, w.id)!, deps({ panes: [pane('%20', 'loom-tp-2', 0)], newSessionId: () => 'sid-x' }));
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM chat_group_members`).get()).toEqual({ n: 0 });
+
+    const gid = Number(db.prepare(`INSERT INTO chat_groups (name, created_at, position) VALUES ('G', 0, 1)`).run().lastInsertRowid);
+    const w2 = add(db, slackDraft({ label: 'Two', action: { kind: 'start_chat', params: { project_dir: '/p', target: 'lane:tp', brief_template: 'b', perm: 'inherit', group_id: gid } } }));
+    await queue(w2, '3.000003');
+    const boom = deps({ panes: [pane('%22', 'loom-tp-2', 2)], newSessionId: () => 'sid-y', launch: async () => { throw new Error('tmux gone'); } });
+    await drainQueue(db, getWatcher(db, w2.id)!, boom);
+    await drainQueue(db, getWatcher(db, w2.id)!, deps({ panes: [pane('%23', 'loom-tp-2', 3)], newSessionId: () => 'sid-z', dryRun: true }));
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM chat_group_members`).get()).toEqual({ n: 0 });
+  });
+  it('rejects a group_id that is not a whole number >= 0', () => {
+    expect(validateDraft(slackDraft({ action: { kind: 'start_chat', params: { project_dir: '/p', target: 'lane:tp', brief_template: 'b', perm: 'inherit', group_id: 'x' } } })).ok).toBe(false);
+    expect(validateDraft(slackDraft({ action: { kind: 'start_chat', params: { project_dir: '/p', target: 'lane:tp', brief_template: 'b', perm: 'inherit', group_id: -1 } } })).ok).toBe(false);
   });
   it('perm overrides the watcher permission setting for this watcher only', async () => {
     const w = add(db, slackDraft({ action: { kind: 'start_chat', params: { project_dir: '/p', target: 'lane:tp', brief_template: 'b', perm: 'normal' } } }));

@@ -11,6 +11,7 @@ import type { RouteCtx, RouteDef } from './index.ts';
 //   POST /api/groups/delete  {id}                      its chats go back to ungrouped
 //   POST /api/groups/order   {ids: number[]}           every group id once, in the new order
 //   POST /api/chat-group     {session, agent, group_id|null}
+//   GET  /api/groups                                   the list, for pickers outside the sidebar
 
 function withDb<T>(f: (db: Database.Database) => T): T {
   const db = realOpenDb();
@@ -64,7 +65,12 @@ async function postSet(ctx: RouteCtx): Promise<void> {
   withDb((db) => reply(ctx, db, setChatGroup(db, agent, session, b.group_id)));
 }
 
+function getList(ctx: RouteCtx): void {
+  withDb((db) => ctx.json(200, { ok: true, groups: listGroups(db) }));
+}
+
 export const routes: RouteDef[] = [
+  { method: 'GET', path: '/api/groups', kind: 'read', handler: getList },
   { method: 'POST', path: '/api/groups', kind: 'browser', handler: postCreate },
   { method: 'POST', path: '/api/groups/rename', kind: 'browser', handler: postRename },
   { method: 'POST', path: '/api/groups/delete', kind: 'browser', handler: postDelete },

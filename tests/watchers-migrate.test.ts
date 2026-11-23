@@ -261,6 +261,7 @@ describe('watchers migration, added after the install was already at schema 2 (t
       tellOrch: () => false,
       dryRun: false,
       briefsDir: briefs,
+      newSessionId: () => `sid-${launches.length + 1}`,
     };
     // One pass: the spawn that was still queued before the migration (prs) drains into the
     // first free pane of the lane, and the new ticket post starts in the next one.
@@ -271,10 +272,10 @@ describe('watchers migration, added after the install was already at schema 2 (t
     expect(t.brief_path).toBe(path.join(briefs, 'tickets-1700000500-000500.md'));
     expect(fs.readFileSync(t.brief_path, 'utf-8')).toBe('New ticket: #5 Export broken\nThread: https://acme.slack.com/archives/C0AAAAAAAAA/p1700000500000500\n\nDo NOT react to the thread.\n');
     expect(launches).toEqual([
-      ['%30', launchCommand('/Users/someone/dev/app', path.join(briefs, 'prs-1700001000-000000.md'), 'cozy-30', LEGACY_LAUNCH_SETTINGS)],
-      ['%33', launchCommand('/Users/someone/dev/app', t.brief_path, 'cozy-33', LEGACY_LAUNCH_SETTINGS)],
+      ['%30', launchCommand('/Users/someone/dev/app', path.join(briefs, 'prs-1700001000-000000.md'), 'cozy-30', LEGACY_LAUNCH_SETTINGS, 'sid-1')],
+      ['%33', launchCommand('/Users/someone/dev/app', t.brief_path, 'cozy-33', LEGACY_LAUNCH_SETTINGS, 'sid-2')],
     ]);
-    expect(launches[1][1]).toBe(`cd '/Users/someone/dev/app' && claude --dangerously-skip-permissions --remote-control 'cozy-33' "$(cat '${t.brief_path}')"`);
+    expect(launches[1][1]).toBe(`cd '/Users/someone/dev/app' && claude --dangerously-skip-permissions --session-id 'sid-2' --remote-control 'cozy-33' "$(cat '${t.brief_path}')"`);
     // A pane from another lane is never used.
     expect(launches.some((l) => l[0] === '%31')).toBe(false);
   });

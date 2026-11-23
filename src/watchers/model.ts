@@ -251,6 +251,7 @@ export function validateDraft(
     if (typeof ap.project_dir !== 'string' || (ap.project_dir && !path.isAbsolute(ap.project_dir))) return { ok: false, detail: 'action.params.project_dir must be an absolute folder' };
     if (typeof ap.target !== 'string' || !(ap.target === 'managed' || LANE.test(ap.target))) return { ok: false, detail: "action.params.target must be 'managed' or 'lane:<name>'" };
     if (typeof ap.standing !== 'boolean') return { ok: false, detail: 'action.params.standing must be true or false' };
+    if (ap.group_id !== undefined && !(Number.isInteger(ap.group_id) && (ap.group_id as number) >= 0)) return { ok: false, detail: 'action.params.group_id must be a group id, or 0 for none' };
     if (!['inherit', 'normal', 'skip'].includes(String(ap.perm))) return { ok: false, detail: 'action.params.perm must be inherit, normal or skip' };
     if (typeof ap.brief_template !== 'string' || ap.brief_template.length > MAX_TEMPLATE) return { ok: false, detail: 'action.params.brief_template must be text (at most 20000 characters)' };
     if (opts.forEnable && !ap.project_dir) return { ok: false, detail: 'choose the project the chat starts in' };

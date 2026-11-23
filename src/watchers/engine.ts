@@ -243,7 +243,10 @@ export async function drainQueue(db: Database.Database, w: Watcher, deps: Engine
     const m: Match = { key: q.event_key, subject: q.subject, title: q.title, permalink: q.permalink, vars: matchVarsFromEvent(w, q) };
     const brief = inv ? renderPrompt(p, 'brief_template', vars(db, w, m)) : renderBrief(template, vars(db, w, m));
     const briefPath = path.join(deps.briefsDir, `${w.id}-${safeName(q.event_key)}.md`);
-    const command = launchCommand(projectDir, briefPath, pane.name || pane.id, settings);
+    // The session id is chosen here, not discovered later, so the event points at its chat and
+    // the chat can be filed into the watcher's sidebar group before it is ever indexed.
+    const sid = (deps.newSessionId ?? randomUUID)();
+    const command = launchCommand(projectDir, briefPath, pane.name || pane.id, settings, sid);
     try {
       fs.mkdirSync(deps.briefsDir, { recursive: true });
       fs.writeFileSync(briefPath, brief);
@@ -259,8 +262,9 @@ export async function drainQueue(db: Database.Database, w: Watcher, deps: Engine
       q.id,
       deps.dryRun
         ? { decision: 'would_fire', mode: 'shadow', result: '', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: briefPath, acted_at: deps.now(), reviewed_at: deps.now(), detail: 'dry run: nothing was typed' }
-        : { decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: briefPath, acted_at: deps.now(), detail: '' },
+        : { decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: briefPath, acted_at: deps.now(), session_id: sid, detail: '' },
     );
+    if (!deps.dryRun) fileInGroup(db, p.group_id, sid);
     started++;
   }
   return { started, waiting: 0 };
@@ -392,8 +396,25 @@ async function drainStanding(db: Database.Database, w: Watcher, deps: EngineDeps
     return { started: 0, waiting: queued.length };
   }
   setStandingSid(db, w.id, sid, now);
+  fileInGroup(db, p.group_id, sid);
   markAll({ decision: 'fired', result: 'started', pane_id: pane.id, pane_name: pane.name, pane_where: pane.where, brief_path: batchPath, acted_at: now, session_id: sid, detail: replaced.slice(0, 500) });
   return { started: 1, waiting: 0 };
+}
+
+/**
+ * Put a chat a watcher just started into the watcher's sidebar group. The chat is not indexed
+ * yet, so this writes the membership row directly (setChatGroup wants the chat to exist); the
+ * sidebar shows it in the group from its first appearance. No group set, or a group since
+ * deleted: the chat lands in the main list as before.
+ */
+export function fileInGroup(db: Database.Database, groupId: unknown, sid: string): void {
+  const gid = Number(groupId);
+  if (!Number.isInteger(gid) || gid <= 0) return;
+  if (!db.prepare(`SELECT 1 FROM chat_groups WHERE id = ?`).get(gid)) return;
+  db.prepare(
+    `INSERT INTO chat_group_members (agent, session_id, group_id) VALUES ('claude', ?, ?)
+     ON CONFLICT(agent, session_id) DO UPDATE SET group_id = excluded.group_id`,
+  ).run(sid, gid);
 }
 
 /** A Slack ts keeps the previous build's brief file name (<id>-<sec>-<frac>.md). */
