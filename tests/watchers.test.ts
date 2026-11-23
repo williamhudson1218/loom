@@ -139,6 +139,15 @@ describe('Slack trigger: pr-link-post', () => {
     expect(pr({ ts: '1', user: 'UX', text: 'no link here' }, prParams, ctx)).toBeNull();
     expect(pr({ ts: '1', user: 'UX', text }, { repos: [] }, ctx)).toBeNull();
   });
+  it('pr-link-post match carries PR_URLS, canonical and deduped, in post order', () => {
+    const w = add(db, slackDraft({ trigger: { kind: 'pr-link-post', params: prParams } }));
+    const m = { ts: '1', user: 'UX', text: `<${url(12)}|#12> and https://github.com/acme/app/pull/13/files plus <${url(12)}#discussion_r1|again>` };
+    expect(slackMatch(w, m, ctx)?.vars.PR_URLS).toBe(`${url(12)} ${url(13)}`);
+  });
+  it('a match with no PR link has no PR_URLS', () => {
+    const w = add(db, slackDraft());
+    expect(slackMatch(w, botPost('1.000000', 5), ctx)?.vars).not.toHaveProperty('PR_URLS');
+  });
   it('ignore-self skips your own posts', () => {
     const m = { ts: '1', user: 'USELF', text: `<${url(9)}>` };
     expect(pr(m, prParams, { selfUserId: 'USELF', ignoreSelf: true })).toBeNull();

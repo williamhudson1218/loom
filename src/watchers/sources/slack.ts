@@ -1,3 +1,4 @@
+import { prUrlsIn } from '../../prpick.ts';
 import type Database from 'better-sqlite3';
 import { compareTs, type SlackMessage } from '../../slack.ts';
 import type { Match, Params, Watcher } from '../model.ts';
@@ -111,8 +112,15 @@ export function slackMatch(w: Watcher, m: SlackMessage, ctx: SlackCtx): Match | 
       TS: m.ts,
       AUTHOR: m.user ? `<@${m.user}>` : m.bot_id ?? '',
       TEXT: plain(m.text ?? '').slice(0, 2000),
+      ...prUrlsVar(m.text ?? ''),
     },
   };
+}
+
+/** `PR_URLS`: the GitHub PR links in a post, canonical (`.../pull/<n>`), deduped, in post order. Absent with none. */
+function prUrlsVar(text: string): { PR_URLS?: string } {
+  const urls = [...new Set(prUrlsIn(text))];
+  return urls.length ? { PR_URLS: urls.join(' ') } : {};
 }
 
 export interface IngestResult {
