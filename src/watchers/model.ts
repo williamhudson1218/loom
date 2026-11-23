@@ -46,7 +46,7 @@ export const TRIGGERS: Record<SourceKind, Record<string, { label: string; defaul
     finding: { label: 'New finding', defaults: { rules: [] } },
   },
   activity: {
-    aimed_at_me: { label: 'Something aimed at you lands on a closed chat', defaults: { reasons: ['review_requested', 'mention', 'team_mention', 'comment'] } },
+    aimed_at_me: { label: 'Something aimed at you lands on a closed chat', defaults: { reasons: ['review_requested', 'mention', 'team_mention', 'comment', 'author'] } },
   },
 };
 

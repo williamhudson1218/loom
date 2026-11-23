@@ -1021,7 +1021,7 @@ function watcherEngineDeps(): EngineDeps {
     selfPane: process.env.TMUX_PANE,
     activity: {
       ghNotifications: (since) => ghNotificationsVia(ghRun, since),
-      ghDetail: (n) => ghDetailVia(ghRun, n),
+      ghDetail: async (n) => ghDetailVia(ghRun, await ghLoginCached(), n),
       slackReplies: async (channel, ts) => {
         if (!slackFeatureOn('watchers')) throw new Error('Slack is not connected');
         return conversationsReplies(channel, ts, { limit: 200 });
@@ -1037,6 +1037,16 @@ function watcherEngineDeps(): EngineDeps {
       },
     },
   };
+}
+
+/** The gh user's login, for telling the user's own GitHub comments apart. Cached once it resolves. */
+let ghLogin: Promise<string> | null = null;
+function ghLoginCached(): Promise<string> {
+  ghLogin ??= ghRun(['api', 'user', '--jq', '.login']).then((s) => s.trim());
+  return ghLogin.catch((e) => {
+    ghLogin = null;
+    throw e;
+  });
 }
 
 function watcherWork(url: string): Promise<Finding[]> {

@@ -140,7 +140,7 @@ export const TEMPLATES: WatcherTemplate[] = [
     ['notify', { template: '{{PR}} is approved and green' }]),
   // Follow-ups (GitHub through gh; Slack threads when Slack is connected)
   T('followups', 'Follow-ups', 'Follow-ups on closed chats', 'Someone re-requests your review, mentions you, or replies on the PR or Slack thread of a chat you closed: put that chat back on Your turn.', 'gh', [],
-    ['activity', { github: true, slack: true, days: 14, max_threads: 40 }], ['aimed_at_me', { reasons: ['review_requested', 'mention', 'team_mention', 'comment'] }],
+    ['activity', { github: true, slack: true, days: 14, max_threads: 40 }], ['aimed_at_me', { reasons: ['review_requested', 'mention', 'team_mention', 'comment', 'author'] }],
     ['reopen_chat', {}], { max_per_hour: 0, cooldown_min: 0 }),
 ];
 

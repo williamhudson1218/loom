@@ -152,12 +152,15 @@ export function followupLabel(kind: FollowupKind | '', who: string): string {
 export function reopenForFollowup(db: Database.Database, f: FollowupInput): { ok: true; reopened: boolean } | { ok: false; detail: string } {
   const cur = getParked(db, f.agent, f.sessionId);
   if (cur?.state === 'waiting') return { ok: false, detail: 'parked and waiting: Park watches this chat' };
+  // A Send & park reply not yet resumed is already on Your turn; its text is what Resume needs.
+  if (cur && !cur.reply_kind) return { ok: true, reopened: false };
   db.transaction(() => {
     db.prepare(
       `INSERT INTO parked_chats (agent, session_id, state, channel, thread_ts, thread_url, sent_ts, sent_at, parked_at, replied_at, reply_user, reply_text, reply_count, reply_kind, reply_url)
        VALUES (@agent, @sid, 'replied', @channel, @thread_ts, @url, '', @at, @at, @at, @who, @text, 1, @kind, @url)
        ON CONFLICT(agent, session_id) DO UPDATE SET state = 'replied', replied_at = @at, reply_user = @who, reply_text = @text,
-         reply_count = parked_chats.reply_count + 1, reply_kind = @kind, reply_url = @url`,
+         reply_count = parked_chats.reply_count + 1, reply_kind = @kind, reply_url = @url,
+         channel = @channel, thread_ts = @thread_ts, thread_url = @url`,
     ).run({ agent: f.agent, sid: f.sessionId, channel: f.channel ?? 'github', thread_ts: f.threadTs ?? '', url: f.url, at: f.at, who: f.who, text: f.text, kind: f.kind });
     restoreChat(db, f.agent, f.sessionId);
   })();

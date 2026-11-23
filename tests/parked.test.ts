@@ -484,6 +484,21 @@ describe('reopen for a follow-up', () => {
     expect(getParked(d, 'claude', 's9')).toMatchObject({ reply_count: 2, reply_kind: 'comment', reply_user: 'bo', reply_text: 'one more thing', replied_at: 3_000 });
   });
 
+  it('a follow-up of another kind relabels the row: channel, thread and link follow the newest', () => {
+    const d = hiddenDb();
+    reopenForFollowup(d, f({ kind: 'thread_reply', channel: 'C1', threadTs: '1.000100', url: 'https://w.slack.com/archives/C1/p1000100' }));
+    reopenForFollowup(d, f({ kind: 'comment', url: 'https://github.com/acme/app/pull/12#c1', at: 3_000 }));
+    expect(getParked(d, 'claude', 's9')).toMatchObject({ channel: 'github', thread_ts: '', thread_url: 'https://github.com/acme/app/pull/12#c1', reply_url: 'https://github.com/acme/app/pull/12#c1', reply_count: 2 });
+  });
+
+  it('a Send & park reply still waiting to be resumed is not overwritten', () => {
+    const d = hiddenDb();
+    park(d, { sessionId: 's9' });
+    d.prepare(`UPDATE parked_chats SET state = 'replied', reply_user = 'jem', reply_text = 'their answer' WHERE session_id = 's9'`).run();
+    expect(reopenForFollowup(d, f())).toEqual({ ok: true, reopened: false });
+    expect(getParked(d, 'claude', 's9')).toMatchObject({ reply_kind: '', reply_text: 'their answer', channel: 'C1' });
+  });
+
   it('refuses a chat Park is already waiting on', () => {
     const d = hiddenDb();
     park(d, { sessionId: 's9' });

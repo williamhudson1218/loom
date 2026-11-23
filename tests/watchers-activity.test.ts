@@ -14,6 +14,7 @@ import {
   slackMatches,
   threadsDue,
   type ActivityCtx,
+  type GhDetail,
   type GhNotification,
 } from '../src/watchers/sources/activity.ts';
 
@@ -49,7 +50,8 @@ const note = (over: Partial<GhNotification> = {}): GhNotification => ({
   subject: { type: 'PullRequest', title: 'Fix the thing', url: 'https://api.github.com/repos/acme/app/pulls/12', latest_comment_url: null },
   repository: { full_name: 'acme/app' }, ...over,
 });
-const detail = (merged = false) => async () => ({ who: 'ana', text: 'take another look', url: PR, merged });
+const detail = (merged = false, over: Partial<GhDetail> = {}) => async (): Promise<GhDetail> => ({ who: 'ana', text: 'take another look', url: PR, merged, comment: true, at: NOW, bot: false, self: false, requested: false, ...over });
+const gm = async (...a: Parameters<typeof githubMatches>) => (await githubMatches(...a)).matches;
 
 describe('prUrlOf', () => {
   it('maps the API url to the web url, and ignores non-PR subjects', () => {
@@ -83,27 +85,51 @@ describe('githubMatches', () => {
   });
   it('keeps only aimed-at-me reasons', async () => {
     const reasons = ['review_requested', 'mention', 'team_mention', 'comment', 'author', 'state_change', 'ci_activity', 'subscribed'];
-    const ms = await githubMatches(db, reasons.map((r, i) => note({ id: String(i), reason: r })), ctx(), detail());
-    expect(ms.map((m) => m.vars.KIND)).toEqual(['review_requested', 'mention', 'mention', 'comment']);
+    const ms = await gm(db, reasons.map((r, i) => note({ id: String(i), reason: r })), ctx({ reasons: [...ctx().reasons, 'author'] }), detail());
+    expect(ms.map((m) => m.vars.KIND)).toEqual(['comment', 'mention', 'mention', 'comment', 'comment']);
   });
   it('builds the match the engine records and the action reads', async () => {
-    const [m] = await githubMatches(db, [note()], ctx(), detail());
+    const [m] = await gm(db, [note()], ctx(), detail(false, { comment: false, requested: true, text: '' }));
     expect(m).toEqual({
       key: 'gh:501@2027-01-15T08:00:00Z', subject: 'claude:s', title: 'ana re-requested your review', permalink: PR,
       chat: { agent: 'claude', session_id: 's' },
-      vars: { KIND: 'review_requested', WHO: 'ana', TEXT: 'take another look', URL: PR, PR_URL: PR },
+      vars: { KIND: 'review_requested', WHO: 'ana', TEXT: '', URL: PR, PR_URL: PR },
     });
+    // A human comment on a review-request thread reads as a comment.
+    const [c] = await gm(db, [note()], ctx(), detail());
+    expect([c.title, c.vars.KIND]).toEqual(['ana commented', 'comment']);
   });
   it('drops a PR whose chat is live, parked-waiting, too old, or unmapped', async () => {
-    expect(await githubMatches(db, [note()], ctx({ isLive: () => true }), detail())).toEqual([]);
-    expect(await githubMatches(db, [note()], ctx({ now: NOW + 20 * DAY }), detail())).toEqual([]);
-    expect(await githubMatches(db, [note({ subject: { ...note().subject, url: 'https://api.github.com/repos/acme/app/pulls/99' } })], ctx(), detail())).toEqual([]);
+    expect(await gm(db, [note()], ctx({ isLive: () => true }), detail())).toEqual([]);
+    expect(await gm(db, [note()], ctx({ now: NOW + 20 * DAY }), detail())).toEqual([]);
+    expect(await gm(db, [note({ subject: { ...note().subject, url: 'https://api.github.com/repos/acme/app/pulls/99' } })], ctx(), detail())).toEqual([]);
     parkChat(db, { agent: 'claude', sessionId: 's', draftId: 'd', channel: 'C', threadTs: '1.0', threadUrl: '', permalink: '', waitingOn: [], sentTs: '1.0', sentAt: NOW });
-    expect(await githubMatches(db, [note()], ctx(), detail())).toEqual([]);
+    expect(await gm(db, [note()], ctx(), detail())).toEqual([]);
+  });
+  it('a comment by a bot or by me, or older than the chat, does not count', async () => {
+    expect(await gm(db, [note({ reason: 'comment' })], ctx(), detail(false, { bot: true }))).toEqual([]);
+    expect(await gm(db, [note({ reason: 'comment' })], ctx(), detail(false, { self: true }))).toEqual([]);
+    expect(await gm(db, [note({ reason: 'comment' })], ctx(), detail(false, { at: NOW - 2 * DAY }))).toEqual([]);
+  });
+  it('with no comment, only a live review request on me counts (a push does not)', async () => {
+    expect(await gm(db, [note()], ctx(), detail(false, { comment: false, requested: false }))).toEqual([]);
+    expect(await gm(db, [note({ reason: 'comment' })], ctx(), detail(false, { comment: false, requested: true }))).toEqual([]);
+    const [m] = await gm(db, [note()], ctx(), detail(false, { comment: false, requested: true, text: '' }));
+    expect(m.vars.KIND).toBe('review_requested');
+  });
+  it('one failed detail call skips that item and reports it; the rest still match', async () => {
+    let n = 0;
+    const r = await githubMatches(db, [note({ id: '1' }), note({ id: '2' })], ctx(), async () => { if (++n === 1) throw new Error('rate limited'); return detail()(); });
+    expect(r.matches.map((m) => m.key)).toEqual(['gh:2@2027-01-15T08:00:00Z']);
+    expect(r.errors).toEqual(['rate limited']);
+  });
+  it('a chat removed from the board (not Send & close) is not reopened', async () => {
+    db.prepare(`INSERT INTO chat_hidden (agent, session_id, hidden_at, via) VALUES ('claude', 's', ?, '')`).run(NOW);
+    expect(await gm(db, [note()], ctx(), detail())).toEqual([]);
   });
   it('drops a merged or closed PR', async () => {
-    expect(await githubMatches(db, [note()], ctx(), detail(true))).toEqual([]);
-    expect(await githubMatches(db, [note()], ctx({ prFinal: () => true }), detail())).toEqual([]);
+    expect(await gm(db, [note()], ctx(), detail(true))).toEqual([]);
+    expect(await gm(db, [note()], ctx({ prFinal: () => true }), detail())).toEqual([]);
   });
 });
 
@@ -169,9 +195,9 @@ describe('the activity source in the engine', () => {
       ghNotifications: async (since) => {
         calls.since.push(since);
         if (over.ghFail) throw new Error(over.ghFail);
-        return { items: over.notes?.() ?? [], pollAfterMs: 60_000 };
+        return { items: over.notes?.() ?? [], pollAfterMs: 0 };
       },
-      ghDetail: async () => ({ who: 'ana', text: 'look again', url: PR, merged: false }),
+      ghDetail: async () => ({ who: 'ana', text: 'look again', url: PR, merged: false, comment: true, at: NOW, bot: false, self: false, requested: false }),
       slackReplies: async (channel, ts) => {
         calls.replies.push(`${channel}/${ts}`);
         if (over.slackFail) throw new Error(over.slackFail);
@@ -206,6 +232,52 @@ describe('the activity source in the engine', () => {
     expect(db.prepare(`SELECT result FROM watcher_events WHERE watcher_id = ? AND event_key LIKE 'gh:502%'`).get(id)).toEqual({ result: 'reopened' });
   });
 
+  it('a GitHub failure on the first poll leaves it unbaselined, so nothing old fires once gh works', async () => {
+    const id = add();
+    let fail = true;
+    const d = deps({ notes: () => [note()] });
+    const gh = d.activity!.ghNotifications;
+    d.activity!.ghNotifications = async (since) => { if (fail) throw new Error('gh: not logged in'); return gh(since); };
+    await tickWatchers(db, d, newEngineState());
+    expect(getWatcher(db, id)!.poll.baselined).toBe(false);
+    fail = false;
+    db.prepare(`UPDATE watchers SET next_poll_at = 0 WHERE id = ?`).run(id);
+    await tickWatchers(db, d, newEngineState());
+    expect(d.calls.reopened).toEqual([]);
+    expect(getWatcher(db, id)!.poll.baselined).toBe(true);
+  });
+
+  it('an empty first poll still sets a watermark', async () => {
+    const id = add();
+    await tickWatchers(db, deps(), newEngineState());
+    expect(getWatcher(db, id)!.poll.watermark).toBe(new Date(NOW).toISOString());
+  });
+
+  it('a failed detail call keeps the watermark, so the item is retried next poll', async () => {
+    const id = add();
+    let notes: GhNotification[] = [];
+    const d = deps({ notes: () => notes });
+    await tickWatchers(db, d, newEngineState());
+    const before = getWatcher(db, id)!.poll.watermark;
+    notes = [note({ updated_at: '2099-01-01T00:00:00Z' })];
+    d.activity!.ghDetail = async () => { throw new Error('rate limited'); };
+    db.prepare(`UPDATE watchers SET next_poll_at = 0 WHERE id = ?`).run(id);
+    await tickWatchers(db, d, newEngineState());
+    expect(getWatcher(db, id)!.poll.watermark).toBe(before);
+    expect(getWatcher(db, id)!.poll.last_error).toContain('rate limited');
+  });
+
+  it('with no Slack id for me, the Slack half is an error, not a guess', async () => {
+    const id = add();
+    chat('t', NOW - 3600_000);
+    thread('t', 'C1', '100.000001');
+    const d = deps();
+    d.slackSelf = () => '';
+    await tickWatchers(db, d, newEngineState());
+    expect(d.calls.replies).toEqual([]);
+    expect(getWatcher(db, id)!.poll.last_error).toContain('Slack');
+  });
+
   it('watermark is the newest updated_at seen, passed as since next time', async () => {
     const id = add();
     const d = deps({ notes: () => [note(), note({ id: '7', updated_at: '2027-01-16T00:00:00Z' })] });
@@ -213,6 +285,7 @@ describe('the activity source in the engine', () => {
     db.prepare(`UPDATE watchers SET next_poll_at = 0 WHERE id = ?`).run(id);
     await tickWatchers(db, d, newEngineState());
     expect(d.calls.since).toEqual(['', '2027-01-16T00:00:00Z']);
+    expect(d.calls.since[0]).toBe('');
   });
 
   it('waits for its next poll time', async () => {
@@ -291,32 +364,33 @@ describe('the activity source in the engine', () => {
 });
 
 describe('gh adapters', () => {
-  it('ghNotificationsVia reads X-Poll-Interval and the body, and passes since only when set', async () => {
+  it('ghNotificationsVia reads every page, and passes since only when set', async () => {
     const calls: string[][] = [];
     const run = async (args: string[]) => {
       calls.push(args);
-      return 'HTTP/2.0 200 OK\r\nX-Poll-Interval: 120\r\nContent-Type: application/json\r\n\r\n' + JSON.stringify([note()]);
+      return JSON.stringify([[note({ id: '1' })], [note({ id: '2' })]]);
     };
-    expect(await ghNotificationsVia(run, '')).toEqual({ items: [note()], pollAfterMs: 120_000 });
+    expect((await ghNotificationsVia(run, '')).items.map((n) => n.id)).toEqual(['1', '2']);
     await ghNotificationsVia(run, '2027-01-15T08:00:00Z');
-    expect(calls[0]).toEqual(['api', '-i', 'notifications?all=false&per_page=50']);
-    expect(calls[1]).toEqual(['api', '-i', 'notifications?all=false&per_page=50&since=2027-01-15T08%3A00%3A00Z']);
+    expect(calls[0]).toEqual(['api', '--paginate', '--slurp', 'notifications?all=false&per_page=50']);
+    expect(calls[1]).toEqual(['api', '--paginate', '--slurp', 'notifications?all=false&per_page=50&since=2027-01-15T08%3A00%3A00Z']);
   });
-  it('ghNotificationsVia treats 304 Not Modified as nothing new', async () => {
-    expect(await ghNotificationsVia(async () => 'HTTP/2.0 304 Not Modified\r\nX-Poll-Interval: 60\r\n\r\n', 'x')).toEqual({ items: [], pollAfterMs: 60_000 });
-  });
-  it('ghDetailVia: a comment gives its author, body and link; the PR gives merged', async () => {
+  it('ghDetailVia: a comment gives its author, body, link, time, and whether a bot or I wrote it', async () => {
     const run = async (args: string[]) => {
       const u = args[1];
-      if (u.endsWith('/pulls/12')) return JSON.stringify({ merged: false, state: 'open', user: { login: 'author' }, html_url: PR });
-      if (u.endsWith('/comments/9')) return JSON.stringify({ user: { login: 'ana' }, body: 'x'.repeat(600), html_url: PR + '#discussion_r9' });
+      if (u.endsWith('/pulls/12')) return JSON.stringify({ merged: false, state: 'open', user: { login: 'author' }, html_url: PR, requested_reviewers: [{ login: 'me' }] });
+      if (u.endsWith('/comments/9')) return JSON.stringify({ user: { login: 'ana', type: 'User' }, body: 'x'.repeat(600), html_url: PR + '#discussion_r9', created_at: '2027-01-15T08:00:00Z' });
+      if (u.endsWith('/comments/10')) return JSON.stringify({ user: { login: 'claude[bot]', type: 'Bot' }, body: 'b', html_url: PR, created_at: '2027-01-15T08:00:00Z' });
+      if (u.endsWith('/comments/11')) return JSON.stringify({ user: { login: 'ME', type: 'User' }, body: 'mine', html_url: PR, created_at: '2027-01-15T08:00:00Z' });
       throw new Error('unexpected ' + u);
     };
-    const d = await ghDetailVia(run, note({ reason: 'comment', subject: { ...note().subject, latest_comment_url: 'https://api.github.com/repos/acme/app/pulls/comments/9' } }));
-    expect(d).toEqual({ who: 'ana', text: 'x'.repeat(500), url: PR + '#discussion_r9', merged: false });
+    const at = (c: string) => note({ reason: 'comment', subject: { ...note().subject, latest_comment_url: `https://api.github.com/repos/acme/app/pulls/comments/${c}` } });
+    expect(await ghDetailVia(run, 'me', at('9'))).toEqual({ who: 'ana', text: 'x'.repeat(500), url: PR + '#discussion_r9', merged: false, comment: true, at: Date.parse('2027-01-15T08:00:00Z'), bot: false, self: false, requested: true });
+    expect(await ghDetailVia(run, 'me', at('10'))).toMatchObject({ bot: true });
+    expect(await ghDetailVia(run, 'me', at('11'))).toMatchObject({ self: true });
   });
-  it('ghDetailVia: a review request with no comment names the PR author; closed counts as merged', async () => {
-    const run = async () => JSON.stringify({ merged: false, state: 'closed', user: { login: 'author' }, html_url: PR });
-    expect(await ghDetailVia(run, note())).toEqual({ who: 'author', text: '', url: PR, merged: true });
+  it('ghDetailVia: no comment names the PR author; closed counts as merged; requested reflects me', async () => {
+    const run = async () => JSON.stringify({ merged: false, state: 'closed', user: { login: 'author' }, html_url: PR, requested_reviewers: [] });
+    expect(await ghDetailVia(run, 'me', note())).toEqual({ who: 'author', text: '', url: PR, merged: true, comment: false, at: 0, bot: false, self: false, requested: false });
   });
 });

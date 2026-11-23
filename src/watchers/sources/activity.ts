@@ -35,6 +35,15 @@ export interface GhDetail {
   text: string;
   url: string;
   merged: boolean;
+  /** True when the notification's latest activity is a comment (who/text/at are its). */
+  comment: boolean;
+  /** The comment's time (ms), 0 without one. */
+  at: number;
+  /** The comment came from a bot account, or from the user. */
+  bot: boolean;
+  self: boolean;
+  /** The user is in the PR's requested reviewers right now. */
+  requested: boolean;
 }
 
 export interface ThreadDue {
@@ -49,7 +58,9 @@ export interface ThreadDue {
 
 type ChatRef = { agent: Agent; session_id: string };
 
-const REASON_KIND: Record<string, FollowupKind> = { review_requested: 'review_requested', mention: 'mention', team_mention: 'mention', comment: 'comment' };
+// `author` is a comment on the user's own PR. The reason says why the user follows the thread, not
+// what just happened, so githubMatches decides from the detail (a human comment, or a live review request).
+const REASON_KIND: Record<string, FollowupKind> = { review_requested: 'review_requested', mention: 'mention', team_mention: 'mention', comment: 'comment', author: 'comment' };
 
 /** `https://api.github.com/repos/o/r/pulls/12` -> `https://github.com/o/r/pull/12`; null for anything but a PR. */
 export function prUrlOf(n: GhNotification): string | null {
@@ -76,25 +87,56 @@ export function chatForPr(db: Database.Database, prUrl: string): ChatRef | null 
 }
 
 /** Off the board, not Park's, and recent enough to watch. */
-function eligible(db: Database.Database, c: ChatRef, ctx: ActivityCtx): boolean {
-  if (ctx.isLive(c.agent, c.session_id)) return false;
-  if (getParked(db, c.agent, c.session_id)?.state === 'waiting') return false;
-  const r = db.prepare(`SELECT last_active_at FROM chats WHERE agent = ? AND session_id = ?`).get(c.agent, c.session_id) as { last_active_at: number } | undefined;
-  return !!r && r.last_active_at >= ctx.now - ctx.days * 86_400_000;
+/** A Remove-from-board mark (not Send & close): the board hides the chat, so reopening it would show nothing. */
+function removedFromBoard(db: Database.Database, c: ChatRef): boolean {
+  return !!db.prepare(`SELECT 1 FROM chat_hidden WHERE agent = ? AND session_id = ? AND via <> 'close'`).get(c.agent, c.session_id);
 }
 
-/** GitHub notifications that should reopen a closed chat. `detail` is only called for ones that map to an eligible chat. */
-export async function githubMatches(db: Database.Database, notes: GhNotification[], ctx: ActivityCtx, detail: (n: GhNotification) => Promise<GhDetail>): Promise<Match[]> {
+/** Off the board, not Park's, not removed, and recent enough to watch. Returns the chat's last activity, or null. */
+function eligible(db: Database.Database, c: ChatRef, ctx: ActivityCtx): number | null {
+  if (ctx.isLive(c.agent, c.session_id)) return null;
+  if (getParked(db, c.agent, c.session_id)?.state === 'waiting') return null;
+  if (removedFromBoard(db, c)) return null;
+  const r = db.prepare(`SELECT last_active_at FROM chats WHERE agent = ? AND session_id = ?`).get(c.agent, c.session_id) as { last_active_at: number } | undefined;
+  return r && r.last_active_at >= ctx.now - ctx.days * 86_400_000 ? r.last_active_at : null;
+}
+
+/**
+ * GitHub notifications that should reopen a closed chat. `detail` is only called for ones
+ * that map to an eligible chat. A notification counts when its latest activity is a
+ * comment by a person other than the user, made after the chat last did anything; or,
+ * with no comment, when it is a review request and the user is requested right now
+ * (a push re-notifies the thread too, and must not count). A failed detail call skips
+ * that one item and is reported, so the caller can retry it.
+ */
+export async function githubMatches(
+  db: Database.Database,
+  notes: GhNotification[],
+  ctx: ActivityCtx,
+  detail: (n: GhNotification) => Promise<GhDetail>,
+): Promise<{ matches: Match[]; errors: string[] }> {
   const out: Match[] = [];
+  const errors: string[] = [];
   for (const n of notes) {
-    const kind = REASON_KIND[n.reason];
+    let kind = REASON_KIND[n.reason];
     if (!kind || !ctx.reasons.includes(n.reason)) continue;
     const pr = prUrlOf(n);
     if (!pr || ctx.prFinal(pr) === true) continue;
     const chat = chatForPr(db, pr);
-    if (!chat || !eligible(db, chat, ctx)) continue;
-    const d = await detail(n);
+    const lastActive = chat ? eligible(db, chat, ctx) : null;
+    if (!chat || lastActive === null) continue;
+    let d: GhDetail;
+    try {
+      d = await detail(n);
+    } catch (e) {
+      errors.push((e as Error).message);
+      continue;
+    }
     if (d.merged) continue;
+    if (d.comment) {
+      if (d.bot || d.self || (d.at && d.at <= lastActive)) continue;
+      if (kind === 'review_requested') kind = 'comment';
+    } else if (!(kind === 'review_requested' && d.requested)) continue;
     const title = followupLabel(kind, d.who);
     out.push({
       key: `gh:${n.id}@${n.updated_at}`,
@@ -105,7 +147,7 @@ export async function githubMatches(db: Database.Database, notes: GhNotification
       vars: { KIND: kind, WHO: d.who, TEXT: d.text, URL: d.url, PR_URL: pr },
     });
   }
-  return out;
+  return { matches: out, errors };
 }
 
 const tsOf = (ms: number): string => (ms / 1000).toFixed(6);
@@ -119,6 +161,7 @@ export function threadsDue(db: Database.Database, ctx: ActivityCtx, max: number)
        JOIN chats c ON c.agent = s.agent AND c.session_id = s.session_id
        LEFT JOIN followup_threads f ON f.thread_key = s.thread_key
        WHERE s.session_id != '' AND c.last_active_at >= ?
+         AND NOT EXISTS (SELECT 1 FROM chat_hidden h WHERE h.agent = c.agent AND h.session_id = c.session_id AND h.via <> 'close')
        ORDER BY c.last_active_at DESC`,
     )
     .all(ctx.now - ctx.days * 86_400_000) as { thread_key: string; url: string; agent: Agent; session_id: string; last_active_at: number; pr_url: string; last_check_at: number }[];
@@ -168,33 +211,44 @@ export function slackMatches(t: ThreadDue, msgs: SlackMsg[], me: string): Match[
 export type GhRunner = (args: string[]) => Promise<string>;
 
 /**
- * The notifications feed since `since` (ISO; '' for everything unread), read with
- * `gh api -i` so GitHub's X-Poll-Interval header comes back too. Read-only: nothing
- * is marked read.
+ * The notifications feed since `since` (ISO; '' for everything unread), every page.
+ * Read-only: nothing is marked read.
  */
 export async function ghNotificationsVia(run: GhRunner, since: string): Promise<{ items: GhNotification[]; pollAfterMs: number }> {
   const q = 'notifications?all=false&per_page=50' + (since ? `&since=${encodeURIComponent(since)}` : '');
-  const raw = await run(['api', '-i', q]);
-  const cut = raw.search(/\r?\n\r?\n/);
-  const head = cut < 0 ? raw : raw.slice(0, cut);
-  const body = cut < 0 ? '' : raw.slice(cut).trim();
-  const poll = Number(head.match(/^x-poll-interval:\s*(\d+)/im)?.[1] ?? 0) * 1000;
-  if (/^HTTP\/[\d.]+ 304/.test(head) || !body) return { items: [], pollAfterMs: poll };
-  const items = JSON.parse(body) as unknown;
-  return { items: Array.isArray(items) ? (items as GhNotification[]) : [], pollAfterMs: poll };
+  const raw = (await run(['api', '--paginate', '--slurp', q])).trim();
+  const pages = raw ? (JSON.parse(raw) as unknown) : [];
+  const items = (Array.isArray(pages) ? pages : []).flatMap((p) => (Array.isArray(p) ? p : [p])) as GhNotification[];
+  return { items, pollAfterMs: 0 };
 }
 
+type GhUser = { login?: string; type?: string };
+
 /**
- * Who did what on a notification's PR: the latest comment's author, text and link
- * when there is one, else the PR's author and link (a review request). `merged` is
- * true for a merged or closed PR, which ends the watch.
+ * What a notification's PR says now: its latest comment (author, text, link, time, bot
+ * or the user's own) when there is one, else the PR's author and link; whether the PR
+ * is merged or closed (that ends the watch); and whether `me` is a requested reviewer.
  */
-export async function ghDetailVia(run: GhRunner, n: GhNotification): Promise<GhDetail> {
-  const pr = JSON.parse(await run(['api', n.subject.url])) as { merged?: boolean; state?: string; user?: { login?: string }; html_url?: string };
+export async function ghDetailVia(run: GhRunner, me: string, n: GhNotification): Promise<GhDetail> {
+  const pr = JSON.parse(await run(['api', n.subject.url])) as { merged?: boolean; state?: string; user?: GhUser; html_url?: string; requested_reviewers?: GhUser[] };
   const merged = pr.merged === true || pr.state === 'closed';
+  const requested = !!me && (pr.requested_reviewers ?? []).some((u) => (u.login ?? '').toLowerCase() === me.toLowerCase());
   const c = n.subject.latest_comment_url && n.subject.latest_comment_url !== n.subject.url
-    ? (JSON.parse(await run(['api', n.subject.latest_comment_url])) as { user?: { login?: string }; body?: string; html_url?: string })
+    ? (JSON.parse(await run(['api', n.subject.latest_comment_url])) as { user?: GhUser; body?: string; html_url?: string; created_at?: string; submitted_at?: string })
     : null;
-  if (c) return { who: c.user?.login ?? '', text: String(c.body ?? '').slice(0, 500), url: c.html_url ?? pr.html_url ?? '', merged };
-  return { who: pr.user?.login ?? '', text: '', url: pr.html_url ?? '', merged };
+  if (c) {
+    const login = c.user?.login ?? '';
+    return {
+      who: login,
+      text: String(c.body ?? '').slice(0, 500),
+      url: c.html_url ?? pr.html_url ?? '',
+      merged,
+      comment: true,
+      at: Date.parse(c.created_at ?? c.submitted_at ?? '') || 0,
+      bot: c.user?.type === 'Bot' || login.endsWith('[bot]'),
+      self: !!me && login.toLowerCase() === me.toLowerCase(),
+      requested,
+    };
+  }
+  return { who: pr.user?.login ?? '', text: '', url: pr.html_url ?? '', merged, comment: false, at: 0, bot: false, self: false, requested };
 }

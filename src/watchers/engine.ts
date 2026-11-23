@@ -618,7 +618,11 @@ async function pollActivity(db: Database.Database, w: Watcher, deps: EngineDeps,
   }
   const sp = w.source.params;
   const prFinal = new Map<string, boolean>();
-  for (const p of deps.prs()) prFinal.set(p.url, p.final);
+  try {
+    for (const p of deps.prs()) prFinal.set(p.url, p.final);
+  } catch {
+    /* no pipeline cache this poll: the PR detail call still says merged or closed */
+  }
   const ctx: ActivityCtx = {
     now,
     days: Number(sp.days ?? 14),
@@ -634,14 +638,25 @@ async function pollActivity(db: Database.Database, w: Watcher, deps: EngineDeps,
     try {
       const r = await a.ghNotifications(w.poll.baselined ? watermark : '');
       pollAfter = Math.max(pollAfter, r.pollAfterMs);
-      for (const n of r.items) if (n.updated_at > watermark) watermark = n.updated_at;
-      matches.push(...(await githubMatches(db, r.items, ctx, (n) => a.ghDetail(n))));
+      const g = await githubMatches(db, r.items, ctx, (n) => a.ghDetail(n));
+      matches.push(...g.matches);
+      if (g.errors.length) {
+        // Keep the watermark: the next poll fetches these again, and the event dedupe absorbs what already fired.
+        errors.push(`GitHub: ${g.errors.length} could not be read (${g.errors[0]})`);
+      } else {
+        let newest = watermark;
+        for (const n of r.items) if (n.updated_at > newest) newest = n.updated_at;
+        // An empty first poll still starts the clock, so the next one does not read every unread notification.
+        watermark = newest || new Date(now).toISOString();
+      }
     } catch (e) {
       errors.push('GitHub: ' + (e as Error).message);
     }
   }
   if (sp.slack !== false) {
     try {
+      // Without the user's own id every reply looks like someone else's.
+      if (!deps.slackSelf()) throw new Error('your Slack user id is not known yet (reconnect Slack in Settings)');
       const floor = (w.created_at / 1000).toFixed(6);
       for (const t of threadsDue(db, ctx, Number(sp.max_threads ?? 40))) {
         const msgs = await a.slackReplies(t.channel, t.thread_ts);
@@ -653,8 +668,10 @@ async function pollActivity(db: Database.Database, w: Watcher, deps: EngineDeps,
       errors.push('Slack: ' + (e as Error).message);
     }
   }
-  if (!w.poll.baselined) baselineMatches(db, w, matches, now);
-  else for (const m of matches) if (!wasBaselined(db, w.id, m.key)) consider(m);
+  // A first poll that failed in part stays unbaselined: baselining half would let the other half fire everything old later.
+  if (!w.poll.baselined) {
+    if (!errors.length) baselineMatches(db, w, matches, now);
+  } else for (const m of matches) if (!wasBaselined(db, w.id, m.key)) consider(m);
   db.prepare(
     `UPDATE watchers SET watermark = ?, last_poll_at = ?, last_ok_at = CASE WHEN ? = '' THEN ? ELSE last_ok_at END, last_error = ?,
        error_count = CASE WHEN ? = '' THEN 0 ELSE error_count + 1 END, next_poll_at = ? WHERE id = ?`,
