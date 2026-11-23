@@ -13,7 +13,7 @@ import { POLL_MS as SLACK_POLL_MS } from '../watchers/sources/slack.ts';
 import { WORK_POLL_MS } from '../watchers/sources/work.ts';
 import { createFromTemplate, templateList } from '../watchers/templates.ts';
 import { discoverInvocables, hasInvocable } from '../watchers/invocables.ts';
-import { isDryRun, runtimeTestDeps, testWatcher, TICK_MS } from '../watchers/engine.ts';
+import { ACTIVITY_POLL_MS, isDryRun, runtimeTestDeps, testWatcher, TICK_MS } from '../watchers/engine.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Watchers (§9): list, templates, create / edit / duplicate / delete, run mode,
@@ -211,7 +211,7 @@ export async function runModeHandler({ json, body }: RouteCtx): Promise<void> {
 }
 
 export function pollEveryMs(kind: string): number {
-  return kind === 'slack' ? SLACK_POLL_MS : kind === 'work' ? WORK_POLL_MS : TICK_MS;
+  return kind === 'slack' ? SLACK_POLL_MS : kind === 'work' ? WORK_POLL_MS : kind === 'activity' ? ACTIVITY_POLL_MS : TICK_MS;
 }
 
 /** Run now (the Watchers tab header): poll on the engine's next tick. */

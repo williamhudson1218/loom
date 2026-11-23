@@ -19,6 +19,8 @@ import { evaluateChats, newTurnMemo, type TurnMemo } from './sources/chats.ts';
 import { evaluatePrs, type PrState } from './sources/prs.ts';
 import { evaluateWork, workBackoffMs, WORK_POLL_MS, type Finding } from './sources/work.ts';
 import type { ChatSignal } from './chatSignals.ts';
+import { githubMatches, markThreadChecked, slackMatches, threadsDue, type ActivityCtx, type GhDetail, type GhNotification } from './sources/activity.ts';
+import type { FollowupInput, FollowupKind, SlackMsg } from '../parked.ts';
 import { launchCommand, paneWhere, pickPane, renderBrief, renderPrompt, settingsForPerm, type RelayOutcome } from './actions.ts';
 import { hasInvocable, readInvoke, type InvocableKind } from './invocables.ts';
 
@@ -79,7 +81,22 @@ export interface EngineDeps {
   dryRun: boolean;
   briefsDir: string;
   selfPane?: string;
+  /** The activity source's I/O (Follow-ups). Absent: an activity watcher records that it cannot run. */
+  activity?: ActivityDeps;
 }
+
+export interface ActivityDeps {
+  /** GitHub notifications updated since `since` (ISO; '' for the first poll), and GitHub's X-Poll-Interval. */
+  ghNotifications(since: string): Promise<{ items: GhNotification[]; pollAfterMs: number }>;
+  /** Who did what on a notification's PR, its link, and whether the PR is merged or closed. */
+  ghDetail(n: GhNotification): Promise<GhDetail>;
+  slackReplies(channel: string, ts: string): Promise<SlackMsg[]>;
+  isLive(agent: string, sid: string): boolean;
+  reopenChat(f: FollowupInput): { ok: boolean; detail: string };
+}
+
+/** How often the activity source polls (GitHub may ask for longer with X-Poll-Interval). */
+export const ACTIVITY_POLL_MS = 180_000;
 
 /** Engine state that outlives one tick (the your-turn edge memo). */
 export interface EngineState {
@@ -178,6 +195,24 @@ export function act(db: Database.Database, w: Watcher, eventId: number, m: Match
     const target = m.chat ? { agent: m.chat.agent, sid: m.chat.session_id } : undefined;
     result = deps.notify(w.label, text || m.title, target) ? 'notified' : 'failed';
     if (result === 'failed') detail = 'notifications are not available';
+  } else if (w.action.kind === 'reopen_chat') {
+    const chat = m.chat ?? null;
+    const v = m.vars ?? {};
+    if (!chat) detail = 'no chat to reopen';
+    else {
+      const r = deps.activity?.reopenChat({
+        agent: chat.agent,
+        sessionId: chat.session_id,
+        kind: (v.KIND || 'comment') as FollowupKind,
+        who: v.WHO ?? '',
+        text: v.TEXT ?? '',
+        url: v.URL || m.permalink,
+        at: deps.now(),
+        ...(v.CHANNEL ? { channel: v.CHANNEL, threadTs: v.THREAD_TS ?? '' } : {}),
+      }) ?? { ok: false, detail: 'follow-ups are not available' };
+      result = r.ok ? 'reopened' : 'failed';
+      detail = r.detail;
+    }
   } else if (w.action.kind === 'tell_orch') {
     const ok = deps.tellOrch(`watcher:${w.id}:${m.subject}`, text || m.title, w.label);
     result = ok ? 'told' : 'failed';
@@ -530,6 +565,8 @@ export async function tickWatchers(db: Database.Database, deps: EngineDeps, stat
           if (!w0.poll.baselined) db.prepare(`UPDATE watchers SET baselined = 1 WHERE id = ?`).run(w0.id);
           mark();
         }
+      } else if (w0.source.kind === 'activity') {
+        if (deps.now() >= w0.poll.next_poll_at) await pollActivity(db, w0, deps, consider(w0));
       } else {
         const matches = w0.source.kind === 'chats' ? evaluateChats(w0, getSignals(), deps.now(), state.turns) : evaluatePrs(w0, (prs ??= deps.prs()));
         if (!w0.poll.baselined) {
@@ -563,6 +600,65 @@ export async function tickWatchers(db: Database.Database, deps: EngineDeps, stat
     state.lastPrune = deps.now();
     pruneBriefs(deps.briefsDir, Number(safeSetting(db, 'watcher_brief_prune_days', '0')), deps.now());
   }
+}
+
+/**
+ * One poll of the activity source: GitHub notifications since the watermark, then the
+ * owned Slack threads that are due. Each half fails on its own (its error goes into
+ * last_error, prefixed) without stopping the other. The first poll baselines what it
+ * finds; later ones consider what was not baselined. Slack replies older than the
+ * watcher itself never count, so turning it on does not reopen last week.
+ */
+async function pollActivity(db: Database.Database, w: Watcher, deps: EngineDeps, consider: (m: Match) => void): Promise<void> {
+  const a = deps.activity;
+  const now = deps.now();
+  if (!a) {
+    db.prepare(`UPDATE watchers SET last_poll_at = ?, last_error = ?, error_count = error_count + 1, next_poll_at = ? WHERE id = ?`).run(now, 'follow-ups are not available in this build', now + ACTIVITY_POLL_MS, w.id);
+    return;
+  }
+  const sp = w.source.params;
+  const prFinal = new Map<string, boolean>();
+  for (const p of deps.prs()) prFinal.set(p.url, p.final);
+  const ctx: ActivityCtx = {
+    now,
+    days: Number(sp.days ?? 14),
+    reasons: Array.isArray(w.trigger.params.reasons) ? (w.trigger.params.reasons as string[]) : [],
+    isLive: (ag, sid) => a.isLive(ag, sid),
+    prFinal: (u) => prFinal.get(u) ?? null,
+  };
+  const matches: Match[] = [];
+  const errors: string[] = [];
+  let watermark = w.poll.watermark;
+  let pollAfter = ACTIVITY_POLL_MS;
+  if (sp.github !== false) {
+    try {
+      const r = await a.ghNotifications(w.poll.baselined ? watermark : '');
+      pollAfter = Math.max(pollAfter, r.pollAfterMs);
+      for (const n of r.items) if (n.updated_at > watermark) watermark = n.updated_at;
+      matches.push(...(await githubMatches(db, r.items, ctx, (n) => a.ghDetail(n))));
+    } catch (e) {
+      errors.push('GitHub: ' + (e as Error).message);
+    }
+  }
+  if (sp.slack !== false) {
+    try {
+      const floor = (w.created_at / 1000).toFixed(6);
+      for (const t of threadsDue(db, ctx, Number(sp.max_threads ?? 40))) {
+        const msgs = await a.slackReplies(t.channel, t.thread_ts);
+        markThreadChecked(db, `${t.channel}/${t.thread_ts}`, now);
+        const since = Number(t.since_ts) > Number(floor) ? t.since_ts : floor;
+        matches.push(...slackMatches({ ...t, since_ts: since }, msgs, deps.slackSelf()));
+      }
+    } catch (e) {
+      errors.push('Slack: ' + (e as Error).message);
+    }
+  }
+  if (!w.poll.baselined) baselineMatches(db, w, matches, now);
+  else for (const m of matches) if (!wasBaselined(db, w.id, m.key)) consider(m);
+  db.prepare(
+    `UPDATE watchers SET watermark = ?, last_poll_at = ?, last_ok_at = CASE WHEN ? = '' THEN ? ELSE last_ok_at END, last_error = ?,
+       error_count = CASE WHEN ? = '' THEN 0 ELSE error_count + 1 END, next_poll_at = ? WHERE id = ?`,
+  ).run(watermark, now, errors.join('; '), now, errors.join('; ').slice(0, 500), errors.join('; '), now + pollAfter, w.id);
 }
 
 /**
@@ -662,6 +758,9 @@ export async function testWatcher(w: Watcher, deps: TestDeps, ignoreSelf = true)
     const sigs = deps.chats();
     scanned = sigs.length;
     matches = evaluateChats(w, sigs, deps.now(), newTurnMemo(), { test: true });
+  } else if (w.source.kind === 'activity') {
+    // A test would read the same notifications the next poll will, and the follow-ups depend on which chats are closed now.
+    return { ok: false, detail: 'Follow-ups cannot be tested ahead of time. Turn it on in Shadow: its History lists what it would reopen.' };
   } else if (w.source.kind === 'work') {
     const url = String(w.source.params.url ?? '');
     if (!url) return { ok: false, detail: 'enter the findings endpoint URL first' };

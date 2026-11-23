@@ -11,15 +11,15 @@ import type Database from 'better-sqlite3';
 // an action in actions.ts, and the loop in engine.ts.
 
 export type RunMode = 'shadow' | 'live';
-export type SourceKind = 'slack' | 'chats' | 'prs' | 'work';
-export type ActionKind = 'start_chat' | 'message_chat' | 'notify' | 'tell_orch';
+export type SourceKind = 'slack' | 'chats' | 'prs' | 'work' | 'activity';
+export type ActionKind = 'start_chat' | 'message_chat' | 'notify' | 'tell_orch' | 'reopen_chat';
 export type Decision = 'fired' | 'would_fire' | 'held_quiet' | 'held_cap' | 'held_cooldown' | 'held_capacity';
-export type EventResult = 'queued' | 'started' | 'sent' | 'notified' | 'told' | 'failed' | '';
+export type EventResult = 'queued' | 'started' | 'sent' | 'notified' | 'told' | 'reopened' | 'failed' | '';
 export type Params = Record<string, unknown>;
 
 export const RUN_MODES: readonly RunMode[] = ['shadow', 'live'];
-export const SOURCE_KINDS: readonly SourceKind[] = ['slack', 'chats', 'prs', 'work'];
-export const ACTION_KINDS: readonly ActionKind[] = ['start_chat', 'message_chat', 'notify', 'tell_orch'];
+export const SOURCE_KINDS: readonly SourceKind[] = ['slack', 'chats', 'prs', 'work', 'activity'];
+export const ACTION_KINDS: readonly ActionKind[] = ['start_chat', 'message_chat', 'notify', 'tell_orch', 'reopen_chat'];
 
 /** Every trigger, per source, with its default params. A draft's params are merged over these. */
 export const TRIGGERS: Record<SourceKind, Record<string, { label: string; defaults: Params }>> = {
@@ -45,6 +45,9 @@ export const TRIGGERS: Record<SourceKind, Record<string, { label: string; defaul
   work: {
     finding: { label: 'New finding', defaults: { rules: [] } },
   },
+  activity: {
+    aimed_at_me: { label: 'Something aimed at you lands on a closed chat', defaults: { reasons: ['review_requested', 'mention', 'team_mention', 'comment'] } },
+  },
 };
 
 export const SOURCE_DEFAULTS: Record<SourceKind, Params> = {
@@ -52,6 +55,7 @@ export const SOURCE_DEFAULTS: Record<SourceKind, Params> = {
   chats: { projects: [], tags: [] },
   prs: { repos: [], mine_only: true },
   work: { url: '', sweep_first: false },
+  activity: { github: true, slack: true, days: 14, max_threads: 40 },
 };
 
 export const ACTION_DEFAULTS: Record<ActionKind, Params> = {
@@ -59,6 +63,7 @@ export const ACTION_DEFAULTS: Record<ActionKind, Params> = {
   message_chat: { template: '' },
   notify: { template: '' },
   tell_orch: { template: '' },
+  reopen_chat: {},
 };
 
 /** The stored row, as better-sqlite3 returns it. */
@@ -205,12 +210,12 @@ export function validateDraft(
   const label = typeof d.label === 'string' ? d.label.trim() : '';
   if (!label || label.length > 120) return { ok: false, detail: 'label is required (at most 120 characters)' };
   const sk = d.source?.kind;
-  if (!sk || !(SOURCE_KINDS as readonly string[]).includes(sk)) return { ok: false, detail: 'source.kind must be slack, chats, prs or work' };
+  if (!sk || !(SOURCE_KINDS as readonly string[]).includes(sk)) return { ok: false, detail: 'source.kind must be slack, chats, prs, work or activity' };
   const tk = d.trigger?.kind ?? '';
   const spec = TRIGGERS[sk][tk];
   if (!spec) return { ok: false, detail: `trigger ${tk || '(none)'} does not exist for source ${sk}` };
   const ak = d.action?.kind;
-  if (!ak || !(ACTION_KINDS as readonly string[]).includes(ak)) return { ok: false, detail: 'action.kind must be start_chat, message_chat, notify or tell_orch' };
+  if (!ak || !(ACTION_KINDS as readonly string[]).includes(ak)) return { ok: false, detail: 'action.kind must be start_chat, message_chat, notify, tell_orch or reopen_chat' };
   const runMode = d.run_mode ?? 'shadow';
   if (!(RUN_MODES as readonly string[]).includes(runMode)) return { ok: false, detail: 'run_mode must be shadow or live' };
   const sp: Params = { ...SOURCE_DEFAULTS[sk], ...(obj(d.source?.params) ?? {}) };
@@ -228,6 +233,11 @@ export function validateDraft(
     if (typeof sp.url !== 'string' || (sp.url && !/^(https:\/\/|http:\/\/localhost[:/])/.test(sp.url))) return { ok: false, detail: 'source.params.url must be an https:// URL' };
     if (typeof sp.sweep_first !== 'boolean') return { ok: false, detail: 'source.params.sweep_first must be true or false' };
     if (opts.forEnable && !sp.url) return { ok: false, detail: 'enter the findings endpoint URL first' };
+  } else if (sk === 'activity') {
+    if (typeof sp.github !== 'boolean' || typeof sp.slack !== 'boolean') return { ok: false, detail: 'source.params.github and slack must be true or false' };
+    if (!(Number.isInteger(sp.days) && (sp.days as number) >= 1 && (sp.days as number) <= 90)) return { ok: false, detail: 'source.params.days must be a whole number from 1 to 90' };
+    if (!(Number.isInteger(sp.max_threads) && (sp.max_threads as number) >= 1 && (sp.max_threads as number) <= 200)) return { ok: false, detail: 'source.params.max_threads must be a whole number from 1 to 200' };
+    if (opts.forEnable && !sp.github && !sp.slack) return { ok: false, detail: 'watch GitHub, Slack or both' };
   } else {
     if (!isStrList(sp.repos) || sp.repos.some((r) => !/^[\w.-]+\/[\w.-]+$/.test(r))) return { ok: false, detail: 'source.params.repos must be owner/name strings' };
     if (typeof sp.mine_only !== 'boolean') return { ok: false, detail: 'source.params.mine_only must be true or false' };
@@ -247,7 +257,13 @@ export function validateDraft(
   if (tk === 'pr-link-post' && opts.forEnable && !(tp.repos as string[]).length) return { ok: false, detail: 'name at least one repo (owner/name)' };
 
   // Action
-  if (ak === 'start_chat') {
+  // Reopening needs a closed chat to reopen, which only the activity source names; the
+  // activity source's matches are only worth reopening or a notification.
+  if (ak === 'reopen_chat' && sk !== 'activity') return { ok: false, detail: 'reopen_chat works with the activity source only' };
+  if (sk === 'activity' && ak !== 'reopen_chat' && ak !== 'notify') return { ok: false, detail: 'the activity source can reopen the chat or send a notification' };
+  if (ak === 'reopen_chat') {
+    // No params: the follow-up itself is what the chat shows.
+  } else if (ak === 'start_chat') {
     if (typeof ap.project_dir !== 'string' || (ap.project_dir && !path.isAbsolute(ap.project_dir))) return { ok: false, detail: 'action.params.project_dir must be an absolute folder' };
     if (typeof ap.target !== 'string' || !(ap.target === 'managed' || LANE.test(ap.target))) return { ok: false, detail: "action.params.target must be 'managed' or 'lane:<name>'" };
     if (typeof ap.standing !== 'boolean') return { ok: false, detail: 'action.params.standing must be true or false' };
