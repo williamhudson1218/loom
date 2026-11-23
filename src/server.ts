@@ -47,7 +47,7 @@ import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmod
 import { authTest, conversationsReplies } from './slackapi.ts';
 import { getSetting, onSettingChanged } from './settingsSchema.ts';
 import type { ThreadRef } from './slackref.ts';
-import { emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
+import { boardParkedFields, emailRepliesVia, getParked, isEmailRow, listParked, pollParked, restoreChat, resumePrompt, sendThen, unparkChat, type AfterSend, waitingLabel, type ParkedRow } from './parked.ts';
 import { OutboxWatch } from './outboxwatch.ts';
 import { heldCount as heldLinkCount } from './pendinglinks.ts';
 import { buildRedraftPrompt, clearMark, newMark, readMarks, redraftView, setMark } from './redraft.ts';
@@ -725,16 +725,12 @@ function slackCountsFor(): Record<string, number> {
 }
 
 /** Parked chats for the board, each with the label the sidebar shows. */
-function parkedForBoard(): (ParkedRow & { label: string; reply_first_line: string })[] {
+function parkedForBoard(): (ParkedRow & ReturnType<typeof boardParkedFields>)[] {
   const db = openDb();
   try {
     const now = Date.now();
     const names = slackNames();
-    return listParked(db).map((r) => ({
-      ...r,
-      label: r.state === 'waiting' ? waitingLabel(r, now) : `${r.reply_user || 'Someone'} replied`,
-      reply_first_line: r.state === 'replied' ? firstLineOf(r.reply_text, names) : '',
-    }));
+    return listParked(db).map((r) => ({ ...r, ...boardParkedFields(r, now, (t) => firstLineOf(t, names)) }));
   } finally {
     db.close();
   }

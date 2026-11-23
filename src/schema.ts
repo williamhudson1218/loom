@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { PARKED_SCHEMA_SQL } from './parked.ts';
+import { PARKED_SCHEMA_SQL, ensureParkedColumns } from './parked.ts';
 import { TEST_LINKS_SCHEMA_SQL, ensureTestLinkColumns } from './testlinks.ts';
 import { ACTIONS_SCHEMA_SQL, ensureActionColumns } from './actions.ts';
 import { PRUNE_SCHEMA_SQL } from './prunesql.ts';
@@ -504,6 +504,7 @@ export function applySchema(db: Database.Database): void {
   ensureOrchestratorColumns(db);
   ensureChatGroupColumns(db);
   db.exec(PARKED_SCHEMA_SQL);
+  ensureParkedColumns(db);
   db.exec(TEST_LINKS_SCHEMA_SQL);
   db.exec(ACTIONS_SCHEMA_SQL);
   ensureActionColumns(db);

@@ -25,6 +25,10 @@ import {
   waitingLabel,
   type ParkedRow,
   type SlackMsg,
+  reopenForFollowup,
+  followupLabel,
+  boardParkedFields,
+  type FollowupInput,
 } from '../src/parked.ts';
 import type { Draft } from '../src/outbox.ts';
 import { buildLaunchCommand, closeSession } from '../src/goto.ts';
@@ -441,5 +445,84 @@ describe('Send / Send & park / Send & close (stubbed sender)', () => {
     const r = await sendThen(d, 'close', 'd1', draft.messages, deps);
     expect(r).toMatchObject({ ok: true, done: true, closed: false });
     expect(board(d)).toEqual([]);
+  });
+});
+
+describe('reopen for a follow-up', () => {
+  const hiddenDb = () => {
+    const d = db();
+    d.exec(`CREATE TABLE chat_hidden (agent TEXT NOT NULL, session_id TEXT NOT NULL, hidden_at INTEGER NOT NULL, via TEXT NOT NULL DEFAULT '', PRIMARY KEY (agent, session_id))`);
+    return d;
+  };
+  const f = (over: Partial<FollowupInput> = {}): FollowupInput => ({
+    agent: 'claude', sessionId: 's9', kind: 'review_requested', who: 'ana', text: 'ready for another look', url: 'https://github.com/acme/app/pull/12', at: 2_000, ...over,
+  });
+
+  it('writes a replied row and clears a close mark', () => {
+    const d = hiddenDb();
+    d.prepare(`INSERT INTO chat_hidden VALUES ('claude', 's9', 1, 'close')`).run();
+    expect(reopenForFollowup(d, f())).toEqual({ ok: true, reopened: true });
+    expect(getParked(d, 'claude', 's9')).toMatchObject({
+      state: 'replied', reply_kind: 'review_requested', reply_user: 'ana', reply_text: 'ready for another look',
+      reply_url: 'https://github.com/acme/app/pull/12', thread_url: 'https://github.com/acme/app/pull/12', reply_count: 1, replied_at: 2_000, channel: 'github',
+    });
+    expect(d.prepare(`SELECT COUNT(*) AS n FROM chat_hidden`).get()).toEqual({ n: 0 });
+  });
+
+  it('leaves a Remove-from-board mark alone', () => {
+    const d = hiddenDb();
+    d.prepare(`INSERT INTO chat_hidden VALUES ('claude', 's9', 1, '')`).run();
+    reopenForFollowup(d, f());
+    expect(d.prepare(`SELECT via FROM chat_hidden`).get()).toEqual({ via: '' });
+  });
+
+  it('a second follow-up bumps the same row', () => {
+    const d = hiddenDb();
+    reopenForFollowup(d, f());
+    expect(reopenForFollowup(d, f({ kind: 'comment', who: 'bo', text: 'one more thing', at: 3_000 }))).toEqual({ ok: true, reopened: false });
+    expect(listParked(d)).toHaveLength(1);
+    expect(getParked(d, 'claude', 's9')).toMatchObject({ reply_count: 2, reply_kind: 'comment', reply_user: 'bo', reply_text: 'one more thing', replied_at: 3_000 });
+  });
+
+  it('refuses a chat Park is already waiting on', () => {
+    const d = hiddenDb();
+    park(d, { sessionId: 's9' });
+    expect(reopenForFollowup(d, f())).toMatchObject({ ok: false });
+    expect(getParked(d, 'claude', 's9')?.state).toBe('waiting');
+  });
+
+  it('a Slack follow-up keeps its channel and thread', () => {
+    const d = hiddenDb();
+    reopenForFollowup(d, f({ kind: 'thread_reply', channel: 'C1', threadTs: '1.000100', url: 'https://w.slack.com/archives/C1/p1000100' }));
+    expect(getParked(d, 'claude', 's9')).toMatchObject({ channel: 'C1', thread_ts: '1.000100' });
+  });
+
+  it('the resume prompt names the follow-up, not a parked reply', () => {
+    const d = hiddenDb();
+    reopenForFollowup(d, f());
+    const p = resumePrompt(getParked(d, 'claude', 's9')!);
+    expect(p).toContain('ana re-requested your review on the GitHub PR');
+    expect(p).toContain('https://github.com/acme/app/pull/12');
+    expect(p).toContain('> ready for another look');
+    expect(p).not.toContain('parked until they answered');
+  });
+
+  it('followupLabel words each kind', () => {
+    expect(followupLabel('thread_reply', 'ana')).toBe('ana replied');
+    expect(followupLabel('review_requested', 'ana')).toBe('ana re-requested your review');
+    expect(followupLabel('mention', '')).toBe('Someone mentioned you');
+    expect(followupLabel('comment', 'bo')).toBe('bo commented');
+  });
+});
+
+describe('board view of a parked row', () => {
+  it('a follow-up gets its own chip and label; a parked reply keeps "replied"', () => {
+    const d = db();
+    d.exec(`CREATE TABLE chat_hidden (agent TEXT NOT NULL, session_id TEXT NOT NULL, hidden_at INTEGER NOT NULL, via TEXT NOT NULL DEFAULT '', PRIMARY KEY (agent, session_id))`);
+    reopenForFollowup(d, { agent: 'claude', sessionId: 's9', kind: 'comment', who: 'bo', text: 'line one\nline two', url: 'u', at: 5 });
+    expect(boardParkedFields(getParked(d, 'claude', 's9')!, 10, (t) => t.split('\n')[0])).toEqual({ label: 'bo commented', reply_first_line: 'line one', chip: 'follow-up', chip_tip: 'bo commented' });
+    park(d, { sessionId: 's1' });
+    d.prepare(`UPDATE parked_chats SET state = 'replied', reply_user = 'jem', reply_text = 'ok' WHERE session_id = 's1'`).run();
+    expect(boardParkedFields(getParked(d, 'claude', 's1')!, 10, (t) => t)).toEqual({ label: 'jem replied', reply_first_line: 'ok', chip: 'replied', chip_tip: 'someone replied in the thread' });
   });
 });

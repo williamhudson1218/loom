@@ -30,9 +30,18 @@ CREATE TABLE IF NOT EXISTS parked_chats (
   reply_ts      TEXT NOT NULL DEFAULT '',
   reply_text    TEXT NOT NULL DEFAULT '',
   reply_count   INTEGER NOT NULL DEFAULT 0,
+  reply_kind    TEXT NOT NULL DEFAULT '',          -- '' (a parked reply) or a FollowupKind
+  reply_url     TEXT NOT NULL DEFAULT '',          -- the follow-up's own link (comment, reply)
   PRIMARY KEY (agent, session_id)
 );
 `;
+
+/** Add the follow-up columns to a parked_chats table made before they existed. */
+export function ensureParkedColumns(db: Database.Database): void {
+  const have = new Set((db.prepare(`PRAGMA table_info(parked_chats)`).all() as { name: string }[]).map((c) => c.name));
+  if (!have.has('reply_kind')) db.exec(`ALTER TABLE parked_chats ADD COLUMN reply_kind TEXT NOT NULL DEFAULT ''`);
+  if (!have.has('reply_url')) db.exec(`ALTER TABLE parked_chats ADD COLUMN reply_url TEXT NOT NULL DEFAULT ''`);
+}
 
 export interface ParkedRow {
   agent: string;
@@ -53,6 +62,8 @@ export interface ParkedRow {
   reply_ts: string;
   reply_text: string;
   reply_count: number;
+  reply_kind: FollowupKind | '';
+  reply_url: string;
 }
 
 interface RawRow extends Omit<ParkedRow, 'waiting_on'> {
@@ -101,6 +112,68 @@ export function parkChat(db: Database.Database, p: ParkInput, now: number = Date
 /** Remove the parked mark (manual unpark, or after a resume). True when a row was removed. */
 export function unparkChat(db: Database.Database, agent: string, sid: string): boolean {
   return db.prepare(`DELETE FROM parked_chats WHERE agent = ? AND session_id = ?`).run(agent, sid).changes > 0;
+}
+
+/* ------------------------------------------------------------------ follow-ups */
+
+// The Follow-ups watcher (source `activity`, action `reopen_chat`) brings a closed chat
+// back when something aimed at the user lands on its PR or Slack thread. It reuses the
+// parked row in its `replied` state, which already drives Your turn, the badge, the
+// banner and Resume; `reply_kind` says it came from a follow-up rather than a park.
+
+export type FollowupKind = 'thread_reply' | 'review_requested' | 'mention' | 'comment';
+
+export interface FollowupInput {
+  agent: string;
+  sessionId: string;
+  kind: FollowupKind;
+  who: string;
+  text: string;
+  url: string;
+  at: number;
+  /** A Slack follow-up's thread; a GitHub one has none (channel 'github'). */
+  channel?: string;
+  threadTs?: string;
+}
+
+export function followupLabel(kind: FollowupKind | '', who: string): string {
+  const w = who || 'Someone';
+  if (kind === 'review_requested') return `${w} re-requested your review`;
+  if (kind === 'mention') return `${w} mentioned you`;
+  if (kind === 'comment') return `${w} commented`;
+  return `${w} replied`;
+}
+
+/**
+ * Put a closed chat back on Your turn for a follow-up: a `replied` parked row (a second
+ * follow-up bumps the same row) and the Send & close mark cleared. A plain
+ * Remove-from-board mark is left alone. A chat Park is still waiting on is Park's.
+ */
+export function reopenForFollowup(db: Database.Database, f: FollowupInput): { ok: true; reopened: boolean } | { ok: false; detail: string } {
+  const cur = getParked(db, f.agent, f.sessionId);
+  if (cur?.state === 'waiting') return { ok: false, detail: 'parked and waiting: Park watches this chat' };
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO parked_chats (agent, session_id, state, channel, thread_ts, thread_url, sent_ts, sent_at, parked_at, replied_at, reply_user, reply_text, reply_count, reply_kind, reply_url)
+       VALUES (@agent, @sid, 'replied', @channel, @thread_ts, @url, '', @at, @at, @at, @who, @text, 1, @kind, @url)
+       ON CONFLICT(agent, session_id) DO UPDATE SET state = 'replied', replied_at = @at, reply_user = @who, reply_text = @text,
+         reply_count = parked_chats.reply_count + 1, reply_kind = @kind, reply_url = @url`,
+    ).run({ agent: f.agent, sid: f.sessionId, channel: f.channel ?? 'github', thread_ts: f.threadTs ?? '', url: f.url, at: f.at, who: f.who, text: f.text, kind: f.kind });
+    restoreChat(db, f.agent, f.sessionId);
+  })();
+  return { ok: true, reopened: !cur };
+}
+
+/** What the board shows for a parked row: the label, the reply's first line, and the row chip. */
+export function boardParkedFields(r: ParkedRow, now: number, firstLineOf: (text: string) => string): { label: string; reply_first_line: string; chip: string; chip_tip: string } {
+  const replied = r.state === 'replied';
+  const label = !replied ? waitingLabel(r, now) : r.reply_kind ? followupLabel(r.reply_kind, r.reply_user) : `${r.reply_user || 'Someone'} replied`;
+  return {
+    label,
+    reply_first_line: replied ? firstLineOf(r.reply_text) : '',
+    chip: r.reply_kind ? 'follow-up' : 'replied',
+    chip_tip: r.reply_kind ? label : 'someone replied in the thread',
+  };
 }
 
 /* ------------------------------------------------------------------ replies */
@@ -167,6 +240,15 @@ export function waitingLabel(r: Pick<ParkedRow, 'waiting_on' | 'sent_at'>, now: 
 /** The first prompt of a resumed chat: the new reply and where it lives. */
 export function resumePrompt(r: ParkedRow): string {
   const who = r.reply_user || 'Someone';
+  if (r.reply_kind) {
+    const where = r.channel === 'github' ? 'the GitHub PR' : 'the Slack thread';
+    return (
+      `Loom: ${followupLabel(r.reply_kind, r.reply_user)} on ${where} this chat was about. You had closed this chat; Loom reopened it for the follow-up.\n\n` +
+      `Link: ${r.reply_url || r.thread_url}\n\n` +
+      (r.reply_text ? `What they wrote:\n${r.reply_text.split('\n').map((l) => '> ' + l).join('\n')}\n\n` : '') +
+      `Read it (read-only), then carry on. Draft any answer for my approval as usual.`
+    );
+  }
   const link = r.reply_ts ? replyPermalink(r) : r.thread_url;
   return (
     `Loom: ${who} replied in the ${isEmailRow(r) ? 'email' : 'Slack'} thread you were waiting on. You sent a message there and this chat was parked until they answered.\n\n` +
