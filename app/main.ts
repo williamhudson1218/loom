@@ -15,7 +15,7 @@ import { startListening, startFailure } from '../src/serverstart.ts';
 import { removeServerJson } from '../src/serverjson.ts';
 import { attachTerminalBridge } from '../src/ptybridge.ts';
 import { openDb, getSlackHotkey, loadTmuxSocketSetting } from '../src/db.ts';
-import { getSetting, onSettingChanged } from '../src/settingsSchema.ts';
+import { getSetting, onSettingChanged, setSetting } from '../src/settingsSchema.ts';
 import { menuAccelerators } from '../src/keymap.ts';
 import { composePath, resolveTmuxTmpdir, loginEnv, shouldAutostartOrchestrator } from '../src/appenv.ts';
 import { practice, setShortcutHost, normalizeAccelerator } from '../src/routes/shortcut.ts';
@@ -401,6 +401,43 @@ function trayTickFrom(panes: TmuxPane[], agents: ReturnType<typeof agentPaneIds>
   }
 }
 
+const SILENCE_MS = 60 * 60_000;
+
+/** Chat sounds silenced from the tray: `sounds_muted_until` in settings, so the server reads it with no restart. */
+function soundsMutedUntil(): number {
+  try {
+    const db = openDb();
+    try {
+      return getSetting(db, 'sounds_muted_until') as number;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return 0;
+  }
+}
+
+function toggleSoundsMuted(): void {
+  try {
+    const db = openDb();
+    try {
+      setSetting(db, 'sounds_muted_until', soundsMutedUntil() > Date.now() ? 0 : Date.now() + SILENCE_MS);
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    console.error('[loom] tray: could not change sound mute:', (e as Error).message);
+  }
+  syncSoundsItem();
+}
+
+const soundsLabel = (): string => (soundsMutedUntil() > Date.now() ? 'Sounds on (silenced for now)' : 'Silence for 1 hour');
+
+function syncSoundsItem(): void {
+  const item = trayMenu?.getMenuItemById('sounds');
+  if (item) item.label = soundsLabel();
+}
+
 function updateTray(): void {
   showTrayCounts(trayTick());
 }
@@ -419,6 +456,7 @@ function showTrayCounts(c: TrayCounts): void {
   tray.setToolTip(`Loom — ${c.live} live · ${c.working} working · ${c.yourTurn} your turn` + (c.watchers ? ` · ${c.watchers} watcher${c.watchers === 1 ? '' : 's'} need${c.watchers === 1 ? 's' : ''} you` : ''));
   const compactItem = trayMenu?.getMenuItemById('compact');
   if (compactItem) compactItem.checked = compactEnabled();
+  syncSoundsItem(); // the hour runs out on its own
 }
 
 /** Pane ids whose @loom_role marks them the orchestrator's (what isOrchPane checks one pane at a time). */
@@ -970,6 +1008,7 @@ function buildTrayMenu(): void {
       checked: compactEnabled(),
       click: (item) => setCompactEnabled(item.checked),
     },
+    { id: 'sounds', label: soundsLabel(), click: toggleSoundsMuted },
     { label: 'Refresh now', click: () => void runOnce() },
     {
       label: 'Pick a Slack message to open its chat' + (slackAccel ? `  (${slackAccel.replace(/Command/g, 'Cmd').replace(/Control/g, 'Ctrl').replace(/Alt/g, 'Option')})` : ''),

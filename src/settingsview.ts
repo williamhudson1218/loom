@@ -223,10 +223,24 @@ function sxGeneral(){var cv=DATA.codexVisible;var aopts=cv||sxv('default_agent')
    sxGrp('Defaults')+
    sxChoice('new_thread_dir',[['last','Last folder you used'],['home','Home folder']],{title:'Default project',help:'The project New thread and Slack auto-start pick. Make default in the New thread window sets it too.',customLabel:'A fixed folder…',ph:'/absolute/path',defTxt:'Last folder you used'})+
    sxKey('notify_sound',{kind:'select',title:'Notification sound',help:'Played when a parked thread gets a reply.',labels:{off:'Off',system:'System default'},after:sxBtn('snd','▶ Preview')})+
+   sxSounds()+
    sxGrp('Tools Loom runs')+
    sxKey('claude_bin',{title:'Claude Code binary',help:'Detected through your shell when empty. Set it if Claude lives somewhere unusual, such as an nvm global.',note:sxDetected('claude'),ph:sxPr('claude')||'Detected automatically',mono:true,noDef:true,after:sxBtn('detect','Detect')})+
    sxKey('extra_path',{title:'Extra PATH entries',help:'Searched before launching claude, tmux, gh and node, separated by colons. Apps started from Finder do not inherit your shell PATH.',ph:'~/.local/bin:/opt/homebrew/bin'})+
    sxRow('GitHub CLI','PR status, checks and Ship.',sxGh()+sxBtn('gogh','Set up in GitHub',{ghost:true}));}
+function sxSounds(){var mu=sxv('sounds_muted_until')||0;
+  return sxGrp('Chat sounds')+
+   (mu>Date.now()?sxNote('Sounds are silenced until '+sxEsc(new Date(mu).toLocaleTimeString())+'. Choose Sounds on in the menu bar icon to end it.','warn'):'')+
+   sxKey('sound_chat_done',{kind:'select',title:'Chat finished',help:'Plays when a chat you are not looking at finishes a turn that ran long enough. Silent for the orchestrator, background chats and the pane you are in.',labels:{off:'Off',system:'System default'},after:sxBtn('snd','▶ Preview',{arg:'sound_chat_done'})})+
+   sxKey('sound_chat_blocked',{kind:'select',title:'Chat needs you',help:'Plays when a chat you are not looking at stops for a permission or an answer, and once more after 10 minutes if it is still waiting.',labels:{off:'Off',system:'System default'},after:sxBtn('snd','▶ Preview',{arg:'sound_chat_blocked'})})+
+   sxKey('sound_min_turn_s',{title:'Shortest turn that plays',help:'A finished turn shorter than this stays silent.',unit:'seconds',min:0,max:3600})+
+   sxQuiet();}
+function sxQuiet(){var q=sxv('quiet_hours')||{enabled:false,start:'22:00',end:'07:00',days:[0,1,2,3,4,5,6]};var nm=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var on='<label class="tg"><input type="checkbox" data-qh="enabled"'+(q.enabled?' checked':'')+'><i></i></label>';
+  var tm='<input type="time" data-qh="start" value="'+sxEsc(q.start)+'" style="width:110px;flex:none"><span class="def">to</span><input type="time" data-qh="end" value="'+sxEsc(q.end)+'" style="width:110px;flex:none">';
+  var dy=nm.map(function(n,i){return '<label class="def" style="display:inline-flex;gap:3px;align-items:center;margin-right:8px"><input type="checkbox" data-qh="day" data-d="'+i+'"'+(q.days.indexOf(i)>=0?' checked':'')+'>'+n+'</label>';}).join('');
+  return sxRow('Quiet hours','No chat sounds, and no sound on Loom banners, between these times. It can run past midnight.',on+tm)+
+   (q.enabled?sxRow('Quiet days','The days the quiet window starts on.',dy):'');}
 function sxPr(n){var p=SX.data.probe;return p&&p.ok&&p.probe[n]&&p.probe[n].found?p.probe[n].path||'':'';}
 function sxDetected(n){var p=sxPr(n);return p?' <span class="def">Detected: <b>'+sxEsc(shortPath(p))+'</b>.</span>':'';}
 function sxGh(){var p=SX.data.probe;if(!p)return sxPill('off','Checking');if(!p.ok)return sxPill('off','Could not check');var g=p.probe.gh;if(!g.found)return sxPill('warn','gh not found');var v=g.version?'gh '+g.version.raw:'gh';return g.auth&&g.auth.loggedIn?sxPill('ok',v+' · logged in'+(g.auth.hosts&&g.auth.hosts.length?' to '+g.auth.hosts[0]:'')):sxPill('warn',v+' · not logged in')+'<span class="def">Connect it in the GitHub section.</span>';}
@@ -458,6 +472,9 @@ function sxChange(e){var t=e.target;
   if(t.dataset.pname){sxPost('/api/projects/update',{id:+t.dataset.pname,name:t.value}).then(function(j){if(!j.ok)sxBad(sxErr(j));else{sxProjRefresh();}});return;}
   if(t.dataset.ship){var f=t.dataset.f,v=t.type==='checkbox'?t.checked:t.value;var o={project_dir:t.dataset.ship};o[f]=v;sxPost('/api/ship/projects/update',o).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoad('ship',true);});return;}
   if(t.dataset.sxch){var k=t.dataset.sxch;if(t.value==='__custom'){SX.cust[k]=true;renderSettings();return;}SX.cust[k]=false;sxSet(k,t.value);return;}
+  if(t.dataset.qh){var q0=sxv('quiet_hours')||{enabled:false,start:'22:00',end:'07:00',days:[0,1,2,3,4,5,6]};var q1={enabled:q0.enabled,start:q0.start,end:q0.end,days:q0.days.slice()};var w=t.dataset.qh;
+   if(w==='enabled')q1.enabled=t.checked;else if(w==='start'||w==='end'){if(!t.value)return;q1[w]=t.value;}else{var dn=+t.dataset.d;q1.days=q1.days.filter(function(x){return x!==dn;});if(t.checked)q1.days.push(dn);q1.days.sort();}
+   sxSet('quiet_hours',q1);return;}
   if(t.dataset.sx){var kk=t.dataset.sx,ty=t.dataset.t,val;
    if(ty==='bool')val=t.checked;else if(ty==='01')val=t.checked?'1':'0';else if(ty==='num'){if(t.value==='')return;val=Number(t.value);}else if(ty==='list')val=t.value.split(':').map(function(x){return x.trim();}).filter(function(x){return x;});else val=t.value;
    sxSet(kk,val);}}
@@ -492,7 +509,7 @@ function sxAct(a,arg,btn){
   if(a==='prm'){sxConfirm({title:'Remove this project',body:'Loom stops listing its chats. Files and sessions are not touched.',ok:'Remove'}).then(function(y){if(y)sxPost('/api/projects/remove',{id:+arg}).then(function(){sxProjRefresh();});});return;}
   if(a==='phide'){var p=(ALLP||[]).filter(function(x){return x.id===+arg;})[0];if(p)sxPost('/api/projects/update',{id:p.id,hidden:!p.hidden}).then(function(){sxProjRefresh();});return;}
   if(a==='padd'){var inp=$('#sx-newproj');var pick=(window.loomNative&&window.loomNative.pickFolder)?window.loomNative.pickFolder().then(function(pp){return pp?sxPost('/api/projects',{path:pp}):null;}):Promise.resolve(sxPost('/api/projects',{path:(inp&&inp.value||'').trim()}));pick.then(function(j){if(!j)return;if(!j.ok){var m=$('#sx-pmsg');if(m)m.textContent=sxErr(j);return;}sxProjRefresh();});return;}
-  if(a==='snd'){var cur=sxv('notify_sound');var sel2=$('[data-sx="notify_sound"]');sxPost('/api/sound/preview',{name:sel2?sel2.value:cur}).then(function(j){if(!j.ok)sxBad(sxErr(j));});return;}
+  if(a==='snd'){var sk=arg||'notify_sound';var cur=sxv(sk);var sel2=$('[data-sx="'+sk+'"]');sxPost('/api/sound/preview',{name:sel2?sel2.value:cur}).then(function(j){if(!j.ok)sxBad(sxErr(j));});return;}
   if(a==='detect'){sxJ('/api/probe?fresh=1').then(function(j){SX.data.probe=j;var pth=j.ok&&j.probe.claude&&j.probe.claude.found?j.probe.claude.path:'';if(!pth){sxBad('Claude Code was not found on this machine');sxRerender(true);return;}sxPut({claude_bin:pth});});return;}
   if(a==='sdir'){btn.disabled=true;btn.textContent='Refreshing…';sxPost('/api/slack/directory/refresh',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));else toast('Refreshed '+j.people+' people, '+j.channels+' channels, '+j.emoji+' emoji');sxLoad('dir',true);});return;}
   if(a==='vtune'){if(!sxVoiceTune(SX.data.slack)[0])return;if(typeof openComposer==='function')openComposer({prompt:'/loom:voice-tuning'});else sxBad('Open the Board to start a chat');return;}

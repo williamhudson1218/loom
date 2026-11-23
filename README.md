@@ -56,6 +56,7 @@ You can reopen the tour or the wizard from Settings › Help (**Take the tour**,
 - **Resume, branch, close.** Resume an old chat, branch it into a new session that leaves the original alone, or close it to free its window.
 - **Save for later.** Star a chat to pin it and keep it from aging out of the board.
 - **Search all history.** Type in the filter box and press Enter to search every transcript on disk. This needs the optional find-chat tool (see SETUP.md).
+- **Chat sounds.** With the plugin installed, a chat that finishes a long turn plays a sound, and one that stops for a permission plays another (Settings › General › Chat sounds). Loom stays silent for the chat you are looking at (a terminal in front and that pane active), the orchestrator, chats outside tmux, turns shorter than the minimum, and quiet hours; it plays at most one sound per five seconds, and a chat still waiting after 10 minutes gets one reminder. **Silence for 1 hour** is in the menu bar icon. Set `LOOM_SILENT=1` in a chat's environment to keep it quiet.
 - **Outbox.** Slack drafts that chats prepare for you. You review them and send, or send and park the chat until the thread replies.
 - **Ship.** A per-project button that releases the staged work in a repo (see below).
 - **Orchestrator.** One chat that sees all the others and reports what needs you. Optional.

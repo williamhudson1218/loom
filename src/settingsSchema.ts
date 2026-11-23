@@ -178,6 +178,24 @@ export function isAccelerator(s: string): boolean {
 export const MAC_SOUNDS = ['Basso', 'Blow', 'Bottle', 'Frog', 'Funk', 'Glass', 'Hero', 'Morse', 'Ping', 'Pop', 'Purr', 'Sosumi', 'Submarine', 'Tink'] as const;
 
 /** `{channel_id: project_dir}`; the same filter slackowner.getChannelProjects applies. */
+export interface QuietHours {
+  enabled: boolean;
+  start: string;
+  end: string;
+  days: number[];
+}
+export const DEFAULT_QUIET_HOURS: QuietHours = { enabled: false, start: '22:00', end: '07:00', days: [0, 1, 2, 3, 4, 5, 6] };
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+function quietHours(v: unknown): Check<QuietHours> {
+  if (!isPlainObject(v)) return bad('quiet_hours must be an object');
+  const { enabled, start, end, days } = v;
+  if (typeof enabled !== 'boolean') return bad('quiet_hours.enabled must be true or false');
+  if (typeof start !== 'string' || !HHMM.test(start) || typeof end !== 'string' || !HHMM.test(end)) return bad('quiet_hours start and end must be HH:MM');
+  if (!Array.isArray(days) || !days.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) return bad('quiet_hours.days must be weekday numbers 0 to 6');
+  return ok({ enabled, start, end, days: [...new Set(days as number[])].sort() });
+}
+
 function channelMap(v: unknown): Check<Record<string, string>> {
   if (!isPlainObject(v)) return bad('channel_projects must be an object of channel id -> project folder');
   const out: Record<string, string> = {};
@@ -233,6 +251,30 @@ export const SETTINGS = [
   enumDef(['off', 'system', ...MAC_SOUNDS] as const, {
     key: 'notify_sound', section: 'general', label: 'Notification sound', help: 'The sound on a Loom notification.',
     defaultNew: 'system', legacyUnset: 'Hero', restart: false,
+  }),
+  // Chat sounds (src/sounds.ts): the Stop and Notification hooks report, the server filters.
+  enumDef(['off', 'system', ...MAC_SOUNDS] as const, {
+    key: 'sound_chat_done', section: 'general', label: 'Chat finished sound',
+    help: 'Played when a chat you are not looking at finishes a long turn.',
+    defaultNew: 'Purr', legacyUnset: 'Purr', restart: false,
+  }),
+  enumDef(['off', 'system', ...MAC_SOUNDS] as const, {
+    key: 'sound_chat_blocked', section: 'general', label: 'Chat needs you sound',
+    help: 'Played when a chat you are not looking at is waiting on you (a permission prompt). Repeats once after 10 minutes if it is still waiting.',
+    defaultNew: 'Hero', legacyUnset: 'Hero', restart: false,
+  }),
+  intDef(0, 3600, {
+    key: 'sound_min_turn_s', section: 'general', label: 'Shortest turn that plays', help: 'A finished turn shorter than this many seconds stays silent.',
+    defaultNew: 30, legacyUnset: 30, restart: false,
+  }),
+  jsonDef(quietHours, {
+    key: 'quiet_hours', section: 'general', label: 'Quiet hours',
+    help: 'No chat sounds or banner sounds in this window (local time; it may wrap midnight). Days are the days it starts on, 0 = Sunday.',
+    defaultNew: DEFAULT_QUIET_HOURS, legacyUnset: DEFAULT_QUIET_HOURS, restart: false,
+  }),
+  numDef(0, 8.64e15, {
+    key: 'sounds_muted_until', section: 'general', label: 'Sounds silenced until', help: 'Epoch milliseconds; 0 when sounds are on. Set from the tray.',
+    defaultNew: 0, legacyUnset: 0, restart: false, internal: true,
   }),
   strDef(optionalPath, {
     key: 'claude_bin', section: 'general', label: 'Claude binary', help: 'Path to claude. Empty detects it.',

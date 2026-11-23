@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { openDb } from './db.ts';
-import { getSetting } from './settingsSchema.ts';
+import { getSetting, type QuietHours } from './settingsSchema.ts';
+import { soundsSilenced } from './sounds.ts';
 
 /** What a notification is about; a click brings the user there. */
 export type NotifyTarget = { agent: string; sid: string } | { pr: string } | { orch: true } | { watcher: string } | undefined;
@@ -31,6 +32,8 @@ export function notifySound(): string {
   try {
     const db = openDb();
     try {
+      // Mute and quiet hours keep the banner but drop its sound.
+      if (soundsSilenced({ mutedUntil: getSetting(db, 'sounds_muted_until') as number, quiet: getSetting(db, 'quiet_hours') as QuietHours }, Date.now())) return 'off';
       return getSetting(db, 'notify_sound') as string;
     } finally {
       db.close();

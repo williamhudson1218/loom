@@ -36,7 +36,15 @@
       {
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/outbox-recording.py\"", "timeout": 10 },
-          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/ship-labels.py\"", "timeout": 10 }
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/ship-labels.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sound.py\"", "timeout": 5 }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sound.py\"", "timeout": 5 }
         ]
       }
     ]

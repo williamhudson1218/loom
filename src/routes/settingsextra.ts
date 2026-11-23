@@ -8,6 +8,7 @@ import { probeEnvironment, clearProbeMemo } from '../probe.ts';
 import { ORCH_PROMPT, ORCH_PROMPT_OVERRIDE, orchDir } from '../orchsession.ts';
 import { refreshDirectory } from '../slackdir.ts';
 import { slackFeatureOn } from '../slackmode.ts';
+import { playSound, soundFile } from '../sounds.ts';
 import type { RouteCtx, RouteDef } from './index.ts';
 
 // Small rows of Settings that need the server: the environment probe, the orchestrator
@@ -73,16 +74,13 @@ async function refreshDir({ json }: RouteCtx): Promise<void> {
   }
 }
 
-const SOUND_RE = /^[A-Za-z]{2,20}$/;
-
 async function previewSound({ json, body }: RouteCtx): Promise<void> {
   const b = await body();
   const name = typeof b?.name === 'string' ? b.name : withDb((db) => getSetting(db, 'notify_sound', { env: false }) as string);
   if (name === 'off') return json(200, { ok: true, played: false });
-  if (name !== 'system' && !SOUND_RE.test(name)) return json(400, { ok: false, detail: 'unknown sound' });
-  const file = name === 'system' ? '/System/Library/Sounds/Funk.aiff' : `/System/Library/Sounds/${name}.aiff`;
-  if (!fs.existsSync(file)) return json(404, { ok: false, detail: 'that sound is not installed' });
-  execFile('afplay', [file], () => {});
+  if (name !== 'system' && !/^[A-Za-z]{2,20}$/.test(name)) return json(400, { ok: false, detail: 'unknown sound' });
+  if (!soundFile(name)) return json(404, { ok: false, detail: 'that sound is not installed' });
+  playSound(name);
   json(200, { ok: true, played: true });
 }
 

@@ -43,6 +43,7 @@ afterEach(() => {
 // registry has to be added or dropped here too.
 const DESIGN_KEYS = [
   'default_agent', 'summary_model', 'analyze_cap', 'analyze_concurrency', 'active_window_days', 'new_thread_dir', 'notify_sound',
+  'sound_chat_done', 'sound_chat_blocked', 'sound_min_turn_s', 'quiet_hours', 'sounds_muted_until',
   'claude_bin', 'extra_path', 'codex_visible',
   'auto_update',
   'terminal', 'launch_target', 'lane_view', 'auto_restore', 'ghostty_rehome', 'ghostty_attach_cmd', 'pane_labels', 'pane_label_model', 'pane_tint', 'pane_tint_base',
@@ -70,6 +71,11 @@ const TODAY: Record<string, unknown> = {
   active_window_days: ACTIVE_WINDOW_DAYS,
   new_thread_dir: 'last', // last_project_dir, home fallback
   notify_sound: 'Hero', // server.ts osascript sound name
+  sound_chat_done: 'Purr', // the old Stop hook's afplay
+  sound_chat_blocked: 'Hero', // the old Notification hook's afplay
+  sound_min_turn_s: 30,
+  quiet_hours: { enabled: false, start: '22:00', end: '07:00', days: [0, 1, 2, 3, 4, 5, 6] },
+  sounds_muted_until: 0,
   claude_bin: '', // detected
   extra_path: [],
   codex_visible: 'on', // Codex is always offered
@@ -148,6 +154,7 @@ const TODAY: Record<string, unknown> = {
 const NEW_USER: Record<string, unknown> = {
   default_agent: 'claude', summary_model: 'haiku', analyze_cap: 10, analyze_concurrency: 1, active_window_days: 7, new_thread_dir: 'last',
   notify_sound: 'system', claude_bin: '', extra_path: [], codex_visible: 'auto',
+  sound_chat_done: 'Purr', sound_chat_blocked: 'Hero', sound_min_turn_s: 30, quiet_hours: { enabled: false, start: '22:00', end: '07:00', days: [0, 1, 2, 3, 4, 5, 6] }, sounds_muted_until: 0,
   terminal: 'inside', launch_target: 'managed', lane_view: 'zoom', auto_restore: true, ghostty_rehome: false, ghostty_attach_cmd: 'tmux attach -t', pane_labels: true,
   pane_label_model: 'haiku', pane_tint: false, pane_tint_base: '#1e1e2e',
   perm_chats: 'normal', perm_watchers: 'normal', perm_orchestrator: 'normal', rc_watchers: false,

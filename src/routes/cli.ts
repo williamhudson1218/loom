@@ -8,7 +8,7 @@ import { reactionsAdd, reactionsRemove, chatPostMessage, SlackError, type CallOp
 import { SLACK_OFF, slackFeatureOn } from '../slackmode.ts';
 import { ensureThreadState, recentAcks, type ThreadStateRow } from '../slackowner.ts';
 import { fetchMine } from '../slackmine.ts';
-import { getSetting } from '../settingsSchema.ts';
+import { getSetting, type QuietHours } from '../settingsSchema.ts';
 import fs from 'node:fs';
 import { isViewSession, tmux } from '../tmux.ts';
 import { gotoPane } from '../goto.ts';
@@ -19,6 +19,9 @@ import { nameNewPanes } from '../panenames.ts';
 import { chatFlags, listSteps, stepSummary } from '../actions.ts';
 import { addTestLink, listTestLinks } from '../testlinks.ts';
 import { heldCount, holdLinks, parseLinksInput, resolveHeldLinks } from '../pendinglinks.ts';
+import { isOrchestratorRef } from '../orchsession.ts';
+import { frontBundleId } from '../frontapp.ts';
+import { SoundCoordinator, paneFocused, playSound, type SoundDeps, type SoundEvent } from '../sounds.ts';
 import type { RouteCtx, RouteDef, Verdict } from './index.ts';
 
 // The plugin's `loom` CLI and hooks (§4.3). Every route here is kind 'cli' (§13):
@@ -62,6 +65,8 @@ export interface CliDeps {
   /** Give any unnamed workspace pane its @name. */
   namePanes(): void;
   dirExists(dir: string): boolean;
+  /** Is this chat mid-turn right now (the live snapshot)? Unknown chats are not. */
+  chatWorking(sessionId: string): boolean;
   /** Start a new chat the way the composer's New thread does (server.ts wires startThreadAsync). */
   startThread(input: { prompt: string; projectDir: string; lane: string }): Promise<{ ok: boolean; detail?: string; pane_id?: string; where?: string }>;
 }
@@ -130,6 +135,7 @@ let deps: CliDeps = {
   loading: () => (inTests || currentTerminal() !== 'inside' ? null : insideLoading()),
   pretrust: (d) => void pretrustFolder(d),
   namePanes: () => void nameNewPanes(),
+  chatWorking: () => false,
   startThread: async () => ({ ok: false, detail: 'starting chats is off under tests' }),
   dirExists: (d) => {
     try {
@@ -541,8 +547,64 @@ export function tickPendingLinks(now: number = Date.now()): { attached: number; 
   });
 }
 
+/* ------------------------------------------------------------------ chat sounds */
+
+// The plugin's sound.py hook posts here on Stop (done) and Notification (blocked).
+// src/sounds.ts decides; this wires its inputs to the live world. Under vitest the
+// effects (afplay, lsappinfo, tmux) are off unless a test supplies them.
+
+function defaultSoundDeps(): SoundDeps {
+  return {
+    settings: () =>
+      withDb((db) => ({
+        doneSound: getSetting(db, 'sound_chat_done') as string,
+        blockedSound: getSetting(db, 'sound_chat_blocked') as string,
+        minTurnS: getSetting(db, 'sound_min_turn_s') as number,
+        quiet: getSetting(db, 'quiet_hours') as QuietHours,
+        mutedUntil: getSetting(db, 'sounds_muted_until') as number,
+      })),
+    isBackground: (ev) => {
+      if (!ev.pane) return true; // headless `claude -p` and anything outside tmux
+      const orchSid = withDb((db) => getSetting(db, 'orchestrator_session_id') as string);
+      return isOrchestratorRef({ session_id: ev.session_id, pane_id: ev.pane }, orchSid, { run: (a) => deps.tmux(a) });
+    },
+    isFocused: (ev) => paneFocused(ev.pane, { front: frontBundleId, tmux: (a) => deps.tmux(a) }),
+    stillBlocked: (sid) => !deps.chatWorking(sid),
+    play: (name) => {
+      if (!inTests) playSound(name);
+    },
+    now: () => Date.now(),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as NodeJS.Timeout),
+  };
+}
+
+let soundCoordinator: SoundCoordinator | null = null;
+
+/** Tests swap the coordinator's inputs; pass null to restore the live ones. */
+export function setSoundDeps(over: SoundDeps | null): void {
+  soundCoordinator?.stop();
+  soundCoordinator = over ? new SoundCoordinator(over) : null;
+}
+
+async function postSoundEvent(ctx: RouteCtx): Promise<void> {
+  const b = await ctx.body();
+  const kind = b?.event === 'done' ? 'done' : b?.event === 'blocked' ? 'blocked' : null;
+  if (!kind) return bad(ctx, 'event must be done or blocked');
+  const session = typeof b?.session_id === 'string' ? b.session_id : '';
+  const pane = typeof b?.pane === 'string' ? b.pane : '';
+  if (session.length > 200) return bad(ctx, 'session_id is too long');
+  if (pane && !PANE_RE.test(pane)) return bad(ctx, 'pane must look like %17');
+  const started = typeof b?.turn_started_at === 'number' && Number.isFinite(b.turn_started_at) && b.turn_started_at > 0 ? b.turn_started_at : undefined;
+  const ev: SoundEvent = { kind, session_id: session, pane, ...(started ? { turn_started_at: started } : {}) };
+  soundCoordinator ??= new SoundCoordinator(defaultSoundDeps());
+  const d = await soundCoordinator.submit(ev);
+  ctx.json(200, { ok: true, play: d.play, reason: d.reason });
+}
+
 export const routes: RouteDef[] = [
   { method: 'POST', path: '/api/cli/focus', kind: 'cli', handler: postFocus },
+  { method: 'POST', path: '/api/cli/sound-event', kind: 'cli', handler: postSoundEvent },
   { method: 'POST', path: '/api/cli/sessions', kind: 'cli', handler: postSessions },
   { method: 'GET', path: '/api/cli/threads', kind: 'cli', handler: getThreads },
   { method: 'GET', path: '/api/cli/outbox', kind: 'cli', handler: getOutbox },
