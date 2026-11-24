@@ -191,7 +191,7 @@ function homeOn(){const v=$('#homeview');return homeSel&&!!v&&v.offsetParent!==n
 function homeStopSky(){if(HOME.sky){HOME.sky.stop();HOME.sky=null;}}
 // Home is a top-level tab: tab==='home' and homeSel are one fact, kept in step by syncHomeTab (render and renderMain call it).
 function syncHomeTab(){const on=tab==='home';if(on===homeSel)return;homeSel=on;if(!on)homeStopSky();}
-function selectHome(){if(tab==='home'){renderHome();return;}tab='home';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();homeLoadOrch(true);}
+function selectHome(){lsDel('loom.lastChat');if(tab==='home'){renderHome();return;}tab='home';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();homeLoadOrch(true);}
 // Opening a chat, the orchestrator or a terminal from anywhere hands the view back to the Board tab.
 function leaveHome(){if(tab!=='home')return;tab='board';stateFilter='all';syncControls();liveToggle();chips();render();}
 // The orchestrator page's own feed: open items, read from /api/orch. Polled slowly, and sooner when the sidebar's count disagrees.

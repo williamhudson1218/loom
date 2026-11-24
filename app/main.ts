@@ -165,7 +165,7 @@ function createWindow(): void {
     if (/^https?:\/\//i.test(url) && !url.startsWith(own)) void openUrl(url, { ...realOpenDeps, open: (u) => shell.openExternal(u) });
     return { action: 'deny' };
   });
-  win.loadURL(`http://localhost:${serverPort()}/`);
+  win.loadURL(`http://localhost:${serverPort()}/${takeResumeFlag() ? '?resume=1' : ''}`);
   win.once('ready-to-show', () => win?.show());
   watchRenderer(win);
   win.on('close', (e) => {
@@ -946,12 +946,28 @@ const updater = new Updater({
 // install-app.sh drops this file before it quits Loom, so the quit it causes does
 // not also start an update swap of its own.
 const SKIP_QUIT_APPLY = path.join(defaultCacheDir(), 'skip-apply-on-quit');
+// Restart to update drops this; the relaunched window takes it once and opens on
+// the chat the user had open (src/dashboard.ts, ?resume=1) instead of Home.
+const RESUME_AFTER_UPDATE = path.join(defaultCacheDir(), 'resume-last-chat');
+function takeResumeFlag(): boolean {
+  try {
+    fs.unlinkSync(RESUME_AFTER_UPDATE);
+    return true;
+  } catch {
+    return false;
+  }
+}
 let updateHandedOff = false;
 function restartToUpdate(): { ok: true; version: string } | { ok: false; detail: string } {
   const ready = updater.state().ready;
   const r = updater.apply({ pid: process.pid, relaunch: true, loomHome: TOOL_DIR });
   if (!r.ok) return r;
   updateHandedOff = true;
+  try {
+    fs.writeFileSync(RESUME_AFTER_UPDATE, '');
+  } catch {
+    /* only costs reopening on Home */
+  }
   // Answer the page first; the apply script waits for this process to exit.
   setTimeout(() => {
     quitting = true;

@@ -1689,7 +1689,7 @@ function slackKeyOf(c){const p=slackPrimary(slackThreadsOf(c));return p?p.key:''
 function slackDraftUrl(c){const f=draftThreadOf(DATA.drafts,c.session_id);return f?f.url:'';}
 function stateLabel(c){return DOT_LABEL[dotCls(c)];}
 function resumeCmd(c){const dir=c.project_dir?('cd '+shortPath(c.project_dir)+' && '):'';return dir+(c.agent==='codex'?'codex resume ':'claude --resume ')+c.session_id;}
-function selectChat(sid,agent,arch){leaveHome();leaveColumns();leaveOrch();leaveTerminal();if(sel&&sel.sid===sid&&sel.agent===agent&&!!sel.arch===!!arch)return;sel={sid,agent,arch:arch||null,chat:arch?archChatOf(sid):null};closeCtx();
+function selectChat(sid,agent,arch){leaveHome();leaveColumns();leaveOrch();leaveTerminal();if(sel&&sel.sid===sid&&sel.agent===agent&&!!sel.arch===!!arch)return;sel={sid,agent,arch:arch||null,chat:arch?archChatOf(sid):null};closeCtx();if(!arch)lsSet('loom.lastChat',JSON.stringify({sid:sid,agent:agent}));
   const sc=selChat();if(sc&&!sel.arch&&pipeEvent(sc)){ackPipe(sc);setTimeout(render,0);}
   DETAIL=null;lastOpen=false;MSGS_SIG='';closeArm='';$('#mhead').dataset.sig='';$('#mtabs').dataset.sig='';$('#mbanner').dataset.sig='';
   mtab=(!sel.arch&&livePaneFor(sid,agent)&&TERM_TOKEN)?'terminal':'transcript';
@@ -1698,7 +1698,7 @@ function selectChat(sid,agent,arch){leaveHome();leaveColumns();leaveOrch();leave
   renderMain();loadTranscript(true);clearInterval(detailTimer);clearTimeout(detailRetry);
   if(!sel.arch){loadDetail();detailTimer=setInterval(loadDetail,20000);}}
 function archChatOf(sid){const h=archHits.find(x=>x.session_id===sid)||JUMP.hits.find(x=>x.session_id===sid);return h?archChat(h):null;}
-function deselect(){sel=null;DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);closeCtx();document.querySelectorAll('#sidelist .srow.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));renderMain();}
+function deselect(){sel=null;lsDel('loom.lastChat');DETAIL=null;clearInterval(detailTimer);clearTimeout(detailRetry);closeCtx();document.querySelectorAll('#sidelist .srow.sel, #kanban .tk.sel').forEach(el=>el.classList.remove('sel'));renderMain();}
 // A Tickets card opens its chat in the Sessions view, where the terminal lives.
 function openInBoard(sid,agent){const c=chatAny(agent,sid);tab=c&&c.saved?'saved':'board';boardView='list';stateFilter='all';selectChat(sid,agent,null);syncControls();liveToggle();chips();render();}
 // ---- Jump with the terminal set to inside Loom ---------------------------------
@@ -2600,7 +2600,10 @@ function renderPtys(){fetch('/api/ptys',{cache:'no-store'}).then(r=>r.ok?r.json(
   el.hidden=false;}).catch(()=>{});}
 setInterval(renderPtys,15000);renderPtys();
 // The header's connections come with /api/data, not the first paint: fetch once now rather than after the first 5 s tick.
-setTimeout(refresh,0);
+// After Restart to update (app/main.ts adds ?resume=1), reopen the chat that was open.
+var RESUME=null;if(/[?&]resume=1/.test(location.search)){try{RESUME=JSON.parse(lsGet('loom.lastChat')||'null');}catch(e){RESUME=null;}history.replaceState(null,'',location.pathname);}
+function resumeLastChat(){const r=RESUME;RESUME=null;if(r&&r.sid&&(DATA.chats||[]).some(c=>c.session_id===r.sid&&c.agent===r.agent))selectChat(r.sid,r.agent);}
+setTimeout(function(){const p=refresh();if(p&&p.then)p.then(resumeLastChat,resumeLastChat);else resumeLastChat();},0);
 setInterval(visOnly(function(){refreshTrees(false);}),300000);
 setInterval(visOnly(refreshWatch),15000);
 setInterval(visOnly(function(){if(tab==='sched'){schedLoad(true);}}),10000);
