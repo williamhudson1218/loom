@@ -1464,11 +1464,11 @@ function rowKeyOf(r){return r.dataset.agent+':'+r.dataset.sid;}
 function flipTops(){const m={};if(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)return m;document.querySelectorAll('#list .srow[data-sid]').forEach(r=>{m[rowKeyOf(r)]=r.getBoundingClientRect().top;});return m;}
 function flipPlay(before){const rows=document.querySelectorAll('#list .srow[data-sid]');rows.forEach(r=>{const o=before[rowKeyOf(r)];if(o===undefined)return;const d=o-r.getBoundingClientRect().top;if(Math.abs(d)<1||Math.abs(d)>1500)return;
   r.style.transition='none';r.style.transform='translateY('+d+'px)';requestAnimationFrame(()=>{r.style.transition='transform .15s ease-out';r.style.transform='';});});}
-// The chat that ran a ship owns it until it merges: ⚓ while it holds the lock (shipping now)
+// The chat that ran a ship owns it until it merges: 🚀 while it holds the lock (shipping now)
 // and while its ship PR is open (in review), not only for the minutes the lock is held.
 // Otherwise the chat's git mark: clean / all staged / unstaged / untracked (gitmarks.ts).
-function shipMark(c){const k=chatKey(c);for(const b of DATA.ships||[]){if(b.lock&&!b.lock.stale&&b.lock.holderKey===k)return '<span class="smk hot" title="shipping now">⚓</span>';}
-  for(const b of DATA.ships||[]){const g=(b.shipped||[]).find(g=>g.runner===k&&g.state==='OPEN');if(g)return '<span class="smk own" title="owns ship #'+g.number+', in review">⚓</span>';}
+function shipMark(c){const k=chatKey(c);for(const b of DATA.ships||[]){if(b.lock&&!b.lock.stale&&b.lock.holderKey===k)return '<span class="smk hot" title="shipping now">🚀</span>';}
+  for(const b of DATA.ships||[]){const g=(b.shipped||[]).find(g=>g.runner===k&&g.state==='OPEN');if(g)return '<span class="smk own" title="owns ship #'+g.number+', in review">🚀</span>';}
   return gitMarkHtml((DATA.gitMarks||{})[k]);}
 function orderRows(gk,gr,selKey){if(sortMode==='recent'&&tab!=='saved'){const want=gr.map(chatKey);const pinned={};if(selKey)pinned[selKey]=1;if(pointerIn)want.forEach(k=>{pinned[k]=1;});
       const out=pinOrder(lastOrder[gk]||[],want,pinned);if(out.join('|')!==want.join('|'))pendingReorder=pointerIn||pendingReorder;
@@ -1582,7 +1582,7 @@ function shipCardChips(c){const x=shipRole(c);if(!x)return '';const {b,r}=x;let 
   if(r.ships.length){const n=r.ships[0];const own=(DATA.chatPr||{})[chatKey(c)]===b.slug+'#'+n;h+='<button class="shipchip'+(shipFilter===n?' on':'')+'" data-shipf="'+n+'" title="rode ship #'+n+(r.ships.length>1?' (and '+(r.ships.length-1)+' earlier)':'')+' — click to show its chats">ship #'+n+'</button>'+(own?'':dotsHtml(shipPipe(b,n)));}
   return h;}
 function lockHtml(b){const l=b.lock;if(!l)return '';const who=l.holderKey?chatName(l.holderKey):(l.sessionId.slice(0,8)||'unknown');
-  return '<span class="shiplock'+(l.stale?' stale':'')+'" title="ship lock'+(l.stale?' (stale, >5 min old — the next acquire takes it)':'')+'">⚓ '+(l.stale?'stale lock: ':'shipping now: ')+esc(who)+(l.pane?' · '+esc(l.pane):'')+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';}
+  return '<span class="shiplock'+(l.stale?' stale':'')+'" title="ship lock'+(l.stale?' (stale, >5 min old — the next acquire takes it)':'')+'">🚀 '+(l.stale?'stale lock: ':'shipping now: ')+esc(who)+(l.pane?' · '+esc(l.pane):'')+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';}
 var shipOpen=lsGet('loom.shipOpen')==='1';
 function shipWho(b){const l=b.lock;if(l.holderKey){const L=DATA.live[l.holderKey];return (L&&L.name)||chatName(l.holderKey);}return l.sessionId.slice(0,8)||'unknown';}
 function shipBody(b){const n=b.next;
@@ -1606,7 +1606,7 @@ function loadShipCands(){fetch('/api/ship/candidates').then(r=>r.json()).then(j=
 function shipsInFlight(b){return (b.shipped||[]).filter(x=>x.state==='OPEN');}
 function shipStrip(){if(tab!=='board')return '';const bs=DATA.ships||[];
   let h=bs.map(b=>{const n=b.next;const l=b.lock;const shipping=!!(l&&!l.stale);const cls=shipping||(!n.staged&&shipsInFlight(b).length)?'shipping':(n.staged>0?'staged':(n.unstaged>0?'unstaged':'idle'));let t;
-    if(shipping)t='<span class="pdot"></span><span class="sl">⚓ Shipping · '+esc(shipWho(b))+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';
+    if(shipping)t='<span class="pdot"></span><span class="sl">🚀 Shipping · '+esc(shipWho(b))+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';
     else{
       // Always shown: one line per ship repo, saying what state it is in.
       const f=shipsInFlight(b);const parts=[];
@@ -1614,11 +1614,11 @@ function shipStrip(){if(tab!=='board')return '';const bs=DATA.ships||[];
       if(n.unstaged>0)parts.push(n.unstaged+' unstaged');
       if(n.unattributed.length)parts.push(n.unattributed.length+' unattributed');
       if(f.length)parts.push('#'+f.map(x=>x.number).join(', #')+' in review');
-      const head=n.staged>0?'Next ship':(f.length&&!n.unstaged?'⚓ Shipped':'Next ship');
-      t=(f.length&&!n.staged?'<span class="pdot"></span>':'<span>⛵</span>')+'<span class="sl">'+head+' · '+(parts.length?parts.join(' · '):'no changes')+'</span>';
+      const head=n.staged>0?'Next ship':(f.length&&!n.unstaged?'🌠 Shipped':'Next ship');
+      t=(f.length&&!n.staged?'<span class="pdot"></span>':'<span>🛰️</span>')+'<span class="sl">'+head+' · '+(parts.length?parts.join(' · '):'no changes')+'</span>';
     }
     return '<div class="shipln '+cls+(shipOpen?' open':'')+'" data-tour="ship"><button type="button" class="shipbar" data-shiptog="1" aria-expanded="'+shipOpen+'">'+t+'<span class="chev">›</span></button><span class="shipacts">'+shipGoBtn(b)+'<button type="button" class="shipicon" data-shipview="'+esc(b.repo)+'" title="View staged work" aria-label="View staged work">\u2630</button></span>'+(shipOpen?shipBody(b):'')+'</div>';}).join('');
-  h+=shipCands.map(c=>'<div class="shipln idle"><button type="button" class="shipbar" data-shipadd="'+esc(c.repo)+'" title="'+esc(c.slug+' · '+c.staged+' staged · ships to '+c.base)+'"><span>⛵</span><span class="sl">Add '+esc(c.name)+' to Ship · '+c.staged+' staged</span></button></div>').join('');
+  h+=shipCands.map(c=>'<div class="shipln idle"><button type="button" class="shipbar" data-shipadd="'+esc(c.repo)+'" title="'+esc(c.slug+' · '+c.staged+' staged · ships to '+c.base)+'"><span>🛰️</span><span class="sl">Add '+esc(c.name)+' to Ship · '+c.staged+' staged</span></button></div>').join('');
   if(typeof shipFilter==='number')h='<div class="shipstrip"><div class="sh"><b>Showing ship #'+shipFilter+'</b><span class="dsub">its chats, live or not</span><span class="spacer"></span><button class="shipchip on" data-shipf="'+shipFilter+'">clear ✕</button></div></div>'+h;
   return h;}
 function setShipFilter(v){shipFilter=(shipFilter===v)?null:v;render();}
