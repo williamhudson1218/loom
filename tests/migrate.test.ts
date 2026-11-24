@@ -299,7 +299,7 @@ describe('migration: what else a legacy install keeps', () => {
     const repo = path.join(ctxFor().home!, 'dev', 'work-app');
     runMigration(db, { dbPath, steps: STEPS, context: { ...ctxFor(), env: { LOOM_SHIP_REPOS: repo } } });
     const rowsShip = db.prepare(`SELECT project_dir, ship_command, label_required, enabled FROM ship_projects WHERE project_dir = ?`).all(repo);
-    expect(rowsShip).toEqual([{ project_dir: repo, ship_command: '/ship', label_required: 1, enabled: 1 }]);
+    expect(rowsShip).toEqual([{ project_dir: repo, ship_command: '/loom:ship', label_required: 1, enabled: 1 }]);
     expect(db.prepare(`SELECT label FROM ship_labels WHERE session_id = 'sess1'`).get()).toEqual({ label: 'a ship label' });
 
     const fresh = openDb(path.join(root, 'fresh', 'manager.db'));

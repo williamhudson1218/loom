@@ -649,10 +649,10 @@ describe('ship', () => {
     const bad = await hit(t, 'POST /api/wizard/continue', { step: 'ship', values: { ship: [{ path: real, enabled: true, ship_command: '/ship --force' }] } });
     expect(bad.status).toBe(400);
     expect(withDb((db) => listShipProjects(db, { includeDisabled: true }))).toHaveLength(0);
-    await next(t, 'ship', { ship: [{ path: real, enabled: true, base_branch: 'main', ship_command: '/ship', label_required: true }] });
+    await next(t, 'ship', { ship: [{ path: real, enabled: true, base_branch: 'main', ship_command: '/release', label_required: true }] });
     const rows = withDb((db) => listShipProjects(db));
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ repo_slug: 'acme/app', base_branch: 'main', ship_command: '/ship', label_required: true, enabled: true });
+    expect(rows[0]).toMatchObject({ repo_slug: 'acme/app', base_branch: 'main', ship_command: '/release', label_required: true, enabled: true });
     // plugin-state.json follows, and lands in the throwaway home
     const state = JSON.parse(fs.readFileSync(path.join(process.env.LOOM_HOME!, 'plugin-state.json'), 'utf8'));
     expect(state.ship.repos).toContain(real);

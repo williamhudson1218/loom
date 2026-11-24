@@ -111,6 +111,9 @@ export function lastUsedProject(db: Database.Database): string | null {
 
 export const DEFAULT_SHIP_COMMAND = '/loom:ship';
 const MAX_SHIP_COMMAND = 200;
+// Claude Code built-ins that win over a user skill of the same name. /ship opens a PR
+// and never merges, so a Ship button sending it would never land anything.
+export const BUILTIN_SHIP_COMMANDS = ['ship', 'steward'];
 
 export interface ShipProject {
   project_dir: string;
@@ -171,6 +174,8 @@ export function checkShipCommand(raw: unknown): { ok: true; command: string } | 
   if (c.length > MAX_SHIP_COMMAND) return { ok: false, detail: 'The ship command is too long.' };
   if (!c.startsWith('/') || /[\r\n\0]/.test(c)) return { ok: false, detail: 'The ship command must be one line starting with /.' };
   if (/(^|\s)--?force\b/i.test(c)) return { ok: false, detail: 'Loom does not send forced landings. Run that by hand.' };
+  const name = c.slice(1).split(/\s/)[0].toLowerCase();
+  if (BUILTIN_SHIP_COMMANDS.includes(name)) return { ok: false, detail: `/${name} is a Claude Code built-in that opens a PR and never merges. Use ${DEFAULT_SHIP_COMMAND} or your own ship skill's name.` };
   return { ok: true, command: c };
 }
 

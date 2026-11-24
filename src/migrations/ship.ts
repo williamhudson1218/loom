@@ -17,7 +17,8 @@ import { resolveLoomRepoDir } from '../repodir.ts';
 // The legacy labels file is imported into ship_labels once; the file itself is
 // left alone and stays a read fallback (src/shipview.ts mergeLabel).
 
-export const LEGACY_SHIP_COMMAND = '/ship';
+// The legacy button sent `/ship`, now a Claude Code built-in, so carried-over rows get the default.
+export const LEGACY_SHIP_COMMAND = DEFAULT_SHIP_COMMAND;
 
 export interface ShipMigrationOpts {
   /** $LOOM_SHIP_REPOS, colon-separated. Unset or empty: no ship repos are carried over. */

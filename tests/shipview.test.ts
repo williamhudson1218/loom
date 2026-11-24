@@ -89,7 +89,7 @@ describe('attribution overrides and the unattributed guess', () => {
 describe('buildShipDetail grouping', () => {
   const status = parsePorcelainZ(['M  a.ts', ' M b.ts', 'MM c.ts', '?? d.ts', 'M  e.ts', ''].join('\0'));
   const next = groupNextShip(status, [edits('claude:A', { 'a.ts': [1, 2], 'c.ts': [1, 2] }), edits('claude:B', { 'b.ts': [1, 2] })]);
-  const board = { repo: '/r', slug: 'o/r', base: 'main', command: '/ship', labelRequired: true, generatedAt: 1, onMain: true, next, lock: null, shipped: [], byChat: {} } as ShipBoard;
+  const board = { repo: '/r', slug: 'o/r', base: 'main', command: '/release', labelRequired: true, generatedAt: 1, onMain: true, next, lock: null, shipped: [], byChat: {} } as ShipBoard;
   const stat = (p: string, a: number, d: number) => ({ path: p, added: a, deleted: d, binary: false });
 
   it('puts numstat on each file, totals the staged set, lists unstaged-touched, and keeps unattributed last with a guess', () => {
@@ -113,7 +113,7 @@ describe('buildShipDetail grouping', () => {
     expect(d.notStaged.unknown.map((f) => [f.path, f.state])).toEqual([['d.ts', 'untracked']]);
     expect(d.gate.ok).toBe(true);
     expect(d.confirm).toContain('commits the 3 staged files as one batch');
-    expect(d.commands).toEqual({ plain: '/ship' });
+    expect(d.commands).toEqual({ plain: '/release' });
   });
 });
 
@@ -134,11 +134,13 @@ describe('ship command, prompt and disabled rules', () => {
   it('launches through the thread starter with the exact prompt and cwd, using a stub (no session)', () => {
     const calls: any[] = [];
     const start = ((i: any) => (calls.push(i), { ok: true, detail: 'started', pane_id: '%9', where: 'loom-x · pane 0' })) as any;
-    const d = { repo: '/r', command: '/ship', onMain: true, totals: { staged: 2, added: 0, deleted: 0, unstaged: 0 }, lock: null };
-    expect(startShipSession(d, { start })).toEqual({ ok: true, paneId: '%9', where: 'loom-x · pane 0', prompt: '/ship' });
-    expect(calls[0]).toMatchObject({ prompt: '/ship', projectDir: '/r', agent: 'claude' });
+    const d = { repo: '/r', command: '/release', onMain: true, totals: { staged: 2, added: 0, deleted: 0, unstaged: 0 }, lock: null };
+    expect(startShipSession(d, { start })).toEqual({ ok: true, paneId: '%9', where: 'loom-x · pane 0', prompt: '/release' });
+    expect(calls[0]).toMatchObject({ prompt: '/release', projectDir: '/r', agent: 'claude' });
     startShipSession(d, { start });
-    expect(calls[1].prompt).toBe('/ship');
+    expect(calls[1].prompt).toBe('/release');
+    expect(startShipSession({ ...d, command: '/ship' }, { start })).toMatchObject({ ok: false, status: 409 });
+    expect(calls).toHaveLength(2);
   });
   it('refuses to launch when disabled, and surfaces a launch failure', () => {
     let n = 0;

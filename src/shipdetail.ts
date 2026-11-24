@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { openDb } from './db.ts';
+import { checkShipCommand } from './projects.ts';
 import { defaultGitAsync, type AsyncGitRunner } from './git.ts';
 import { defaultGh, type GhRunner } from './detail.ts';
 import { buildShipBoard, chatEditsFor, shipConfigFor, shipRepos } from './ships.ts';
@@ -100,7 +101,9 @@ export type ShipStartResult = { ok: true; paneId: string; where: string; prompt:
 export function startShipSession(detail: Pick<ShipDetail, 'repo' | 'onMain' | 'totals' | 'lock'> & { base?: string; command?: string }, deps: ShipStartDeps): ShipStartResult {
   const gate = shipDisabledReason({ onMain: detail.onMain, staged: detail.totals.staged, lock: detail.lock, base: detail.base });
   if (!gate.ok) return { ok: false, status: 409, detail: gate.reason };
-  const prompt = shipPrompt(detail.command);
+  const cmd = checkShipCommand(detail.command);
+  if (!cmd.ok) return { ok: false, status: 409, detail: `${cmd.detail} Change it in Settings › Ship.` };
+  const prompt = shipPrompt(cmd.command);
   const r = deps.start({ prompt, projectDir: detail.repo, agent: 'claude', lane: '', focus: false });
   if (!r.ok) return { ok: false, status: 409, detail: r.detail };
   return { ok: true, paneId: r.pane_id ?? '', where: r.where ?? '', prompt };

@@ -89,11 +89,15 @@ describe('git probes', () => {
 describe('ship command', () => {
   it('defaults to /loom:ship and accepts a slash command with arguments', () => {
     expect(checkShipCommand('')).toEqual({ ok: true, command: '/loom:ship' });
-    expect(checkShipCommand('  /ship ')).toEqual({ ok: true, command: '/ship' });
+    expect(checkShipCommand('  /release ')).toEqual({ ok: true, command: '/release' });
     expect(checkShipCommand('/team:release main')).toEqual({ ok: true, command: '/team:release main' });
   });
   it('refuses a non-slash command, a multi-line one, an over-long one and a forced landing', () => {
     expect(checkShipCommand('ship it').ok).toBe(false);
+    expect(checkShipCommand('/ship')).toMatchObject({ ok: false });
+    expect(checkShipCommand('/Ship main').ok).toBe(false);
+    expect(checkShipCommand('/steward').ok).toBe(false);
+    expect(checkShipCommand('/loom:ship').ok).toBe(true);
     expect(checkShipCommand('/ship\nrm -rf /').ok).toBe(false);
     expect(checkShipCommand('/' + 'x'.repeat(250)).ok).toBe(false);
     expect(checkShipCommand('/ship ' + '--' + 'force').ok).toBe(false);
@@ -118,16 +122,16 @@ describe('Add repo to Ship', () => {
   });
   it('re-adding re-enables the row and keeps its settings', () => {
     const dir = mkRepo('i');
-    addShipProject(db, dir, { command: '/ship', labelRequired: true });
+    addShipProject(db, dir, { command: '/release', labelRequired: true });
     updateShipProject(db, dir, { enabled: false });
     expect(shipRepos(db)).toEqual([]);
     const r = addShipProject(db, dir);
-    expect(r).toMatchObject({ ok: true, project: { enabled: true, ship_command: '/ship', label_required: true } });
+    expect(r).toMatchObject({ ok: true, project: { enabled: true, ship_command: '/release', label_required: true } });
   });
   it('updates and removes a row; disabled rows leave the list but stay in Settings', () => {
     const dir = mkRepo('j');
     addShipProject(db, dir);
-    expect(updateShipProject(db, dir, { ship_command: '/ship', base_branch: 'trunk', label_required: true })).toMatchObject({ ok: true, project: { ship_command: '/ship', base_branch: 'trunk', label_required: true } });
+    expect(updateShipProject(db, dir, { ship_command: '/release', base_branch: 'trunk', label_required: true })).toMatchObject({ ok: true, project: { ship_command: '/release', base_branch: 'trunk', label_required: true } });
     expect(updateShipProject(db, dir, { ship_command: 'nope' }).ok).toBe(false);
     expect(updateShipProject(db, '/nowhere', { enabled: true })).toEqual({ ok: false, detail: 'unknown repo' });
     expect(shipPluginState(db)).toEqual({ repos: [dir], label_required: [dir], lock: [dir], base: { [dir]: 'trunk' } });
@@ -143,9 +147,9 @@ describe('Add repo to Ship', () => {
   it('$LOOM_SHIP_REPOS overrides the list; a listed row keeps its own settings', () => {
     const a = mkRepo('k');
     const b = mkRepo('l');
-    addShipProject(db, a, { command: '/ship' });
+    addShipProject(db, a, { command: '/release' });
     process.env.LOOM_SHIP_REPOS = `${a}:${b}:${path.join(tmp, 'gone')}`;
-    expect(shipConfigs(db).map((c) => [c.repo, c.command])).toEqual([[a, '/ship'], [b, '/loom:ship']]);
+    expect(shipConfigs(db).map((c) => [c.repo, c.command])).toEqual([[a, '/release'], [b, '/loom:ship']]);
   });
   it('offers a repo with staged files, a GitHub remote and no row; not one already on Ship', async () => {
     const dir = mkRepo('m', { remote: 'https://github.com/o/m.git' });
@@ -197,7 +201,7 @@ describe('labels', () => {
 });
 
 describe('migration (legacy install)', () => {
-  it('ships the legacy repo with /ship and labels required; Loom is added disabled', () => {
+  it('ships the legacy repo with the default command and labels required; Loom is added disabled', () => {
     const home = fs.mkdtempSync(path.join(tmp, 'home-'));
     const legacy = path.join(home, 'dev', 'work-app');
     fs.mkdirSync(path.dirname(legacy), { recursive: true });
@@ -210,7 +214,7 @@ describe('migration (legacy install)', () => {
     const r = migrateShip(db, { envRepos: legacy, loomRepoDir: loom, labelsFile, now: 100 });
     expect(r).toEqual({ repos: [legacy], loomAdded: true, labels: 2 });
     const rows = listShipProjects(db, { includeDisabled: true });
-    expect(rows.find((x) => x.project_dir === legacy)).toMatchObject({ ship_command: '/ship', label_required: true, enabled: true, repo_slug: 'o/tp', base_branch: 'main' });
+    expect(rows.find((x) => x.project_dir === legacy)).toMatchObject({ ship_command: '/loom:ship', label_required: true, enabled: true, repo_slug: 'o/tp', base_branch: 'main' });
     expect(rows.find((x) => x.project_dir === loom)).toMatchObject({ ship_command: '/loom:ship', enabled: false });
     expect(shipRepos(db)).toEqual([legacy]);
     expect(shipPluginState(db)).toEqual({ repos: [legacy], label_required: [legacy], lock: [legacy], base: { [legacy]: 'main' } });
@@ -254,7 +258,7 @@ describe('plugin-state.json follows ship_projects', () => {
   const state = () => JSON.parse(fs.readFileSync(pluginStatePath(), 'utf-8')).ship;
   it('is rewritten on add, update and remove', async () => {
     const dir = mkRepo('ps');
-    const add = await call(addHandler, { path: dir, ship_command: '/ship', label_required: true });
+    const add = await call(addHandler, { path: dir, ship_command: '/release', label_required: true });
     expect(add.code).toBe(200);
     expect(state()).toEqual({ repos: [dir], label_required: [dir], lock: [dir], base: { [dir]: 'main' } });
     await call(updateHandler, { project_dir: dir, ship_lock: false });
