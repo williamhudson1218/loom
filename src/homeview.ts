@@ -169,8 +169,8 @@ export const HOME_VIEW_HTML = String.raw`<div id="homeview" aria-label="Overview
       <div class="hm-side"><div class="hm-seg" id="hm-seg" role="group" aria-label="Overview layout"><button type="button" data-hv="B" aria-pressed="true">Orbit</button><button type="button" data-hv="A" aria-pressed="false">Dashboard</button></div><div class="hm-clock" id="hm-clock"></div></div>
     </div>
     <section class="hm-tiles" id="hm-tiles" aria-label="Stats"></section>
-    <div id="hm-A" class="hm-main hm-grid" hidden><section class="hm-card" id="hm-recent" aria-label="Recent chats"></section><div class="hm-col"><section class="hm-card" id="hm-needs" aria-label="Needs you"></section><section class="hm-card" id="hm-ship" aria-label="Ship card"></section></div></div>
-    <div id="hm-B" class="hm-main hm-orbitwrap"><div class="hm-orbit" id="hm-orbit"></div><div class="hm-legend" id="hm-legend"></div><div class="hm-strip"><section class="hm-card" id="hm-needs2" aria-label="Needs you"></section><section class="hm-card" id="hm-ship2" aria-label="Ship card"></section></div></div>
+    <div id="hm-A" class="hm-main hm-grid" hidden><section class="hm-card" id="hm-recent" aria-label="Recent chats"></section><div class="hm-col"><section class="hm-card" id="hm-needs" aria-label="Needs you"></section><section class="hm-card" id="hm-ship" aria-label="Launch card"></section></div></div>
+    <div id="hm-B" class="hm-main hm-orbitwrap"><div class="hm-orbit" id="hm-orbit"></div><div class="hm-legend" id="hm-legend"></div><div class="hm-strip"><section class="hm-card" id="hm-needs2" aria-label="Needs you"></section><section class="hm-card" id="hm-ship2" aria-label="Launch card"></section></div></div>
     <div class="hm-acts" id="hm-acts" role="group" aria-label="Jump off"></div>
   </div></div>
 </div>`;
@@ -216,10 +216,10 @@ function homeNeedsHtml(oc,cap){const all=oc?oc.needs:[];const n=cap!=null?Math.m
   const more=all.length>n?'<button type="button" class="hm-more" data-hact="orch">+'+(all.length-n)+' more, open orchestrator</button>':'';
   return '<h3>Needs you<button type="button" class="hm-link" data-hact="orch">Open orchestrator</button></h3>'+body+more;}
 function homeShipHtml(t,nLines,withRepos){
-  if(!t.files)return '<h3>Ship card</h3><div class="hm-ship"><div class="cap">Nothing is staged.</div></div>';
+  if(!t.files)return '<h3>Launch card</h3><div class="hm-ship"><div class="cap">Nothing is staged.</div></div>';
   const lines=t.lines.slice(0,nLines).map(l=>'<li>'+esc(chatName(l.key))+' · '+l.staged+'</li>').join('');
   const repos=withRepos&&t.repos.length>1?'<ul>'+t.repos.slice(0,2).map(r=>'<li><button type="button" class="hm-repo" data-hrepo="'+esc(r.repo)+'" data-hk="r'+esc(r.repo)+'">'+esc(r.name)+'</button> · '+r.staged+' staged</li>').join('')+'</ul>':'';
-  return '<h3>Ship card</h3><div class="hm-ship"><div class="cap"><b>'+homePlural(t.files,'file','files')+' staged</b> by '+homePlural(t.chats,'chat','chats')+'</div>'+(lines?'<ul>'+lines+'</ul>':'')+repos+'</div>';}
+  return '<h3>Launch card</h3><div class="hm-ship"><div class="cap"><b>'+homePlural(t.files,'file','files')+' staged</b> by '+homePlural(t.chats,'chat','chats')+'</div>'+(lines?'<ul>'+lines+'</ul>':'')+repos+'</div>';}
 function homeShortName(repo){return String(repo).replace(/[/]+$/,'').split('/').pop();}
 function homeTilesHtml(cl,oc,ship,now){
   const tile=(cls,dot,n,l,s)=>'<div class="hm-tile'+cls+'"><div class="n">'+(dot?'<i class="hdot '+dot+'"></i>':'')+n+'</div><div class="l">'+l+'</div><div class="s">'+esc(s)+'</div></div>';
@@ -231,13 +231,13 @@ function homeTilesHtml(cl,oc,ship,now){
   return tile('','d-working',cl.working.length,'Working','chats in flight')+
     tile(' you','d-turn',cl.turn.length,'Your turn',old?'oldest waiting '+homeAge(old.at,now):'none waiting')+
     tile('','d-stale',cl.stale.length,'Stale','idle since yesterday')+
-    tile('','',ship.files,'Staged to ship',ship.files?'across '+homePlural(ship.chats,'chat','chats'):'nothing staged')+
+    tile('','',ship.files,'Staged to launch',ship.files?'across '+homePlural(ship.chats,'chat','chats'):'nothing staged')+
     tile('','',on,'Orchestrator',os)+
     tile('','',TERMS.length,'Terminals',homePlural(wins,'window','windows'));}
 function homeActsHtml(canWait,shipRepo){
   const a=(k,l,cls,kbd,dis)=>'<button type="button" class="hm-act'+cls+'" data-hact="'+k+'"'+(dis?' disabled':'')+'>'+l+(kbd?' <kbd>'+esc(kbd)+'</kbd>':'')+'</button>';
   return a('thread','New thread',' pri',HOME_KEYS.newThread,false)+a('oldest','Open oldest waiting chat','','',!canWait)+a('orch','Orchestrator','','',false)+
-    a('ship','Review ship card','','',!shipRepo)+a('term','New terminal','','',false)+a('jump','Jump to anything','',HOME_KEYS.jump,false);}
+    a('ship','Review launch card','','',!shipRepo)+a('term','New terminal','','',false)+a('jump','Jump to anything','',HOME_KEYS.jump,false);}
 function homeOrbitHtml(cl,total,now){const box=$('#hm-orbit');const W=box.clientWidth,H=box.clientHeight;if(W<50||H<50)return;
   const byKey={};cl.turn.concat(cl.working,cl.stale).forEach(r=>{byKey[r.key]=r;});
   const keys=g=>g.map(r=>r.key).sort();

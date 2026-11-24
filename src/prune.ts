@@ -435,7 +435,7 @@ async function pruneNow(repo: string, opts: PruneOpts, deps: PruneDeps): Promise
   }
   const base = opts.base ?? (await resolvePruneBase(repo, deps.git, opts.db));
   if (!base) {
-    result.error = 'no base branch: set one in Settings › Ship, or run git remote set-head origin --auto';
+    result.error = 'no base branch: set one in Settings › Launch, or run git remote set-head origin --auto';
     return finish();
   }
   result.base = base;

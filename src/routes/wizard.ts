@@ -137,7 +137,7 @@ export function requirementRows(r: ProbeReport, brew: BrewInfo): RequirementRow[
   });
   rows.push({
     id: 'gh', required: false, ok: r.gh.found && !!r.gh.auth?.loggedIn, title: 'GitHub CLI (gh)',
-    detail: !r.gh.found ? 'Not installed. Needed for PR status, checks and the Ship button.' : r.gh.auth?.loggedIn ? `Found at ${r.gh.path}, logged in${r.gh.auth.hosts.length ? ' to ' + r.gh.auth.hosts.join(', ') : ''}.` : `Found at ${r.gh.path}, not logged in. Run gh auth login in a terminal.`,
+    detail: !r.gh.found ? 'Not installed. Needed for PR status, checks and the Launch button.' : r.gh.auth?.loggedIn ? `Found at ${r.gh.path}, logged in${r.gh.auth.hosts.length ? ' to ' + r.gh.auth.hosts.join(', ') : ''}.` : `Found at ${r.gh.path}, not logged in. Run gh auth login in a terminal.`,
     fix: r.gh.found ? 'none' : 'brew-gh', fixBlocked: r.gh.found ? undefined : brewBlocked,
   });
   rows.push({

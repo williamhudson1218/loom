@@ -145,18 +145,18 @@ function smToggleDiff(id){if(SM.exp[id]){delete SM.exp[id];smRender();return;}SM
 function smCloseBtn(){return '<button class="smx" data-smclose="1" title="Close (Esc)" aria-label="Close">✕</button>';}
 function smHeadHtml(d){
   if(SM.view==='started'){const st=SM.started||{};const L=Object.keys(DATA.live).map(k=>DATA.live[k]).find(x=>x.pane_id===st.pane);
-    return '<span class="smok">✓</span><div class="grow"><h2 id="smtitle">Ship session started</h2><div class="sub">Running in '+(L&&L.name?'<span class="mono">@'+esc(L.name)+'</span>':'a new chat')+(st.where?'<span class="sep">·</span><span>'+esc(st.where)+'</span>':'')+'</div></div>'+smCloseBtn();}
-  if(!d)return '<div class="grow"><h2 id="smtitle">Ship staged work</h2></div>'+smCloseBtn();
-  if(SM.view==='confirm')return '<div class="grow"><h2 id="smtitle">Ship '+smPlural(d.totals.staged,'file','files')+' as one batch?</h2><div class="sub">Starts a new Claude session in this checkout and runs <code>'+esc(d.commands.plain)+'</code>.</div></div>'+smCloseBtn();
-  return '<div class="grow"><h2 id="smtitle">Ship staged work</h2><div class="sub"><span>'+esc(d.repo.split('/').pop())+'</span><span class="sep">·</span><span>'+(d.onMain?esc(d.base||'main'):'not on '+esc(d.base||'main'))+'</span><span class="sep">·</span><span>'+smPlural(d.totals.staged,'file','files')+'</span><span class="a">+'+d.totals.added+'</span><span class="d">−'+d.totals.deleted+'</span><span class="sep">·</span><span>'+smPlural(d.chats.length,'chat','chats')+'</span></div></div>'+smCloseBtn();}
+    return '<span class="smok">✓</span><div class="grow"><h2 id="smtitle">Launch session started</h2><div class="sub">Running in '+(L&&L.name?'<span class="mono">@'+esc(L.name)+'</span>':'a new chat')+(st.where?'<span class="sep">·</span><span>'+esc(st.where)+'</span>':'')+'</div></div>'+smCloseBtn();}
+  if(!d)return '<div class="grow"><h2 id="smtitle">Launch staged work</h2></div>'+smCloseBtn();
+  if(SM.view==='confirm')return '<div class="grow"><h2 id="smtitle">Launch '+smPlural(d.totals.staged,'file','files')+' as one batch?</h2><div class="sub">Starts a new Claude session in this checkout and runs <code>'+esc(d.commands.plain)+'</code>.</div></div>'+smCloseBtn();
+  return '<div class="grow"><h2 id="smtitle">Launch staged work</h2><div class="sub"><span>'+esc(d.repo.split('/').pop())+'</span><span class="sep">·</span><span>'+(d.onMain?esc(d.base||'main'):'not on '+esc(d.base||'main'))+'</span><span class="sep">·</span><span>'+smPlural(d.totals.staged,'file','files')+'</span><span class="a">+'+d.totals.added+'</span><span class="d">−'+d.totals.deleted+'</span><span class="sep">·</span><span>'+smPlural(d.chats.length,'chat','chats')+'</span></div></div>'+smCloseBtn();}
 function smChatHtml(c,d){const pane=smPane(c.key);const cur=SM.lab[c.key]!==undefined?SM.lab[c.key]:smSaved(c);const miss=d.labelRequired&&!cur.trim();
   const id='smlab-'+esc(smSid(c.key));
   let h='<div class="smcard'+(miss?' miss':'')+'" data-smcard="'+esc(c.key)+'"><div class="smct"><span class="sdot '+smDot(c.key)+'"></span><span class="nm" data-smchat="'+esc(c.key)+'">'+esc(smChatName(c.key))+'</span>'+(pane?'<span class="pn">'+esc(pane)+'</span>':'')+'<span class="spacer"></span><span>'+smPlural(c.staged.length,'file','files')+'</span></div>';
-  h+='<div class="smlab"><label for="'+id+'">Ship label'+(d.labelRequired?'<span class="smreq">Required</span>':'')+'</label><input id="'+id+'" data-smlabel="'+esc(c.key)+'" value="'+esc(cur)+'" maxlength="200" placeholder="Describe this change in one line" autocomplete="off"'+(TERM_TOKEN?'':' disabled')+'>'+
+  h+='<div class="smlab"><label for="'+id+'">Launch label'+(d.labelRequired?'<span class="smreq">Required</span>':'')+'</label><input id="'+id+'" data-smlabel="'+esc(c.key)+'" value="'+esc(cur)+'" maxlength="200" placeholder="Describe this change in one line" autocomplete="off"'+(TERM_TOKEN?'':' disabled')+'>'+
     (c.title?'<span class="smhint">Chat title is “'+esc(c.title)+'”. <button class="smlink" data-smusetitle="'+esc(c.key)+'">Use it</button></span>':'')+'</div>';
   h+=c.staged.map(f=>smFile(f,'staged')).join('');
   if(c.unstaged.length){const shown=c.unstaged.slice(0,3).map(f=>'<span class="mono">'+esc(f.path)+'</span>').join(', ');
-    h+='<div class="smtouched">Also touched, not staged (won’t ship): '+shown+(c.unstaged.length>3?' and '+(c.unstaged.length-3)+' more':'')+'</div>';}
+    h+='<div class="smtouched">Also touched, not staged (won’t launch): '+shown+(c.unstaged.length>3?' and '+(c.unstaged.length-3)+' more':'')+'</div>';}
   return h+'</div>';}
 function smAssignOptions(){const rows=[];Object.keys(DATA.live).forEach(k=>{const c=chatByKey(k);if(c)rows.push([k,(smPane(k)||'')+' '+disp(c)]);});
   return '<option value="">Assign to…</option>'+rows.sort((a,b)=>a[1].localeCompare(b[1])).map(r=>'<option value="'+esc(r[0])+'">'+esc(r[1].trim())+'</option>').join('');}
@@ -172,7 +172,7 @@ function smNotStagedChat(c){const pane=smPane(c.key);
   return '<div class="smcard" data-smns="'+esc(c.key)+'"><div class="smct"><span class="sdot '+smDot(c.key)+'"></span><span class="nm" data-smchat="'+esc(c.key)+'">'+esc(smChatName(c.key))+'</span>'+(pane?'<span class="pn">'+esc(pane)+'</span>':'')+'<span class="spacer"></span><span>'+smPlural(c.unstaged.length,'file','files')+'</span></div>'+c.unstaged.map(f=>smFile(f,'unstaged')).join('')+'</div>';}
 function smNotStagedHtml(d){const n=d.notStaged||{chats:[],unknown:[]};if(!n.chats.length&&!n.unknown.length)return '';
   const total=n.chats.reduce((a,c)=>a+c.unstaged.length,0)+n.unknown.length;
-  let h='<div class="smown"><h3>Not staged <span>· '+smPlural(total,'file','files')+' in progress, won’t ship</span></h3>'+n.chats.map(smNotStagedChat).join('');
+  let h='<div class="smown"><h3>Not staged <span>· '+smPlural(total,'file','files')+' in progress, won’t launch</span></h3>'+n.chats.map(smNotStagedChat).join('');
   if(n.unknown.length)h+='<div class="smns-unknown"><h3>Unknown owner <span>· '+smPlural(n.unknown.length,'file','files')+' no chat claims</span></h3>'+smUnRows(n.unknown)+'</div>';
   return h+'</div>';}
 function smSumHtml(d){const rows=d.chats.map(c=>{const a=c.staged.reduce((n,f)=>n+f.added,0),x=c.staged.reduce((n,f)=>n+f.deleted,0);
@@ -183,28 +183,28 @@ function smSumHtml(d){const rows=d.chats.map(c=>{const a=c.staged.reduce((n,f)=>
 function smStepsHtml(items){return '<ol class="smsteps">'+items.map((s,i)=>'<li class="'+(s[0]||'')+'"><span class="i">'+(s[0]==='sdone'?'✓':s[0]==='snow'?''+loadingMark(12)+'':(i+1))+'</span><span>'+s[1]+(s[2]?'<small>'+s[2]+'</small>':'')+'</span></li>').join('')+'</ol>';}
 function smBodyHtml(d){
   if(!d)return '<div class="smempty">'+(SM.failed?esc(SM.failed):'Loading…')+'</div>';
-  if(SM.view==='started')return smStepsHtml([['sdone','Session launched',smPlural(d.totals.staged,'staged file','staged files')+' locked for this ship.'],['snow','Committing and opening the pull request','Watch it in the ship session.'],['slater','Merge when CI and review are green']])+'<div class="smnote">Other chats can keep working. New staged files wait for the next ship.</div>';
+  if(SM.view==='started')return smStepsHtml([['sdone','Session launched',smPlural(d.totals.staged,'staged file','staged files')+' locked for this launch.'],['snow','Committing and opening the pull request','Watch it in the launch session.'],['slater','Merge when CI and review are green']])+'<div class="smnote">Other chats can keep working. New staged files wait for the next launch.</div>';
   if(SM.view==='confirm')return smSumHtml(d)+smStepsHtml([['','Commit the staged files as one batch','Unstaged changes are left alone.'],['','Open a <span class="mono">ship/</span> pull request','Labels become the PR’s change list.'],['','Merge when CI and review are green','Production deploy follows.']])+(SM.err?'<div class="smerr">'+esc(SM.err)+'</div>':'');
   let b=d.chats.map(c=>smChatHtml(c,d)).join('')+smUnHtml(d);
   if(!d.chats.length&&!smUnStagedCount(d))b='<div class="smempty">Nothing staged.</div>';
   b+=smNotStagedHtml(d);
   return b;}
-// The footer's message: why Ship is or is not available.
+// The footer's message: why Launch is or is not available.
 function smGateInfo(d){
   if(!d.gate.ok){const l=d.lock;
     if(l&&!l.stale){const who=l.holderKey?(smPane(l.holderKey)||smChatName(l.holderKey)):(l.sessionId.slice(0,8)||'unknown');
-      return {ok:false,cls:'',html:'Shipping now: '+(l.holderKey?'<a data-smchat="'+esc(l.holderKey)+'">'+esc(who)+'</a>':esc(who))+', '+smPlural(l.batch,'file','files')};}
+      return {ok:false,cls:'',html:'Launching now: '+(l.holderKey?'<a data-smchat="'+esc(l.holderKey)+'">'+esc(who)+'</a>':esc(who))+', '+smPlural(l.batch,'file','files')};}
     return {ok:false,cls:'',html:esc(d.gate.reason)};}
   if(d.labelRequired){const m=smMissing(d);
     if(m)return {ok:false,cls:'',html:'⚠ '+m+(m===1?' label':' labels')+' missing'};
     if(d.chats.length)return {ok:true,cls:' ok',html:'✓ All '+d.chats.length+(d.chats.length===1?' chat':' chats')+' labelled'};}
   return {ok:true,cls:' ok',html:''};}
 function smFootHtml(d){
-  if(SM.view==='started')return '<span class="spacer"></span><button class="smbtn" data-smclose="1">Close</button><button class="smbtn pri" data-smopen="1">Open ship session</button>';
+  if(SM.view==='started')return '<span class="spacer"></span><button class="smbtn" data-smclose="1">Close</button><button class="smbtn pri" data-smopen="1">Open launch session</button>';
   if(!d)return '<span class="spacer"></span><button class="smbtn" data-smclose="1">Close</button>';
-  if(SM.view==='confirm')return '<span class="smnote">Nothing is committed until you start.</span><span class="spacer"></span><button class="smbtn" data-smback="1">Back</button><button class="smbtn pri" data-smgo="1" '+(SM.busy?'disabled':'')+'>'+(SM.busy?'Starting…':'Start ship session')+'</button>';
+  if(SM.view==='confirm')return '<span class="smnote">Nothing is committed until you start.</span><span class="spacer"></span><button class="smbtn" data-smback="1">Back</button><button class="smbtn pri" data-smgo="1" '+(SM.busy?'disabled':'')+'>'+(SM.busy?'Starting…':'Start launch session')+'</button>';
   const g=smGateInfo(d);
-  return '<button class="smbtn ghost" data-smrefresh="1">Refresh</button><span class="spacer"></span><span class="smgate'+g.cls+'" id="smgate">'+g.html+'</span><button class="smbtn" data-smclose="1">Cancel</button><button class="smbtn pri" id="smshipbtn" data-smship="1" '+(g.ok&&TERM_TOKEN?'':'disabled')+' title="'+esc(g.ok?'Review and start '+(d.command||'the ship command'):'')+'">Review and ship</button>';}
+  return '<button class="smbtn ghost" data-smrefresh="1">Refresh</button><span class="spacer"></span><span class="smgate'+g.cls+'" id="smgate">'+g.html+'</span><button class="smbtn" data-smclose="1">Cancel</button><button class="smbtn pri" id="smshipbtn" data-smship="1" '+(g.ok&&TERM_TOKEN?'':'disabled')+' title="'+esc(g.ok?'Review and start '+(d.command||'the launch command'):'')+'">Review and launch</button>';}
 function smRender(){if(!SM.open)return;const d=SM.d;
   $('#smhead').innerHTML=smHeadHtml(d);
   const body=$('#smbody');const top=body.scrollTop;body.innerHTML=smBodyHtml(d);body.scrollTop=top;
@@ -223,7 +223,7 @@ function smUseTitle(key){const c=SM.d&&SM.d.chats.find(x=>x.key===key);if(!c)ret
   smSaveLabel(key);smUpdateGate();}
 function smAssign(path,key){fetch('/api/ship/assign',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({repo:SM.repo,path,key})}).then(r=>r.json()).then(j=>{if(!j.ok){toast(j.detail||'assign failed','#8a2f2f');return;}toast('assigned');smLoad();}).catch(()=>toast('server off?','#8a2f2f'));}
 // "Add <repo> to Ship": the board's ship line calls this for a candidate from GET /api/ship/candidates.
-function shipAddRepo(repo,after){fetch('/api/ship/projects',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:repo})}).then(r=>r.json()).then(j=>{if(!j.ok){toast(j.detail||'could not add','#8a2f2f');return;}toast('added to Ship');if(after)after(j.project);}).catch(()=>toast('server off?','#8a2f2f'));}
+function shipAddRepo(repo,after){fetch('/api/ship/projects',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:repo})}).then(r=>r.json()).then(j=>{if(!j.ok){toast(j.detail||'could not add','#8a2f2f');return;}toast('added to Launch');if(after)after(j.project);}).catch(()=>toast('server off?','#8a2f2f'));}
 function smGo(){if(SM.busy)return;SM.busy=true;SM.err='';smRender();
   fetch('/api/ship/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({repo:SM.repo})}).then(r=>r.json()).then(j=>{SM.busy=false;
     if(!j.ok){SM.err=j.detail||'failed';smRender();return;}
@@ -243,5 +243,5 @@ function wireShipModal(){const m=$('#shipmodal');
   m.addEventListener('change',e=>{const t=e.target;if(t.dataset&&t.dataset.smlabel)smSaveLabel(t.dataset.smlabel);else if(t.dataset&&t.dataset.smpick&&t.value)smAssign(t.dataset.smpick,t.value);});
   m.addEventListener('keydown',e=>{const t=e.target;if(e.key==='Enter'&&t.dataset&&t.dataset.smlabel){e.preventDefault();t.blur();}});
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&SM.open){e.stopPropagation();e.preventDefault();if(SM.view==='confirm'&&!SM.busy){SM.view='review';smRender();}else closeShipModal();}},true);}
-function shipGate(b){const l=b.lock;if(l&&!l.stale)return 'A ship is already in progress.';if(!b.onMain)return 'The checkout is not on '+(b.base||'main')+'.';if(b.next.staged<=0)return 'Nothing is staged.';return '';}
+function shipGate(b){const l=b.lock;if(l&&!l.stale)return 'A launch is already in progress.';if(!b.onMain)return 'The checkout is not on '+(b.base||'main')+'.';if(b.next.staged<=0)return 'Nothing is staged.';return '';}
 `;

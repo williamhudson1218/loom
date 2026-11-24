@@ -57,7 +57,7 @@ describe('PR and CI split button', () => {
     const m = harness({ chatPr: own, pipes: { 'o/r#10': { dots: dots('fail'), jobs, events: [] }, 'o/r#20': { dots: dots('pass', 'pass'), jobs: [], events: [] } }, ships }).menu();
     expect(m).toContain('PR #10');
     expect(m).toContain('PR #20');
-    expect(m).toContain('ship PR');
+    expect(m).toContain('launch PR');
     expect(m).toContain('>merged<');
     expect(m).toContain('title="https://github.com/o/r/pull/20/checks"');
     expect(m).toContain('title="https://github.com/o/r/pull/10/files"');

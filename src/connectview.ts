@@ -93,7 +93,7 @@ function cnGhHtml(K){var st=CN.gh,v=cnGhView(st),h='';
    else h+='<div>Copy this code, then paste it on the GitHub page that opened in your browser.</div><div class="cn-row"><span class="cn-code">'+cnEsc(j.code)+'</span>'+cnB(K,'ghcopy','Copy code',{arg:j.code})+'</div><div class="cn-row"><a href="'+cnEsc(j.url||CN_DEVICE)+'" target="_blank" rel="noopener">Open github.com/login/device</a><span class="def">Waiting for you to approve in the browser.</span>'+cnB(K,'ghcancel','Cancel',{ghost:true})+'</div>';
    return '<div class="cn-stack">'+h+'</div>';}
   if(v.kind==='missing'){
-   h+='<div class="cn-row">'+cnPill('off','gh is not installed')+'</div><div class="def">Loom uses the GitHub CLI (gh) for pull request status, checks, reviews and Ship.</div>';
+   h+='<div class="cn-row">'+cnPill('off','gh is not installed')+'</div><div class="def">Loom uses the GitHub CLI (gh) for pull request status, checks, reviews and Launch.</div>';
    h+=st.brew?'<div class="cn-row">'+cnB(K,'ghinstall','Install with Homebrew',{pri:true})+'<span class="def">Runs brew install gh.</span></div>':'<div class="cn-row"><a href="https://cli.github.com" target="_blank" rel="noopener">Download gh from cli.github.com</a>'+cnB(K,'ghrefresh','Check again')+'</div>';
    return '<div class="cn-stack">'+msg+h+'</div>';}
   if(v.kind==='unauth'){h+='<div class="cn-row">'+cnPill('warn','Not signed in')+cnB(K,'ghlogin','Connect GitHub',{pri:true,icon:'github'})+'</div><div class="def">Loom runs gh auth login. GitHub shows a one-time code here and opens its sign-in page in your browser. gh keeps the token; Loom never sees it.</div>';return '<div class="cn-stack">'+msg+h+'</div>';}

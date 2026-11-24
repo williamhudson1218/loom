@@ -50,12 +50,12 @@ export const STEPS: readonly StepMeta[] = [
   {
     id: 'requirements', title: 'Requirements', optional: false, blocking: true, skippable: false,
     why: 'Loom runs chats inside tmux and calls Claude Code, so both must be present.',
-    unlocks: ['Starting and tracking chats (tmux and Claude Code)', 'Chat titles and summaries (Claude login)', 'PR status and the Ship button (gh, optional)', 'Codex chats (Codex, optional)'],
+    unlocks: ['Starting and tracking chats (tmux and Claude Code)', 'Chat titles and summaries (Claude login)', 'PR status and the Launch button (gh, optional)', 'Codex chats (Codex, optional)'],
   },
   {
     id: 'projects', title: 'Projects', optional: true, blocking: false, skippable: true,
     why: 'Tells Loom which folders hold the code you work on, so chats are grouped and new chats start in the right place.',
-    unlocks: ['Per-project grouping and filters', 'New thread opens in the right folder', 'Ship and Slack channel mapping later on'],
+    unlocks: ['Per-project grouping and filters', 'New thread opens in the right folder', 'Launch and Slack channel mapping later on'],
   },
   {
     id: 'terminal', title: 'Terminal', optional: true, blocking: false, skippable: true,
@@ -76,13 +76,13 @@ export const STEPS: readonly StepMeta[] = [
   {
     id: 'plugin', title: 'Loom plugin', optional: true, blocking: false, skippable: true,
     why: 'Installs the small hooks and skills that let chats talk to Loom.',
-    unlocks: ['Reliable Jump, Resume and live state (pane state hook)', 'Slack thread ownership and the Outbox', 'Ship labels: who contributed what', 'Named panes and messages between chats'],
+    unlocks: ['Reliable Jump, Resume and live state (pane state hook)', 'Slack thread ownership and the Outbox', 'Launch labels: who contributed what', 'Named panes and messages between chats'],
   },
   {
     // The id stays 'slack' so recorded setup progress and the shortcut step's gate keep working.
     id: 'slack', title: 'Connections', optional: true, blocking: false, skippable: true,
     why: 'Connects Loom to Slack, GitHub and Gmail. Each one is optional and can be set up later in Settings.',
-    unlocks: ['Slack: Outbox sending, parked-thread replies, watchers, names and emoji', 'GitHub: pull request status, checks, reviews and Ship (through gh)', 'Gmail: send email drafts as you and check their threads before sending'],
+    unlocks: ['Slack: Outbox sending, parked-thread replies, watchers, names and emoji', 'GitHub: pull request status, checks, reviews and Launch (through gh)', 'Gmail: send email drafts as you and check their threads before sending'],
   },
   {
     id: 'shortcut', title: 'Slack shortcut', optional: true, blocking: false, skippable: true,
@@ -90,9 +90,9 @@ export const STEPS: readonly StepMeta[] = [
     unlocks: ['Jump to an existing chat for a thread in one keystroke', 'Start a chat in the right project from a message', 'Falls back to pasting a thread link'],
   },
   {
-    id: 'ship', title: 'Ship', optional: true, blocking: false, skippable: true,
-    why: 'Tells Loom which repos you ship from, so it can show staged work and run your ship command.',
-    unlocks: ['Ship groups and the staged-work dialog', 'Optional labels: who contributed what to a ship'],
+    id: 'ship', title: 'Launch', optional: true, blocking: false, skippable: true,
+    why: 'Tells Loom which repos you launch from, so it can show staged work and run your launch command.',
+    unlocks: ['Launch groups and the staged-work dialog', 'Optional labels: who contributed what to a launch'],
   },
   {
     id: 'orchestrator', title: 'Orchestrator', optional: true, blocking: false, skippable: true,
@@ -423,7 +423,7 @@ export function buildSummary(i: SummaryInput): SummaryRow[] {
       on: i.shortcutReady === true,
       detail: i.shortcutReady === null ? 'Off (needs Slack)' : i.shortcutReady ? 'Ready' : 'Accessibility not granted',
     },
-    { id: 'ship', label: 'Ship', on: i.shipRepos.length > 0, detail: i.shipRepos.length ? i.shipRepos.join(', ') : 'No repos on Ship' },
+    { id: 'ship', label: 'Launch', on: i.shipRepos.length > 0, detail: i.shipRepos.length ? i.shipRepos.join(', ') : 'No repos on Launch' },
     { id: 'orchestrator', label: 'Orchestrator', on: i.orchestrator, detail: i.orchestrator ? 'On' : 'Off' },
     { id: 'watchers', label: 'Watchers', on: i.watchers > 0, detail: i.watchers ? `${i.watchers} template${i.watchers === 1 ? '' : 's'}, off or in Shadow until tested` : 'Off' },
   ];

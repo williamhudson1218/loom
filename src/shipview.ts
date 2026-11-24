@@ -170,7 +170,7 @@ export interface ShipGate {
 export function shipDisabledReason(input: { onMain: boolean; staged: number; lock: Pick<ShipLock, 'stale' | 'holderKey' | 'pane' | 'sessionId'> | null; base?: string }): ShipGate {
   const { onMain, staged, lock } = input;
   if (lock && !lock.stale) {
-    return { ok: false, reason: 'A ship is already in progress.', holder: { key: lock.holderKey, pane: lock.pane, sessionId: lock.sessionId } };
+    return { ok: false, reason: 'A launch is already in progress.', holder: { key: lock.holderKey, pane: lock.pane, sessionId: lock.sessionId } };
   }
   if (!onMain) return { ok: false, reason: `The checkout is not on ${input.base || 'main'}.` };
   if (staged <= 0) return { ok: false, reason: 'Nothing is staged.' };

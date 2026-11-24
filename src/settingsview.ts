@@ -116,10 +116,10 @@ var SX_SECS=[
  {id:'terminal',label:'Terminal',what:'Chooses where a chat opens, how it looks and how Ghostty tabs are rehomed.',needs:'Ghostty: Accessibility and Automation. iTerm2 and Terminal.app: Automation.'},
  {id:'agents',label:'Agents & permissions',what:'Sets how chats, watcher workers and the orchestrator are launched, including whether they skip permission prompts.',needs:'Nothing, but Skip permissions carries real risk.'},
  {id:'slack',label:'Slack',what:'Connects Loom to Slack so it can send from the Outbox, poll parked threads and label channels.',needs:'A Slack user token (kept in the macOS Keychain) or the Claude Slack connector.'},
- {id:'github',label:'GitHub',what:'Signs the GitHub CLI (gh) in, which Loom uses for pull request status, checks, reviews and Ship.',needs:'gh. Loom can install it with Homebrew, or get it from cli.github.com.'},
+ {id:'github',label:'GitHub',what:'Signs the GitHub CLI (gh) in, which Loom uses for pull request status, checks, reviews and Launch.',needs:'gh. Loom can install it with Homebrew, or get it from cli.github.com.'},
  {id:'shortcut',label:'Slack shortcut',what:'Jump to or start a chat for the Slack message under your pointer.',needs:'Slack desktop app and Accessibility. Needs Slack connected for names.'},
  {id:'outbox',label:'Outbox',what:'Controls how drafts from chats are reviewed, sent and followed up, and connects Gmail for email drafts.',needs:'Slack connected (Direct app) to send Slack drafts; Gmail connected, or an email CLI, to send email drafts; helpers installed to record drafts.'},
- {id:'ship',label:'Ship',what:'Lists the repos you ship from and the command the Ship button runs.',needs:'A git repo with a remote and gh logged in.'},
+ {id:'ship',label:'Launch',what:'Lists the repos you launch from and the command the Launch button runs.',needs:'A git repo with a remote and gh logged in.'},
  {id:'orch',label:'Orchestrator',what:'Runs a supervising chat that summarises and manages your other chats.',needs:'Claude Code login. Optional Remote Control needs a supported account.'},
  {id:'watchers',label:'Watchers',what:'Watches a Slack channel, your live chats or pull requests, and starts a chat, messages one, notifies you or tells the orchestrator when a rule matches.',needs:'Slack source: Direct app. Pull requests: gh. Chats: nothing.'},
  {id:'helpers',label:'Helpers',what:'Manages the hooks and skills Loom installs into Claude Code.',needs:'Claude Code on this machine. Loom adds a local plugin; it never edits settings.json.'},
@@ -227,7 +227,7 @@ function sxGeneral(){var cv=DATA.codexVisible;var aopts=cv||sxv('default_agent')
    sxGrp('Tools Loom runs')+
    sxKey('claude_bin',{title:'Claude Code binary',help:'Detected through your shell when empty. Set it if Claude lives somewhere unusual, such as an nvm global.',note:sxDetected('claude'),ph:sxPr('claude')||'Detected automatically',mono:true,noDef:true,after:sxBtn('detect','Detect')})+
    sxKey('extra_path',{title:'Extra PATH entries',help:'Searched before launching claude, tmux, gh and node, separated by colons. Apps started from Finder do not inherit your shell PATH.',ph:'~/.local/bin:/opt/homebrew/bin'})+
-   sxRow('GitHub CLI','PR status, checks and Ship.',sxGh()+sxBtn('gogh','Set up in GitHub',{ghost:true}));}
+   sxRow('GitHub CLI','PR status, checks and Launch.',sxGh()+sxBtn('gogh','Set up in GitHub',{ghost:true}));}
 function sxSounds(){var mu=sxv('sounds_muted_until')||0;
   return sxGrp('Chat sounds')+
    (mu>Date.now()?sxNote('Sounds are silenced until '+sxEsc(new Date(mu).toLocaleTimeString())+'. Choose Sounds on in the menu bar icon to end it.','warn'):'')+
@@ -364,13 +364,13 @@ function sxGithub(){return sxRow('GitHub CLI','Connect GitHub runs gh auth login
    sxNote('Sign out or switch accounts with <code>gh auth logout</code> and <code>gh auth switch</code> in a terminal.');}
 function sxHelperPill(name){var pl=SX.data.plugin;if(!pl)return '';return pl.status==='not_installed'?sxPill('warn','Helpers not installed'):sxPill('ok','Installed');}
 function sxShip(){var sh=SX.data.ship;if(!sh)return '<p class="sxempty">loading…</p>';var rows=sh.projects||[];
-  var tb=rows.length?'<div class="sxtbl"><table><tr><th>Repo</th><th>Base branch</th><th>Ship command</th><th>Label staged work</th><th>Ship lock</th><th>On</th><th></th></tr>'+rows.map(function(p){var d=sxEsc(p.project_dir);
-   return '<tr><td><code>'+sxEsc(shortPath(p.project_dir))+'</code><div class="def">'+sxEsc(p.repo_slug||'')+'</div></td><td><input type="text" data-ship="'+d+'" data-f="base_branch" value="'+sxEsc(p.base_branch)+'" style="width:90px"></td><td><input type="text" data-ship="'+d+'" data-f="ship_command" value="'+sxEsc(p.ship_command)+'" style="width:130px"></td><td><label class="tg"><input type="checkbox" data-ship="'+d+'" data-f="label_required"'+(p.label_required?' checked':'')+'><i></i></label></td><td><label class="tg"><input type="checkbox" data-ship="'+d+'" data-f="ship_lock"'+(p.ship_lock!==false?' checked':'')+'><i></i></label></td><td><label class="tg"><input type="checkbox" data-ship="'+d+'" data-f="enabled"'+(p.enabled?' checked':'')+'><i></i></label></td><td>'+sxBtn('shrm','Remove',{arg:p.project_dir,danger:true})+'</td></tr>';}).join('')+'</table></div><p class="def">Ship lock: while a ship runs from this repo, other chats can’t stage on its main branch.</p>':'<p class="sxempty">No repos yet. The first Ship click offers to add the current repo, or add one below.</p>';
+  var tb=rows.length?'<div class="sxtbl"><table><tr><th>Repo</th><th>Base branch</th><th>Launch command</th><th>Label staged work</th><th>Launch lock</th><th>On</th><th></th></tr>'+rows.map(function(p){var d=sxEsc(p.project_dir);
+   return '<tr><td><code>'+sxEsc(shortPath(p.project_dir))+'</code><div class="def">'+sxEsc(p.repo_slug||'')+'</div></td><td><input type="text" data-ship="'+d+'" data-f="base_branch" value="'+sxEsc(p.base_branch)+'" style="width:90px"></td><td><input type="text" data-ship="'+d+'" data-f="ship_command" value="'+sxEsc(p.ship_command)+'" style="width:130px"></td><td><label class="tg"><input type="checkbox" data-ship="'+d+'" data-f="label_required"'+(p.label_required?' checked':'')+'><i></i></label></td><td><label class="tg"><input type="checkbox" data-ship="'+d+'" data-f="ship_lock"'+(p.ship_lock!==false?' checked':'')+'><i></i></label></td><td><label class="tg"><input type="checkbox" data-ship="'+d+'" data-f="enabled"'+(p.enabled?' checked':'')+'><i></i></label></td><td>'+sxBtn('shrm','Remove',{arg:p.project_dir,danger:true})+'</td></tr>';}).join('')+'</table></div><p class="def">Launch lock: while a launch runs from this repo, other chats can’t stage on its main branch.</p>':'<p class="sxempty">No repos yet. The first Launch click offers to add the current repo, or add one below.</p>';
   var have={};rows.forEach(function(p){have[p.project_dir]=1;});var cands=(ALLP||[]).filter(function(p){return !p.hidden&&!have[p.path];});
   return (sh.override?sxNote('<code>LOOM_SHIP_REPOS</code> is set in the environment and overrides this list.','warn'):'')+tb+
    '<div class="sxrow"><select id="sx-shipadd">'+cands.map(function(p){return '<option value="'+sxEsc(p.path)+'">'+sxEsc(p.name+' · '+shortPath(p.path))+'</option>';}).join('')+'</select>'+sxBtn('shadd','+ Add repo from Projects',{dis:!cands.length})+'<span class="def" id="sx-shmsg"></span></div>'+
-   sxKey('trees_prune_after_ship',{title:'Prune merged worktrees after a ship',help:'When a ship lands, removes that repo’s worktrees that are merged, clean and not in use. Never forced; the result shows in the Trees tab.'})+
-   sxNote('The Ship button runs the ship command in a new chat. A new row defaults to <code>'+sxEsc(sh.defaultCommand||'/loom:ship')+'</code>. There is no force option.');}
+   sxKey('trees_prune_after_ship',{title:'Prune merged worktrees after a launch',help:'When a launch lands, removes that repo’s worktrees that are merged, clean and not in use. Never forced; the result shows in the Trees tab.'})+
+   sxNote('The Launch button runs the launch command in a new chat. A new row defaults to <code>'+sxEsc(sh.defaultCommand||'/loom:ship')+'</code>. There is no force option.');}
 function sxOrch(){return sxKey('orchestrator_enabled',{kind:'toggle01',title:'Orchestrator',help:'A chat that supervises your other chats.'})+
    sxKey('perm_orchestrator',{kind:'seg',title:'Permission mode',help:'Same trade-off as chats.'})+
    sxKey('orchestrator_notify',{kind:'select',title:'Notify me',help:'When the orchestrator pings you.',labels:{needs_you:'Only when it asks a question',all:'On every report',off:'Never'}})+
@@ -384,8 +384,8 @@ var SX_ITEMS=[
  ['record-placement','Hook','Remembers which pane each chat runs in.',''],
  ['thread-ownership','Hook','Tells Loom which chat owns a Slack thread.','slack'],
  ['outbox-recording','Hook','Lets chats add drafts to the Outbox.','outbox'],
- ['ship-labels','Hook','Asks for a one-line label on staged work before Ship.','ship'],
- ['ship','Skill','The generic ship procedure the Ship button starts.',''],
+ ['ship-labels','Hook','Asks for a one-line label on staged work before Launch.','ship'],
+ ['ship','Skill','The generic launch procedure the Launch button starts.',''],
  ['slack-drafting','Skill','How a chat writes and queues a Slack draft.','slack'],
  ['handling-slack-threads','Skill','Picks up a Slack thread as a ticket or as context.','slack'],
  ['tmux-route','Skill','Messages another pane by its name.',''],
@@ -537,13 +537,13 @@ function sxAct(a,arg,btn){
   if(a==='parm'){sxPost('/api/shortcut/practice',{action:'arm'}).then(function(j){if(j.ok){SX.practice=j.practice;renderSettings();sxPollPractice();}});return;}
   if(a==='pcancel'){sxPost('/api/shortcut/practice',{action:'cancel'}).then(function(j){if(j.ok){SX.practice=j.practice;renderSettings();}});return;}
   if(a==='shadd'){var sel=$('#sx-shipadd');if(!sel||!sel.value)return;sxPost('/api/ship/projects',{path:sel.value}).then(function(j){if(!j.ok){var m3=$('#sx-shmsg');if(m3)m3.textContent=sxErr(j);return;}sxLoad('ship',true);});return;}
-  if(a==='shrm'){sxConfirm({title:'Take this repo off Ship',body:'The Ship button stops offering it. The repo itself is not touched.',ok:'Remove'}).then(function(y){if(y)sxPost('/api/ship/projects/remove',{project_dir:arg}).then(function(){sxLoad('ship',true);});});return;}
+  if(a==='shrm'){sxConfirm({title:'Take this repo off Launch',body:'The Launch button stops offering it. The repo itself is not touched.',ok:'Remove'}).then(function(y){if(y)sxPost('/api/ship/projects/remove',{project_dir:arg}).then(function(){sxLoad('ship',true);});});return;}
   if(a==='gogh'){SX.sec='github';try{lsSet('loom.settingsSec',SX.sec);}catch(x){}renderSettings();return;}
   if(a==='gowatch'){tab='watch';stateFilter='all';onlyGroup=null;syncControls();liveToggle();chips();render();return;}
   if(a==='hcmds'){SX.cmds=!SX.cmds;renderSettings();return;}
   if(a==='hinst'||a==='hupd'){var pv=SX.data.plugin;var run=function(){btn.disabled=true;btn.textContent=a==='hinst'?'Installing…':'Updating…';sxPost('/api/plugin/'+(a==='hinst'?'install':'update'),{}).then(function(j){if(!j.ok)sxBad(sxErr(j),j.steps);else toast(a==='hinst'?'Helpers installed':'Helpers updated');sxLoad('plugin',true);});};
    if(a==='hinst'&&pv&&pv.preview){sxConfirm({title:'Install the Loom helpers',body:'Loom adds a local plugin to Claude Code by running:<pre class="sxpre">'+sxEsc((pv.preview.install||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>It does not edit your settings.json. Remove undoes it.',ok:'Install'}).then(function(y){if(y)run();});}else run();return;}
-  if(a==='hrm'){var pr=SX.data.plugin;sxConfirm({title:'Remove the Loom helpers',body:'Loom runs:<pre class="sxpre">'+sxEsc(((pr&&pr.preview&&pr.preview.remove)||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>Chats stop recording drafts, thread ownership and ship labels until you install them again.',ok:'Remove',danger:true}).then(function(y){if(y)sxPost('/api/plugin/remove',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoad('plugin',true);});});return;}
+  if(a==='hrm'){var pr=SX.data.plugin;sxConfirm({title:'Remove the Loom helpers',body:'Loom runs:<pre class="sxpre">'+sxEsc(((pr&&pr.preview&&pr.preview.remove)||[]).map(function(c){return c.display;}).join(String.fromCharCode(10)))+'</pre>Chats stop recording drafts, thread ownership and launch labels until you install them again.',ok:'Remove',danger:true}).then(function(y){if(y)sxPost('/api/plugin/remove',{}).then(function(j){if(!j.ok)sxBad(sxErr(j));sxLoad('plugin',true);});});return;}
   if(a==='tour'){if(typeof startTour==='function')startTour();else window.dispatchEvent(new CustomEvent('loom:start-tour'));return;}
   if(a==='aboutdiag'){if(typeof loomCopyDetails==='function')loomCopyDetails({},btn);return;}
   if(a==='welcome'){if(typeof showWelcome==='function')showWelcome({replay:true});return;}

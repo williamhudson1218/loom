@@ -171,11 +171,11 @@ export function gitRepoRoot(dir: string, git: SyncGit = defaultSyncGit): string 
 export function checkShipCommand(raw: unknown): { ok: true; command: string } | { ok: false; detail: string } {
   const c = typeof raw === 'string' ? raw.trim() : '';
   if (!c) return { ok: true, command: DEFAULT_SHIP_COMMAND };
-  if (c.length > MAX_SHIP_COMMAND) return { ok: false, detail: 'The ship command is too long.' };
-  if (!c.startsWith('/') || /[\r\n\0]/.test(c)) return { ok: false, detail: 'The ship command must be one line starting with /.' };
+  if (c.length > MAX_SHIP_COMMAND) return { ok: false, detail: 'The launch command is too long.' };
+  if (!c.startsWith('/') || /[\r\n\0]/.test(c)) return { ok: false, detail: 'The launch command must be one line starting with /.' };
   if (/(^|\s)--?force\b/i.test(c)) return { ok: false, detail: 'Loom does not send forced landings. Run that by hand.' };
   const name = c.slice(1).split(/\s/)[0].toLowerCase();
-  if (BUILTIN_SHIP_COMMANDS.includes(name)) return { ok: false, detail: `/${name} is a Claude Code built-in that opens a PR and never merges. Use ${DEFAULT_SHIP_COMMAND} or your own ship skill's name.` };
+  if (BUILTIN_SHIP_COMMANDS.includes(name)) return { ok: false, detail: `/${name} is a Claude Code built-in that opens a PR and never merges. Use ${DEFAULT_SHIP_COMMAND} or your own launch skill's name.` };
   return { ok: true, command: c };
 }
 

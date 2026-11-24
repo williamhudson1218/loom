@@ -487,8 +487,8 @@ export const SETTINGS = [
   // ---- Ship
   // On for migrated installs too (legacyUnset true): it was asked for as the default.
   boolDef({
-    key: 'trees_prune_after_ship', section: 'ship', label: 'Prune merged worktrees after a ship',
-    help: 'When a ship lands, remove that repo’s worktrees that are merged, clean and not in use. Never forced.',
+    key: 'trees_prune_after_ship', section: 'ship', label: 'Prune merged worktrees after a launch',
+    help: 'When a launch lands, remove that repo’s worktrees that are merged, clean and not in use. Never forced.',
     defaultNew: true, legacyUnset: true, restart: false,
   }),
 

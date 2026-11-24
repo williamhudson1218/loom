@@ -406,7 +406,7 @@ WZ_STEPS.welcome = function (c) {
     + '<div class="cards">'
     + '<div class="opt" style="cursor:default"><div class="ic">&#9776;</div><b>One list</b><span class="d">Every chat across every project, grouped by what needs you.</span></div>'
     + '<div class="opt" style="cursor:default"><div class="ic">&#9654;</div><b>Run them here</b><span class="d">Each chat runs in tmux, so it survives closing the window.</span></div>'
-    + '<div class="opt" style="cursor:default"><div class="ic">&#9993;</div><b>Slack and PRs</b><span class="d">Optional. Draft replies, watch channels, ship PRs, and jump from a Slack message to its chat with one shortcut.</span></div>'
+    + '<div class="opt" style="cursor:default"><div class="ic">&#9993;</div><b>Slack and PRs</b><span class="d">Optional. Draft replies, watch channels, launch PRs, and jump from a Slack message to its chat with one shortcut.</span></div>'
     + '</div>'
     + '<div class="def">Setup takes about five minutes. Everything after Requirements is optional and can be changed later in Settings. Nothing is changed on your machine until you press an Install or Allow button.</div>'
     + '</div>';
@@ -579,7 +579,7 @@ function wzPluginDraw() {
 }
 WZ_STEPS.plugin = function (c) {
   c.innerHTML = '<div class="stack"><div class="g2">'
-    + '<div class="lrow" style="display:block"><b>Hooks</b><span class="def" style="display:block">Small scripts Claude Code runs at fixed moments.</span><ul style="margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--wz-text2)"><li><b>Thread ownership</b> remembers which chat owns which Slack thread</li><li><b>Outbox recording</b> makes Slack drafts show up in Loom&#39;s Outbox</li><li><b>Ship labels</b> records what each chat contributes to a ship</li><li><b>Pane state</b> records which tmux pane each chat lives in</li></ul></div>'
+    + '<div class="lrow" style="display:block"><b>Hooks</b><span class="def" style="display:block">Small scripts Claude Code runs at fixed moments.</span><ul style="margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--wz-text2)"><li><b>Thread ownership</b> remembers which chat owns which Slack thread</li><li><b>Outbox recording</b> makes Slack drafts show up in Loom&#39;s Outbox</li><li><b>Launch labels</b> records what each chat contributes to a launch</li><li><b>Pane state</b> records which tmux pane each chat lives in</li></ul></div>'
     + '<div class="lrow" style="display:block"><b>Skills</b><span class="def" style="display:block">Instructions Claude loads when relevant.</span><ul style="margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--wz-text2)"><li><b>ship</b> lands staged work as a PR</li><li><b>slack-drafting</b> writes replies into the Outbox</li><li><b>handling-slack-threads</b> decides ticket versus context</li><li><b>tmux-route</b> sends messages between named panes</li><li><b>review</b> reads a PR without changing it</li></ul></div></div>'
     + '<div id="wz-plugin" class="stack"></div></div>';
   wzPluginDraw();
@@ -612,7 +612,7 @@ function wzSlackDraw() {
   // How Loom uses Slack: a small radio group nested in the Slack section, not peers of the connections.
   var modes = [['direct', 'Direct app', '<span class="tag">Full features</span>', 'Loom reads and posts with your own Slack token, through the Loom app or one you create.'],
     ['mcp', 'MCP only', '<span class="tag warn">Reduced</span>', 'Use the Claude Slack connector you already have. No Slack token in Loom, fewer features.'],
-    ['skip', 'Skip', '', 'Leave Slack off. Chats and ship still work. Connect later in Settings &rsaquo; Slack.']];
+    ['skip', 'Skip', '', 'Leave Slack off. Chats and launch still work. Connect later in Settings &rsaquo; Slack.']];
   var cur = modes.filter(function (m) { return m[0] === ch; })[0] || modes[0];
   var cards = '<div class="cn-seg" role="radiogroup" aria-label="How Loom uses Slack" id="wz-slcards">' + modes.map(function (m) {
     return '<button type="button" role="radio" aria-checked="' + (m[0] === ch ? 'true' : 'false') + '" data-wz-slack="' + m[0] + '">' + m[1] + (m[2] ? ' ' + m[2] : '') + '</button>';
@@ -745,7 +745,7 @@ function wzSlackPill() {
 }
 var WZ_CONN = [
   ['slack', 'Slack', 'Send from the Outbox, watch channels, follow parked threads.'],
-  ['github', 'GitHub', 'Pull request status, checks, reviews and Ship, through gh.'],
+  ['github', 'GitHub', 'Pull request status, checks, reviews and Launch, through gh.'],
   ['gmail', 'Gmail', 'Send email drafts as you and check their threads first.']
 ];
 function wzConnTabsHtml() {
@@ -924,17 +924,17 @@ function wzShipDraw() {
   var el = wzEl('wz-shiptbl'), rows = WZ.S.ship;
   if (!el) return;
   if (!rows) { el.innerHTML = '<div class="def">'+loadingMark(14)+'Reading your projects...</div>'; return; }
-  if (!rows.length) { el.innerHTML = '<div class="note">None of your projects has a GitHub remote, so there is nothing to ship from yet. Add a project in the Projects step, or add repos later in Settings &rsaquo; Ship.</div>'; return; }
-  el.innerHTML = '<div class="tblw"><table><tr><th>Project</th><th>Repo</th><th>Base branch</th><th>Ship command</th><th>Label staged work</th><th>Ship</th></tr>'
+  if (!rows.length) { el.innerHTML = '<div class="note">None of your projects has a GitHub remote, so there is nothing to launch from yet. Add a project in the Projects step, or add repos later in Settings &rsaquo; Launch.</div>'; return; }
+  el.innerHTML = '<div class="tblw"><table><tr><th>Project</th><th>Repo</th><th>Base branch</th><th>Launch command</th><th>Label staged work</th><th>Launch</th></tr>'
     + rows.map(function (r, i) {
-      return '<tr><td>' + wzEsc(r.name) + '</td><td><code>' + wzEsc(r.repo) + '</code></td><td><input type="text" style="width:90px" data-wz-ship="' + i + '" data-k="base" value="' + wzEsc(r.base) + '" aria-label="Base branch"></td><td><input type="text" style="width:130px" data-wz-ship="' + i + '" data-k="command" value="' + wzEsc(r.command) + '" aria-label="Ship command"></td>'
+      return '<tr><td>' + wzEsc(r.name) + '</td><td><code>' + wzEsc(r.repo) + '</code></td><td><input type="text" style="width:90px" data-wz-ship="' + i + '" data-k="base" value="' + wzEsc(r.base) + '" aria-label="Base branch"></td><td><input type="text" style="width:130px" data-wz-ship="' + i + '" data-k="command" value="' + wzEsc(r.command) + '" aria-label="Launch command"></td>'
         + '<td><label class="tg"><input type="checkbox" data-wz-shipt="' + i + '" data-k="label"' + (r.label ? ' checked' : '') + ' aria-label="Label staged work"><i></i></label></td>'
-        + '<td><label class="tg"><input type="checkbox" data-wz-shipt="' + i + '" data-k="enabled"' + (r.enabled ? ' checked' : '') + ' aria-label="Ship from this repo"><i></i></label></td></tr>';
+        + '<td><label class="tg"><input type="checkbox" data-wz-shipt="' + i + '" data-k="enabled"' + (r.enabled ? ' checked' : '') + ' aria-label="Launch from this repo"><i></i></label></td></tr>';
     }).join('') + '</table></div>';
 }
 WZ_STEPS.ship = function (c) {
   c.innerHTML = '<div class="stack"><div id="wz-shiptbl"></div>'
-    + '<div class="def"><b>Label staged work</b>: when on, a chat must say what its staged changes are for before it finishes, so the ship dialog can show who contributed what instead of just file names. Loom never force-pushes and the Ship button has no force option.</div>'
+    + '<div class="def"><b>Label staged work</b>: when on, a chat must say what its staged changes are for before it finishes, so the launch dialog can show who contributed what instead of just file names. Loom never force-pushes and the Launch button has no force option.</div>'
     + '<div class="def">Repos come from your Projects step. A project with no GitHub remote is not listed.</div></div>';
   wzShipDraw();
   wzShipLoad();
@@ -986,7 +986,7 @@ WZ_STEPS.watchers = function (c) {
 /* -- done -- */
 WZ_STEPS.done = function (c) {
   c.innerHTML = '<div class="stack"><div class="sumgrid" id="wz-sum"><div class="def">'+loadingMark(14)+'Summing up...</div></div>'
-    + '<div class="def">Everything above can be changed in Settings (the gear, top right). The tour takes about a minute and covers the sidebar, chats, the Outbox, Ship and the Slack shortcut. Choose Not now to skip it; it stays in Settings &rsaquo; Help.</div></div>';
+    + '<div class="def">Everything above can be changed in Settings (the gear, top right). The tour takes about a minute and covers the sidebar, chats, the Outbox, Launch and the Slack shortcut. Choose Not now to skip it; it stays in Settings &rsaquo; Help.</div></div>';
   var go = function (ax) {
     wzGet('/api/wizard/summary?ax=' + (ax ? '1' : '0')).then(function (r) {
       var el = wzEl('wz-sum');

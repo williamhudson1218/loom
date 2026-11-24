@@ -160,8 +160,8 @@ function tourStops(){
   ];
   // Ship runs only where it has something to show: the sample, or a Ship repository
   // set up on this Mac. Without one the gear stop below already says where to add it.
-  stops.push({id:'ship',has:function(){return TOUR.shipOk;},anchor:'#shipmodal:not([hidden]) .smbox',place:'left',title:'Ship staged work',
-    body:'Ship turns the changes that several chats have staged into one pull request. The ship line in the sidebar counts the staged files. This dialog shows which chat changed what, flags files no chat has claimed, and starts your ship command. Loom never force-pushes.',
+  stops.push({id:'ship',has:function(){return TOUR.shipOk;},anchor:'#shipmodal:not([hidden]) .smbox',place:'left',title:'Launch staged work',
+    body:'Launch turns the changes that several chats have staged into one pull request. The launch line in the sidebar counts the staged files. This dialog shows which chat changed what, flags files no chat has claimed, and starts your launch command. Loom never force-pushes.',
     open:function(){if(TOUR.shipRepo)openShipModal(TOUR.shipRepo,false);},
     close:function(){closeShipModal();}});
   stops.push(
@@ -174,7 +174,7 @@ function tourStops(){
     {id:'slack',requires:TOUR.slackOn,has:tourHasSlackChat,anchor:'[data-tour="slack"]',place:'left',title:'Slack threads and the shortcut',body:slackBody,
      open:function(){tourSelectChat(ownsSlack);tourForceTranscript();}},
     {id:'gear',anchor:'[data-tour="gear"]',place:'below',title:'Settings live here',
-     body:'The gear opens every choice from setup: terminal, permissions, Slack, Ship repositories, watchers and the helper plugin. Settings › Help, or Take the tour in the ⌘K jump box, runs this tour again.'}
+     body:'The gear opens every choice from setup: terminal, permissions, Slack, Launch repositories, watchers and the helper plugin. Settings › Help, or Take the tour in the ⌘K jump box, runs this tour again.'}
   );
   return stops;
 }

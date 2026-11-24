@@ -1467,8 +1467,8 @@ function flipPlay(before){const rows=document.querySelectorAll('#list .srow[data
 // The chat that ran a ship owns it until it merges: 🚀 while it holds the lock (shipping now)
 // and while its ship PR is open (in review), not only for the minutes the lock is held.
 // Otherwise the chat's git mark: clean / all staged / unstaged / untracked (gitmarks.ts).
-function shipMark(c){const k=chatKey(c);for(const b of DATA.ships||[]){if(b.lock&&!b.lock.stale&&b.lock.holderKey===k)return '<span class="smk hot" title="shipping now">🚀</span>';}
-  for(const b of DATA.ships||[]){const g=(b.shipped||[]).find(g=>g.runner===k&&g.state==='OPEN');if(g)return '<span class="smk own" title="owns ship #'+g.number+', in review">🚀</span>';}
+function shipMark(c){const k=chatKey(c);for(const b of DATA.ships||[]){if(b.lock&&!b.lock.stale&&b.lock.holderKey===k)return '<span class="smk hot" title="launching now">🚀</span>';}
+  for(const b of DATA.ships||[]){const g=(b.shipped||[]).find(g=>g.runner===k&&g.state==='OPEN');if(g)return '<span class="smk own" title="owns launch #'+g.number+', in review">🚀</span>';}
   return gitMarkHtml((DATA.gitMarks||{})[k]);}
 function orderRows(gk,gr,selKey){if(sortMode==='recent'&&tab!=='saved'){const want=gr.map(chatKey);const pinned={};if(selKey)pinned[selKey]=1;if(pointerIn)want.forEach(k=>{pinned[k]=1;});
       const out=pinOrder(lastOrder[gk]||[],want,pinned);if(out.join('|')!==want.join('|'))pendingReorder=pointerIn||pendingReorder;
@@ -1578,11 +1578,11 @@ function inShipFilter(c){const x=shipRole(c);if(shipFilter==='next')return !!(x&
 function chatByKey(k){const i=k.indexOf(':');const a=k.slice(0,i),sid=k.slice(i+1);return DATA.chats.find(c=>c.agent===a&&c.session_id===sid)||null;}
 function chatName(k){const c=chatByKey(k);if(!c)return k.slice(k.indexOf(':')+1,k.indexOf(':')+9);const L=DATA.live[k];return (L&&L.name?'@'+L.name+' · ':'')+disp(c);}
 function shipCardChips(c){const x=shipRole(c);if(!x)return '';const {b,r}=x;let h='';
-  if(r.next){const ready=r.next==='staged';h+='<button class="shipchip next'+(ready?' ready':'')+(shipFilter==='next'?' on':'')+'" data-shipf="next" title="'+(ready?'staged: rides the next ship':r.next==='both'?'some staged, some still in progress':'changed on main, not staged yet: won’t ride')+'">next ship'+(ready?' ✓':' …')+'</button>';}
-  if(r.ships.length){const n=r.ships[0];const own=(DATA.chatPr||{})[chatKey(c)]===b.slug+'#'+n;h+='<button class="shipchip'+(shipFilter===n?' on':'')+'" data-shipf="'+n+'" title="rode ship #'+n+(r.ships.length>1?' (and '+(r.ships.length-1)+' earlier)':'')+' — click to show its chats">ship #'+n+'</button>'+(own?'':dotsHtml(shipPipe(b,n)));}
+  if(r.next){const ready=r.next==='staged';h+='<button class="shipchip next'+(ready?' ready':'')+(shipFilter==='next'?' on':'')+'" data-shipf="next" title="'+(ready?'staged: rides the next launch':r.next==='both'?'some staged, some still in progress':'changed on main, not staged yet: won’t ride')+'">next launch'+(ready?' ✓':' …')+'</button>';}
+  if(r.ships.length){const n=r.ships[0];const own=(DATA.chatPr||{})[chatKey(c)]===b.slug+'#'+n;h+='<button class="shipchip'+(shipFilter===n?' on':'')+'" data-shipf="'+n+'" title="rode launch #'+n+(r.ships.length>1?' (and '+(r.ships.length-1)+' earlier)':'')+' — click to show its chats">launch #'+n+'</button>'+(own?'':dotsHtml(shipPipe(b,n)));}
   return h;}
 function lockHtml(b){const l=b.lock;if(!l)return '';const who=l.holderKey?chatName(l.holderKey):(l.sessionId.slice(0,8)||'unknown');
-  return '<span class="shiplock'+(l.stale?' stale':'')+'" title="ship lock'+(l.stale?' (stale, >5 min old — the next acquire takes it)':'')+'">🚀 '+(l.stale?'stale lock: ':'shipping now: ')+esc(who)+(l.pane?' · '+esc(l.pane):'')+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';}
+  return '<span class="shiplock'+(l.stale?' stale':'')+'" title="launch lock'+(l.stale?' (stale, >5 min old — the next acquire takes it)':'')+'">🚀 '+(l.stale?'stale lock: ':'launching now: ')+esc(who)+(l.pane?' · '+esc(l.pane):'')+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';}
 var shipOpen=lsGet('loom.shipOpen')==='1';
 function shipWho(b){const l=b.lock;if(l.holderKey){const L=DATA.live[l.holderKey];return (L&&L.name)||chatName(l.holderKey);}return l.sessionId.slice(0,8)||'unknown';}
 function shipBody(b){const n=b.next;
@@ -1591,12 +1591,12 @@ function shipBody(b){const n=b.next;
     (n.shared.length?'<span class="wip" title="'+esc(n.shared.join(NL))+'">· ⚠ '+n.shared.length+' edited by two chats</span>':'')+'</div>'+
     (b.lock?'<div class="sh">'+lockHtml(b)+'</div>':'')+
     '<div class="shc">'+n.chats.map(c=>'<span class="shipmate" data-key="'+esc(c.key)+'" title="'+esc(c.files.map(f=>f.state+' '+f.path+(f.shared?' (shared)':'')).join(NL))+'">'+esc(chatName(c.key))+' '+(c.staged?'<span class="ok">'+c.staged+'✓</span> ':'')+(c.unstaged?'<span class="wip">'+c.unstaged+'…</span>':'')+'</span>').join('')+'</div>'+
-    '<div class="shipacts2"><button type="button" class="shipbtn'+(shipFilter==='next'?' on':'')+'" data-shipf="next" title="Filter the board to the chats riding this ship">'+(shipFilter==='next'?'Showing these chats ✕':'Show these chats')+'</button><button type="button" class="shipbtn" data-shipview="'+esc(b.repo)+'" title="Review the staged files and their labels">View staged work</button></div>'+
-    '<div class="shiphint">'+(shipGate(b)?esc(shipGate(b)):'Ship reviews the staged work, then starts a new chat that runs <code>/ship</code>.')+'</div></div>';}
+    '<div class="shipacts2"><button type="button" class="shipbtn'+(shipFilter==='next'?' on':'')+'" data-shipf="next" title="Filter the board to the chats riding this launch">'+(shipFilter==='next'?'Showing these chats ✕':'Show these chats')+'</button><button type="button" class="shipbtn" data-shipview="'+esc(b.repo)+'" title="Review the staged files and their labels">View staged work</button></div>'+
+    '<div class="shiphint">'+(shipGate(b)?esc(shipGate(b)):'Launch reviews the staged work, then starts a new chat that runs <code>'+esc(b.command||'/loom:ship')+'</code>.')+'</div></div>';}
 // The card's primary action: always on the bar, collapsed or open. Opens the review
 // modal at its confirm step; nothing commits until "Start ship session" there.
 function shipGoBtn(b){const g=shipGate(b);
-  return '<button type="button" class="shipgo" data-shipgo="'+esc(b.repo)+'"'+(g?' disabled aria-disabled="true"':'')+' title="'+esc(g||'Review and start /ship ('+b.next.staged+' staged)')+'">Ship</button>';}
+  return '<button type="button" class="shipgo" data-shipgo="'+esc(b.repo)+'"'+(g?' disabled aria-disabled="true"':'')+' title="'+esc(g||'Review and start '+(b.command||'/loom:ship')+' ('+b.next.staged+' staged)')+'">Launch</button>';}
 // One line per repo. Idle is muted; staged work gets an accent border; a live ship
 // lock goes amber with a pulsing dot, so work in progress is visible even collapsed.
 // Git projects with staged work that are not on Ship yet: the strip offers to add them.
@@ -1606,7 +1606,7 @@ function loadShipCands(){fetch('/api/ship/candidates').then(r=>r.json()).then(j=
 function shipsInFlight(b){return (b.shipped||[]).filter(x=>x.state==='OPEN');}
 function shipStrip(){if(tab!=='board')return '';const bs=DATA.ships||[];
   let h=bs.map(b=>{const n=b.next;const l=b.lock;const shipping=!!(l&&!l.stale);const cls=shipping||(!n.staged&&shipsInFlight(b).length)?'shipping':(n.staged>0?'staged':(n.unstaged>0?'unstaged':'idle'));let t;
-    if(shipping)t='<span class="pdot"></span><span class="sl">🚀 Shipping · '+esc(shipWho(b))+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';
+    if(shipping)t='<span class="pdot"></span><span class="sl">🚀 Launching · '+esc(shipWho(b))+(l.batch.length?' · '+l.batch.length+' files':'')+'</span>';
     else{
       // Always shown: one line per ship repo, saying what state it is in.
       const f=shipsInFlight(b);const parts=[];
@@ -1614,12 +1614,12 @@ function shipStrip(){if(tab!=='board')return '';const bs=DATA.ships||[];
       if(n.unstaged>0)parts.push(n.unstaged+' unstaged');
       if(n.unattributed.length)parts.push(n.unattributed.length+' unattributed');
       if(f.length)parts.push('#'+f.map(x=>x.number).join(', #')+' in review');
-      const head=n.staged>0?'Next ship':(f.length&&!n.unstaged?'🌠 Shipped':'Next ship');
+      const head=n.staged>0?'Next launch':(f.length&&!n.unstaged?'🌠 Launched':'Next launch');
       t=(f.length&&!n.staged?'<span class="pdot"></span>':'<span>🛰️</span>')+'<span class="sl">'+head+' · '+(parts.length?parts.join(' · '):'no changes')+'</span>';
     }
     return '<div class="shipln '+cls+(shipOpen?' open':'')+'" data-tour="ship"><button type="button" class="shipbar" data-shiptog="1" aria-expanded="'+shipOpen+'">'+t+'<span class="chev">›</span></button><span class="shipacts">'+shipGoBtn(b)+'<button type="button" class="shipicon" data-shipview="'+esc(b.repo)+'" title="View staged work" aria-label="View staged work">\u2630</button></span>'+(shipOpen?shipBody(b):'')+'</div>';}).join('');
-  h+=shipCands.map(c=>'<div class="shipln idle"><button type="button" class="shipbar" data-shipadd="'+esc(c.repo)+'" title="'+esc(c.slug+' · '+c.staged+' staged · ships to '+c.base)+'"><span>🛰️</span><span class="sl">Add '+esc(c.name)+' to Ship · '+c.staged+' staged</span></button></div>').join('');
-  if(typeof shipFilter==='number')h='<div class="shipstrip"><div class="sh"><b>Showing ship #'+shipFilter+'</b><span class="dsub">its chats, live or not</span><span class="spacer"></span><button class="shipchip on" data-shipf="'+shipFilter+'">clear ✕</button></div></div>'+h;
+  h+=shipCands.map(c=>'<div class="shipln idle"><button type="button" class="shipbar" data-shipadd="'+esc(c.repo)+'" title="'+esc(c.slug+' · '+c.staged+' staged · launches to '+c.base)+'"><span>🛰️</span><span class="sl">Add '+esc(c.name)+' to Launch · '+c.staged+' staged</span></button></div>').join('');
+  if(typeof shipFilter==='number')h='<div class="shipstrip"><div class="sh"><b>Showing launch #'+shipFilter+'</b><span class="dsub">its chats, live or not</span><span class="spacer"></span><button class="shipchip on" data-shipf="'+shipFilter+'">clear ✕</button></div></div>'+h;
   return h;}
 function setShipFilter(v){shipFilter=(shipFilter===v)?null:v;render();}
 function wireShips(root){root.querySelectorAll('[data-shipadd]').forEach(el=>el.onclick=(e)=>{e.stopPropagation();shipAddRepo(el.dataset.shipadd,()=>{shipCands=shipCands.filter(c=>c.repo!==el.dataset.shipadd);refresh();setTimeout(loadShipCands,1500);});});
@@ -1631,14 +1631,14 @@ function wireShips(root){root.querySelectorAll('[data-shipadd]').forEach(el=>el.
 function shipFilesHtml(files){return '<div class="shipfiles">'+files.slice(0,40).map(f=>'<div class="sf"><span class="fst '+(f.state==='staged'?'staged':f.state==='untracked'?'untracked':'uncommitted')+'">'+esc(f.state)+'</span><span class="fp">&lrm;'+esc(f.path)+'</span>'+(f.shared?'<span class="badge warn">shared</span>':'')+'</div>').join('')+(files.length>40?'<div class="dsub">+'+(files.length-40)+' more</div>':'')+'</div>';}
 function shipSectionHtml(d,c){const s=d.ship;if(!s)return '';let h='';
   if(s.lock&&s.lock.holderKey===chatKey(c))h+='<div class="drow">'+lockHtml({lock:s.lock})+'</div>';
-  if(s.next){const n=s.next;h+='<div class="drow"><b>Next ship</b><span class="badge '+(n.staged&&!n.unstaged?'good':'warn')+'">'+(n.unstaged?(n.staged?n.staged+' staged · '+n.unstaged+' in progress':'in progress — not staged'):'staged — will ride')+'</span></div>'+shipFilesHtml(n.files)+
+  if(s.next){const n=s.next;h+='<div class="drow"><b>Next launch</b><span class="badge '+(n.staged&&!n.unstaged?'good':'warn')+'">'+(n.unstaged?(n.staged?n.staged+' staged · '+n.unstaged+' in progress':'in progress — not staged'):'staged — will ride')+'</span></div>'+shipFilesHtml(n.files)+
     (n.fellows.length?'<div class="dsub">riding with: '+n.fellows.map(f=>esc(chatName(f.key))+' ('+f.staged+'✓'+(f.unstaged?' '+f.unstaged+'…':'')+')').join(', ')+'</div>':'')+(s.lock&&s.lock.holderKey!==chatKey(c)?'<div class="drow">'+lockHtml({lock:s.lock})+'</div>':'');}
-  if(s.shipped){const x=s.shipped;h+='<div class="prline" style="margin-top:6px"><a href="'+esc(x.url)+'" target="_blank" rel="noopener">ship #'+x.number+'</a><span>'+esc(x.title)+'</span></div>'+
-    '<div class="dsub">'+esc(x.branch)+' · '+x.files+' files'+(x.runner?' · shipped by '+esc(x.runner===chatKey(c)?'this chat':chatName(x.runner)):'')+'</div>'+
+  if(s.shipped){const x=s.shipped;h+='<div class="prline" style="margin-top:6px"><a href="'+esc(x.url)+'" target="_blank" rel="noopener">launch #'+x.number+'</a><span>'+esc(x.title)+'</span></div>'+
+    '<div class="dsub">'+esc(x.branch)+' · '+x.files+' files'+(x.runner?' · launched by '+esc(x.runner===chatKey(c)?'this chat':chatName(x.runner)):'')+'</div>'+
     (x.members.length>1?'<div class="dsub">rode with: '+x.members.filter(k=>k!==chatKey(c)).map(k=>esc(chatName(k))).join(', ')+'</div>':'')+
-    (x.pipeline?'<div class="stepper">'+x.pipeline.steps.map(st=>stepHtml(st,true,x.pipeline.repo+'#'+x.pipeline.number)).join('')+'</div>':'<div class="dempty">fetching the ship’s pipeline…</div>')+
+    (x.pipeline?'<div class="stepper">'+x.pipeline.steps.map(st=>stepHtml(st,true,x.pipeline.repo+'#'+x.pipeline.number)).join('')+'</div>':'<div class="dempty">fetching the launch’s pipeline…</div>')+
     (s.others.length?'<div class="dsub">also rode: '+s.others.map(n=>'#'+n).join(', ')+'</div>':'');}
-  return '<div class="dsec"><h3>Ship</h3>'+h+'</div>';}
+  return '<div class="dsec"><h3>Launch</h3>'+h+'</div>';}
 // ---- PR pipelines -------------------------------------------------------------
 // checks → review → merged → deploy → done. The board gets a dot per step from
 // /api/data (served from the server's cache); the panel gets the full stepper
@@ -2353,7 +2353,7 @@ function wireCleanup(det){
 // says it is waiting on someone else), then the classifier's stage, and Done
 // for a chat no longer running in a pane (only on All).
 var KB_COLS=['needsYou','blocked','discovery','implementation','shipping','done'];
-var KB_NAME={needsYou:'Needs you',blocked:'Blocked',discovery:'Discovery',implementation:'Implementation',shipping:'Shipping',done:'Done'};
+var KB_NAME={needsYou:'Needs you',blocked:'Blocked',discovery:'Discovery',implementation:'Implementation',shipping:'Launching',done:'Done'};
 var KB_EMPTY={needsYou:'Nothing is waiting on you.',blocked:'Nothing is waiting on anyone else.',done:'No ended chats in view.'};
 function kbCol(c){var L=DATA.live[chatKey(c)];if(!L)return 'done';var s=L.stage||'';var stage=(s==='discovery'||s==='implementation'||s==='shipping')?s:'implementation';
   if(L.working)return stage;

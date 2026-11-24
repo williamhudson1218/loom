@@ -60,7 +60,7 @@ function prciRows(gs){var rows=[];gs.forEach(function(g){
   rows.push({l:'Copy PR link',copy:g.url});});return rows;}
 function prciMenuHtml(gs){var rows=prciRows(gs),i=0,h='';
   rows.forEach(function(r,k){
-    if(r.h){if(k>0)h+='<div class="prsep"></div>';h+='<div class="prhd"><span class="prn">PR #'+esc(r.h.num)+'</span><span>'+(r.h.kind==='ship'?'ship PR':'this chat')+'</span><span class="pst s-'+esc(r.h.state==='open'?'review':r.h.state)+'">'+esc(r.h.state)+'</span></div>';return;}
+    if(r.h){if(k>0)h+='<div class="prsep"></div>';h+='<div class="prhd"><span class="prn">PR #'+esc(r.h.num)+'</span><span>'+(r.h.kind==='ship'?'launch PR':'this chat')+'</span><span class="pst s-'+esc(r.h.state==='open'?'review':r.h.state)+'">'+esc(r.h.state)+'</span></div>';return;}
     if(r.s&&!r.u){h+='<div class="prrow static"><span class="prj '+esc(r.s)+'">'+prciJobIcon(r.s)+'</span><span class="prl">'+esc(r.l)+'</span><span class="prst">'+esc(r.s)+'</span></div>';return;}
     h+='<button type="button" role="menuitem" class="prrow" data-i="'+(i++)+'" data-ri="'+k+'" tabindex="-1"'+(r.u?' title="'+esc(r.u)+'"':'')+'>'+(r.s?'<span class="prj '+esc(r.s)+'">'+prciJobIcon(r.s)+'</span>':'')+'<span class="prl">'+esc(r.l)+'</span>'+(r.s?'<span class="prst">'+esc(r.s)+'</span>':'')+'</button>';});
   return h;}
