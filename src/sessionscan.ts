@@ -14,7 +14,7 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 // a <task-notification> naming the launching tool_use id.
 const BACKGROUND_ACK = /running in background|Async agent launched|working in the background|Spawned successfully/i;
 const NOTIFY_RE = /<task-notification>[\s\S]*?<tool-use-id>([^<\\]+)<\/tool-use-id>/g;
-const SHIP_CMD = /<command-name>\/?(ship|release)<\/command-name>/;
+const SHIP_CMD = /<command-name>\/?(ship|release|launch)<\/command-name>/;
 const BG_TTL_MS = 6 * 3_600_000; // a task that never reported back is not still running
 
 export interface Todo {
