@@ -35,6 +35,7 @@ export interface LanePane {
   name: string; // @name, '' if unnamed
   group: string; // @group, '' if ungrouped
   agent: boolean; // a claude/codex process is among its descendants
+  width?: number; // columns right now; a pane shrinks when its window does
 }
 
 export interface WorldState {
@@ -234,7 +235,7 @@ export function focusedPaneFrom(run: TmuxRunner): string | null {
   }
 }
 
-const WORLD_FORMAT = `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{@name}${SEP}#{@group}`;
+const WORLD_FORMAT = `#{pane_id}${SEP}#{session_name}${SEP}#{window_index}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_current_command}${SEP}#{@name}${SEP}#{@group}${SEP}#{pane_width}`;
 
 export function readWorld(run: TmuxRunner = defaultRun): WorldState {
   let out: string;
@@ -277,6 +278,7 @@ function worldFrom(rows: string[][], agents: Map<string, unknown>, focused: stri
       name: (r[6] ?? '').trim(),
       group: (r[7] ?? '').trim(),
       agent: agents.has(r[0]),
+      ...(r[8] && Number.isFinite(Number(r[8])) ? { width: Number(r[8]) } : {}),
     })),
     focused,
   };

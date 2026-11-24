@@ -11,6 +11,9 @@ import { readInvoke } from './invocables.ts';
 
 const SHELL = /^(zsh|bash)$/;
 
+/** Narrower than this, a watcher does not launch a chat into the pane. */
+export const MIN_LAUNCH_COLS = 40;
+
 /* ------------------------------------------------------------ templates */
 
 /** Fill {{NAME}} variables; unknown ones are left as typed. */
@@ -57,7 +60,9 @@ export function pickPane(panes: LanePane[], opts: PickOpts = {}): LanePane | nul
       !p.agent &&
       !p.group &&
       !exclude.has(p.pane_id) &&
-      p.pane_id !== opts.focused,
+      p.pane_id !== opts.focused &&
+      // A pane squeezed by a narrow window: the typed launch never becomes a chat there.
+      !(p.width !== undefined && p.width < MIN_LAUNCH_COLS),
   );
   free.sort(
     (a, b) =>

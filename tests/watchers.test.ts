@@ -366,6 +366,12 @@ describe('prs triggers', () => {
 /* ------------------------------------------------------------ the loop */
 
 describe('pickPane', () => {
+  it('skips a pane too narrow for a chat to start in (the window shrank under it)', () => {
+    const panes = [pane('%7', 'loom-tp-3', 3, 'zsh', { width: 1 }), pane('%8', 'loom-tp-3', 4, 'zsh', { width: 39 }), pane('%9', 'loom-tp-4', 0, 'zsh', { width: 40 })];
+    expect(pickPane(panes)?.pane_id).toBe('%9');
+    expect(pickPane(panes.slice(0, 2))).toBeNull();
+    expect(pickPane([pane('%5', 'loom-tp-2', 0)])?.pane_id).toBe('%5'); // width unknown: as before
+  });
   const panes = [
     pane('%1', 'loom-tp-forms-1', 0), // other lane
     pane('%2', 'loom-tp-terminals', 0), // no lane

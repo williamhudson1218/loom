@@ -135,8 +135,8 @@ describe('acquirePaneAuto: lanes keep today\'s picker, no lanes means a managed 
       calls.push(args);
       if (args[0] === 'list-panes' && args.includes('-a')) {
         const fmt = String(args[args.indexOf('-F') + 1]);
+        if (fmt.includes('#{pane_pid}')) return panes.map((p) => [p.id, p.session, '1', p.idx, '999999', p.cmd ?? 'zsh', '', '', '80'].join(SEP)).join('\n');
         if (fmt.includes('#{pane_width}')) return panes.map((p) => `${p.id} ${p.session} 80 24`).join('\n');
-        if (fmt.includes('#{pane_pid}')) return panes.map((p) => [p.id, p.session, '1', p.idx, '999999', p.cmd ?? 'zsh', '', ''].join(SEP)).join('\n');
         return panes.map((p) => [p.id, p.session, ''].join(SEP)).join('\n');
       }
       if (args[0] === 'has-session') throw new Error('no session');
@@ -200,8 +200,8 @@ describe('launch confirmation', () => {
       const a = args.join(' ');
       if (args[0] === 'list-panes' && args.includes('-a')) {
         const fmt = String(args[args.indexOf('-F') + 1]);
+        if (fmt.includes('#{pane_pid}')) return ['%1', 'loom-tp-2', '1', '0', '999999', 'zsh', '', '', '80'].join('~|LOOM|~');
         if (fmt.includes('#{pane_width}')) return '%1 loom-tp-2 80 24';
-        if (fmt.includes('#{pane_pid}')) return ['%1', 'loom-tp-2', '1', '0', '999999', 'zsh', '', ''].join('~|LOOM|~');
         return ['%1', 'loom-tp-2', ''].join('~|LOOM|~');
       }
       if (a.includes('display-message') && a.includes('session_name')) return 'loom-tp-2 · pane 0';
