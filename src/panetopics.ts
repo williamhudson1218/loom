@@ -164,7 +164,7 @@ export function recentActivity(text: string, prompts: string[] = []): Activity {
     else if (t.name === 'Bash' && TEST_CMD.test(cmd)) act.tests++;
     else if (t.name === 'Bash' && SHIP_CMD.test(cmd)) { /* counted by the flags below, not as a read */ }
     else if (/^(Read|Grep|Glob|Bash|WebFetch|WebSearch)$/.test(t.name) || t.name.startsWith('mcp__')) act.reads++;
-    if (t.name === 'Skill' && t.input.skill === 'ship') act.ship = true;
+    if (t.name === 'Skill' && (t.input.skill === 'ship' || t.input.skill === 'release')) act.ship = true;
     if (!cmd) continue;
     if (/\bgit commit\b/.test(cmd)) act.commit = true;
     if (/\bgit push\b/.test(cmd)) act.push = true;
@@ -172,7 +172,7 @@ export function recentActivity(text: string, prompts: string[] = []): Activity {
     if (/\bgh pr ready\b/.test(cmd)) act.prReady = true;
     if (CI_CMD.test(cmd)) act.ciWatch = true;
   }
-  if (prompts.some((p) => /^\/ship\b/.test(p))) act.ship = true;
+  if (prompts.some((p) => /^\/(ship|release)\b/.test(p))) act.ship = true;
   act.lastAssistantText = act.lastAssistantText.slice(-600);
   act.doings = doings.slice(-RECENT_DOINGS);
   return act;
