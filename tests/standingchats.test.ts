@@ -50,6 +50,7 @@ describe('standing chat identification', () => {
     event(db, pm, 'k1', 'sid-old');
     event(db, pm, 'k2', 'sid-now');
     event(db, other, 'k3', '');
+    event(db, other, 'k4', 'sid-per-event'); // a per-match chat records its session too, and stays on the Board
     const refs = standingRefs(db);
     expect(Object.fromEntries(refs)).toEqual({
       'sid-now': { watcher_id: pm, label: 'Findings PM', current: true },

@@ -28,7 +28,12 @@ export function standingRefs(db: Database.Database): Map<string, StandingRef> {
   const out = new Map<string, StandingRef>();
   try {
     const past = db
-      .prepare(`SELECT DISTINCT e.session_id AS sid, w.id AS id, w.label AS label FROM watcher_events e JOIN watchers w ON w.id = e.watcher_id WHERE e.session_id != ''`)
+      // Only a standing watcher's sessions: a per-match start_chat records its
+      // session on the event too, and that chat is an ordinary chat on the Board.
+      .prepare(
+        `SELECT DISTINCT e.session_id AS sid, w.id AS id, w.label AS label FROM watcher_events e JOIN watchers w ON w.id = e.watcher_id
+         WHERE e.session_id != '' AND w.action_kind = 'start_chat' AND json_extract(w.action_params, '$.standing') = 1`,
+      )
       .all() as { sid: string; id: string; label: string }[];
     for (const r of past) out.set(r.sid, { watcher_id: r.id, label: r.label, current: false });
   } catch {
