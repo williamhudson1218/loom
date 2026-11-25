@@ -160,7 +160,48 @@ describe('chat group order', () => {
 });
 
 describe('drag helpers', () => {
-  const lib = new Function(`${GROUPING_JS}; return { reorderIds, dropGroupOf };`)() as any;
+  const lib = new Function(`${GROUPING_JS}; return { reorderIds, dropGroupOf, applyGroupHoldsTo, dndScrollSpeed };`)() as any;
+  const key = (c: any) => c.agent + ':' + c.session_id;
+  const G = [{ id: 1, name: 'a' }, { id: 2, name: 'b' }, { id: 3, name: 'c' }];
+  it('a dropped chat stays where it was dropped when a stale poll lands, until the write is confirmed', () => {
+    const hold: any = { chats: { 'claude:s1': { gid: 2, until: 1000, acked: false } }, order: null };
+    const stale = [{ agent: 'claude', session_id: 's1', group: G[0] }];
+    lib.applyGroupHoldsTo(hold, stale, G, key, 10);
+    expect(stale[0].group).toBe(G[1]);
+    // The poll agrees but the write is not confirmed yet: keep holding (an older poll may still land).
+    const agrees = [{ agent: 'claude', session_id: 's1', group: G[1] }];
+    lib.applyGroupHoldsTo(hold, agrees, G, key, 20);
+    expect(hold.chats['claude:s1']).toBeTruthy();
+    hold.chats['claude:s1'].acked = true;
+    lib.applyGroupHoldsTo(hold, agrees, G, key, 30);
+    expect(hold.chats).toEqual({});
+    // Out of every group, and expiry lets the server win.
+    const h2: any = { chats: { 'claude:s1': { gid: 0, until: 100, acked: false } }, order: null };
+    const rows = [{ agent: 'claude', session_id: 's1', group: G[0] }];
+    lib.applyGroupHoldsTo(h2, rows, G, key, 50);
+    expect(rows[0].group).toBeNull();
+    rows[0].group = G[0];
+    lib.applyGroupHoldsTo(h2, rows, G, key, 101);
+    expect(rows[0].group).toBe(G[0]);
+    expect(h2.chats).toEqual({});
+  });
+  it('a reorder stays put over a stale poll, and yields when the groups changed underneath', () => {
+    const hold: any = { chats: {}, order: { ids: [3, 1, 2], until: 1000, acked: true } };
+    expect(lib.applyGroupHoldsTo(hold, [], G, key, 10).map((g: any) => g.id)).toEqual([3, 1, 2]);
+    expect(hold.order).toBeTruthy();
+    expect(lib.applyGroupHoldsTo(hold, [], [G[2], G[0], G[1]], key, 20).map((g: any) => g.id)).toEqual([3, 1, 2]);
+    expect(hold.order).toBeNull();
+    const h2: any = { chats: {}, order: { ids: [3, 1, 2], until: 1000, acked: false } };
+    expect(lib.applyGroupHoldsTo(h2, [], [G[0], G[1]], key, 10).map((g: any) => g.id)).toEqual([1, 2]);
+  });
+  it('drag autoscroll: still in the middle, faster toward and past each edge, capped', () => {
+    expect(lib.dndScrollSpeed(100, 700, 400)).toBe(0);
+    expect(lib.dndScrollSpeed(100, 700, 150)).toBeLessThan(0);
+    expect(lib.dndScrollSpeed(100, 700, 110)).toBeLessThan(lib.dndScrollSpeed(100, 700, 150));
+    expect(lib.dndScrollSpeed(100, 700, 20)).toBe(-22);
+    expect(lib.dndScrollSpeed(100, 700, 690)).toBeGreaterThan(0);
+    expect(lib.dndScrollSpeed(100, 700, 900)).toBe(22);
+  });
   it('reorderIds places the dragged id before or after the target', () => {
     expect(lib.reorderIds([1, 2, 3], 3, 1, false)).toEqual([3, 1, 2]);
     expect(lib.reorderIds([1, 2, 3], 1, 3, true)).toEqual([2, 3, 1]);

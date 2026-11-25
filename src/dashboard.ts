@@ -1515,7 +1515,7 @@ var dnd=null, dndPending=false;
 function dndHeader(el){let n=el&&el.closest?el.closest('.srow,.sgrp'):null;while(n&&!n.classList.contains('sgrp'))n=n.previousElementSibling;return n;}
 function dndSection(h){const out=[h];let n=h.nextElementSibling;while(n&&!n.classList.contains('sgrp')){out.push(n);n=n.nextElementSibling;}return out;}
 function dndClear(sl){sl.querySelectorAll('.dnd-over,.dnd-before,.dnd-after').forEach(n=>n.classList.remove('dnd-over','dnd-before','dnd-after'));}
-function dndEnd(sl){dnd=null;dndClear(sl);sl.querySelectorAll('.dnd-src').forEach(n=>n.classList.remove('dnd-src'));if(dndPending){dndPending=false;render();}}
+function dndEnd(sl){dndScrollV=0;dnd=null;dndClear(sl);sl.querySelectorAll('.dnd-src').forEach(n=>n.classList.remove('dnd-src'));if(dndPending){dndPending=false;render();}}
 function dndPlan(e,sl){const h=dndHeader(e.target);if(!h||!dnd)return null;const gid=dropGroupOf(h.dataset.gid);
   if(dnd.kind==='chat'){if(gid===dnd.cur)return null;return {h,gid};}
   if(!gid||gid===dnd.gid)return null;const els=dndSection(h),r1=h.getBoundingClientRect(),r2=els[els.length-1].getBoundingClientRect();
@@ -1531,9 +1531,18 @@ function wireDnd(sl){if(sl._dnd)return;sl._dnd=true;
   sl.addEventListener('dragleave',e=>{if(!sl.contains(e.relatedTarget))dndClear(sl);});
   sl.addEventListener('drop',e=>{if(!dnd)return;const p=dndPlan(e,sl),d=dnd;dndClear(sl);if(!p)return;e.preventDefault();dnd=null;
     if(d.kind==='chat'){const c=DATA.chats.find(x=>x.agent===d.agent&&x.session_id===d.sid);if(c)setChatGroupTo(c,p.gid||null);}
-    else{const gs=DATA.groups||[],ids=reorderIds(gs.map(g=>g.id),d.gid,p.gid,p.after);DATA.groups=ids.map(i=>gs.find(g=>g.id===i));
-      grpPost('/api/groups/order',{ids}).then(j=>{if(!grpDone(j))refresh();}).catch(()=>{toast('server off','#8a2b2e');refresh();});}});
-  sl.addEventListener('dragend',()=>dndEnd(sl));}
+    else{const gs=DATA.groups||[],ids=reorderIds(gs.map(g=>g.id),d.gid,p.gid,p.after);DATA.groups=ids.map(i=>gs.find(g=>g.id===i));const h={ids,until:Date.now()+15000,acked:false};grpHold.order=h;
+      const undo=()=>{if(grpHold.order===h)grpHold.order=null;refresh();};
+      grpPost('/api/groups/order',{ids}).then(j=>{if(j.ok)h.acked=true;if(!grpDone(j))undo();}).catch(()=>{toast('server off','#8a2b2e');undo();});}});
+  sl.addEventListener('dragend',()=>dndEnd(sl));
+  // Near the list's top or bottom edge (or past it, over the pinned header or the composer) the
+  // list scrolls, so a drag reaches groups that are out of view. dragover fires while the pointer
+  // is held still, and the frame loop keeps the scroll smooth between those events.
+  document.addEventListener('dragover',e=>{if(dnd)dndAutoScroll(sl,e.clientY);});
+  document.addEventListener('drop',()=>{dndScrollV=0;});}
+var dndScrollV=0,dndScrollRaf=0;
+function dndAutoScroll(sl,y){const r=sl.getBoundingClientRect();dndScrollV=dndScrollSpeed(r.top,r.bottom,y);
+  if(dndScrollV&&!dndScrollRaf){const step=()=>{if(!dnd||!dndScrollV){dndScrollRaf=0;return;}sl.scrollTop+=dndScrollV;dndScrollRaf=requestAnimationFrame(step);};dndScrollRaf=requestAnimationFrame(step);}}
 function doSave(sid,agent,el){const nav=tab==='saved'?null:closeNavPlan(DATA.chats.find(x=>x.agent===agent&&x.session_id===sid));flash(el,'saving…','#7a6a1a');fetch('/save?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?(j.closed?'saved, pane freed':'saved'):(j.detail||'failed'),j.ok?'#7a6a1a':'#8a2b2e');if(j.ok){markSaved(sid,agent,true);closeNavGo(nav);}setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function doUnsave(sid,agent,el){flash(el,'removing…','#7a6a1a');fetch('/unsave?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent)).then(r=>r.json()).then(j=>{flash(el,j.ok?'unsaved':(j.detail||'failed'),j.ok?'#1f6f3f':'#8a2b2e');if(j.ok)markSaved(sid,agent,false);setTimeout(refresh,1200);setTimeout(refresh,3200);}).catch(()=>flash(el,'server off','#8a2b2e'));}
 function markSaved(sid,agent,v){const c=DATA.chats.find(x=>x.agent===agent&&x.session_id===sid);if(c){c.saved=v;c.saved_at=v?Date.now():0;render();}}
@@ -1870,7 +1879,15 @@ function groupsPanel(c){const cur=c.group?c.group.id:0;return '<div class="cmtag
 function grpMenuHtml(g){return '<input id="grpname" class="newtag" maxlength="40" value="'+esc(g.name)+'" aria-label="Group name"/><button type="button" class="cmi" data-grprename="1"><span>Rename group</span><span class="cmh">Enter</span></button><div class="cmdiv"></div><button type="button" class="cmi danger" data-grpdel="1"><span>'+(ctxState&&ctxState.armDel?'Click again to delete':'Delete group')+'</span><span class="cmh">chats stay</span></button>';}
 function grpPost(url,body){return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());}
 function grpDone(j,fix){if(!j.ok){toast(j.detail||'failed','#8a2b2e');return false;}if(j.groups)DATA.groups=j.groups;if(fix)fix(j);render();if(ctxState&&!ctxState.grp)renderCtx();setTimeout(refresh,300);return true;}
-function setChatGroupTo(c0,id){const c=currentChat(c0);return grpPost('/api/chat-group',{session:c.session_id,agent:c.agent,group_id:id}).then(j=>{if(grpDone(j,j=>{const x=DATA.chats.find(v=>v.agent===c.agent&&v.session_id===c.session_id);if(x)x.group=j.group||null;}))closeCtx();}).catch(()=>toast('server off','#8a2b2e'));}
+function setChatGroupTo(c0,id){const c=currentChat(c0),k=chatKey(c),h=holdChatGroup(k,id);const x0=DATA.chats.find(v=>chatKey(v)===k);if(x0){x0.group=id?((DATA.groups||[]).find(g=>g.id===id)||x0.group):null;render();}
+  const undo=()=>{if(grpHold.chats[k]===h)delete grpHold.chats[k];refresh();};
+  return grpPost('/api/chat-group',{session:c.session_id,agent:c.agent,group_id:id}).then(j=>{if(!j.ok){undo();grpDone(j);return;}h.acked=true;if(grpDone(j,j=>{const x=DATA.chats.find(v=>chatKey(v)===k);if(x)x.group=j.group||null;}))closeCtx();}).catch(()=>{undo();toast('server off','#8a2b2e');});}
+// A move or a reorder shows the moment it is made. A poll that left before the write landed
+// still carries the old grouping, so until the write is confirmed and a poll agrees (or 15 s
+// pass) refresh() lays the pending change back over what the poll brought.
+var grpHold={chats:{},order:null};
+function holdChatGroup(k,id){const h={gid:id||0,until:Date.now()+15000,acked:false};grpHold.chats[k]=h;return h;}
+function applyGroupHolds(){DATA.groups=applyGroupHoldsTo(grpHold,DATA.chats||[],DATA.groups||[],chatKey,Date.now());}
 function createGroupFor(c0,name){const c=currentChat(c0);name=name.trim();if(!name)return;const ex=(DATA.groups||[]).find(g=>g.name.toLowerCase()===name.toLowerCase());if(ex){setChatGroupTo(c,ex.id);return;}
   grpPost('/api/groups',{name,session:c.session_id,agent:c.agent}).then(j=>{if(grpDone(j,j=>{const x=DATA.chats.find(v=>v.agent===c.agent&&v.session_id===c.session_id);if(x)x.group=j.group;}))closeCtx();}).catch(()=>toast('server off','#8a2b2e'));}
 function openGroupCtx(g,x,y){closeArm='';ctxState={c:null,x,y,anchor:null,only:'',grp:g,armDel:false};renderCtx();const i=$('#grpname');if(i){i.focus();i.select();}}
@@ -2079,7 +2096,7 @@ function syncDefaultAgent(){$('#default-agent').value=DATA.defaultAgent;agentMen
 // The board poll sends back the last ETag; an unchanged board is a bodiless 304 and nothing is re-processed.
 // Any write the page makes (POST etc.) drops the ETag, so local optimistic edits are always reconciled by a full reply.
 var dataEtag='';(function(){const f=window.fetch;window.fetch=function(i,o){if(o&&o.method&&String(o.method).toUpperCase()!=='GET')dataEtag='';return f.apply(this,arguments);};})();
-function refresh(){return fetch('/api/data',{cache:'no-store',headers:dataEtag?{'if-none-match':dataEtag}:{}}).then(r=>{if(r.status===304)return null;dataEtag=r.headers.get('etag')||'';return r.json();}).then(d=>{if(!d){pollFailed=false;DATA.generatedAt=Date.now();renderStale();if(Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();return;}pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.standing=d.standing||[];DATA.tags=d.tags||DATA.tags||[];DATA.groups=d.groups||DATA.groups||[];DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.defaultProject=d.defaultProject||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
+function refresh(){return fetch('/api/data',{cache:'no-store',headers:dataEtag?{'if-none-match':dataEtag}:{}}).then(r=>{if(r.status===304)return null;dataEtag=r.headers.get('etag')||'';return r.json();}).then(d=>{if(!d){pollFailed=false;DATA.generatedAt=Date.now();renderStale();if(Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();return;}pollFailed=false;DATA.generatedAt=d.generatedAt||Date.now();DATA.slackMode=d.slackMode||DATA.slackMode;DATA.connections=d.connections||DATA.connections||[];showAutoRestore(d.autoRestore);DATA.archiveSearch=!!d.archiveSearch;DATA.port=d.port||DATA.port;renderStale();const before=dataSig();const wasLive=!!(sel&&!sel.arch&&livePaneFor(sel.sid,sel.agent));DATA.chats=d.chats;DATA.standing=d.standing||[];DATA.tags=d.tags||DATA.tags||[];DATA.groups=d.groups||DATA.groups||[];applyGroupHolds();DATA.live=d.live;DATA.defaultAgent=d.defaultAgent;DATA.slackOwners=d.slackOwners||[];DATA.slackCounts=d.slackCounts||{};DATA.testLinks=d.testLinks||{};DATA.actions=d.actions||{};DATA.slackStarts=d.slackStarts||[];setDrafts(d.drafts||[]);DATA.parked=d.parked||[];DATA.launches=d.launches||[];DATA.pipes=d.pipes||{};DATA.chatPr=d.chatPr||{};DATA.ships=d.ships||[];DATA.gitMarks=d.gitMarks||{};DATA.projects=d.projects||DATA.projects||null;DATA.defaultProject=d.defaultProject||null;DATA.orch=d.orch||DATA.orch;DATA.terminal=d.terminal||DATA.terminal;checkInsideFocus(d.focus);checkSlackStarts();
 // A chat that just started running (Resume) opens on its terminal.
 if(sel&&!sel.arch&&!wasLive&&livePaneFor(sel.sid,sel.agent)&&TERM_TOKEN)mtab='terminal';
 if(dataSig()!==before||Date.now()-lastRenderAt>30000){liveToggle();chips();render();lastRenderAt=Date.now();}if(homeSel)renderHome();}).catch(()=>{pollFailed=true;renderStale();if(homeSel)homeClock();});}

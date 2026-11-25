@@ -29,6 +29,28 @@ function reorderIds(ids,dragId,targetId,after){
   rest.splice(ti+(after?1:0),0,dragId);return rest;
 }
 function dropGroupOf(gid){var n=Number(gid);return n>0?n:0;}
+// A drop or reorder shows at once; a poll that left before the write landed still has the old
+// grouping. Lay each pending change ({chats:{key:{gid,until,acked}}, order:{ids,until,acked}})
+// over the poll's chats and groups. A hold ends once the write is confirmed and a poll agrees,
+// or when it expires. Mutates hold and the chats' group; returns the groups in display order.
+function applyGroupHoldsTo(hold,chats,groups,keyOf,now){
+  var byGid=function(id){for(var i=0;i<groups.length;i++)if(groups[i].id===id)return groups[i];return null;};
+  Object.keys(hold.chats).forEach(function(k){var h=hold.chats[k],x=null;
+    for(var i=0;i<chats.length;i++)if(keyOf(chats[i])===k){x=chats[i];break;}
+    if(!x||now>h.until){delete hold.chats[k];return;}
+    if((x.group?x.group.id:0)===h.gid){if(h.acked)delete hold.chats[k];return;}
+    x.group=h.gid?(byGid(h.gid)||x.group):null;});
+  var o=hold.order;if(!o)return groups;if(now>o.until){hold.order=null;return groups;}
+  var cur=groups.map(function(g){return g.id;});
+  if(cur.join(',')===o.ids.join(',')){if(o.acked)hold.order=null;return groups;}
+  if(cur.length!==o.ids.length||!o.ids.every(function(i){return cur.indexOf(i)>=0;}))return groups;
+  return o.ids.map(byGid);
+}
+// Scroll speed (px per frame) for a drag at y in a list spanning top..bottom: 0 in the middle,
+// rising to 22 in the last 56 px (or a quarter of a short list) and past either edge.
+function dndScrollSpeed(top,bottom,y){var edge=Math.min(56,(bottom-top)/4),max=22;
+  if(y<top+edge)return -Math.min(max,Math.ceil((top+edge-y)/edge*max));
+  if(y>bottom-edge)return Math.min(max,Math.ceil((y-(bottom-edge))/edge*max));return 0;}
 var STATUS_GROUPS=['Working','Your turn','Waiting on others','Saved for later','Recent','Closed'];
 function statusGroupOf(c,f){var pk=f.parked?f.parked(c):'';if(pk==='waiting')return 'Waiting on others';if(pk==='replied')return 'Your turn';if(f.saved(c))return 'Saved for later';if(f.done&&f.done(c))return 'Closed';if(f.working(c))return 'Working';if(f.live(c)&&f.turn(c))return 'Your turn';return 'Recent';}
 function groupChats(rows,mode,f){
