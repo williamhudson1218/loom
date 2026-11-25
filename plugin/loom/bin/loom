@@ -1054,6 +1054,9 @@ def _git_root(d):
 def route_new(args):
     project, lane, prompt_file, words = "", "", "", []
     i = 0
+    if args and args[0] in ("-h", "--help", "help"):
+        print("usage: loom route new [--project <dir>] [--lane <lane>] (--prompt-file <p> | <text...>)")
+        return
     while i < len(args):
         a = args[i]
         if a in ("--project", "--lane", "--prompt-file") and i + 1 < len(args):

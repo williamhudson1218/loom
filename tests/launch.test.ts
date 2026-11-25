@@ -144,6 +144,11 @@ describe('each kind follows its own setting', () => {
     expect(claudeCommand({ kind: 'orch', dir: '/p', sid: 's', name: 'n' }, orch)).toContain("--remote-control 'n' --name 'n'");
     expect(claudeCommand({ kind: 'orch', dir: '/p', sid: 's', name: 'n' }, orch)).not.toContain('--dangerously-skip-permissions');
   });
+  it('puts a prompt that starts with a dash after --, so claude does not read it as an option', () => {
+    expect(claudeCommand({ kind: 'chat', dir: '/p', prompt: '--help' }, SAFE_LAUNCH_SETTINGS)).toBe("cd '/p' && claude -- $'--help'");
+    expect(claudeCommand({ kind: 'resume', dir: '/p', sid: 's', prompt: '-x' }, SAFE_LAUNCH_SETTINGS)).toMatch(/ -- \$'-x'$/);
+    expect(claudeCommand({ kind: 'chat', dir: '/p', prompt: 'hi' }, SAFE_LAUNCH_SETTINGS)).not.toContain(' -- ');
+  });
   it('uses claude_bin, quoting it only when needed', () => {
     expect(claudeCommand({ kind: 'chat', dir: '/p' }, { ...SAFE_LAUNCH_SETTINGS, claudeBin: '/opt/homebrew/bin/claude' })).toBe("cd '/p' && /opt/homebrew/bin/claude");
     expect(claudeCommand({ kind: 'resume', dir: '/p', sid: 's' }, { ...SAFE_LAUNCH_SETTINGS, claudeBin: '/My Tools/claude' })).toContain(" '/My Tools/claude' --resume 's'");

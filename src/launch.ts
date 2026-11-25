@@ -199,6 +199,15 @@ function binary(s: LaunchSettings): string {
   return /^[A-Za-z0-9_./+@:-]+$/.test(b) ? b : shq(b);
 }
 
+/**
+ * The prompt as the command's last argument, with a leading space. A prompt that
+ * starts with `-` goes after `--`, or claude reads it as an option: a chat
+ * launched with the text `--help` printed the usage and exited.
+ */
+function promptTail(text: string, quote?: (s: string) => string): string {
+  return (text.trimStart().startsWith('-') ? ' -- ' : ' ') + promptArg(text, quote);
+}
+
 /** The shell line typed into a pane to start (or resume) a Claude Code session. */
 export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSettings = currentLaunchSettings()): string {
   const cd = `cd ${shq(input.dir)} && `;
@@ -207,13 +216,13 @@ export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSetting
   switch (input.kind) {
     case 'chat': {
       const sid = input.sid ? ` --session-id ${shq(input.sid)}` : '';
-      const prompt = input.prompt?.trim() ? ' ' + promptArg(input.prompt) : '';
+      const prompt = input.prompt?.trim() ? promptTail(input.prompt) : '';
       return cd + `${claude}${settings.skipChats ? skip : ''}${sid}${prompt}`;
     }
     case 'resume':
     case 'branch': {
       const fork = input.kind === 'branch' ? ' --fork-session' : '';
-      const prompt = !input.prompt?.trim() ? '' : input.kind === 'branch' ? ' ' + promptArg(input.prompt, shq) : ' ' + promptArg(input.prompt);
+      const prompt = !input.prompt?.trim() ? '' : input.kind === 'branch' ? promptTail(input.prompt, shq) : promptTail(input.prompt);
       return cd + `${RESUME_FULL_ENV} ${claude} --resume ${shq(input.sid ?? '')}${fork}${settings.skipChats ? skip : ''}${prompt}`;
     }
     case 'watcher': {
@@ -232,7 +241,7 @@ export function claudeCommand(input: ClaudeCommandInput, settings: LaunchSetting
         ` --name ${shq(name)}` +
         (input.mcpConfig ? ` --mcp-config ${shq(input.mcpConfig)}` : '') +
         (input.systemPromptFile ? ` --append-system-prompt "$(cat ${shq(input.systemPromptFile)})"` : '');
-      const prompt = input.prompt?.trim() ? ' ' + promptArg(input.prompt) : '';
+      const prompt = input.prompt?.trim() ? promptTail(input.prompt) : '';
       if (input.resume) return cd + `${RESUME_FULL_ENV} ${claude} --resume ${shq(input.sid ?? '')}${flags}${prompt}`;
       return cd + `${claude} --session-id ${shq(input.sid ?? '')}${flags}${prompt}`;
     }
