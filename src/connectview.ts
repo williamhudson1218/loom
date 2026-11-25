@@ -126,9 +126,9 @@ function cnGmStart(redraw,email){cnGmStop();CN.gmMsg=null;var w=cnPreopen();
   }).catch(function(){if(w)w.close();CN.gmMsg={kind:'err',text:'Loom did not answer.'};if(redraw)redraw();});}
 var CN_GHELP='<details class="cn-help"><summary>How to create the Google client (about five minutes, once)</summary><ol>'+
  '<li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">console.cloud.google.com</a> and create a project (any name, such as Loom).</li>'+
- '<li>APIs and Services, Library: search for <b>Gmail API</b> and click Enable.</li>'+
+ '<li>APIs and Services, Library: search for <b>Gmail API</b> and click Enable, then do the same for <b>Google Calendar API</b>.</li>'+
  '<li>APIs and Services, OAuth consent screen (Google Auth Platform): choose <b>External</b>, fill in the app name and your email, and leave it in <b>Testing</b>. Under Audience, add every address you will connect as a <b>test user</b>.</li>'+
- '<li>Data access: add the scopes <code>gmail.send</code> and <code>gmail.metadata</code>. Loom also asks for your email address.</li>'+
+ '<li>Data access: add the scopes <code>gmail.send</code>, <code>gmail.metadata</code>, <code>calendar.events</code> and <code>calendar.freebusy</code>. Loom also asks for your email address.</li>'+
  '<li>Clients (Credentials), Create credentials, OAuth client ID: application type <b>Desktop app</b>. Copy the client id and the client secret into the fields here.</li>'+
  '<li>Click Connect Gmail. Google shows "Google hasn’t verified this app": that is your own Testing app, so click Continue. A Testing app’s sign-in lasts seven days; Loom then asks you to reconnect.</li></ol></details>';
 // o.fields: show the client id and secret inputs here (the wizard). Settings shows them as its own rows.
@@ -146,7 +146,7 @@ function cnGmHtml(K,o){o=o||{};var st=CN.gm,v=cnGmView(st),h='';
   if(acc.length)send+=acc.map(function(a){return '<div class="cn-acct"><span class="e">'+cnEsc(a.email)+'</span>'+
     '<label class="def">Draft label <input type="text" data-cn-label="'+cnEsc(a.email)+'" value="'+cnEsc(a.label===a.email?'':a.label)+'" placeholder="'+cnEsc(a.email)+'"></label>'+
     (a.isDefault?cnPill('ok','Default'):cnB(K,'gmdefault','Make default',{arg:a.email,ghost:true}))+
-    (a.reconnect?cnPill('warn','Needs reconnecting')+cnB(K,'gmreconnect','Reconnect',{arg:a.email,pri:true}):'')+
+    (a.reconnect?cnPill('warn','Needs reconnecting')+cnB(K,'gmreconnect','Reconnect',{arg:a.email,pri:true}):a.calendar===false?cnB(K,'gmreconnect','Reconnect to add Calendar',{arg:a.email,ghost:true}):'')+
     cnB(K,'gmdisc','Disconnect',{arg:a.email,danger:true})+'</div>';}).join('');
   if(CN.gmO)send+='<div class="cn-row"><span class="def">Waiting for you to approve in Google.</span><a href="'+cnEsc(CN.gmO.url)+'" target="_blank" rel="noopener">Open the Google page</a>'+cnB(K,'gmcancel','Cancel',{ghost:true})+'</div>';
   else if(acc.length)send+='<div class="cn-row">'+cnB(K,'gmconnect','Add another account',{icon:'gmail'})+'<span class="def">The default account sends drafts that name no account. A draft names an account by its label or address.</span></div>';

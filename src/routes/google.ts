@@ -85,7 +85,7 @@ export function makeGoogleRoutes(over: Partial<GoogleRouteDeps> = {}): RouteDef[
       clientId: clientId || null,
       clientIdFromEnv: !!process.env.LOOM_GOOGLE_CLIENT_ID?.trim(),
       hasSecret: !!secret,
-      accounts: accounts.map((a, i) => ({ email: a.email, label: a.label, isDefault: i === 0, reconnect: a.reconnect ?? null, reconnectHint: a.reconnect ? googleHint('reconnect_gmail') : null })),
+      accounts: accounts.map((a, i) => ({ email: a.email, label: a.label, isDefault: i === 0, reconnect: a.reconnect ?? null, reconnectHint: a.reconnect ? googleHint('reconnect_gmail') : null, calendar: !!a.calendar })),
       via,
       cli: cliOk ? cli : null,
       // The CLI is something Loom found on this Mac; shown with ~ for the home folder.
@@ -145,7 +145,7 @@ export function makeGoogleRoutes(over: Partial<GoogleRouteDeps> = {}): RouteDef[
     try {
       storeGoogleRefresh(email, { refresh_token: g.refresh_token, client_id: flow.clientId, client_secret: flow.clientSecret });
       await withDb((db) => {
-        label = saveGoogleAccount(db, { email }).label;
+        label = saveGoogleAccount(db, { email, calendar: true }).label;
         markGoogleReconnect(db, email, '');
       });
     } catch {

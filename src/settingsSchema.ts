@@ -206,14 +206,14 @@ function channelMap(v: unknown): Check<Record<string, string>> {
   return ok(out);
 }
 
-/** Connected Gmail accounts: [{email, label, reconnect?}], no secrets. */
-function googleAccounts(v: unknown): Check<{ email: string; label: string; reconnect?: string }[]> {
+/** Connected Gmail accounts: [{email, label, reconnect?, calendar?}], no secrets. */
+function googleAccounts(v: unknown): Check<{ email: string; label: string; reconnect?: string; calendar?: true }[]> {
   if (!Array.isArray(v)) return bad('google_accounts must be a list');
-  const out: { email: string; label: string; reconnect?: string }[] = [];
+  const out: { email: string; label: string; reconnect?: string; calendar?: true }[] = [];
   for (const a of v) {
     if (!isPlainObject(a) || typeof a.email !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(a.email)) return bad('google_accounts: each entry needs an email');
     const label = typeof a.label === 'string' && a.label.trim() ? a.label.trim().slice(0, 64) : a.email;
-    out.push({ email: a.email.toLowerCase(), label, ...(typeof a.reconnect === 'string' && a.reconnect ? { reconnect: a.reconnect } : {}) });
+    out.push({ email: a.email.toLowerCase(), label, ...(typeof a.reconnect === 'string' && a.reconnect ? { reconnect: a.reconnect } : {}), ...(a.calendar === true ? { calendar: true as const } : {}) });
   }
   return ok(out);
 }

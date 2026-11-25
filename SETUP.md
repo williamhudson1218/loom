@@ -204,9 +204,9 @@ So an existing Email CLI setup keeps sending exactly as before until you connect
 **Connect Gmail (built in)** signs in to Google with your own OAuth client. Create it once (about five minutes):
 
 1. In [console.cloud.google.com](https://console.cloud.google.com), create a project.
-2. APIs and Services › Library: enable the **Gmail API**.
+2. APIs and Services › Library: enable the **Gmail API** and the **Google Calendar API**.
 3. OAuth consent screen (Google Auth Platform): choose **External**, leave publishing status in **Testing**, and add every address you will connect as a **test user**.
-4. Data access: add the scopes `gmail.send` and `gmail.metadata`.
+4. Data access: add the scopes `gmail.send`, `gmail.metadata`, `calendar.events` and `calendar.freebusy`.
 5. Clients › Create client › **Desktop app**. Copy the client id and client secret into Settings › Outbox (or set `LOOM_GOOGLE_CLIENT_ID` and `LOOM_GOOGLE_CLIENT_SECRET`).
 6. Click **Connect Gmail**. Google shows "Google hasn’t verified this app" because it is your own Testing app: click Continue, then allow.
 
@@ -219,6 +219,10 @@ What Loom asks for, and why:
 | `openid`, `email` | Your address: the From line and the address that counts as you in the before-send check |
 | `gmail.send` | Sending a draft. It grants no read access. |
 | `gmail.metadata` | Reading a draft's thread for the before-send check and parked replies: From, Date, Message-ID, labels and the snippet. No message bodies or attachments. |
+| `calendar.events` | Creating and updating calendar events, such as a booking a chat drafts. No calendar settings or sharing. |
+| `calendar.freebusy` | Busy times only (no titles or details) for you and the attendees, to find a free slot. |
+
+An account connected before Loom asked for Calendar keeps sending email; Settings › Outbox shows **Reconnect to add Calendar** next to it.
 
 Loom does not ask for `gmail.readonly` or `gmail.settings.basic`, so the built-in sender does not append your Gmail signature and does not list send-as aliases (messages you sent are still recognised through their SENT label). If you need either, use the Email CLI.
 

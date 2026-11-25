@@ -24,6 +24,12 @@ import { pkcePair } from './slackoauth.ts';
 //   gmail.metadata   threads.get with format=metadata: From, Date, Message-ID,
 //                    labels and the snippet for the freshness check and parked
 //                    replies. No message bodies or attachments.
+//   calendar.events  create and update events on the person's calendars (a
+//                    booking a chat drafts). No calendar settings or sharing.
+//   calendar.freebusy  busy blocks only (no titles or details) for the person
+//                    and attendees, to propose a time that is free.
+// An account connected before the Calendar scopes has no `calendar` flag: Gmail
+// keeps working and Settings offers "Reconnect to add Calendar".
 // sendAs (alias addresses, signatures) needs gmail.settings.basic or gmail.readonly,
 // so the built-in adapter reports the account address only and does not append a
 // Gmail signature. Messages the account sent carry the SENT label, which every
@@ -38,6 +44,8 @@ export const GOOGLE_SCOPES = [
   'email',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.metadata',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar.freebusy',
 ] as const;
 export const GOOGLE_STATE_TTL_MS = 10 * 60_000;
 /** Keychain service for each account's refresh data; the Keychain account is the email address. */
@@ -221,6 +229,8 @@ export interface GoogleAccount {
   label: string;
   /** Set when a refresh was refused; the account needs connecting again. */
   reconnect?: string;
+  /** The grant includes the Calendar scopes. Absent on accounts connected before Loom asked for them. */
+  calendar?: true;
 }
 
 export function listGoogleAccounts(db: Database.Database): GoogleAccount[] {
@@ -232,11 +242,12 @@ function writeAccounts(db: Database.Database, list: GoogleAccount[]): void {
 }
 
 /** Add or update an account (by email). A new account goes last; the first one is the default. */
-export function saveGoogleAccount(db: Database.Database, a: { email: string; label?: string }): GoogleAccount {
+export function saveGoogleAccount(db: Database.Database, a: { email: string; label?: string; calendar?: boolean }): GoogleAccount {
   const list = listGoogleAccounts(db);
   const email = a.email.toLowerCase();
   const i = list.findIndex((x) => x.email === email);
-  const next: GoogleAccount = { email, label: (a.label ?? (i >= 0 ? list[i].label : '') ?? '').trim() || email };
+  const calendar = a.calendar ?? (i >= 0 && !!list[i].calendar);
+  const next: GoogleAccount = { email, label: (a.label ?? (i >= 0 ? list[i].label : '') ?? '').trim() || email, ...(calendar ? { calendar: true as const } : {}) };
   if (i >= 0) list[i] = next;
   else list.push(next);
   writeAccounts(db, list);
@@ -430,7 +441,7 @@ export function googleHint(code: string): string {
     redirect_uri_mismatch: 'Google refused the loopback redirect. The client must be a Desktop app client.',
     no_email: 'Google did not say which account signed in. Start Connect Gmail again.',
     no_refresh_token: 'Google returned no refresh token. Remove Loom at myaccount.google.com/permissions, then connect again.',
-    missing_scopes: 'Some permissions were left unticked on the Google screen. Connect again and allow sending and reading message headers.',
+    missing_scopes: 'Some permissions were left unticked on the Google screen. Connect again and allow every box: sending, reading message headers, and your calendar.',
     reconnect_gmail: 'The Gmail connection expired or was revoked. Connect the account again in Settings, Outbox.',
     keychain_failed: 'The macOS Keychain did not store the connection. Try again and allow Loom when macOS asks.',
   };

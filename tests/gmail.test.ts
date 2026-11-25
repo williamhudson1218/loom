@@ -54,7 +54,7 @@ afterEach(() => {
 
 const db = () => openDb(dbPath);
 const idToken = (claims: Record<string, unknown>) => ['e30', Buffer.from(JSON.stringify(claims)).toString('base64url'), 'sig'].join('.');
-const SCOPE = 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.metadata';
+const SCOPE = 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.metadata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy';
 
 type Call = { url: string; init: RequestInit };
 function stubFetch(handler: (url: string, init: RequestInit) => { status?: number; json?: unknown } | Promise<{ status?: number; json?: unknown }>) {
@@ -80,7 +80,7 @@ describe('Connect Gmail: the authorize URL', () => {
     expect(q.get('access_type')).toBe('offline');
     expect(q.get('state')).toBe(state);
     expect(q.get('login_hint')).toBe('alex@example.com');
-    expect(q.get('scope')!.split(' ')).toEqual(['openid', 'email', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata']);
+    expect(q.get('scope')!.split(' ')).toEqual(['openid', 'email', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.freebusy']);
     // The secret never goes in the browser URL.
     expect(url).not.toContain(SECRET);
     const flow = takeGoogleState(state)!;
@@ -102,7 +102,9 @@ describe('Connect Gmail: the authorize URL', () => {
     expect(emailFromIdToken(idToken({ email: 'alex@example.com', email_verified: false }))).toBe('');
     expect(emailFromIdToken('garbage')).toBe('');
     expect(missingScopes(SCOPE)).toEqual([]);
-    expect(missingScopes('openid email https://www.googleapis.com/auth/gmail.metadata')).toEqual(['gmail.send']);
+    expect(missingScopes('openid email https://www.googleapis.com/auth/gmail.metadata')).toEqual(['gmail.send', 'calendar.events', 'calendar.freebusy']);
+    // A grant from before Loom asked for Calendar is short the two Calendar scopes only.
+    expect(missingScopes('openid email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.metadata')).toEqual(['calendar.events', 'calendar.freebusy']);
   });
 });
 
@@ -178,7 +180,7 @@ describe('Connect Gmail: routes', () => {
     expect(seen[0]).toMatchObject({ clientId: CID, clientSecret: SECRET, code: '4/abc', redirectUri: 'http://127.0.0.1:4317/google/callback' });
     expect(JSON.parse(kc.get(GOOGLE_REFRESH_SERVICE, 'alex@example.com')!)).toEqual({ refresh_token: '1//refresh', client_id: CID, client_secret: SECRET });
     const d2 = db();
-    expect(listGoogleAccounts(d2)).toEqual([{ email: 'alex@example.com', label: 'alex@example.com' }]);
+    expect(listGoogleAccounts(d2)).toEqual([{ email: 'alex@example.com', label: 'alex@example.com', calendar: true }]);
     const rows = d2.prepare('SELECT value FROM settings').all() as { value: string }[];
     d2.close();
     expect(rows.some((r) => r.value.includes('1//refresh') || r.value.includes('ya29'))).toBe(false);
@@ -223,6 +225,13 @@ describe('Connect Gmail: routes', () => {
       expect.objectContaining({ email: 'alex@work.example.com', label: 'work', isDefault: true }),
       expect.objectContaining({ email: 'alex@example.com', isDefault: false }),
     ]);
+    // Connected before Loom asked for Calendar: still sends, and Settings offers the reconnect.
+    expect((await call('GET /api/google/status', '/api/google/status')).body!.accounts.every((a: { calendar: boolean }) => a.calendar === false)).toBe(true);
+    const d3 = db();
+    saveGoogleAccount(d3, { email: 'alex@example.com', calendar: true });
+    saveGoogleAccount(d3, { email: 'alex@example.com', label: 'home' });
+    expect(listGoogleAccounts(d3).find((a) => a.email === 'alex@example.com')).toEqual({ email: 'alex@example.com', label: 'home', calendar: true });
+    d3.close();
     expect((await call('POST /api/google/account', '/api/google/account', { email: 'alex@example.com', label: 'work' })).body).toMatchObject({ error: 'label_in_use' });
     expect((await call('POST /api/google/account', '/api/google/account', { email: 'alex@example.com', label: 'has space' })).body).toMatchObject({ error: 'bad_label' });
     const out = await call('POST /api/google/disconnect', '/api/google/disconnect', { email: 'alex@work.example.com' });
