@@ -92,6 +92,10 @@ h1, h2, p { margin: 0; }
 .m-tool { display: flex; gap: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--muted); word-break: break-word; }
 .m-think { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 0; font: italic 13px/1.45 inherit; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-think.open { white-space: pre-wrap; word-break: break-word; }
+.optmsgs { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 12px; }
+.m-user.sending { opacity: .6; }
+.optthumbs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.optthumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
 .mlive { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 4px; }
 .mlive-a { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text2); font-family: var(--mono); }
 .mlive-b { display: flex; gap: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--muted); padding-left: 18px; word-break: break-word; }

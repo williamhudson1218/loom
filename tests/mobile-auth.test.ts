@@ -28,6 +28,8 @@ const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-uploads-'));
 const outboxCalls: { kind: string; arg: unknown }[] = [];
 const closed: { pane: string; agent: string }[] = [];
 let extraChats: MobileChat[] = [];
+/** Panes whose capture shows Claude Code's spinner. */
+const busyPanes = new Set(['%8']);
 
 const live = (over: Partial<LiveLoc> = {}): LiveLoc => ({ agent: 'claude', session_id: 's1', pane_id: '%7', tmux_session: 'loom-work', window_index: '1', pane_index: '0', running: true, working: false, name: 'blue-vanilla', stage: 'implementation', ...over });
 const chat = (over: Partial<MobileChat> = {}): MobileChat => ({ agent: 'claude', session_id: 's1', title: 'Fix the widget', project: 'demo', state: 'waiting_on_user', jsonl_path: '/nonexistent.jsonl', last_active_at: 1000, last_turn_at: 1000, live: live(), ...over });
@@ -44,7 +46,7 @@ function fakeDeps(): Partial<MobileDeps> {
       tmuxCalls.push(args);
       if (args[0] === 'display-message') return paneCmd + '\n';
       if (args[0] === 'list-panes') return '%7\tShip the widget\n%8\t\n%9\tSomeone else\n';
-      if (args[0] === 'capture-pane') return '⏺ Running the tests\n\n✻ Cogitating… (12s · ↓ 340 tokens · esc to interrupt)\n\n> \n';
+      if (args[0] === 'capture-pane') return busyPanes.has(args[args.length - 1]) ? '⏺ Running the tests\n\n✻ Cogitating… (12s · ↓ 340 tokens · esc to interrupt)\n\n> \n' : '✻ Cooked for 9s · done 8:58 PM\n\n> \n';
       return '';
     },
     send: (pane, text) => {
@@ -372,16 +374,35 @@ describe('what a paired phone can do', () => {
     expect(one.body.live_status).toBeNull();
   });
 
-  it('sends the live spinner line only while the chat works, or right after a reply', async () => {
+  it('sends the live spinner line, and a busy pane reads as working before the board does', async () => {
     tmuxCalls.length = 0;
-    expect((await raw('GET', '/m/api/session?key=claude:s1', ph())).body.live_status).toBeNull();
-    expect(tmuxCalls.some((a) => a[0] === 'capture-pane')).toBe(false);
+    const idle = (await raw('GET', '/m/api/session?key=claude:s1', ph())).body;
+    expect(idle.live_status).toBeNull();
+    expect((idle.session as { group: string }).group).toBe('turn');
     const working = (await raw('GET', '/m/api/session?key=claude:s2', ph())).body.live_status as { text: string; since: number };
     expect(working.text).toBe('Cogitating… 12s · 340 tokens');
     expect(Math.abs(Date.now() - 12_000 - working.since)).toBeLessThan(5_000);
-    expect(tmuxCalls.filter((a) => a[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%8']]);
-    const justSent = (await raw('GET', '/m/api/session?key=claude:s1&live=1', ph())).body.live_status as { text: string };
-    expect(justSent.text).toBe('Cogitating… 12s · 340 tokens');
+    expect(tmuxCalls.filter((a) => a[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%7'], ['capture-pane', '-p', '-t', '%8']]);
+    // s1 is still "your turn" on the board, but its pane shows the spinner (a reply just landed).
+    busyPanes.add('%7');
+    try {
+      const b = (await raw('GET', '/m/api/session?key=claude:s1', ph())).body;
+      expect((b.live_status as { text: string }).text).toBe('Cogitating… 12s · 340 tokens');
+      expect(b.session).toMatchObject({ group: 'working', tail: '' });
+    } finally {
+      busyPanes.delete('%7');
+    }
+  });
+
+  it('never captures a pane that is not running Claude', async () => {
+    paneCmd = 'zsh';
+    tmuxCalls.length = 0;
+    try {
+      expect((await raw('GET', '/m/api/session?key=claude:s1', ph())).body.live_status).toBeNull();
+      expect(tmuxCalls.some((a) => a[0] === 'capture-pane')).toBe(false);
+    } finally {
+      paneCmd = '2.1.233';
+    }
   });
 
   it('takes the topic from the pane\'s @topic with one list-panes call, falling back to the title', async () => {

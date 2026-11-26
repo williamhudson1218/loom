@@ -331,8 +331,8 @@ function detailScreen(r) {
   var talkBtn = h('button', { class: 'iconbtn talkbtn', 'aria-label': 'Talk (conversation mode)', title: 'Talk' }, icon('talk'));
   var title = h('div', { class: 'a' }), sub = h('div', { class: 'b' }), chip = h('span', { class: 'stagechip' });
   var status = h('span'), pane = h('span', { class: 'mono' });
-  var msgsEl = h('div', { class: 'msgs' }), liveEl = h('div', { class: 'mlive', 'aria-live': 'polite' });
-  var scroller = h('div', { class: 'scroll' }, msgsEl, liveEl);
+  var msgsEl = h('div', { class: 'msgs' }), optEl = h('div', { class: 'optmsgs' }), liveEl = h('div', { class: 'mlive', 'aria-live': 'polite' });
+  var scroller = h('div', { class: 'scroll' }, msgsEl, optEl, liveEl);
   var ta = h('textarea', { class: 'tinput', rows: '1', placeholder: 'Reply', enterkeyhint: 'send', 'aria-label': 'Reply' });
   var sendBtn = h('button', { class: 'sendbtn', 'aria-label': 'Send reply' }, icon('send'));
   var stopBtn = h('button', { class: 'stopbtn', 'aria-label': 'Interrupt (sends Esc)', title: 'Interrupt (Esc)' }, icon('stop'));
@@ -346,6 +346,9 @@ function detailScreen(r) {
   // The live row: while the chat works (or for a minute after a reply, before the board catches
   // up) the server sends Claude Code's spinner line, and this screen polls every 1.5 s, else 3 s.
   var sentAt = 0, liveOn = false, lastLoad = 0, lastTool = '', openThinking = {};
+  // Replies sent from here, shown at once as dimmed bubbles until the transcript has them (or 20 s).
+  // base: how many user messages the transcript had at send time, so an older identical line can't match.
+  var sentQ = [], lastMsgs = [];
   // Follow new messages only while the reader is at the bottom. Scrolling up, even a little,
   // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
   // repaint waits for the touch (and its momentum) to end, so it can't snap the view back down.
@@ -461,6 +464,31 @@ function detailScreen(r) {
     fill();
     return row;
   }
+  function flatText(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+  function usersOf(msgs) { return msgs.filter(function (m) { return m.role === 'user'; }).map(function (m) { return flatText(m.text); }); }
+  // Photo paths (or Claude Code's [Image #n]) are prefixed to the typed text, so the typed part ends it.
+  function sameReply(u, t) { return t ? u === t || (u.length > t.length && u.slice(-t.length) === t && u.charAt(u.length - t.length - 1) === ' ') : true; }
+  function dropSent(q) { q.urls.forEach(function (u) { URL.revokeObjectURL(u); }); }
+  function reconcile(msgs) {
+    var users = usersOf(msgs), now = Date.now();
+    sentQ = sentQ.filter(function (q) {
+      var fresh = users.length > q.base ? users.slice(q.base) : users.slice(-3);
+      var done = now - q.at > 20000 || (q.sent && fresh.some(function (u) { return sameReply(u, q.text); }));
+      if (done) dropSent(q);
+      return !done;
+    });
+  }
+  function paintOpt() {
+    clear(optEl);
+    optEl.style.display = sentQ.length ? '' : 'none';
+    sentQ.forEach(function (q) {
+      var b = h('div', { class: 'm-user sending', 'aria-label': 'Sending' });
+      if (q.urls.length) b.appendChild(h('div', { class: 'optthumbs' }, q.urls.map(function (u) { return h('img', { src: u, alt: '' }); })));
+      if (q.shown) b.appendChild(h('div', { text: q.shown }));
+      optEl.appendChild(b);
+    });
+    if (stick && !touching) scroller.scrollTop = scroller.scrollHeight;
+  }
   function paintLive(ls) {
     var on = !!(ls && ls.text) || sess.group === 'working';
     liveOn = on || Date.now() - sentAt < 60000;
@@ -485,7 +513,11 @@ function detailScreen(r) {
       if (!x.ok) return;
       if (x.json.session) sess = x.json.session;
       canReply = x.json.can_reply !== false;
-      paintHead(); paintEnabled(); paintMsgs(x.json.messages || []); paintLive(x.json.live_status);
+      lastMsgs = x.json.messages || [];
+      reconcile(lastMsgs);
+      // A reply still in flight means the agent is (about to be) busy, whatever the board says yet.
+      if (sentQ.some(function (q) { return q.sent; }) && sess.group !== 'working') sess = Object.assign({}, sess, { group: 'working', tail: '' });
+      paintHead(); paintEnabled(); paintMsgs(lastMsgs); paintOpt(); paintLive(x.json.live_status);
       if (Array.isArray(x.json.drafts)) takeDrafts(x.json.drafts);
     });
   }
@@ -498,15 +530,23 @@ function detailScreen(r) {
     busy = true; sendBtn.disabled = true;
     var payload = { key: key, text: text };
     if (ready.length) payload.images = ready.map(function (p) { return p.id; });
+    var q = { text: flatText(text), shown: text, urls: ready.map(function (p) { return p.url; }), at: Date.now(), base: usersOf(lastMsgs).length, sent: false };
+    sentQ.push(q); stick = true; paintOpt();
     api('/m/api/reply', { body: payload }).then(function (x) {
       busy = false; sendBtn.disabled = !canReply;
       if (x.ok) {
         ta.value = ''; drafts[key] = ''; grow();
-        if (own) { pending.forEach(function (p) { URL.revokeObjectURL(p.url); }); pending = []; paintThumbs(); }
+        if (own) { pending.forEach(function (p) { if (q.urls.indexOf(p.url) < 0) URL.revokeObjectURL(p.url); }); pending = []; paintThumbs(); }
+        q.sent = true; q.at = Date.now();
         stick = true; sentAt = Date.now(); liveOn = true;
+        sess = Object.assign({}, sess, { group: 'working', tail: '' });
+        paintHead(); paintLive(null);
         toast('Sent to ' + (sess.name || 'session'));
         setTimeout(load, 700);
-      } else if (x.status === 409) { toast('That session isn’t live anymore'); load(); }
+        return;
+      }
+      sentQ = sentQ.filter(function (o) { return o !== q; }); paintOpt();
+      if (x.status === 409) { toast('That session isn’t live anymore'); load(); }
       else if (x.status === 403) toast('That pane isn’t running Claude');
       else toast(errText(x, 'Could not send'));
     });
@@ -591,7 +631,7 @@ function detailScreen(r) {
   });
   paintHead(); paintEnabled(); grow();
   var p = poll(function () { if (liveOn || Date.now() - lastLoad >= 2900) load(); }, 1500);
-  return { stop: function () { alive = false; p.stop(); kit.stop(); if (window.LoomTalk) window.LoomTalk.close(); } };
+  return { stop: function () { alive = false; p.stop(); sentQ.forEach(dropSent); sentQ = []; kit.stop(); if (window.LoomTalk) window.LoomTalk.close(); } };
 }
 
 // ---- drafts: the card and its sheets, shared by the Outbox tab and a chat's dock -------

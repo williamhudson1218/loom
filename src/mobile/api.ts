@@ -469,8 +469,9 @@ function getSessions(ctx: RouteCtx): void {
 }
 
 /** One chat: its row, transcript, and its pending drafts (the outbox cards, so the chat screen docks them without a second poll).
- *  live_status is Claude Code's spinner line off the pane, captured only while the chat is working
- *  or the phone says it just sent a reply (`&live=1`, before the board has caught up). */
+ *  live_status is Claude Code's spinner line off the pane (one read-only capture whenever the pane runs
+ *  Claude). A spinner on screen is the truest "busy" signal, so it makes the row's group 'working'
+ *  even before the board's state catches up (a reply just sent, a chat busy but marked your turn). */
 async function getSession(ctx: RouteCtx): Promise<void> {
   me(ctx);
   const c = findChat(ctx.url.searchParams.get('key'));
@@ -478,9 +479,10 @@ async function getSession(ctx: RouteCtx): Promise<void> {
   const can = c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id));
   const mine = deps.drafts().filter((d) => d.session_id === c.session_id);
   const { drafts } = await outboxPayload(mine, deps.chats(), deps.fresh);
-  const wantLive = can && (!!c.live.working || ctx.url.searchParams.get('live') === '1');
-  const live_status = wantLive ? paneLiveStatus(deps.tmux, c.live.pane_id) : null;
-  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux), mine.length), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can, drafts, live_status });
+  const live_status = can ? paneLiveStatus(deps.tmux, c.live.pane_id) : null;
+  const row = sessionRow(c, deps.tail(c), paneTopics(deps.tmux), mine.length);
+  const session = live_status && row.group !== 'working' && !c.parked && !c.saved ? { ...row, group: 'working' as const, tail: '' } : row;
+  ctx.json(200, { session, messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can, drafts, live_status });
 }
 
 /** Reply and interrupt: the chat must be live and its pane running Claude right now. */

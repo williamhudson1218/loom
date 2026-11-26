@@ -446,15 +446,18 @@ function getTurn(ctx: RouteCtx): void {
   const c = findChat(ctx.url.searchParams.get('key'));
   if (!c) return ctx.json(404, { ok: false, detail: 'no such live chat' });
   const { lastUser, turn } = turnSince(deps.messages(c));
-  const working = !!c.live.working;
+  const can = deps.canReply(c);
+  // The pane's spinner line (livestatus.ts): shown under "Agent working…", and a busy pane counts as
+  // working before the board's state catches up.
+  const live_status = can || c.live.working ? paneLiveStatus(deps.tmux, c.live.pane_id) : null;
+  const working = !!c.live.working || !!live_status;
   ctx.json(200, {
     working,
     at_prompt: !working && deps.pendingTool(c.jsonl_path),
     since_user: turn.length,
     last_user: lastUser.slice(0, 300),
-    can_reply: deps.canReply(c),
-    // The pane's spinner line (livestatus.ts), shown under "Agent working…".
-    live_status: working ? paneLiveStatus(deps.tmux, c.live.pane_id) : null,
+    can_reply: can,
+    live_status,
   });
 }
 

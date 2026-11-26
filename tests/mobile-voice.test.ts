@@ -122,11 +122,12 @@ let spoken: string[] = [];
 let heard: number[] = [];
 let warmed = 0;
 let messages: MobileMsg[] = [];
+let screen = 'Bash command\n  git push\nDo you want to proceed?\n❯ 1. Yes\n';
 
 function fakeVoice(): Partial<VoiceDeps> {
   return {
     chats: () => [chat({ live: live({ working }) })],
-    tmux: (args) => (args[0] === 'capture-pane' ? 'Bash command\n  git push\nDo you want to proceed?\n❯ 1. Yes\n' : ''),
+    tmux: (args) => (args[0] === 'capture-pane' ? screen : ''),
     messages: () => messages,
     canReply: () => true,
     ask: async (p) => {
@@ -280,6 +281,17 @@ describe('voice routes', () => {
     r = await call('GET', '/m/api/voice/turn?key=claude:s1');
     expect(r.body.at_prompt).toBe(true);
     expect((await call('GET', '/m/api/voice/turn?key=claude:nope')).status).toBe(404);
+  });
+
+  it('reads a busy pane as working, with its spinner line, before the board catches up', async () => {
+    const was = screen;
+    screen = '⏺ Reading the file\n\n✶ Pondering… (4s · ↓ 90 tokens · esc to interrupt)\n\n> \n';
+    try {
+      const r = await call('GET', '/m/api/voice/turn?key=claude:s1');
+      expect(r.body).toMatchObject({ working: true, at_prompt: false, live_status: { text: 'Pondering… 4s · 90 tokens' } });
+    } finally {
+      screen = was;
+    }
   });
 
   it('speaks a short plain reply without asking the model', async () => {
