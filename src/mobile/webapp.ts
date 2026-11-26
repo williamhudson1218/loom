@@ -43,6 +43,7 @@ var ICONS = {
   stop: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"></rect></svg>',
   send: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>',
   warn: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"></path></svg>',
+  image: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M21 16l-5-5-8 8"></path></svg>',
   share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Share icon" style="vertical-align:-2px"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"></path></svg>'
 };
 function icon(name) { var t = document.createElement('span'); t.className = 'ico'; t.innerHTML = ICONS[name]; return t; }
@@ -305,7 +306,11 @@ function detailScreen(r) {
   var sendBtn = h('button', { class: 'sendbtn', 'aria-label': 'Send reply' }, icon('send'));
   var stopBtn = h('button', { class: 'stopbtn', 'aria-label': 'Interrupt (sends Esc)', title: 'Interrupt (Esc)' }, icon('stop'));
   var quick = h('div', { class: 'quick' });
-  var composer = h('div', { class: 'composer' }, quick, h('div', { class: 'crow' }, stopBtn, ta, sendBtn));
+  var attachBtn = h('button', { class: 'attachbtn', 'aria-label': 'Attach photos', title: 'Attach photos' }, icon('image'));
+  var fileIn = h('input', { type: 'file', accept: 'image/*', multiple: 'multiple', class: 'filein', 'aria-hidden': 'true', tabindex: '-1' });
+  var thumbs = h('div', { class: 'thumbs' });
+  var composer = h('div', { class: 'composer' }, quick, thumbs, h('div', { class: 'crow' }, stopBtn, attachBtn, ta, sendBtn, fileIn));
+  var pending = [];
   var canReply = true, lastSig = '', busy = false;
   // Follow new messages only while the reader is at the bottom. Scrolling up, even a little,
   // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
@@ -324,6 +329,51 @@ function detailScreen(r) {
   ta.value = drafts[key] || '';
   function grow() { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; }
   ta.addEventListener('input', function () { drafts[key] = ta.value; grow(); });
+
+  // Photos: downscaled in the browser (2048 px long edge, JPEG), uploaded as soon as they are picked,
+  // and sent with the reply as ids. A gif goes up as it is.
+  function shrink(file) {
+    if (file.type === 'image/gif' || !window.createImageBitmap) return Promise.resolve(file);
+    return createImageBitmap(file).then(function (bm) {
+      var k = Math.min(1, 2048 / Math.max(bm.width, bm.height));
+      if (k === 1 && file.type === 'image/jpeg' && file.size < 1500000) { if (bm.close) bm.close(); return file; }
+      var cv = document.createElement('canvas');
+      cv.width = Math.round(bm.width * k); cv.height = Math.round(bm.height * k);
+      cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+      if (bm.close) bm.close();
+      return new Promise(function (res) { cv.toBlob(function (b) { res(b || file); }, 'image/jpeg', 0.85); });
+    }).catch(function () { return file; });
+  }
+  function paintThumbs() {
+    clear(thumbs);
+    pending.forEach(function (p) {
+      var rm = h('button', { class: 'thumbx', 'aria-label': 'Remove photo', on: { click: function () {
+        pending = pending.filter(function (q) { return q !== p; }); URL.revokeObjectURL(p.url); paintThumbs();
+      } } }, '×');
+      thumbs.appendChild(h('div', { class: 'thumb' + (p.err ? ' bad' : p.id ? '' : ' up') }, h('img', { src: p.url, alt: '' }), rm));
+    });
+  }
+  function addFiles(files) {
+    Array.prototype.forEach.call(files || [], function (f) {
+      if (!/^image\//.test(f.type) || pending.length >= 10) return;
+      var p = { url: URL.createObjectURL(f), id: '', err: false };
+      pending.push(p); paintThumbs();
+      shrink(f).then(function (blob) {
+        return fetch('/m/api/image', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
+      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, json: j }; }); })
+        .catch(function () { return { ok: false, json: {} }; })
+        .then(function (x) {
+          if (x.ok && x.json.id) p.id = x.json.id; else { p.err = true; toast(errText({ json: x.json }, 'Could not upload photo')); }
+          paintThumbs();
+        });
+    });
+  }
+  attachBtn.addEventListener('click', function () { fileIn.click(); });
+  fileIn.addEventListener('change', function () { addFiles(fileIn.files); fileIn.value = ''; });
+  ta.addEventListener('paste', function (e) {
+    var fs = e.clipboardData && e.clipboardData.files;
+    if (fs && fs.length) { e.preventDefault(); addFiles(fs); }
+  });
 
   function paintHead() {
     title.textContent = sess.topic || sess.name || 'Session';
@@ -365,7 +415,7 @@ function detailScreen(r) {
     scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
   }
   function paintEnabled() {
-    ta.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
+    ta.disabled = !canReply; attachBtn.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
     if (!canReply) ta.placeholder = 'This session isn’t live on your Mac';
     paintQuick();
   }
@@ -379,13 +429,19 @@ function detailScreen(r) {
     });
   }
   function send(text) {
-    text = String(text == null ? ta.value : text).trim();
-    if (!text || busy || !canReply) return;
+    var own = text == null;
+    text = String(own ? ta.value : text).trim();
+    var ready = own ? pending.filter(function (p) { return p.id; }) : [];
+    if ((!text && !ready.length) || busy || !canReply) return;
+    if (own && pending.some(function (p) { return !p.id && !p.err; })) { toast('Photos are still uploading'); return; }
     busy = true; sendBtn.disabled = true;
-    api('/m/api/reply', { body: { key: key, text: text } }).then(function (x) {
+    var payload = { key: key, text: text };
+    if (ready.length) payload.images = ready.map(function (p) { return p.id; });
+    api('/m/api/reply', { body: payload }).then(function (x) {
       busy = false; sendBtn.disabled = !canReply;
       if (x.ok) {
         ta.value = ''; drafts[key] = ''; grow();
+        if (own) { pending.forEach(function (p) { URL.revokeObjectURL(p.url); }); pending = []; paintThumbs(); }
         stick = true;
         toast('Sent to ' + (sess.name || 'session'));
         setTimeout(load, 700);

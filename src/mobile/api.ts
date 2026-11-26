@@ -1,5 +1,8 @@
 import type http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { TOOL_DIR } from '../paths.ts';
 import type { RouteCtx, RouteDef } from '../routes/index.ts';
 import type { Agent } from '../types.ts';
 import type { LiveLoc } from '../dashboard.ts';
@@ -53,6 +56,8 @@ export interface MobileDeps {
   outboxRedraft(id: string): Promise<OutboxResult>;
   /** The port Loom is serving on (tailscale serve proxies to it). */
   port(): number;
+  /** Where phone photo uploads land (0700). Tests point it at a temp dir. */
+  uploadsDir(): string;
   tailscale: TailscaleDeps;
 }
 
@@ -70,6 +75,7 @@ let deps: MobileDeps = {
   outboxDiscard: async () => ({ status: 503, body: { ok: false, detail: 'not wired' } }),
   outboxRedraft: async () => ({ status: 503, body: { ok: false, detail: 'not wired' } }),
   port: () => 4317,
+  uploadsDir: () => path.join(TOOL_DIR, 'uploads', 'mobile'),
   tailscale: realTailscaleDeps,
 };
 
@@ -393,14 +399,100 @@ function claudePane(ctx: RouteCtx, key: unknown): MobileChat | null {
   return c;
 }
 
+/* ------------------------------------------------------------------ photo uploads */
+
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+const UPLOAD_TTL_MS = 7 * 24 * 3600 * 1000;
+const IMAGE_ID = /^[0-9a-f]{32}$/;
+
+/** The image type by its first bytes, never by the header; null when it is not one we take. */
+export function sniffImage(b: Buffer): string | null {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (b.length >= 6 && /^GIF8[79]a$/.test(b.subarray(0, 6).toString('latin1'))) return 'gif';
+  if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'webp';
+  if (b.length >= 12 && b.subarray(4, 8).toString('latin1') === 'ftyp' && /^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(b.subarray(8, 12).toString('latin1'))) return 'heic';
+  return null;
+}
+
+/** Same escaping as the terminal drop (src/termdrop.ts): backslash everything outside a safe set; quote if it has a control char. */
+export function shellEscapePath(p: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(p)) return "'" + p.replace(/'/g, "'\\''") + "'";
+  return p.replace(/[^A-Za-z0-9_\-.,:+@%/=~]/g, '\\$&');
+}
+
+function pruneUploads(dir: string): void {
+  try {
+    const cutoff = Date.now() - UPLOAD_TTL_MS;
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch {
+        /* raced with another prune */
+      }
+    }
+  } catch {
+    /* no dir yet */
+  }
+}
+
+/** The saved file for an upload id, or null when the id is malformed or the file is gone. */
+function uploadPath(id: unknown): string | null {
+  if (typeof id !== 'string' || !IMAGE_ID.test(id)) return null;
+  const dir = deps.uploadsDir();
+  for (const ext of ['jpg', 'png', 'gif', 'webp', 'heic']) {
+    const fp = path.join(dir, id + '.' + ext);
+    if (fs.existsSync(fp)) return fp;
+  }
+  return null;
+}
+
+/** POST /m/api/image: the raw image bytes as the body. Saved under the uploads dir; the reply names it by id. */
+async function uploadImage(ctx: RouteCtx): Promise<void> {
+  me(ctx);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let over = false;
+  await new Promise<void>((resolve) => {
+    ctx.req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > MAX_IMAGE_BYTES) over = true;
+      else chunks.push(c);
+    });
+    ctx.req.on('end', () => resolve());
+    ctx.req.on('error', () => resolve());
+  });
+  if (over) return ctx.json(413, { ok: false, detail: 'image is too large (12 MB max)' });
+  const buf = Buffer.concat(chunks);
+  const ext = sniffImage(buf);
+  if (!ext) return ctx.json(415, { ok: false, detail: 'not a supported image (jpeg, png, heic, webp, gif)' });
+  const dir = deps.uploadsDir();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  pruneUploads(dir);
+  const id = randomBytes(16).toString('hex');
+  fs.writeFileSync(path.join(dir, id + '.' + ext), buf, { mode: 0o600 });
+  ctx.json(200, { ok: true, id });
+}
+
 async function reply(ctx: RouteCtx): Promise<void> {
   me(ctx);
   const b = await ctx.body();
-  const text = str(b?.text).trim();
-  if (!text) return ctx.json(400, { ok: false, detail: 'text is required' });
+  let text = str(b?.text).trim();
+  const ids = b?.images === undefined ? [] : b.images;
+  if (!Array.isArray(ids) || ids.length > 10) return ctx.json(400, { ok: false, detail: 'images must be a list of up to 10 ids' });
+  const paths: string[] = [];
+  for (const id of ids) {
+    const fp = uploadPath(id);
+    if (!fp) return ctx.json(400, { ok: false, detail: 'unknown image' });
+    paths.push(fp);
+  }
+  if (!text && !paths.length) return ctx.json(400, { ok: false, detail: 'text is required' });
   if (text.length > 8000) return ctx.json(400, { ok: false, detail: 'text is too long' });
   const c = claudePane(ctx, b?.key);
   if (!c) return;
+  if (paths.length) text = (paths.map(shellEscapePath).join(' ') + ' ' + text).trim();
   const r = deps.send(c.live.pane_id, text, c.agent);
   ctx.json(r.ok ? 200 : 500, r);
 }
@@ -504,6 +596,7 @@ export const MOBILE_ROUTES: RouteDef[] = [
   dv('GET', '/m/api/sessions', getSessions),
   dv('GET', '/m/api/session', getSession),
   dv('POST', '/m/api/reply', reply),
+  dv('POST', '/m/api/image', uploadImage),
   dv('POST', '/m/api/interrupt', interrupt),
   dv('GET', '/m/api/outbox', getOutbox),
   dv('POST', '/m/api/outbox/send', outboxSend),
@@ -520,7 +613,7 @@ export const MOBILE_ROUTES: RouteDef[] = [
 
 /* ------------------------------------------------------------------ static + headers */
 
-export const MOBILE_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'";
+export const MOBILE_CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'";
 
 /** Every /m/ response: no framing, no referrer, no sniffing, the CSP. */
 export function setMobileHeaders(res: http.ServerResponse): void {

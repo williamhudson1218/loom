@@ -98,6 +98,16 @@ h1, h2, p { margin: 0; }
 .sendbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; border: 0; display: flex; align-items: center; justify-content: center; background: var(--primary); color: #fff; }
 .sendbtn[disabled], .btn[disabled], .qbtn[disabled], .stopbtn[disabled] { opacity: .45; }
 .tinput { flex: 1; resize: none; min-height: 44px; max-height: 140px; padding: 11px 14px; border-radius: 22px; font-size: 16px; outline: none; background: var(--surface); border: 1px solid var(--border); line-height: 20px; }
+button.attachbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+.attachbtn[disabled] { opacity: .45; }
+.filein { display: none; }
+.thumbs { display: flex; gap: 8px; overflow-x: auto; padding-top: 6px; }
+.thumbs:empty { display: none; }
+.thumb { position: relative; flex: none; width: 56px; height: 56px; border-radius: 10px; border: 1px solid var(--border); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; display: block; }
+.thumb.up img { opacity: .45; }
+.thumb.bad { border-color: var(--danger); }
+.thumbx { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 11px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 15px; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; }
 .tinput:focus, .field:focus { border-color: var(--accent); }
 
 .tabbar { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 6px 0 env(safe-area-inset-bottom); min-height: calc(56px + env(safe-area-inset-bottom)); background: var(--tabbar); border-top: 1px solid var(--border); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }

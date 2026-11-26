@@ -23,6 +23,7 @@ let tailOn = true;
 const sent: { pane: string; text: string }[] = [];
 const tmuxCalls: string[][] = [];
 let paneCmd = '2.1.233';
+const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-uploads-'));
 const outboxCalls: { kind: string; arg: unknown }[] = [];
 
 const live = (over: Partial<LiveLoc> = {}): LiveLoc => ({ agent: 'claude', session_id: 's1', pane_id: '%7', tmux_session: 'loom-work', window_index: '1', pane_index: '0', running: true, working: false, name: 'blue-vanilla', stage: 'implementation', ...over });
@@ -55,6 +56,7 @@ function fakeDeps(): Partial<MobileDeps> {
       outboxCalls.push({ kind: 'redraft', arg: id });
       return { status: 200, body: { ok: true } };
     },
+    uploadsDir: () => uploadsDir,
     tailscale: { exists: () => false, run: async () => ({ code: 1, stdout: '', stderr: 'no' }) },
   };
 }
@@ -88,7 +90,7 @@ interface Res {
   text: string;
   body: Record<string, unknown>;
 }
-function raw(method: string, p: string, headers: Record<string, string>, body?: string): Promise<Res> {
+function raw(method: string, p: string, headers: Record<string, string>, body?: string | Buffer): Promise<Res> {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method, path: p, agent: false, headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
       let s = '';
@@ -133,6 +135,8 @@ async function pairDevice(name = 'Test phone'): Promise<{ cookie: string; id: st
   const cookie = m![1];
   return { cookie, id: cookie.split('.')[0] };
 }
+
+import { shellEscapePath as shellEscapeForTest } from '../src/mobile/api.ts';
 
 const deviceRoutes = MOBILE_ROUTES.filter((r) => r.kind === 'device');
 const writes = MOBILE_ROUTES.filter((r) => r.method !== 'GET');
@@ -265,7 +269,7 @@ describe('the tailnet Host reaches /m/ and nothing else', () => {
     const out = await raw('GET', '/m/', { host: TAILNET });
     expect(out.status).toBe(200);
     expect(out.headers['content-type']).toMatch(/text\/html/);
-    expect(out.headers['content-security-policy']).toBe("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'");
+    expect(out.headers['content-security-policy']).toBe("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'");
     expect(out.headers['x-frame-options']).toBe('DENY');
     expect(out.headers['referrer-policy']).toBe('no-referrer');
     expect(out.headers['cache-control']).toBe('no-store');
@@ -410,5 +414,55 @@ describe('what a paired phone can do', () => {
     expect(out.status).toBe(200);
     expect(String(out.headers['set-cookie']?.[0])).toContain('Max-Age=0');
     expect((await raw('GET', '/m/api/me', h)).status).toBe(401);
+  });
+
+  describe('photo uploads', () => {
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
+    const imgHdr = () => ({ 'content-type': 'image/png', ...tail, cookie: `loom_device=${cookie}` });
+
+    it('refuses an unpaired phone and a foreign Origin', async () => {
+      expect((await raw('POST', '/m/api/image', { 'content-type': 'image/png', ...tail }, PNG)).status).toBe(401);
+      expect((await raw('POST', '/m/api/image', { ...imgHdr(), origin: 'https://evil.example' }, PNG)).status).toBe(403);
+    });
+
+    it('saves an image by its magic bytes (0600) and returns only an id', async () => {
+      const r = await raw('POST', '/m/api/image', imgHdr(), PNG);
+      expect(r.status).toBe(200);
+      const id = String(r.body.id);
+      expect(id).toMatch(/^[0-9a-f]{32}$/);
+      expect(Object.keys(r.body).sort()).toEqual(['id', 'ok']);
+      const fp = path.join(uploadsDir, id + '.png');
+      expect(fs.readFileSync(fp).equals(PNG)).toBe(true);
+      expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
+    });
+
+    it('refuses bytes that are not an image whatever the header says, and oversize bodies', async () => {
+      const bad = await raw('POST', '/m/api/image', imgHdr(), Buffer.from('<html>not an image</html>'));
+      expect(bad.status).toBe(415);
+      const big = await raw('POST', '/m/api/image', imgHdr(), Buffer.concat([PNG, Buffer.alloc(12 * 1024 * 1024)])).catch(() => ({ status: 413 }));
+      expect(big.status).toBe(413);
+    });
+
+    it('a reply with images types the escaped paths, then the text', async () => {
+      const id = String((await raw('POST', '/m/api/image', imgHdr(), PNG)).body.id);
+      sent.length = 0;
+      const ok = await raw('POST', '/m/api/reply', ph(), JSON.stringify({ key: 'claude:s1', text: 'what is this?', images: [id] }));
+      expect(ok.status).toBe(200);
+      expect(sent).toEqual([{ pane: '%7', text: shellEscapeForTest(path.join(uploadsDir, id + '.png')) + ' what is this?' }]);
+      sent.length = 0;
+      expect((await raw('POST', '/m/api/reply', ph(), JSON.stringify({ key: 'claude:s1', text: '', images: [id] }))).status).toBe(200);
+      expect(sent[0].text).toBe(shellEscapeForTest(path.join(uploadsDir, id + '.png')));
+    });
+
+    it('rejects unknown or path-like image ids and sends nothing', async () => {
+      sent.length = 0;
+      for (const images of [['0'.repeat(32)], ['../../etc/passwd'], [42], 'x']) {
+        expect((await raw('POST', '/m/api/reply', ph(), JSON.stringify({ key: 'claude:s1', text: 'hi', images }))).status).toBe(400);
+      }
+      paneCmd = 'zsh';
+      const id = String((await raw('POST', '/m/api/image', imgHdr(), PNG)).body.id);
+      expect((await raw('POST', '/m/api/reply', ph(), JSON.stringify({ key: 'claude:s1', text: '', images: [id] }))).status).toBe(403);
+      expect(sent).toEqual([]);
+    });
   });
 });
