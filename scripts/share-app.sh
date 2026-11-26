@@ -3,8 +3,8 @@
 #
 #   scripts/share-app.sh [path/to/Loom.app] [out.zip]
 #
-# Loom is not signed with a Developer ID or notarized. It is ad-hoc signed with
-# a valid seal (app/afterpack.cjs), so on the other Mac a downloaded copy gets
+# Loom is not signed with a Developer ID or notarized. It is signed (a release
+# with Loom's self-signed certificate, a local build ad-hoc) with a valid seal (app/afterpack.cjs), so on the other Mac a downloaded copy gets
 # the ordinary "Apple could not verify" warning, which Privacy & Security ›
 # Open Anyway gets past, rather than "Loom is damaged". See SETUP.md, "Sharing
 # Loom". ditto (not zip) keeps the bundle exactly as signed.

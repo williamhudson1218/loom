@@ -218,7 +218,7 @@ yarn test
 
 Releases are cut by CI: every push to `main` that touches the app runs the tests, builds, checks the bundle for personal data and publishes a GitHub Release, and running Looms update themselves (`src/updater.ts`, SETUP.md [Updates](SETUP.md#updates)). Build the app by hand with `cd app && yarn install && yarn build && yarn rebuild && yarn dist`. Install a build with `scripts/install-app.sh` (it also takes a release zip, or `--release`), which quits a running Loom, swaps the bundle in and relaunches. Never delete and copy over a running Loom; opening it mid-copy crashes it.
 
-The app is not signed with a Developer ID or notarized; it is ad-hoc signed. Built locally it opens directly. To give it to someone else, zip it with `scripts/share-app.sh` and see [Sharing Loom](SETUP.md#6a-sharing-loom) for the one-time Open Anyway step on their Mac.
+The app is not signed with a Developer ID or notarized. Releases are signed with Loom's own self-signed certificate (the `LOOM_SIGN_P12` secret, pinned by `scripts/release/signing-cert.sha1`), so macOS keeps its Files and Folders grants across updates; a local build is ad-hoc signed and opens directly. To give it to someone else, zip it with `scripts/share-app.sh` and see [Sharing Loom](SETUP.md#6a-sharing-loom) for the one-time Open Anyway step on their Mac.
 
 ## License
 

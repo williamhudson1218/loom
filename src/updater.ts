@@ -7,10 +7,12 @@ import { pipeline } from 'node:stream/promises';
 
 // Loom's self-updater: GitHub Releases in, a swapped bundle out.
 //
-// Not electron-updater / Squirrel.Mac: Loom is ad-hoc signed, so its designated
-// requirement is `cdhash H"…"`, pinned to the exact bytes of this build, and
+// Not electron-updater / Squirrel.Mac: Loom was ad-hoc signed, so its designated
+// requirement was `cdhash H"…"`, pinned to the exact bytes of one build, and
 // ShipIt refuses any new bundle that does not satisfy the running app's
-// requirement, i.e. every update. So the updater here does what ShipIt would, by
+// requirement, i.e. every update. Releases are now signed with Loom's own
+// self-signed certificate (app/afterpack.cjs), which keeps folder grants across
+// updates, but ShipIt would still want a trusted Developer ID. So the updater here does what ShipIt would, by
 // hand: fetch latest.json from the newest release, download the zip, check its
 // sha256, unpack it with ditto, `codesign --verify --deep --strict` it, check the
 // bundle id and version, and keep it ready. Applying hands off to a detached

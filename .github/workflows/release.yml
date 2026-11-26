@@ -1,5 +1,6 @@
-# Every push to main that changes the app cuts a Loom release: tests, a signed
-# (ad-hoc) arm64 build, the personal-data check, then a GitHub Release with the
+# Every push to main that changes the app cuts a Loom release: tests, an arm64
+# build signed with Loom's self-signed certificate (stable across releases, so
+# macOS folder grants survive updates; app/afterpack.cjs), the personal-data check, then a GitHub Release with the
 # zip, SHA256SUMS and latest.json. Running Looms find it through
 # releases/latest/download/latest.json and update themselves (src/updater.ts).
 name: Release
@@ -81,9 +82,39 @@ jobs:
       - name: Restore cached helpers
         run: scripts/release/helpers.sh fetch
 
+      # The certificate lives in the LOOM_SIGN_P12 / LOOM_SIGN_P12_PASSWORD secrets;
+      # its SHA-1 is pinned in scripts/release/signing-cert.sha1 so a swapped secret
+      # fails here instead of silently resetting every user's grants. codesign only
+      # signs with a trusted identity, hence the system trust setting (runner-only).
+      - name: Signing keychain
+        id: sign
+        env:
+          P12: ${{ secrets.LOOM_SIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.LOOM_SIGN_P12_PASSWORD }}
+        run: |
+          [ -n "$P12" ] && [ -n "$P12_PASSWORD" ] || { echo "LOOM_SIGN_P12 / LOOM_SIGN_P12_PASSWORD secrets are not set"; exit 1; }
+          KC="$RUNNER_TEMP/loom-sign.keychain-db"; KCPW=$(openssl rand -hex 16)
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/loom.p12"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          security import "$RUNNER_TEMP/loom.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-certificate -c "Loom Release Signing" -p "$KC" > "$RUNNER_TEMP/loom.pem"
+          rm -f "$RUNNER_TEMP/loom.p12"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/loom.pem"
+          sha1=$(openssl x509 -in "$RUNNER_TEMP/loom.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
+          [ "$sha1" = "$(tr -d '[:space:]' < scripts/release/signing-cert.sha1)" ] || { echo "signing certificate $sha1 is not the pinned one"; exit 1; }
+          security find-identity -v -p codesigning "$KC" | grep -q "$sha1" || { echo "identity $sha1 is not valid for code signing"; exit 1; }
+          echo "identity=$sha1" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KC" >> "$GITHUB_OUTPUT"
+
       - name: Build
         working-directory: app
         env:
+          LOOM_SIGN_IDENTITY: ${{ steps.sign.outputs.identity }}
+          LOOM_SIGN_KEYCHAIN: ${{ steps.sign.outputs.keychain }}
           LOOM_RELEASE: '1'
           LOOM_VERSION: ${{ steps.v.outputs.version }}
           LOOM_COMMIT: ${{ steps.v.outputs.sha }}
@@ -97,6 +128,9 @@ jobs:
         run: |
           APP=app/release/mac-arm64/Loom.app
           codesign --verify --deep --strict "$APP"
+          req=$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => //p'); echo "designated: $req"
+          case "$req" in *cdhash*|'') echo "Loom.app is ad-hoc signed; folder grants would reset on this update"; exit 1;; esac
+          echo "$req" | grep -qi "$(tr -d '[:space:]' < scripts/release/signing-cert.sha1)" || { echo "designated requirement does not name the pinned certificate"; exit 1; }
           got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
           [ "$got" = "${{ steps.v.outputs.version }}" ] || { echo "built $got, expected ${{ steps.v.outputs.version }}"; exit 1; }
           for h in "$APP"/Contents/Helpers/*/Loom.app; do echo "$h: $(codesign -dvvv "$h" 2>&1 | sed -n 's/^CDHash=//p')"; done

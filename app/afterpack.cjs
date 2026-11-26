@@ -1,10 +1,18 @@
-// electron-builder afterPack hook: give Loom.app a valid ad-hoc signature.
+// electron-builder afterPack hook: give Loom.app a valid signature.
 //
-// Loom ships unsigned (no Developer ID, "identity": null), and electron-builder
+// Releases are signed with Loom's own self-signed certificate (LOOM_SIGN_IDENTITY,
+// the certificate's SHA-1, imported by release.yml from the LOOM_SIGN_P12 secret).
+// That makes the designated requirement `identifier "com.loom.app" and
+// certificate root = H"…"`, the same for every build, so macOS keeps the Files
+// and Folders grants (Documents, Downloads, Pictures, …) across updates. Ad-hoc,
+// the requirement is the build's cdhash and every update re-asks for all of them.
+// Local builds without the variable are still ad-hoc.
+//
+// Loom has no Developer ID ("identity": null keeps electron-builder out of it), and electron-builder
 // renames Electron.app and edits its Info.plist and resources, which leaves the
 // Electron binary's linker signature claiming resources that are no longer
 // sealed. A downloaded copy in that state fails Gatekeeper as "Loom is damaged
-// and can't be opened", with no way through. Re-signing ad-hoc (inside out:
+// and can't be opened", with no way through. Re-signing (inside out:
 // each framework and Electron helper, then the app) makes the seal valid, so a
 // quarantined copy gets the ordinary "could not verify" path that System
 // Settings › Privacy & Security › Open Anyway lets through.
@@ -17,7 +25,9 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const sign = (target, extra = []) => execFileSync('codesign', ['--force', '--sign', '-', ...extra, target], { stdio: 'inherit' });
+const IDENTITY = process.env.LOOM_SIGN_IDENTITY || '-';
+const KEYCHAIN = process.env.LOOM_SIGN_KEYCHAIN ? ['--keychain', process.env.LOOM_SIGN_KEYCHAIN] : [];
+const sign = (target, extra = []) => execFileSync('codesign', ['--force', '--sign', IDENTITY, ...KEYCHAIN, ...extra, target], { stdio: 'inherit' });
 /** The code hash a grant is keyed to, or null when the target is unsigned. codesign -d writes to stderr. */
 function cdhashOf(target) {
   const r = spawnSync('codesign', ['-dvvv', target], { encoding: 'utf8' });
@@ -45,5 +55,5 @@ exports.default = async function afterPack(context) {
     const now = cdhashOf(h);
     if (!hash || now !== hash) throw new Error(`afterPack: ${h} changed code hash (${hash} -> ${now}); its grants would reset`);
   }
-  console.log(`  • ad-hoc sealed ${path.basename(app)}; helpers unchanged: ${[...before.values()].join(', ') || 'none'}`);
+  console.log(`  • ${IDENTITY === '-' ? 'ad-hoc' : 'certificate'} sealed ${path.basename(app)}; helpers unchanged: ${[...before.values()].join(', ') || 'none'}`);
 };
