@@ -183,7 +183,7 @@ h1, h2, p { margin: 0; }
 .sheet .newm { font-size: 14px; line-height: 1.4; padding: 8px 10px; border-radius: 10px; background: var(--surface2); color: var(--text2); }
 .sheet .wl { font-size: 13px; font-weight: 600; color: var(--warn); }
 .sheet .ro { display: flex; gap: 10px; }
-.toast { position: absolute; z-index: 30; left: 16px; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; font-size: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.3); background: var(--toast); color: #fff; }
+.toast { position: absolute; z-index: 30; left: 16px; right: 16px; top: calc(8px + env(safe-area-inset-top)); display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; font-size: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.3); background: var(--toast); color: #fff; }
 .toast span { flex: 1; }
 .toast button { border: 0; background: transparent; font-size: 14px; font-weight: 700; color: #9cc3ff; }
 .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }

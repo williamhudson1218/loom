@@ -146,9 +146,10 @@ function toast(msg, undo) {
   if (toastEl) { toastEl.remove(); toastEl = null; }
   clearTimeout(toastTimer);
   var btn = undo ? h('button', { text: 'Undo', on: { click: function () { hideToast(); undo(); } } }) : null;
-  toastEl = h('div', { class: 'toast', role: 'status' }, h('span', { text: msg }), btn);
+  // Top of the screen, so it never covers the composer or the tab bar; a tap anywhere on it dismisses.
+  toastEl = h('div', { class: 'toast', role: 'status', on: { click: function (e) { if (!e.target.closest('button')) hideToast(); } } }, h('span', { text: msg }), btn);
   app.appendChild(toastEl);
-  toastTimer = setTimeout(hideToast, undo ? 4000 : 3000);
+  toastTimer = setTimeout(hideToast, undo ? 4000 : 2000);
 }
 function hideToast() { clearTimeout(toastTimer); if (toastEl) { toastEl.remove(); toastEl = null; } }
 function openSheet(build, onClose) {
@@ -306,6 +307,19 @@ function detailScreen(r) {
   var quick = h('div', { class: 'quick' });
   var composer = h('div', { class: 'composer' }, quick, h('div', { class: 'crow' }, stopBtn, ta, sendBtn));
   var canReply = true, lastSig = '', busy = false;
+  // Follow new messages only while the reader is at the bottom. Scrolling up, even a little,
+  // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
+  // repaint waits for the touch (and its momentum) to end, so it can't snap the view back down.
+  var stick = true, touching = false, pendingMsgs = null, settleTimer = 0;
+  scroller.addEventListener('scroll', function () {
+    stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+    if (pendingMsgs && !touching) { clearTimeout(settleTimer); settleTimer = setTimeout(flushPending, 250); }
+  }, { passive: true });
+  scroller.addEventListener('touchstart', function () { touching = true; }, { passive: true });
+  function touchEnd() { touching = false; clearTimeout(settleTimer); settleTimer = setTimeout(flushPending, 250); }
+  scroller.addEventListener('touchend', touchEnd, { passive: true });
+  scroller.addEventListener('touchcancel', touchEnd, { passive: true });
+  function flushPending() { if (touching || !pendingMsgs) return; var m = pendingMsgs; pendingMsgs = null; paintMsgs(m); }
 
   ta.value = drafts[key] || '';
   function grow() { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; }
@@ -338,9 +352,9 @@ function detailScreen(r) {
   function paintMsgs(msgs) {
     var sig = JSON.stringify(msgs);
     if (sig === lastSig) return;
+    if (touching) { pendingMsgs = msgs; return; }
     lastSig = sig;
-    var near = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
-    var first = !msgsEl.firstChild;
+    var first = !msgsEl.firstChild, keep = scroller.scrollTop;
     clear(msgsEl);
     msgs.forEach(function (m) {
       if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user', text: m.text }));
@@ -348,7 +362,7 @@ function detailScreen(r) {
       else msgsEl.appendChild(h('div', { class: 'm-asst', text: m.text }));
     });
     if (!msgs.length) msgsEl.appendChild(h('div', { class: 'empty', text: 'No messages yet.' }));
-    if (first || near) scroller.scrollTop = scroller.scrollHeight;
+    scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
   }
   function paintEnabled() {
     ta.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
@@ -372,6 +386,7 @@ function detailScreen(r) {
       busy = false; sendBtn.disabled = !canReply;
       if (x.ok) {
         ta.value = ''; drafts[key] = ''; grow();
+        stick = true;
         toast('Sent to ' + (sess.name || 'session'));
         setTimeout(load, 700);
       } else if (x.status === 409) { toast('That session isn’t live anymore'); load(); }

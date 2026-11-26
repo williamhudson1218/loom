@@ -221,8 +221,8 @@ export interface MobileMsg {
   text: string;
 }
 
-/** The last ~40 messages, tool calls as one-liners. Claude transcripts only carry tool calls; Codex uses the shared reader. */
-export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 40): MobileMsg[] {
+/** The last ~100 messages, tool calls as one-liners. Claude transcripts only carry tool calls; Codex uses the shared reader. */
+export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): MobileMsg[] {
   if (agent !== 'claude') return readTranscript(agent, jsonlPath, { limit }).map((m) => ({ role: m.role, text: m.text }));
   let text = '';
   try {
