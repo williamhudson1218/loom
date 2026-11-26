@@ -136,6 +136,7 @@ button.attachbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; d
 .btn.ghost { background: transparent; border: 0; color: var(--danger); }
 .btn.dng { color: var(--danger); }
 .btn.big.dng { font-weight: 600; }
+.iconbtn.talkbtn[disabled] { opacity: .45; }
 .iconbtn.more { font-size: 26px; line-height: 1; margin-right: -8px; }
 .dock { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
 .dockbar { flex: none; height: 40px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: var(--warn-bg); color: var(--warn); font-size: 14px; font-weight: 600; }

@@ -59,6 +59,7 @@ var ICONS = {
   stop: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"></rect></svg>',
   send: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>',
   warn: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"></path></svg>',
+  talk: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"></path></svg>',
   image: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M21 16l-5-5-8 8"></path></svg>',
   share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Share icon" style="vertical-align:-2px"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"></path></svg>'
 };
@@ -326,6 +327,8 @@ var drafts = {};
 function detailScreen(r) {
   var key = r.key, sess = sessionByKey(key) || { key: key, name: '', topic: '', project: '', stage: 'implementation', group: 'working', drafts: 0 };
   var moreBtn = h('button', { class: 'iconbtn more', 'aria-label': 'More', 'aria-haspopup': 'dialog', text: '⋯' });
+  // Conversation mode (src/mobile/voiceapp.ts): this tap also unlocks audio playback on iOS.
+  var talkBtn = h('button', { class: 'iconbtn talkbtn', 'aria-label': 'Talk (conversation mode)', title: 'Talk' }, icon('talk'));
   var title = h('div', { class: 'a' }), sub = h('div', { class: 'b' }), chip = h('span', { class: 'stagechip' });
   var status = h('span'), pane = h('span', { class: 'mono' });
   var msgsEl = h('div', { class: 'msgs' }), scroller = h('div', { class: 'scroll' }, msgsEl);
@@ -442,7 +445,7 @@ function detailScreen(r) {
     scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
   }
   function paintEnabled() {
-    ta.disabled = !canReply; attachBtn.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
+    talkBtn.disabled = !canReply; ta.disabled = !canReply; attachBtn.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
     if (!canReply) ta.placeholder = 'This session isn’t live on your Mac';
     paintQuick();
   }
@@ -549,12 +552,17 @@ function detailScreen(r) {
   screenEl.appendChild(h('div', { class: 'scr' },
     h('header', { class: 'dhdr' },
       h('button', { class: 'iconbtn', 'aria-label': 'Back to sessions', on: { click: function () { location.hash = '#sessions'; } } }, icon('back')),
-      h('div', { class: 'dtitle' }, title, sub), chip, moreBtn),
+      h('div', { class: 'dtitle' }, title, sub), chip, talkBtn, moreBtn),
     h('div', { class: 'band' }, status, pane),
     scroller, dock, composer));
+  talkBtn.addEventListener('click', function () {
+    if (!canReply) { toast('This session isn’t live on your Mac'); return; }
+    if (!window.LoomTalk) { toast('Conversation mode didn’t load'); return; }
+    window.LoomTalk.open({ key: key, name: sess.name || sess.topic || 'session', onClose: function () { if (alive) load(); } });
+  });
   paintHead(); paintEnabled(); grow();
   var p = poll(load, 3000);
-  return { stop: function () { alive = false; p.stop(); kit.stop(); } };
+  return { stop: function () { alive = false; p.stop(); kit.stop(); if (window.LoomTalk) window.LoomTalk.close(); } };
 }
 
 // ---- drafts: the card and its sheets, shared by the Outbox tab and a chat's dock -------

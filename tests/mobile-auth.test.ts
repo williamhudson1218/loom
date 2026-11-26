@@ -280,7 +280,7 @@ describe('the tailnet Host reaches /m/ and nothing else', () => {
     const out = await raw('GET', '/m/', { host: TAILNET });
     expect(out.status).toBe(200);
     expect(out.headers['content-type']).toMatch(/text\/html/);
-    expect(out.headers['content-security-policy']).toBe("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'");
+    expect(out.headers['content-security-policy']).toBe("default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'");
     expect(out.headers['x-frame-options']).toBe('DENY');
     expect(out.headers['referrer-policy']).toBe('no-referrer');
     expect(out.headers['cache-control']).toBe('no-store');
@@ -377,6 +377,16 @@ describe('what a paired phone can do', () => {
     expect(rows.find((r) => r.key === 'claude:s2')?.topic).toBe('Fix the widget');
     expect(tmuxCalls.filter((a) => a[0] === 'list-panes')).toEqual([['list-panes', '-a', '-F', '#{pane_id}\t#{@topic}']]);
     expect(tmuxCalls.length).toBe(1);
+  });
+
+  it('conversation mode reads the same live chats and panes (voice routes wired)', async () => {
+    const t = await raw('GET', '/m/api/voice/turn?key=claude:s2', ph());
+    expect(t.status).toBe(200);
+    expect(t.body).toMatchObject({ working: true, at_prompt: false, can_reply: true });
+    paneCmd = 'zsh';
+    expect((await raw('GET', '/m/api/voice/turn?key=claude:s1', ph())).body.can_reply).toBe(false);
+    expect((await raw('GET', '/m/api/voice/turn?key=claude:gone', ph())).status).toBe(404);
+    expect((await raw('GET', '/m/api/voice/turn?key=claude:s1', {})).status).toBe(401);
   });
 
   it('replies and interrupts only into a live pane running Claude', async () => {

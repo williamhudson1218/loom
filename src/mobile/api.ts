@@ -14,6 +14,7 @@ import { applyServe, clearLeftoverServe, realTailscaleDeps, tailscaleStatus, typ
 import { portRange, preferredPort } from '../serverport.ts';
 import { loadVapidKeys, validSubscription } from './webpush.ts';
 import { mobileFile } from './web.ts';
+import { VOICE_ROUTES, setVoiceDeps } from './voice.ts';
 
 // The phone's API (/m/api/*). The gate (src/routes/index.ts) has already checked
 // Host, the same-origin Origin on writes, and (kind `device`) the device cookie
@@ -694,6 +695,15 @@ async function pushUnsubscribe(ctx: RouteCtx): Promise<void> {
   ctx.json(200, { ok: true });
 }
 
+// Conversation mode (src/mobile/voice.ts) reads the same live chats and panes. Closures, so
+// server.ts's later setMobileDeps reaches it too.
+setVoiceDeps({
+  chats: () => deps.chats(),
+  tmux: (args) => deps.tmux(args),
+  messages: (c) => mobileTranscript(c.agent, c.jsonl_path, 200),
+  canReply: (c) => c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id)),
+});
+
 const dv = (method: RouteDef['method'], path: string, handler: RouteDef['handler']): RouteDef => ({ method, path, kind: 'device', handler });
 
 /** Every /m/api route. Kept out of ROUTES: the gate judges these with requireDevice, never requireWrite. */
@@ -718,11 +728,12 @@ export const MOBILE_ROUTES: RouteDef[] = [
   dv('GET', '/m/api/push/key', pushKey),
   dv('POST', '/m/api/push/subscribe', pushSubscribe),
   dv('POST', '/m/api/push/unsubscribe', pushUnsubscribe),
+  ...VOICE_ROUTES,
 ];
 
 /* ------------------------------------------------------------------ static + headers */
 
-export const MOBILE_CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'";
+export const MOBILE_CSP = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'";
 
 /** Every /m/ response: no framing, no referrer, no sniffing, the CSP. */
 export function setMobileHeaders(res: http.ServerResponse): void {

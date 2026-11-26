@@ -312,7 +312,7 @@ export const VOICE_CSS = String.raw`
 .talktop { display:flex; align-items:center; gap:8px; }
 .talkname { flex:1; min-width:0; font-weight:600; font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .talkend { border:0; border-radius:999px; padding:8px 16px; font:600 15px/1 inherit; background:#d9443a; color:#fff; }
-.talkchip { border:1px solid var(--line, rgba(255,255,255,.18)); background:transparent; color:inherit; border-radius:999px; padding:7px 12px; font:500 13px/1 inherit; }
+.talkchip { border:1px solid var(--border); background:transparent; color:inherit; border-radius:999px; padding:7px 12px; font:500 13px/1 inherit; }
 .talkmid { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center; min-height:0; }
 .talkorb { position:relative; width:168px; height:168px; border-radius:50%; border:0; background:radial-gradient(circle at 35% 30%, #7aa8ff, #3b6fe0 70%); box-shadow:0 10px 40px rgba(59,111,224,.35); }
 .talkring { position:absolute; inset:-10px; border-radius:50%; border:3px solid rgba(122,168,255,.55); transition:transform .08s linear; pointer-events:none; }
@@ -328,7 +328,7 @@ export const VOICE_CSS = String.raw`
 .talklabel { font-weight:600; font-size:20px; margin-top:8px; }
 .talkhint { color:var(--muted, #9aa3b5); font-size:14px; max-width:320px; line-height:1.4; }
 .talklive { font-size:16px; line-height:1.45; max-width:340px; min-height:1.45em; }
-.talklog { flex:none; max-height:34vh; overflow-y:auto; border-top:1px solid var(--line, rgba(255,255,255,.12)); padding-top:8px; display:flex; flex-direction:column; gap:8px; -webkit-overflow-scrolling:touch; }
+.talklog { flex:none; max-height:34vh; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:8px; -webkit-overflow-scrolling:touch; }
 .talkmsg { font-size:14px; line-height:1.45; }
 .talkmsg b { display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted, #9aa3b5); margin-bottom:1px; }
 .talkmsg.you span { color:var(--text, #e8eaf0); }

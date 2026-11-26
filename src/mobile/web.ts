@@ -5,6 +5,7 @@
 
 import { APP_CSS } from './webcss.ts';
 import { APP_JS } from './webapp.ts';
+import { VOICE_CSS, VOICE_JS } from './voiceapp.ts';
 import { ICON_180_B64, ICON_192_B64, ICON_512_B64 } from './icons.ts';
 
 export const MOBILE_HTML = `<!doctype html>
@@ -105,8 +106,8 @@ type MobileFile = { type: string; body: string | Buffer };
 
 const FILES: Record<string, () => MobileFile> = {
   '/m/': () => ({ type: 'text/html; charset=utf-8', body: MOBILE_HTML }),
-  '/m/app.js': () => ({ type: 'text/javascript; charset=utf-8', body: APP_JS }),
-  '/m/app.css': () => ({ type: 'text/css; charset=utf-8', body: APP_CSS }),
+  '/m/app.js': () => ({ type: 'text/javascript; charset=utf-8', body: APP_JS + VOICE_JS }),
+  '/m/app.css': () => ({ type: 'text/css; charset=utf-8', body: APP_CSS + VOICE_CSS }),
   '/m/manifest.webmanifest': () => ({ type: 'application/manifest+json; charset=utf-8', body: MOBILE_MANIFEST }),
   '/m/sw.js': () => ({ type: 'text/javascript; charset=utf-8', body: MOBILE_SW }),
   '/m/icon-180.png': () => ({ type: 'image/png', body: Buffer.from(ICON_180_B64, 'base64') }),
