@@ -1,5 +1,6 @@
 import type { RouteCtx, RouteDef } from './index.ts';
 import { phoneAccessView, setPhoneAccess } from '../mobile/api.ts';
+import { tailscaleSetup } from '../mobile/tailscale.ts';
 import { deviceStore, formatCode } from '../mobile/devices.ts';
 
 // Settings › Devices on Loom's own page: Phone access (tailscale serve), pairing a
@@ -8,7 +9,7 @@ import { deviceStore, formatCode } from '../mobile/devices.ts';
 // carries the live pairing code, which is acceptable only because a read needs
 // Loom's own Host (no tailnet Host reaches /api/*, and the page's origin is the
 // only one that can read the response).
-//   GET  /api/devices                    { phoneAccess, devices, pending, pairing }
+//   GET  /api/devices                    { phoneAccess, setup, devices, pending, pairing }
 //   POST /api/devices/phone-access {on}  same shape
 //   POST /api/devices/pair-start         { code, url, expires_at }
 //   POST /api/devices/approve {id} | deny {id} | revoke {id}
@@ -21,9 +22,13 @@ async function view() {
   const s = deviceStore();
   const phoneAccess = await phoneAccessView();
   const code = s.liveCode();
+  const ts = await tailscaleSetup();
+  const devs = s.devices();
   return {
     phoneAccess,
-    devices: s.devices().map((d) => ({ id: d.id, name: d.name, created_at: d.created_at, last_seen_at: d.last_seen_at, push: !!d.push })),
+    // The Set up your phone checklist reads these; each is a plain fact, never a secret.
+    setup: { ...ts, phoneAccess: phoneAccess.state === 'on', paired: devs.length > 0, notifications: devs.some((d) => !!d.push) },
+    devices: devs.map((d) => ({ id: d.id, name: d.name, created_at: d.created_at, last_seen_at: d.last_seen_at, push: !!d.push })),
     pending: s.pendingRequests(),
     pairing: code ? { code: formatCode(code.code), url: pairingUrl(phoneAccess), expires_at: code.expires_at } : null,
   };

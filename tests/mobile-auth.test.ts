@@ -8,6 +8,7 @@ import { termToken } from '../src/ptybridge.ts';
 import { ROUTES, setTailnetHostSource } from '../src/routes/index.ts';
 import { MOBILE_ROUTES, resetPairRate, setMobileDeps, type MobileChat, type MobileDeps } from '../src/mobile/api.ts';
 import { DeviceStore, setDeviceStore } from '../src/mobile/devices.ts';
+import { setTailscaleSetupDeps } from '../src/mobile/tailscale.ts';
 import type { LiveLoc } from '../src/dashboard.ts';
 
 // The phone's door. Every /m/api route except the two pairing calls refuses a
@@ -349,17 +350,19 @@ describe('what a paired phone can do', () => {
     expect(meR.body).toMatchObject({ device: { name: 'Working phone' }, tailnetHost: null });
     const s = await raw('GET', '/m/api/sessions', ph());
     expect(s.status).toBe(200);
-    expect(s.body.counts).toEqual({ working: 1, needs: 1, blocked: 0 });
+    expect(s.body.counts).toEqual({ working: 1, turn: 1, waiting: 0, saved: 0, recent: 0 });
     expect(s.body.outbox_pending).toBe(1);
-    const rows = s.body.sessions as { key: string; group: string; tail: string; pane: string }[];
-    expect(rows[0]).toMatchObject({ key: 'claude:s1', group: 'needs', tail: 'Should I ship it?', pane: 'loom-work:1.0' });
+    const secs = s.body.sections as { key: string; kind: string; sessions: { key: string; group: string; tail: string; pane: string; drafts: number }[] }[];
+    expect(secs.map((x) => [x.key, x.kind])).toEqual([['working', 'status'], ['turn', 'status']]);
+    expect(secs[1].sessions[0]).toMatchObject({ key: 'claude:s1', group: 'turn', tail: 'Should I ship it?', pane: 'loom-work:1.0', drafts: 1 });
     const one = await raw('GET', '/m/api/session?key=claude:s1', ph());
     expect(one.body.can_reply).toBe(true);
+    expect((one.body.session as { drafts: number }).drafts).toBe(1);
   });
 
   it('takes the topic from the pane\'s @topic with one list-panes call, falling back to the title', async () => {
     tmuxCalls.length = 0;
-    const rows = (await raw('GET', '/m/api/sessions', ph())).body.sessions as { key: string; topic: string }[];
+    const rows = ((await raw('GET', '/m/api/sessions', ph())).body.sections as { sessions: { key: string; topic: string }[] }[]).flatMap((x) => x.sessions);
     expect(rows.find((r) => r.key === 'claude:s1')?.topic).toBe('Ship the widget');
     expect(rows.find((r) => r.key === 'claude:s2')?.topic).toBe('Fix the widget');
     expect(tmuxCalls.filter((a) => a[0] === 'list-panes')).toEqual([['list-panes', '-a', '-F', '#{pane_id}\t#{@topic}']]);
@@ -395,6 +398,16 @@ describe('what a paired phone can do', () => {
       { kind: 'discard', arg: 'd1' },
       { kind: 'redraft', arg: 'd1' },
     ]);
+  });
+
+  it('narrows the outbox to one chat with ?session=, and refuses a malformed key', async () => {
+    const ids = async (q: string) => ((await raw('GET', '/m/api/outbox' + q, ph())).body.drafts as { id: string }[]).map((d) => d.id);
+    expect(await ids('?session=claude%3As1')).toEqual(['d1']);
+    expect(await ids('?session=claude%3As2')).toEqual([]);
+    expect(await ids('')).toEqual(['d1']);
+    for (const bad of ['', 's1', 'claude%3A', 'claude%3As1%20x', '%3As1', 'claude%3A..%2Fx%2Fy']) {
+      expect((await raw('GET', '/m/api/outbox?session=' + bad, ph())).status, bad).toBe(400);
+    }
   });
 
   it('keeps prefs per device and validates push subscriptions', async () => {
@@ -465,4 +478,19 @@ describe('what a paired phone can do', () => {
       expect(sent).toEqual([]);
     });
   });
+  it('GET /api/devices carries the setup checklist facts', async () => {
+    setTailscaleSetupDeps({
+      exists: () => true,
+      run: async () => ({ code: 0, stdout: JSON.stringify({ BackendState: 'Running', Self: { DNSName: 'example-mac.tail0000.ts.net.' }, CertDomains: ['example-mac.tail0000.ts.net'], Peer: { p: { OS: 'iOS', Online: false } } }), stderr: '' }),
+    });
+    try {
+      const setup = (await raw('GET', '/api/devices', {})).body.setup as Record<string, unknown>;
+      expect(setup).toMatchObject({ tailscaleInstalled: true, signedIn: true, magicDns: true, httpsCerts: true, iphone: 'offline', phoneAccess: false });
+      expect(typeof setup.paired).toBe('boolean');
+      expect(typeof setup.notifications).toBe('boolean');
+    } finally {
+      setTailscaleSetupDeps(null);
+    }
+  });
+
 });

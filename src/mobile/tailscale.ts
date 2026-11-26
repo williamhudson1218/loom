@@ -15,6 +15,8 @@ export interface PhoneAccess {
   state: PhoneState;
   url?: string;
   detail?: string;
+  /** A login.tailscale.com link Tailscale printed when Serve needs approving for the tailnet. */
+  approveUrl?: string;
 }
 
 export interface RunResult {
@@ -75,6 +77,65 @@ export async function tailscaleStatus(deps: TailscaleDeps = realTailscaleDeps): 
   return { ok: true, cli, host };
 }
 
+/** The approval link in `tailscale serve` output (e.g. "Serve is not enabled on your tailnet. To enable, visit: https://login.tailscale.com/f/serve?node=..."). */
+export function extractApprovalUrl(text: string): string | undefined {
+  const m = /https:\/\/login\.tailscale\.com\/[^\s"'<>)]+/.exec(text);
+  return m ? m[0].replace(/[.,;]+$/, '') : undefined;
+}
+
+export type IphoneState = 'none' | 'offline' | 'online';
+
+export interface TailscaleSetup {
+  tailscaleInstalled: boolean;
+  signedIn: boolean;
+  magicDns: boolean;
+  httpsCerts: boolean;
+  iphone: IphoneState;
+}
+
+/** One `tailscale status --json`, read for the setup checklist. Pure. */
+export function parseSetup(statusJson: string): Omit<TailscaleSetup, 'tailscaleInstalled'> {
+  const none = { signedIn: false, magicDns: false, httpsCerts: false, iphone: 'none' as IphoneState };
+  let j: { BackendState?: string; Self?: { DNSName?: string }; CertDomains?: unknown; Peer?: Record<string, { OS?: string; Online?: boolean }> } | null = null;
+  try {
+    j = JSON.parse(statusJson);
+  } catch {
+    return none;
+  }
+  if (!j || typeof j !== 'object') return none;
+  const host = (j.Self?.DNSName ?? '').replace(/\.$/, '').toLowerCase();
+  const peers = j.Peer && typeof j.Peer === 'object' ? Object.values(j.Peer).filter((p) => p && String(p.OS ?? '').toLowerCase() === 'ios') : [];
+  return {
+    signedIn: j.BackendState === 'Running',
+    magicDns: HOST_RE.test(host),
+    httpsCerts: Array.isArray(j.CertDomains) && j.CertDomains.length > 0,
+    iphone: peers.length === 0 ? 'none' : peers.some((p) => p.Online === true) ? 'online' : 'offline',
+  };
+}
+
+let setupDeps: TailscaleDeps = realTailscaleDeps;
+let setupCache: { at: number; deps: TailscaleDeps; v: TailscaleSetup } | null = null;
+
+/** Tests: point the setup read at a fake CLI and forget the cache. */
+export function setTailscaleSetupDeps(d: TailscaleDeps | null): void {
+  setupDeps = d ?? realTailscaleDeps;
+  setupCache = null;
+}
+
+/** Setup checklist facts. Cached 4 s: the Devices pane polls every 2 s. Never throws. */
+export async function tailscaleSetup(deps: TailscaleDeps = setupDeps): Promise<TailscaleSetup> {
+  if (setupCache && setupCache.deps === deps && Date.now() - setupCache.at < 4000) return setupCache.v;
+  const cli = findCli(deps);
+  let v: TailscaleSetup;
+  if (!cli) v = { tailscaleInstalled: false, signedIn: false, magicDns: false, httpsCerts: false, iphone: 'none' };
+  else {
+    const r = await deps.run(cli, ['status', '--json']).catch(() => ({ code: 1, stdout: '', stderr: '' }));
+    v = { tailscaleInstalled: true, ...parseSetup(r.stdout) };
+  }
+  setupCache = { at: Date.now(), deps, v };
+  return v;
+}
+
 const oneLine = (s: string): string => s.trim().split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 200) ?? '';
 
 export interface ApplyResult {
@@ -98,7 +159,10 @@ export async function applyServe(on: boolean, port: number, deps: TailscaleDeps 
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) return { access: { on, state: 'error', detail: 'bad port' } };
   const r = await deps.run(s.cli, ['serve', '--bg', '--https=443', `http://127.0.0.1:${port}`]);
-  if (r.code !== 0) return { access: { on, state: 'error', detail: oneLine(r.stderr) || 'tailscale serve failed' }, host: s.host };
+  if (r.code !== 0) {
+    const approveUrl = extractApprovalUrl(r.stderr + '\n' + r.stdout);
+    return { access: { on, state: 'error', detail: oneLine(r.stderr) || 'tailscale serve failed', ...(approveUrl ? { approveUrl } : {}) }, host: s.host };
+  }
   return { access: { on: true, state: 'on', url }, host: s.host };
 }
 
