@@ -89,7 +89,7 @@ export function loadVapidKeys(file: string = VAPID_PATH()): VapidKeys {
 }
 
 /** Generic contact for the push services; never a person's address. */
-export const VAPID_SUBJECT = 'mailto:loom@localhost.invalid';
+export const VAPID_SUBJECT = 'https://localhost';
 
 /** `vapid t=<jwt>, k=<public key>` for one push service origin. */
 export function vapidAuthorization(endpoint: string, keys: VapidKeys, now: number = Date.now(), subject: string = VAPID_SUBJECT): string {
