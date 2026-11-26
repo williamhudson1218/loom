@@ -1,4 +1,4 @@
-// The Settings page: fifteen sections in the mock's frame C layout (a left nav and a
+// The Settings page: sixteen sections in the mock's frame C layout (a left nav and a
 // pane that opens each section with what it does, what it needs and a status pill).
 // Plain browser CSS/HTML/JS in strings, spliced verbatim by dashboard.ts like orchview.ts.
 // String.raw so nothing here needs double escaping; it must never contain a dollar-brace
@@ -13,6 +13,7 @@
 
 import { KEYMAP } from './keymap.ts';
 import { logoSvg } from './logo.ts';
+import { DEVICES_VIEW_CSS, DEVICES_VIEW_JS } from './devicesview.ts';
 
 // What the Help list needs of the keymap; the page resolves `setting` rows itself.
 const KEYMAP_JSON = JSON.stringify(KEYMAP.map((k) => ({ keys: k.keys, label: k.label, scope: k.scope, setting: k.setting ?? '' }))).split('<').join('');
@@ -94,7 +95,7 @@ export const SETTINGS_VIEW_CSS = String.raw`
   #settings-section .sxrec { display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 14px; border:1px solid var(--sx-sel-line); background:#1a2033; border-radius:9px; font-size:14px; letter-spacing:.04em; color:var(--sx-text); min-width:60px; justify-content:center; }
   #settings-section .sxrec.live { border-color:var(--sx-amber); color:var(--sx-amber); }
   #settings-section .sxempty { color:var(--sx-muted); font-size:12.5px; padding:10px 0; }
-`;
+` + DEVICES_VIEW_CSS;
 
 export const SETTINGS_VIEW_HTML = String.raw`
 <section id="settings-section">
@@ -119,6 +120,7 @@ var SX_SECS=[
  {id:'github',label:'GitHub',what:'Signs the GitHub CLI (gh) in, which Loom uses for pull request status, checks, reviews and Launch.',needs:'gh. Loom can install it with Homebrew, or get it from cli.github.com.'},
  {id:'shortcut',label:'Slack shortcut',what:'Jump to or start a chat for the Slack message under your pointer.',needs:'Slack desktop app and Accessibility. Needs Slack connected for names.'},
  {id:'outbox',label:'Outbox',what:'Controls how drafts from chats are reviewed, sent and followed up, and connects Gmail for email drafts.',needs:'Slack connected (Direct app) to send Slack drafts; Gmail connected, or an email CLI, to send email drafts; helpers installed to record drafts.'},
+ {id:'devices',label:'Devices',what:'Pairs your phone with Loom so you can see your chats, reply and send Outbox drafts from the Loom web app, with notifications.',needs:'Tailscale installed and signed in on this Mac and on the phone.'},
  {id:'ship',label:'Launch',what:'Lists the repos you launch from and the command the Launch button runs.',needs:'A git repo with a remote and gh logged in.'},
  {id:'orch',label:'Orchestrator',what:'Runs a supervising chat that summarises and manages your other chats.',needs:'Claude Code login. Optional Remote Control needs a supported account.'},
  {id:'watchers',label:'Watchers',what:'Watches a Slack channel, your live chats or pull requests, and starts a chat, messages one, notifies you or tells the orchestrator when a rule matches.',needs:'Slack source: Direct app. Pull requests: gh. Chats: nothing.'},
@@ -142,7 +144,7 @@ function sxLoad(name,force){if(!force&&SX.loaded[name])return;SX.loaded[name]=1;
 function sxLoadProjects(){fetch('/api/projects?all=1').then(function(r){return r.json();}).then(function(j){if(j.ok){ALLP=j.projects;sxRerender();}});}
 function sxLoadSettings(){return fetch('/api/settings').then(function(r){return r.json();}).then(function(d){if(d.ok){SET=d;sxRerender();}else{var el=$('#settings-body');if(el)el.innerHTML='<p class="meta">'+sxEsc(sxErr(d))+'</p>';}}).catch(function(){var el=$('#settings-body');if(el)el.innerHTML='<p class="meta">server off?</p>';});}
 function sxAx(){if(window.loomNative&&window.loomNative.axStatus){window.loomNative.axStatus().then(function(a){SX.ax=a;sxRerender();}).catch(function(){SX.ax={unavailable:true};});}else SX.ax={unavailable:true};}
-function sxPrefetch(){if(SX.pre)return;SX.pre=true;sxLoad('slack',true);sxLoad('plugin',true);sxLoad('ship',true);sxLoad('slackapp',true);if(!ALLP)sxLoadProjects();sxAx();}
+function sxPrefetch(){if(SX.pre)return;SX.pre=true;sxLoad('slack',true);sxLoad('plugin',true);sxLoad('ship',true);sxLoad('slackapp',true);devLoad();if(!ALLP)sxLoadProjects();sxAx();}
 function sxPut(o){return sxPost('/api/settings',o).then(function(j){if(j.ok){SET=Object.assign(SET,j);(j.changed||[]).forEach(function(k){var s=sxs(k);if(s&&s.restart)SX.restart[k]=1;});
   if(o.terminal!==undefined&&j.terminal)DATA.terminal={kind:j.terminal.effective,label:j.terminal.label};
   if(o.default_agent!==undefined){DATA.defaultAgent=o.default_agent;if(typeof syncDefaultAgent==='function')syncDefaultAgent();}
@@ -202,6 +204,7 @@ function sxStatus(id){var sl=SX.data.slack,mode=sxv('slack_mode'),pl=SX.data.plu
   if(id==='github'){var gv=cnGhView(CN.gh);if(gv.kind!=='checking')return gv.pill;var gc=(DATA.connections||[]).filter(function(c){return c.id==='github';})[0];return gc?[gc.state==='ok'?'ok':gc.state==='warn'?'warn':'off',gc.state==='ok'?'Connected':gc.state==='warn'?'Not signed in':'Not set up']:['off','Checking'];}
   if(id==='shortcut'){var hk=sxv('slack_goto_hotkey');return hk==='off'?['off','Off']:['ok',sxFmtAcc(hk)];}
   if(id==='outbox'){return mode==='direct'?['ok','On']:['off','Needs Slack (Direct app)'];}
+  if(id==='devices')return devStatus();
   if(id==='ship'){if(!sh||!sh.projects)return ['off','Checking'];var e=sh.projects.filter(function(p){return p.enabled;}).length;return e?['ok',e+(e===1?' repo':' repos')]:['off','No repos'];}
   if(id==='orch')return sxv('orchestrator_enabled')==='1'?['ok','Enabled']:['off','Off'];
   if(id==='watchers')return sxv('watchers_enabled')?['ok','On']:['off','Off'];
@@ -441,7 +444,7 @@ function sxHelp(){var hk=sxv('slack_goto_hotkey');
    '<div class="def" style="margin-top:12px">Loom data is kept in your Loom data folder; see Advanced.</div>';}
 
 /* ---- the page ---- */
-function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();if(id==='updates')return sxUpdates();if(id==='about')return sxAbout();return sxHelp();}
+function sxBody(id){if(id==='general')return sxGeneral();if(id==='projects')return sxProjects();if(id==='terminal')return sxTerminal();if(id==='agents')return sxAgents();if(id==='slack')return sxSlackSection();if(id==='github')return sxGithub();if(id==='shortcut')return sxShortcut();if(id==='outbox')return sxOutbox();if(id==='ship')return sxShip();if(id==='devices')return sxDevices();if(id==='orch')return sxOrch();if(id==='watchers')return sxWatchers();if(id==='helpers')return sxHelpers();if(id==='advanced')return sxAdvanced();if(id==='updates')return sxUpdates();if(id==='about')return sxAbout();return sxHelp();}
 // Settings > About. Copy diagnostics is Copy details with no error in it (src/errorview.ts).
 var SX_LOGO='__SX_LOGO__';
 function sxAbout(){var s=(typeof UPD!=='undefined'&&UPD&&UPD.state)||{};
@@ -450,6 +453,7 @@ function sxAbout(){var s=(typeof UPD!=='undefined'&&UPD&&UPD.state)||{};
 function renderSettings(){var el=$('#settings-body');
   if(!SET){el.innerHTML='<p class="meta">loading…</p>';sxLoadSettings();return;}
   sxPrefetch();
+  if(SX.sec==='devices')devEnter();
   if(SX.sec==='general')sxLoad('probe');if(SX.sec==='github'&&!SX.ghLoaded){SX.ghLoaded=1;cnGhLoad(sxRerender);}if(SX.sec==='outbox'&&!SX.gmLoaded){SX.gmLoaded=1;cnGmLoad(sxRerender);}if(SX.sec==='orch')sxLoad('prompt');if(SX.sec==='slack')sxLoad('dir');
   var old=$('#sxpane'),top=old?old.scrollTop:0;
   var sec=SX_SECS.filter(function(s){return s.id===SX.sec;})[0]||SX_SECS[0];SX.sec=sec.id;
@@ -505,6 +509,7 @@ function sxStartRec(){SX.rec=true;SX.recMsg='';SX.recH=function(ev){ev.preventDe
   window.addEventListener('keydown',SX.recH,true);}
 function sxPollPractice(){clearTimeout(SX.pollT);sxJ('/api/shortcut/practice').then(function(j){if(!j.ok)return;SX.practice=j.practice;sxRerender();if(j.practice&&j.practice.state==='armed'&&tab==='settings'&&SX.sec==='shortcut')SX.pollT=setTimeout(sxPollPractice,1500);});}
 function sxAct(a,arg,btn){
+  if(a.indexOf('dev_')===0){devAct(a,arg,btn);return;}
   if(a==='updcheck'||a==='updapply'){sxUpdatesAct(a,btn);return;}
   if(a==='prm'){sxConfirm({title:'Remove this project',body:'Loom stops listing its chats. Files and sessions are not touched.',ok:'Remove'}).then(function(y){if(y)sxPost('/api/projects/remove',{id:+arg}).then(function(){sxProjRefresh();});});return;}
   if(a==='phide'){var p=(ALLP||[]).filter(function(x){return x.id===+arg;})[0];if(p)sxPost('/api/projects/update',{id:p.id,hidden:!p.hidden}).then(function(){sxProjRefresh();});return;}
@@ -552,4 +557,4 @@ function sxAct(a,arg,btn){
    var txt2=JSON.stringify({settings:snap,chats:DATA.chats.length,projects:(ALLP||[]).length,slackMode:DATA.slackMode,codexVisible:!!DATA.codexVisible,archiveSearch:!!DATA.archiveSearch,helpers:SX.data.plugin?SX.data.plugin.status:null,page:location.origin},null,2);
    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt2).then(function(){toast('Support info copied');},function(){sxBad('Could not copy');});return;}
 }
-`.split('__SX_KEYMAP__').join(KEYMAP_JSON).split('__SX_LOGO__').join(logoSvg(40, 'sx'));
+`.split('__SX_KEYMAP__').join(KEYMAP_JSON).split('__SX_LOGO__').join(logoSvg(40, 'sx')) + DEVICES_VIEW_JS;

@@ -20,6 +20,9 @@ import { routes as updateRoutes } from './update.ts';
 import { routes as diagnosticsRoutes } from './diagnostics.ts';
 import { routes as actionsRoutes } from './actions.ts';
 import { routes as groupsRoutes } from './groups.ts';
+import { routes as devicesRoutes } from './devices.ts';
+import { MOBILE_ROUTES, tailnetHostNow } from '../mobile/api.ts';
+import { deviceCookie, deviceStore, type Device } from '../mobile/devices.ts';
 
 // ---- The route table and the one write guard (§13) --------------------------
 //
@@ -43,9 +46,18 @@ import { routes as groupsRoutes } from './groups.ts';
 //   orch     The orchestrator's MCP process: its own 0600 token, unchanged.
 //   read     A module GET with nothing to guard beyond the Host check every
 //            request gets. Never use it for a route that changes state.
+//   device   The phone (/m/api/*, src/mobile/api.ts): a paired device's
+//            `loom_device` cookie, and on a write an Origin equal to the request's
+//            own origin. Lives in MOBILE_ROUTES, never in ROUTES.
+//   device-open  The two pairing calls a phone makes before it has a cookie.
+//            Writes still need the same-origin Origin.
+//
+// The phone's door (§ mobile): a request whose Host is the Mac's tailnet name
+// (tailscale serve) may reach /m/ and nothing else, so the tokenless read routes
+// stay localhost-only. /m/ is also served on Loom's own Host, same rules.
 
 export type WriteKind = 'browser' | 'cli' | 'browser+cli' | 'orch';
-export type RouteKind = WriteKind | 'read';
+export type RouteKind = WriteKind | 'read' | 'device' | 'device-open';
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 export interface RouteCtx {
@@ -162,6 +174,7 @@ export const MODULE_ROUTES: RouteDef[] = [
   ...diagnosticsRoutes,
   ...actionsRoutes,
   ...groupsRoutes,
+  ...devicesRoutes,
 ];
 
 export const ROUTES: RouteDef[] = [...CORE_ROUTES, ...MODULE_ROUTES];
@@ -202,6 +215,46 @@ export function ownOrigin(req: http.IncomingMessage): boolean {
 
 export type Verdict = { ok: true } | { ok: false; status: number; reason: string };
 
+// ---- The phone's door ----------------------------------------------------------
+
+// The Mac's tailnet name while Phone access is on (src/mobile/api.ts sets it), else null.
+let tailnetHostFn: () => string | null = () => tailnetHostNow();
+export function setTailnetHostSource(fn: () => string | null): void {
+  tailnetHostFn = fn;
+}
+
+/** The request arrived through tailscale serve: its Host is exactly the Mac's tailnet name. */
+export function tailnetHost(req: http.IncomingMessage): string | null {
+  const want = tailnetHostFn();
+  const host = (req.headers.host ?? '').toLowerCase();
+  if (!want || !host) return null;
+  return host === want || host === `${want}:443` ? want : null;
+}
+
+export const isMobilePath = (p: string): boolean => p === '/m' || p.startsWith('/m/');
+
+/** A phone write's Origin: the request's own origin, https on the tailnet, Loom's own locally. */
+export function mobileOriginOk(req: http.IncomingMessage): boolean {
+  const t = tailnetHost(req);
+  if (t) return req.headers.origin === `https://${t}`;
+  return ownHost(req) && ownOrigin(req);
+}
+
+/** The paired device this request's cookie names, or null. */
+export function requestDevice(req: http.IncomingMessage): Device | null {
+  return deviceStore().verify(deviceCookie(req.headers.cookie));
+}
+
+/** The /m/ guard: device-open needs only the Origin on a write; device needs the cookie too. */
+export function requireDevice(req: http.IncomingMessage, kind: RouteKind): Verdict {
+  if (!ownHost(req) && !tailnetHost(req)) return { ok: false, status: 403, reason: 'bad host' };
+  if (kind !== 'device' && kind !== 'device-open') return { ok: false, status: 403, reason: 'unknown route kind' };
+  const method = (req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD' && !mobileOriginOk(req)) return { ok: false, status: 403, reason: 'bad origin' };
+  if (kind === 'device' && !requestDevice(req)) return { ok: false, status: 401, reason: 'not paired' };
+  return { ok: true };
+}
+
 const header = (req: http.IncomingMessage, name: string): string => {
   const v = req.headers[name];
   return Array.isArray(v) ? v[0] ?? '' : v ?? '';
@@ -238,7 +291,7 @@ export function requireWrite(req: http.IncomingMessage, kind: RouteKind): Verdic
   return { ok: false, status: 403, reason: 'unknown route kind' };
 }
 
-export type GateResult = { ok: true; route?: RouteDef } | { ok: false; status: number; detail: string };
+export type GateResult = { ok: true; route?: RouteDef; mobile?: boolean } | { ok: false; status: number; detail: string };
 
 /**
  * What every request passes before any handler. Every request must carry Loom's
@@ -246,9 +299,14 @@ export type GateResult = { ok: true; route?: RouteDef } | { ok: false; status: n
  * guard. Anything else that is not a GET is refused, and so is a GET on a path
  * that only exists as a write (`/save?...` from an <img> tag, say).
  */
-export function gate(req: http.IncomingMessage, url: URL, routes: RouteDef[] = ROUTES): GateResult {
-  if (!ownHost(req)) return { ok: false, status: 403, detail: 'bad host' };
+export function gate(req: http.IncomingMessage, url: URL, routes: RouteDef[] = ROUTES, mobileRoutes: RouteDef[] = MOBILE_ROUTES): GateResult {
+  const local = ownHost(req);
+  const tail = !local && !!tailnetHost(req);
+  if (!local && !tail) return { ok: false, status: 403, detail: 'bad host' };
   const method = (req.method || 'GET').toUpperCase();
+  if (isMobilePath(url.pathname)) return gateMobile(req, url, method, mobileRoutes);
+  // The tailnet name reaches /m/ and nothing else: not the board, not the read routes.
+  if (tail) return { ok: false, status: 403, detail: 'bad host' };
   const route = routes.find((r) => r.path === url.pathname && r.method === method);
   if (route) {
     const v = requireWrite(req, route.kind);
@@ -260,6 +318,22 @@ export function gate(req: http.IncomingMessage, url: URL, routes: RouteDef[] = R
     return { ok: true };
   }
   return { ok: false, status: 405, detail: 'method not allowed' };
+}
+
+/** /m/: static files are GET only; /m/api/* rows pass requireDevice; an unknown /m/api path is the handler's 404. */
+function gateMobile(req: http.IncomingMessage, url: URL, method: string, mobileRoutes: RouteDef[]): GateResult {
+  const route = mobileRoutes.find((r) => r.path === url.pathname && r.method === method);
+  if (route) {
+    const v = requireDevice(req, route.kind);
+    return v.ok ? { ok: true, route, mobile: true } : { ok: false, status: v.status, detail: v.reason };
+  }
+  if (mobileRoutes.some((r) => r.path === url.pathname)) return { ok: false, status: 405, detail: 'method not allowed' };
+  if (method !== 'GET' && method !== 'HEAD') {
+    // A write to an unknown /m/api path is refused before anything; still check Origin first so a probe learns nothing.
+    if (!mobileOriginOk(req)) return { ok: false, status: 403, detail: 'bad origin' };
+    return { ok: false, status: 405, detail: 'method not allowed' };
+  }
+  return { ok: true, mobile: true };
 }
 
 /** Run a module route's handler with a small context. */

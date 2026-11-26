@@ -40,7 +40,7 @@ import { discardDraft, setSeen, LEGACY_OUTBOX_PATH, setLegacyWriteBack, legacySt
 import { learnFromEdit } from './voicelearn.ts';
 import { startEventIngest } from './events.ts';
 import { allTestLinks } from './testlinks.ts';
-import { handleCliPath, setCliDeps, tickPendingLinks } from './routes/cli.ts';
+import { handleCliPath, setChatEventListener, setCliDeps, tickPendingLinks } from './routes/cli.ts';
 import { firstPaint } from './routes/wizard.ts';
 import { connectionsSafe } from './connections.ts';
 import { slackFeatureOn, slackMode, slackOffDetail, SLACK_OFF } from './slackmode.ts';
@@ -89,6 +89,9 @@ import { clientFetchJs } from './clientfetch.ts';
 import { codexVisible, currentTerminal, insideFocusState, terminalLabel } from './terminal.ts';
 import { autoResumeParked, settingsGet, settingsPut } from './settings.ts';
 import { orchSettings } from './orchestrator.ts';
+import { reapplyPhoneAccess, serveMobileStatic, setMobileDeps, setMobileHeaders, type MobileChat } from './mobile/api.ts';
+import { deviceStore } from './mobile/devices.ts';
+import { DraftWatch, chatEventPush, pushSoon, watcherPush } from './mobile/push-triggers.ts';
 import { provisionalViews, spawnTitles } from './liveindex.ts';
 import { isOrchestratorRef } from './orchsession.ts';
 import { isStandingChat, splitStanding, standingRefs, type StandingRef } from './standingchats.ts';
@@ -521,6 +524,70 @@ function pendingDrafts(): ReturnType<typeof pendingDraftsRaw> {
     const x = sch ? { ...x1, scheduled: sch } : x1;
     return s ? { ...x, send_state: s.state, send_note: s.note ?? '' } : x;
   });
+}
+
+/**
+ * The outbox card's Send (POST /api/outbox/send), callable: the phone's confirm
+ * sheet (src/mobile/api.ts) runs exactly this. Send posts as the user, so it only ever
+ * fires from a confirm, and posts exactly the messages in the body (which the
+ * confirm displayed). LOOM_SLACK_DRYRUN=1 or `dry: true` renders with the CLI's
+ * preview instead and leaves the draft pending.
+ */
+export async function outboxSendAction(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
+  const id = typeof body.id === 'string' ? body.id : '';
+  if (!id) return { status: 400, body: { ok: false, detail: 'id is required' } };
+  const dryAsked = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
+  // Posting needs the Web API (direct mode). A dry run touches nothing, so it is always allowed.
+  // A review-only draft with no reactions never touches Slack, so it does not need it.
+  const pending = readOutbox()[id];
+  const slackFree = (!!pending?.review || !!pending?.email) && !pending.messages?.length && !pending.reactions?.length;
+  if (!dryAsked && !slackFree && !slackFeatureOn('send')) return { status: 409, body: { ok: false, error: SLACK_OFF, detail: slackOffDetail() } };
+  // The chat is posting this draft itself right now: a second post would duplicate it.
+  if (!dryAsked && chatIsSending(id)) return { status: 409, body: { ok: false, detail: 'the chat is posting this draft now' } };
+  const messages = Array.isArray(body.messages) && body.messages.every((m) => typeof m === 'string') ? (body.messages as string[]) : null;
+  if (!messages) return { status: 400, body: { ok: false, detail: 'messages must be an array of strings' } };
+  if (body.after !== undefined && body.after !== 'none' && body.after !== 'park' && body.after !== 'close') {
+    return { status: 400, body: { ok: false, detail: "after must be 'none', 'park' or 'close'" } };
+  }
+  // `park: true` is the old spelling of after: 'park'.
+  const after: AfterSend = (body.after as AfterSend | undefined) ?? (body.park === true ? 'park' : 'none');
+  const dry = dryAsked;
+  const ackStale = body.ack_stale === true;
+  // ack_fresh: true (sent anyway past any warning) or the ids of the new messages the card showed.
+  const ackFresh: boolean | string[] = body.ack_fresh === true ? true : Array.isArray(body.ack_fresh) && body.ack_fresh.every((x) => typeof x === 'string') ? (body.ack_fresh as string[]).slice(0, 500) : false;
+  // A send that was refused for freshness refreshes the card's passive check too.
+  const done = <T extends { ok: boolean; stale_thread?: unknown; fresh_error?: unknown }>(r: T): T => {
+    if (!r.ok && (r.stale_thread || r.fresh_error)) clearFreshCache(id);
+    return r;
+  };
+  const out = (r: { ok: boolean }) => ({ status: r.ok ? 200 : 409, body: r as unknown as Record<string, unknown> });
+  if (after !== 'none' && !dry) {
+    const db = openDb();
+    try {
+      return out(await sendThen(db, after, id, messages, {
+        readDraft: (x) => readOutbox()[x],
+        send: (x, m) => sendDraft(x, m, sendOpts(false, ackStale, ackFresh)).then(done),
+        closePane: closeChatPane,
+        names: slackNames(),
+      }));
+    } finally {
+      db.close();
+    }
+  }
+  return out(done(await sendDraft(id, messages, sendOpts(dry, ackStale, ackFresh))));
+}
+
+/** The outbox card's Discard (POST /api/outbox/discard), callable. */
+export async function outboxDiscardAction(id: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!id) return { status: 400, body: { ok: false, detail: 'id is required' } };
+  const r = await discardDraft(id);
+  return { status: r.ok ? 200 : 409, body: r as unknown as Record<string, unknown> };
+}
+
+/** The outbox card's Redraft (POST /api/outbox/redraft), callable. */
+export async function outboxRedraftAction(id: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const r = await startRedraft(id);
+  return { status: r.ok ? 200 : (r.code ?? 409), body: { ok: r.ok, detail: r.detail, ...(r.how ? { how: r.how } : {}) } };
 }
 
 /**
@@ -973,7 +1040,10 @@ function watcherAttentionTick(): void {
       }
       const { entered, next } = enteringNeeds(watcherNeedSeen, watcherNeeds(db, views, (k) => !!live[k]));
       watcherNeedSeen = next;
-      for (const n of entered) notifyUser({ title: 'Watcher needs you', body: needText(n), target: { watcher: n.id } });
+      for (const n of entered) {
+        notifyUser({ title: 'Watcher needs you', body: needText(n), target: { watcher: n.id } });
+        pushSoon(watcherPush(n.id, needText(n)));
+      }
     } finally {
       db.close();
     }
@@ -1506,6 +1576,84 @@ export function loomWriteHeaders(port: number = serverPort()): Record<string, st
   return { origin: `http://127.0.0.1:${port}`, 'x-loom-token': termToken() };
 }
 
+/** The phone's Sessions list: live board chats, standing watcher chats and the orchestrator left out. */
+function mobileChats(): MobileChat[] {
+  const { views, live } = snapshot();
+  const { board } = boardSplit(views, live);
+  let orchSid = '';
+  try {
+    const db = openDb();
+    try {
+      orchSid = orchSettings.sessionId(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* no DB: nothing to leave out */
+  }
+  const out: MobileChat[] = [];
+  for (const v of board) {
+    const L = live[agentSessionKey(v.agent, v.session_id)];
+    if (!L || v.done || (orchSid && v.session_id === orchSid)) continue;
+    out.push({
+      agent: v.agent, session_id: v.session_id, title: v.title || v.first_message, project: v.project,
+      state: v.summary_pending ? 'pending' : v.state || 'done', jsonl_path: v.jsonl_path,
+      last_active_at: v.last_active_at, last_turn_at: v.last_turn_at, live: L,
+    });
+  }
+  return out;
+}
+
+/** The phone's view of a hook event's chat, for a push's title and body. */
+function mobileChatInfo(sid: string): { key: string; topic: string; name: string; line: string } | null {
+  const c = mobileChats().find((x) => x.session_id === sid);
+  if (!c) return null;
+  return { key: agentSessionKey(c.agent, c.session_id), topic: c.title, name: c.live.name ?? '', line: lastMessageTail(c as unknown as ChatView, 120) };
+}
+
+function wireMobile(): void {
+  // "Allow <name>?" on the Mac when a phone asks to pair. Never from a test run.
+  if (!process.env.VITEST) {
+    deviceStore().onRequest = (p) => notifyUser({ title: `Allow ${p.name}?`, body: 'A phone asked to pair with Loom. Allow or deny it in Settings › Devices.' });
+  }
+  setMobileDeps({
+    chats: mobileChats,
+    tail: (c) => lastMessageTail(c as unknown as ChatView),
+    tmux: (args) => tmux(args),
+    send: (paneId, text, agent) => sendToPane(paneId, text, agent),
+    drafts: () => pendingDrafts(),
+    fresh: async (d) => {
+      const deps = freshDeps();
+      if (!slackFeatureOn('send')) Object.assign(deps, { slackMe: undefined });
+      return (await cachedFresh(d.id, d, deps)).items;
+    },
+    outboxSend: outboxSendAction,
+    outboxDiscard: outboxDiscardAction,
+    outboxRedraft: outboxRedraftAction,
+    port: () => serverPort(),
+  });
+  setChatEventListener((ev, background) => {
+    // No phone listening: skip the tmux and DB reads the suppression rules need.
+    if (!deviceStore().devices().some((d) => d.push)) return;
+    pushSoon(chatEventPush(ev, background(), {
+      chat: mobileChatInfo,
+      minTurnS: () => {
+        try {
+          const db = openDb();
+          try {
+            return getSetting(db, 'sound_min_turn_s') as number;
+          } finally {
+            db.close();
+          }
+        } catch {
+          return 0;
+        }
+      },
+      now: () => Date.now(),
+    }));
+  });
+}
+
 export function createServer(): http.Server {
   try {
     const db = openDb();
@@ -1528,6 +1676,7 @@ export function createServer(): http.Server {
     if (c.key === 'find_chat_bin') syncFindChat();
     if (c.key === 'setup_origin') syncSetupOrigin();
   });
+  wireMobile();
   setCliDeps({
     chats: () => snapshot().views.filter((v) => v.agent === 'claude').map((v) => ({ session_id: v.session_id, title: v.title, jsonl_path: v.jsonl_path, project_dir: v.project_dir })),
     live: () => Object.values(snapshot().live).map((l) => ({ session_id: l.session_id, pane_id: l.pane_id, cwd: l.cwd })),
@@ -1549,6 +1698,12 @@ export function createServer(): http.Server {
     if (!g.ok) {
       req.resume(); // drain an unread body so a kept-alive socket stays usable
       return json(res, g.status, { ok: false, detail: g.detail });
+    }
+    // The phone's surface (src/mobile/api.ts): the gate has judged it with requireDevice.
+    if (g.mobile) {
+      setMobileHeaders(res);
+      if (g.route?.handler) return runRoute(g.route, req, res, url);
+      return serveMobileStatic(req, res, url);
     }
     if (g.route?.handler) return runRoute(g.route, req, res, url);
     // /api/cli/outbox/<id> and any unknown /api/cli/ path: cli-guarded (src/routes/cli.ts).
@@ -1878,55 +2033,14 @@ export function createServer(): http.Server {
       let raw = '';
       req.on('data', (chunk: Buffer) => { raw += chunk; });
       req.on('end', () => {
-        let body: { id?: unknown; messages?: unknown; dry?: unknown; park?: unknown; after?: unknown; ack_stale?: unknown; ack_fresh?: unknown };
+        let body: Record<string, unknown>;
         try {
           body = JSON.parse(raw) ?? {};
         } catch {
           return json(res, 400, { ok: false, detail: 'invalid body' });
         }
-        const id = typeof body.id === 'string' ? body.id : '';
-        if (!id) return json(res, 400, { ok: false, detail: 'id is required' });
-        if (url.pathname === '/api/outbox/discard') {
-          discardDraft(id).then((r) => json(res, r.ok ? 200 : 409, r));
-          return;
-        }
-        const dryAsked = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
-        // Posting needs the Web API (direct mode). A dry run touches nothing, so it is always allowed.
-        // A review-only draft with no reactions never touches Slack, so it does not need it.
-        const pending = readOutbox()[id];
-        const slackFree = (!!pending?.review || !!pending?.email) && !pending.messages?.length && !pending.reactions?.length;
-        if (!dryAsked && !slackFree && !slackFeatureOn('send')) return json(res, 409, { ok: false, error: SLACK_OFF, detail: slackOffDetail() });
-        // The chat is posting this draft itself right now: a second post would duplicate it.
-        if (!dryAsked && chatIsSending(id)) return json(res, 409, { ok: false, detail: 'the chat is posting this draft now' });
-        const messages = Array.isArray(body.messages) && body.messages.every((m) => typeof m === 'string') ? (body.messages as string[]) : null;
-        if (!messages) return json(res, 400, { ok: false, detail: 'messages must be an array of strings' });
-        if (body.after !== undefined && body.after !== 'none' && body.after !== 'park' && body.after !== 'close') {
-          return json(res, 400, { ok: false, detail: "after must be 'none', 'park' or 'close'" });
-        }
-        // `park: true` is the old spelling of after: 'park'.
-        const after: AfterSend = (body.after as AfterSend | undefined) ?? (body.park === true ? 'park' : 'none');
-        const dry = body.dry === true || process.env.LOOM_SLACK_DRYRUN === '1';
-        const ackStale = body.ack_stale === true;
-        // ack_fresh: true (sent anyway past any warning) or the ids of the new messages the card showed.
-        const ackFresh: boolean | string[] = body.ack_fresh === true ? true : Array.isArray(body.ack_fresh) && body.ack_fresh.every((x) => typeof x === 'string') ? (body.ack_fresh as string[]).slice(0, 500) : false;
-        // A send that was refused for freshness refreshes the card's passive check too.
-        const done = <T extends { ok: boolean; stale_thread?: unknown; fresh_error?: unknown }>(r: T): T => {
-          if (!r.ok && (r.stale_thread || r.fresh_error)) clearFreshCache(id);
-          return r;
-        };
-        if (after !== 'none' && !dry) {
-          const db = openDb();
-          sendThen(db, after, id, messages, {
-            readDraft: (x) => readOutbox()[x],
-            send: (x, m) => sendDraft(x, m, sendOpts(false, ackStale, ackFresh)).then(done),
-            closePane: closeChatPane,
-            names: slackNames(),
-          })
-            .then((r) => json(res, r.ok ? 200 : 409, r))
-            .finally(() => db.close());
-          return;
-        }
-        sendDraft(id, messages, sendOpts(dry, ackStale, ackFresh)).then(done).then((r) => json(res, r.ok ? 200 : 409, r));
+        const run = url.pathname === '/api/outbox/discard' ? outboxDiscardAction(typeof body.id === 'string' ? body.id : '') : outboxSendAction(body);
+        run.then((r) => json(res, r.status, r.body)).catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });
       return;
     }
@@ -1934,8 +2048,7 @@ export function createServer(): http.Server {
     // Redraft: tell the chat that owns a draft the thread moved on, and hold Send until it answers.
     if (url.pathname === '/api/outbox/redraft' && req.method === 'POST') {
       return readBody(req, res, (b) => {
-        const id = typeof b.id === 'string' ? b.id : '';
-        startRedraft(id).then((r) => json(res, r.ok ? 200 : (r.code ?? 409), { ok: r.ok, detail: r.detail, ...(r.how ? { how: r.how } : {}) }));
+        outboxRedraftAction(typeof b.id === 'string' ? b.id : '').then((r) => json(res, r.status, r.body));
       });
     }
 
@@ -2655,6 +2768,18 @@ export function startGhTicks(): void {
   setInterval(() => void fillSeenTick().catch((e) => console.error('[loom] outbox seen:', (e as Error).message)), 3000).unref?.();
   // plugin-state.json follows the settings its hooks gate on (src/pluginmgr.ts).
   startPluginStateSync(() => openDb());
+  // Phone access: re-apply tailscale serve for this run's port, and push new outbox drafts.
+  void reapplyPhoneAccess().catch((e) => console.error('[loom] phone access:', (e as Error).message));
+  const draftWatch = new DraftWatch();
+  setInterval(() => {
+    try {
+      let names: Map<string, string> | null = null;
+      const nameOf = (d: { id: string }) => (names ??= new Map(mobileChats().map((c) => [c.session_id, c.live.name ?? '']))).get((d as Draft).session_id) ?? '';
+      for (const ev of draftWatch.next(pendingDraftsRaw(), nameOf)) pushSoon(ev);
+    } catch (e) {
+      console.error('[loom] draft push:', (e as Error).message);
+    }
+  }, 3_000).unref?.();
 
 }
 

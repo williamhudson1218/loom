@@ -587,6 +587,13 @@ export function setSoundDeps(over: SoundDeps | null): void {
   soundCoordinator = over ? new SoundCoordinator(over) : null;
 }
 
+/** The same hook events, for the phone's pushes (src/mobile/push-triggers.ts). `background` costs a tmux call, so it is lazy. */
+type ChatEventListener = (ev: SoundEvent, background: () => boolean) => void;
+let chatEventListener: ChatEventListener | null = null;
+export function setChatEventListener(fn: ChatEventListener | null): void {
+  chatEventListener = fn;
+}
+
 async function postSoundEvent(ctx: RouteCtx): Promise<void> {
   const b = await ctx.body();
   const kind = b?.event === 'done' ? 'done' : b?.event === 'blocked' ? 'blocked' : null;
@@ -598,6 +605,11 @@ async function postSoundEvent(ctx: RouteCtx): Promise<void> {
   const started = typeof b?.turn_started_at === 'number' && Number.isFinite(b.turn_started_at) && b.turn_started_at > 0 ? b.turn_started_at : undefined;
   const ev: SoundEvent = { kind, session_id: session, pane, ...(started ? { turn_started_at: started } : {}) };
   soundCoordinator ??= new SoundCoordinator(defaultSoundDeps());
+  try {
+    chatEventListener?.(ev, () => defaultSoundDeps().isBackground(ev));
+  } catch {
+    /* a push is a nicety; the sound still decides */
+  }
   const d = await soundCoordinator.submit(ev);
   ctx.json(200, { ok: true, play: d.play, reason: d.reason });
 }
