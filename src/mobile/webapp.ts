@@ -445,6 +445,8 @@ function detailScreen(r) {
     clear(msgsEl);
     lastTool = '';
     for (var i = msgs.length - 1; i >= 0 && msgs[i].role !== 'user'; i--) if (msgs[i].role === 'tool') { lastTool = msgs[i].text; break; }
+    // Already the transcript's last line: the live row doesn't repeat it.
+    if (msgs.length && msgs[msgs.length - 1].role === 'tool') lastTool = '';
     msgs.forEach(function (m) {
       if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
       else if (m.role === 'thinking') msgsEl.appendChild(thinkingRow(m.text));
