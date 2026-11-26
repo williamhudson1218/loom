@@ -121,6 +121,9 @@ button.attachbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; d
 .kind { flex: none; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 3px 7px; border-radius: 6px; background: var(--surface2); color: var(--text2); }
 .where { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctx { font-size: 13px; color: var(--muted); }
+.ctx .openlnk { margin-left: 8px; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.lnk { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+.m-asst .lnk, .dtext .lnk { color: var(--accent); }
 .warnband { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.4; padding: 8px 10px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); }
 .dtext { font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .dtext + .dtext { padding-top: 8px; border-top: 1px dashed var(--border); }

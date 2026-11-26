@@ -276,6 +276,16 @@ export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): 
 
 /* ------------------------------------------------------------------ outbox */
 
+/** Where a draft's conversation lives, for the phone's Open link: the Slack thread, the PR, or
+ *  the channel (slack.com/app_redirect opens it in the Slack app). Email drafts have none. */
+export function draftUrl(d: Draft): string | undefined {
+  if (d.review && !d.messages?.length) return /^[\w.-]+\/[\w.-]+$/.test(d.review.repo) && Number.isInteger(Number(d.review.pr)) ? `https://github.com/${d.review.repo}/pull/${d.review.pr}` : undefined;
+  if (d.kind === 'email' || d.email) return undefined;
+  if (d.thread_url && /^https:\/\/[\w-]+\.slack\.com\//.test(d.thread_url)) return d.thread_url;
+  if (d.channel && /^[CDG][A-Z0-9]+$/.test(d.channel)) return `https://slack.com/app_redirect?channel=${d.channel}`;
+  return undefined;
+}
+
 export function draftKind(d: Draft): 'thread' | 'dm' | 'channel' | 'email' | 'review' {
   if (d.review && !d.messages?.length) return 'review';
   if (d.kind === 'email' || d.email) return 'email';
@@ -317,6 +327,7 @@ export async function outboxPayload(drafts: Draft[], chats: MobileChat[], freshF
         where,
         ctx,
         from: names.get(d.session_id) ?? '',
+        url: draftUrl(d),
         created_at: d.created_at,
         messages: draftMessages(d),
         stale,

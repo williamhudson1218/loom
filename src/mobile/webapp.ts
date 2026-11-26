@@ -18,6 +18,22 @@ function append(el, kids) {
     else el.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
   });
 }
+// Plain text with its http(s) links made tappable. Slack's <url|label> markup shows the label.
+// Links open outside the app: a slack.com or github.com link opens the Slack or GitHub app
+// when it's installed (iOS universal links), Safari otherwise.
+var URL_RE = /<(https?:\/\/[^|>\s]+)\|([^>]+)>|<(https?:\/\/[^>\s]+)>|(https?:\/\/[^\s<>"]+[^\s<>".,;:!?)\]'])/g;
+function linked(text) {
+  var f = document.createDocumentFragment(), s = String(text == null ? '' : text), i = 0, m;
+  URL_RE.lastIndex = 0;
+  while ((m = URL_RE.exec(s))) {
+    if (m.index > i) f.appendChild(document.createTextNode(s.slice(i, m.index)));
+    var url = m[1] || m[3] || m[4], label = m[2] || url;
+    f.appendChild(h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', class: 'lnk', text: label }));
+    i = m.index + m[0].length;
+  }
+  if (i < s.length) f.appendChild(document.createTextNode(s.slice(i)));
+  return f;
+}
 function h(tag, props) {
   var el = document.createElement(tag);
   if (props) {
@@ -407,9 +423,9 @@ function detailScreen(r) {
     var first = !msgsEl.firstChild, keep = scroller.scrollTop;
     clear(msgsEl);
     msgs.forEach(function (m) {
-      if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user', text: m.text }));
+      if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
       else if (m.role === 'tool') msgsEl.appendChild(h('div', { class: 'm-tool' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: m.text })));
-      else msgsEl.appendChild(h('div', { class: 'm-asst', text: m.text }));
+      else msgsEl.appendChild(h('div', { class: 'm-asst' }, linked(m.text)));
     });
     if (!msgs.length) msgsEl.appendChild(h('div', { class: 'empty', text: 'No messages yet.' }));
     scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
@@ -503,11 +519,12 @@ function outboxScreen() {
         t.addEventListener('input', function () { var a = msgsOf(d).slice(); a[i] = t.value; OB.edits[d.id] = a; });
         return h('label', { class: 'edit' }, msgs.length > 1 ? 'Message ' + (i + 1) + ' of ' + msgs.length : 'Edit before sending', t);
       });
-    } else body = msgs.map(function (m) { return h('p', { class: 'dtext', text: m }); });
+    } else body = msgs.map(function (m) { return h('p', { class: 'dtext' }, linked(m)); });
     var stale = d.stale ? h('div', { class: 'warnband' }, icon('warn'), h('span', { text: d.stale_note || 'There is new activity since this was drafted.' })) : null;
     return h('article', { class: 'draft' },
       h('div', { class: 'top' }, h('div', { class: 'l' }, h('span', { class: 'kind', text: KIND[d.kind] || d.kind || 'Draft' }), h('span', { class: 'where', text: d.where || '' })), h('span', { class: 'sage', text: ago(d.created_at) })),
-      h('div', { class: 'ctx' }, (d.ctx || '') + (d.from ? ' · from ' : ''), d.from ? h('span', { class: 'mono', text: d.from }) : null),
+      h('div', { class: 'ctx' }, (d.ctx || '') + (d.from ? ' · from ' : ''), d.from ? h('span', { class: 'mono', text: d.from }) : null,
+        d.url ? h('a', { class: 'openlnk', href: d.url, target: '_blank', rel: 'noopener noreferrer', text: d.kind === 'review' ? 'Open PR' : 'Open in Slack' }) : null),
       stale, body,
       h('div', { class: 'actions' },
         h('button', { class: 'btn ghost', text: 'Discard', on: { click: function () { discard(d); } } }),

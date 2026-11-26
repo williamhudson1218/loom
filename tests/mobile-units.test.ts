@@ -7,7 +7,7 @@ import { CODE_ALPHABET, CODE_TTL_MS, DeviceStore, PENDING_TTL_MS, cleanName, dev
 import { encryptPayload, generateVapidKeys, loadVapidKeys, sendPush, validSubscription, vapidAuthorization } from '../src/mobile/webpush.ts';
 import { applyServe, clearLeftoverServe, serveIsLoomOnly, tailscaleStatus, type TailscaleDeps } from '../src/mobile/tailscale.ts';
 import { DraftWatch, PushDispatcher, chatEventPush, inPushQuiet, parseHidIdle, type PushDeps } from '../src/mobile/push-triggers.ts';
-import { draftKind, groupOf, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
+import { draftKind, draftUrl, groupOf, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
 import type { Device } from '../src/mobile/devices.ts';
 import type { Draft } from '../src/outbox.ts';
 
@@ -388,5 +388,18 @@ describe('outboxPayload order', () => {
     const d = (id: string, created_at: string) => ({ id, session_id: 's', channel: 'C1', messages: ['x'], status: 'pending', created_at }) as Draft;
     const out = await outboxPayload([d('a', '2026-11-26T09:00:00'), d('c', '2026-11-26T11:00:00'), d('b', '2026-11-26T10:00:00')], []);
     expect(out.drafts.map((x) => x.id)).toEqual(['c', 'b', 'a']);
+  });
+});
+
+describe('draftUrl', () => {
+  const base = { id: 'd', session_id: 's', channel: 'C1ABC', messages: ['x'], status: 'pending', created_at: '' } as Draft;
+  it('links the thread, else the channel, else the PR', () => {
+    expect(draftUrl({ ...base, thread_url: 'https://example.slack.com/archives/C1ABC/p1700000000000100' })).toBe('https://example.slack.com/archives/C1ABC/p1700000000000100');
+    expect(draftUrl(base)).toBe('https://slack.com/app_redirect?channel=C1ABC');
+    expect(draftUrl({ ...base, channel: '', messages: [], review: { repo: 'acme/app', pr: 12 } } as unknown as Draft)).toBe('https://github.com/acme/app/pull/12');
+  });
+  it('gives nothing for email or an odd url', () => {
+    expect(draftUrl({ ...base, kind: 'email', channel: '' })).toBeUndefined();
+    expect(draftUrl({ ...base, channel: '', thread_url: 'javascript:alert(1)' })).toBeUndefined();
   });
 });
