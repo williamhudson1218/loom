@@ -19,7 +19,7 @@ import { mobileFile } from './web.ts';
 // Host, the same-origin Origin on writes, and (kind `device`) the device cookie
 // before any handler here runs. What a phone may do is deliberately narrow:
 // read sessions/transcripts/outbox, type a line into a live Claude pane, send Esc
-// to one, act on outbox drafts through the desktop's own send/discard/redraft, and
+// to one, close a live Claude or Codex chat the way the desktop's Close does, act on outbox drafts through the desktop's own send/discard/redraft, and
 // manage its own notifications and pairing. No raw keys, no terminal, no settings.
 
 /* ------------------------------------------------------------------ deps */
@@ -62,6 +62,8 @@ export interface MobileDeps {
   tmux(args: string[]): string;
   /** Type a line into a pane and submit it (src/goto.ts sendToPane). */
   send(paneId: string, text: string, agent: Agent): { ok: boolean; detail: string };
+  /** End the agent in a pane, the desktop's Close (src/goto.ts closeSession). */
+  close(paneId: string, agent: Agent): { ok: boolean; detail: string };
   drafts(): Draft[];
   fresh?(d: Draft): Promise<FreshItem[]>;
   outboxSend(body: Record<string, unknown>): Promise<OutboxResult>;
@@ -84,6 +86,7 @@ let deps: MobileDeps = {
   tail: () => '',
   tmux: unwired,
   send: () => ({ ok: false, detail: 'not wired' }),
+  close: () => ({ ok: false, detail: 'not wired' }),
   drafts: () => [],
   outboxSend: async () => ({ status: 503, body: { ok: false, detail: 'not wired' } }),
   outboxDiscard: async () => ({ status: 503, body: { ok: false, detail: 'not wired' } }),
@@ -273,6 +276,8 @@ export function sessionsPayload(
 
 /** Claude Code shows in tmux as its version string (2.1.233) or `claude`. */
 export const isClaudeCommand = (cmd: string): boolean => /^\d+\.\d+\.\d+$/.test(cmd.trim()) || cmd.trim() === 'claude';
+/** The pane is running the chat's own agent right now. Codex shows as `codex` (native install) or `node` (the npm launcher). */
+export const isAgentCommand = (agent: Agent, cmd: string): boolean => (agent === 'codex' ? /^(codex|node)$/.test(cmd.trim()) : isClaudeCommand(cmd));
 
 function paneCommand(paneId: string): string {
   if (!/^%\d+$/.test(paneId)) return '';
@@ -459,12 +464,15 @@ function getSessions(ctx: RouteCtx): void {
   ctx.json(200, sessionsPayload(deps.chats(), deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()));
 }
 
-function getSession(ctx: RouteCtx): void {
+/** One chat: its row, transcript, and its pending drafts (the outbox cards, so the chat screen docks them without a second poll). */
+async function getSession(ctx: RouteCtx): Promise<void> {
   me(ctx);
   const c = findChat(ctx.url.searchParams.get('key'));
   if (!c) return ctx.json(404, { ok: false, detail: 'no such live chat' });
   const can = c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id));
-  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux), draftCounts(deps.drafts()).get(c.session_id) ?? 0), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can });
+  const mine = deps.drafts().filter((d) => d.session_id === c.session_id);
+  const { drafts } = await outboxPayload(mine, deps.chats(), deps.fresh);
+  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux), mine.length), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can, drafts });
 }
 
 /** Reply and interrupt: the chat must be live and its pane running Claude right now. */
@@ -579,6 +587,17 @@ async function reply(ctx: RouteCtx): Promise<void> {
   ctx.json(r.ok ? 200 : 500, r);
 }
 
+/** POST /m/api/close: end the chat's agent like the desktop's Close. The session stays resumable. */
+async function closeChat(ctx: RouteCtx): Promise<void> {
+  me(ctx);
+  const b = await ctx.body();
+  const c = findChat(b?.key);
+  if (!c) return ctx.json(409, { ok: false, detail: 'chat is not live' });
+  if (!isAgentCommand(c.agent, paneCommand(c.live.pane_id))) return ctx.json(403, { ok: false, detail: 'that pane is not running Claude or Codex' });
+  const r = deps.close(c.live.pane_id, c.agent);
+  ctx.json(r.ok ? 200 : 500, r);
+}
+
 async function interrupt(ctx: RouteCtx): Promise<void> {
   me(ctx);
   const b = await ctx.body();
@@ -687,6 +706,7 @@ export const MOBILE_ROUTES: RouteDef[] = [
   dv('POST', '/m/api/reply', reply),
   dv('POST', '/m/api/image', uploadImage),
   dv('POST', '/m/api/interrupt', interrupt),
+  dv('POST', '/m/api/close', closeChat),
   dv('GET', '/m/api/outbox', getOutbox),
   dv('POST', '/m/api/outbox/send', outboxSend),
   dv('POST', '/m/api/outbox/discard', outboxDiscard),

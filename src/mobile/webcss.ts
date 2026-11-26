@@ -81,10 +81,6 @@ h1, h2, p { margin: 0; }
 .dhdr { display: flex; align-items: center; gap: 6px; padding: 0 12px 10px 4px; border-bottom: 1px solid var(--border); }
 .iconbtn { width: 44px; height: 44px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--accent); flex: none; }
 .dtitle { flex: 1; min-width: 0; }
-.draftsbtn { flex: none; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 600; background: var(--warn-bg); color: var(--warn); border: 1px solid var(--border); }
-.obnav { display: flex; justify-content: space-between; align-items: center; margin: 0 -12px; }
-.linkbtn { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 12px; border: 0; background: transparent; color: var(--accent); font-size: 16px; }
-.linkbtn svg { width: 22px; height: 22px; }
 .hdr h1.sub { font-size: 24px; letter-spacing: -.3px; overflow-wrap: anywhere; }
 .dtitle .a { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dtitle .b { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -139,6 +135,19 @@ button.attachbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; d
 .btn.pri { border: 0; background: var(--primary); color: #fff; font-weight: 600; padding: 0 16px; }
 .btn.ghost { background: transparent; border: 0; color: var(--danger); }
 .btn.dng { color: var(--danger); }
+.btn.big.dng { font-weight: 600; }
+.iconbtn.more { font-size: 26px; line-height: 1; margin-right: -8px; }
+.dock { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
+.dockbar { flex: none; height: 40px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: var(--warn-bg); color: var(--warn); font-size: 14px; font-weight: 600; }
+.dockbar .chev { font-size: 12px; }
+.docklist { max-height: 45vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.draft.mini { flex: none; padding: 12px; gap: 8px; border-radius: 14px; }
+.draft.mini .where { font-size: 15px; }
+.draft.mini .dtext { font-size: 14px; }
+.dtext.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.draft.mini .actions { align-items: center; }
+.draft.mini .actions .btn { height: 36px; }
+.actions .openlnk { margin-right: auto; font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; }
 .btn.big { height: 50px; border-radius: 14px; font-size: 17px; flex: 1; }
 .btn.big.pri { font-weight: 600; }
 .btn.link { background: transparent; border: 0; color: var(--accent); }

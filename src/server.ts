@@ -1636,6 +1636,7 @@ function wireMobile(): void {
     tail: (c) => lastMessageTail(c as unknown as ChatView),
     tmux: (args) => tmux(args),
     send: (paneId, text, agent) => sendToPane(paneId, text, agent),
+    close: (paneId, agent) => closeSession(paneId, agent),
     drafts: () => pendingDrafts(),
     fresh: async (d) => {
       const deps = freshDeps();

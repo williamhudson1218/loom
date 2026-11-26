@@ -179,15 +179,15 @@ function openSheet(build, onClose) {
   app.appendChild(ov);
   return close;
 }
-function confirmSheet(title, body, okLabel) {
+function confirmSheet(title, body, okLabel, danger) {
   return new Promise(function (res) {
     openSheet(function (sheet, close) {
       sheet.appendChild(h('div', { class: 'ttl', text: title }));
       if (body) sheet.appendChild(h('div', { class: 'muted', text: body }));
       sheet.appendChild(h('div', { class: 'ro' },
-        h('button', { class: 'btn big', text: 'Cancel', on: { click: function () { close(); res(false); } } }),
-        h('button', { class: 'btn big pri', text: okLabel, on: { click: function () { close(); res(true); } } })));
-    });
+        h('button', { class: 'btn big', text: 'Cancel', on: { click: function () { res(false); close(); } } }),
+        h('button', { class: danger ? 'btn big dng' : 'btn big pri', text: okLabel, on: { click: function () { res(true); close(); } } })));
+    }, function () { res(false); });
   });
 }
 
@@ -235,7 +235,8 @@ function parseHash() {
   var x = (location.hash || '').replace(/^#/, '');
   if (x.indexOf('s=') === 0) { try { return { screen: 'detail', key: decodeURIComponent(x.slice(2)) }; } catch (e) {} }
   if (x === 'outbox') return { screen: 'outbox' };
-  if (x.indexOf('outbox?s=') === 0) { try { return { screen: 'outbox', key: decodeURIComponent(x.slice(9)) }; } catch (e) {} }
+  // An old #outbox?s=<key> link (the chat's drafts used to be their own screen) opens the chat.
+  if (x.indexOf('outbox?s=') === 0) { try { return { screen: 'detail', key: decodeURIComponent(x.slice(9)) }; } catch (e) {} }
   if (x === 'settings') return { screen: 'settings' };
   return { screen: 'sessions' };
 }
@@ -249,6 +250,7 @@ function route() {
   setActiveTab(r.screen === 'detail' ? 'detail' : r.screen);
   if (r.screen === 'detail') { tabBtns.sessions.btn.classList.add('on'); }
   curScreen = SCREENS[r.screen](r) || {};
+  if (pendingToast) { toast(pendingToast); pendingToast = ''; }
 }
 
 // ---- sessions --------------------------------------------------------------------
@@ -323,7 +325,7 @@ function sessionsScreen() {
 var drafts = {};
 function detailScreen(r) {
   var key = r.key, sess = sessionByKey(key) || { key: key, name: '', topic: '', project: '', stage: 'implementation', group: 'working', drafts: 0 };
-  var draftsBtn = h('button', { class: 'draftsbtn', on: { click: function () { location.hash = '#outbox?s=' + encodeURIComponent(key); } } });
+  var moreBtn = h('button', { class: 'iconbtn more', 'aria-label': 'More', 'aria-haspopup': 'dialog', text: '⋯' });
   var title = h('div', { class: 'a' }), sub = h('div', { class: 'b' }), chip = h('span', { class: 'stagechip' });
   var status = h('span'), pane = h('span', { class: 'mono' });
   var msgsEl = h('div', { class: 'msgs' }), scroller = h('div', { class: 'scroll' }, msgsEl);
@@ -336,7 +338,7 @@ function detailScreen(r) {
   var thumbs = h('div', { class: 'thumbs' });
   var composer = h('div', { class: 'composer' }, quick, thumbs, h('div', { class: 'crow' }, stopBtn, attachBtn, ta, sendBtn, fileIn));
   var pending = [];
-  var canReply = true, lastSig = '', busy = false;
+  var canReply = true, lastSig = '', busy = false, alive = true;
   // Follow new messages only while the reader is at the bottom. Scrolling up, even a little,
   // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
   // repaint waits for the touch (and its momentum) to end, so it can't snap the view back down.
@@ -414,10 +416,6 @@ function detailScreen(r) {
     var g = sess.group, at = age ? ' · ' + age : '';
     status.textContent = g === 'working' ? '~ working' : g === 'waiting' ? '‖ waiting on others' + at : g === 'turn' ? '● your turn' + at : g === 'saved' ? '○ saved for later' + at : '○ idle' + at;
     status.style.color = statusInfo(g).color;
-    var nd = sess.drafts || 0;
-    draftsBtn.style.display = nd > 0 ? '' : 'none';
-    draftsBtn.textContent = 'Drafts ' + nd;
-    draftsBtn.setAttribute('aria-label', nd + (nd === 1 ? ' draft' : ' drafts') + ' from this chat');
     status.style.fontWeight = '600';
     pane.textContent = sess.pane || '';
     ta.placeholder = 'Reply to ' + (sess.name || 'session');
@@ -450,11 +448,13 @@ function detailScreen(r) {
   }
   function load() {
     return api('/m/api/session?key=' + encodeURIComponent(key)).then(function (x) {
-      if (x.status === 404) { toast('That session has ended'); location.hash = '#sessions'; return; }
+      if (!alive) return;
+      if (x.status === 404) { toast0('That session has ended'); location.hash = '#sessions'; return; }
       if (!x.ok) return;
       if (x.json.session) sess = x.json.session;
       canReply = x.json.can_reply !== false;
       paintHead(); paintEnabled(); paintMsgs(x.json.messages || []);
+      if (Array.isArray(x.json.drafts)) takeDrafts(x.json.drafts);
     });
   }
   function send(text) {
@@ -488,100 +488,143 @@ function detailScreen(r) {
       else toast(errText(x, 'Could not interrupt'));
     });
   });
+
+  // Close chat: the desktop's Close (Ctrl-C twice, /quit for Codex). The session stays resumable from the Mac.
+  function closeChat() {
+    var nm = sess.name || 'this chat';
+    confirmSheet('Close ' + nm + '?', 'The session stays resumable from the Mac.', 'Close chat', true).then(function (ok) {
+      if (!ok) return;
+      api('/m/api/close', { body: { key: key } }).then(function (x) {
+        if (x.ok) { toast0('Closed ' + nm); location.hash = '#sessions'; loadSessions(); setTimeout(loadSessions, 1500); }
+        else if (x.status === 409) { toast('That session isn’t live anymore'); load(); }
+        else if (x.status === 403) toast('That pane isn’t running Claude or Codex');
+        else toast(errText(x, 'Could not close the chat'));
+      });
+    });
+  }
+  moreBtn.addEventListener('click', function () {
+    openSheet(function (sheet, close) {
+      sheet.appendChild(h('div', { class: 'ttl', text: sess.topic || sess.name || 'Session' }));
+      sheet.appendChild(h('button', { class: 'btn big dng', style: 'flex:none', text: 'Close chat', on: { click: function () { close(); closeChat(); } } }));
+      sheet.appendChild(h('button', { class: 'btn big', style: 'flex:none', text: 'Cancel', on: { click: close } }));
+    });
+  });
+
+  // This chat's drafts, docked between the transcript and the composer. Collapsed or open is
+  // remembered per chat; a draft this phone hasn't seen before opens it again.
+  var kit = draftKit({ mini: true, render: paintDock, reload: load });
+  var dockBar = h('button', { class: 'dockbar', on: { click: function () { mem.open = !mem.open; saveMem(); paintDock(); } } });
+  var dockList = h('div', { class: 'docklist' });
+  var dock = h('div', { class: 'dock' }, dockBar, dockList);
+  dock.style.display = 'none';
+  var memKey = 'loom.dock.' + key, mem = null, dockSig = '';
+  try { mem = JSON.parse(ls(memKey) || 'null'); } catch (e) {}
+  if (!mem || typeof mem !== 'object' || !Array.isArray(mem.seen)) mem = { open: true, seen: [] };
+  function saveMem() { ls(memKey, JSON.stringify(mem)); }
+  function takeDrafts(list) {
+    var ids = list.map(function (d) { return d.id; });
+    var fresh = ids.some(function (id) { return mem.seen.indexOf(id) < 0; });
+    if (fresh) mem.open = true;
+    if (fresh || ids.length !== mem.seen.length) { mem.seen = ids; if (ids.length) saveMem(); else ls(memKey, null); }
+    if (kit.take(list)) paintDock();
+  }
+  function paintDock() {
+    if (!alive) return;
+    var vis = kit.visible(), n = vis.length;
+    var sig = JSON.stringify([vis, mem.open, kit.open, kit.editing]);
+    if (sig === dockSig) return;
+    dockSig = sig;
+    dock.style.display = n ? '' : 'none';
+    clear(dockBar);
+    dockBar.appendChild(h('span', { text: n + (n === 1 ? ' draft' : ' drafts') + ' from this chat' }));
+    dockBar.appendChild(h('span', { class: 'chev', 'aria-hidden': 'true', text: mem.open ? '▴' : '▾' }));
+    dockBar.setAttribute('aria-expanded', mem.open ? 'true' : 'false');
+    var keep = dockList.scrollTop;
+    clear(dockList);
+    dockList.style.display = mem.open && n ? '' : 'none';
+    if (mem.open) vis.forEach(function (d) { dockList.appendChild(kit.card(d)); });
+    dockList.scrollTop = keep;
+  }
+
   screenEl.appendChild(h('div', { class: 'scr' },
     h('header', { class: 'dhdr' },
       h('button', { class: 'iconbtn', 'aria-label': 'Back to sessions', on: { click: function () { location.hash = '#sessions'; } } }, icon('back')),
-      h('div', { class: 'dtitle' }, title, sub), draftsBtn, chip),
+      h('div', { class: 'dtitle' }, title, sub), chip, moreBtn),
     h('div', { class: 'band' }, status, pane),
-    scroller, composer));
+    scroller, dock, composer));
   paintHead(); paintEnabled(); grow();
   var p = poll(load, 3000);
-  return { stop: function () { p.stop(); } };
+  return { stop: function () { alive = false; p.stop(); kit.stop(); } };
 }
 
-// ---- outbox ----------------------------------------------------------------------
+// ---- drafts: the card and its sheets, shared by the Outbox tab and a chat's dock -------
 var KIND = { thread: 'Thread', dm: 'DM', channel: 'Channel', email: 'Email', review: 'PR review' };
-var OB = { drafts: [], done: [], editing: null, edits: {}, hidden: {}, sheet: false, only: null };
-function outboxScreen(r) {
-  // r.key set: one chat's drafts (#outbox?s=<key>), from the Drafts button on its detail screen.
-  var only = r && r.key ? r.key : null;
-  var line = h('p', { text: '' });
-  var list = h('div', { class: 'list', style: 'gap:12px' });
-  var scroller = h('div', { class: 'scroll' }, list);
-  var heading = h('h1', { text: 'Outbox' });
-  var hdr;
-  if (only) {
-    hdr = h('header', { class: 'hdr' },
-      h('div', { class: 'obnav' },
-        h('button', { class: 'linkbtn', 'aria-label': 'Back to the chat', on: { click: function () { location.hash = '#s=' + encodeURIComponent(only); } } }, icon('back'), 'Chat'),
-        h('button', { class: 'linkbtn', text: 'All drafts', on: { click: function () { location.hash = '#outbox'; } } })),
-      heading, line);
-    heading.className = 'sub';
-  } else hdr = h('header', { class: 'hdr' }, heading, line);
-  screenEl.appendChild(h('div', { class: 'scr' }, hdr, scroller));
-  if (OB.only !== only) { OB.drafts = []; OB.edits = {}; OB.only = only; }
-  var alive = true, loaded = false;
-  function paintHeading() {
-    if (!only) return;
-    var s = sessionByKey(only), d0 = OB.drafts[0];
-    heading.textContent = 'Drafts from ' + ((s && (s.name || s.topic)) || (d0 && d0.from) || 'this chat');
-  }
-
-  function msgsOf(d) { return OB.edits[d.id] || d.messages || []; }
-  function visible() { return OB.drafts.filter(function (d) { return !OB.hidden[d.id]; }); }
-  function render() {
-    if (!alive) return;
-    var vis = visible();
-    paintHeading();
-    line.textContent = vis.length === 0 ? (only ? 'No drafts from this chat.' : 'Nothing waiting. Drafts land here as sessions write them.') : vis.length + (vis.length === 1 ? ' draft waiting on you.' : ' drafts waiting on you.') + ' Nothing posts until you tap Post.';
-    var keep = scroller.scrollTop;
-    clear(list);
-    vis.forEach(function (d) { list.appendChild(card(d)); });
-    OB.done.forEach(function (x) { list.appendChild(h('div', { class: 'done' }, h('span', { class: 'dot' + (x.accent ? ' accent' : '') }), h('span', { style: 'flex:1', text: x.text }))); });
-    if (!vis.length && !OB.done.length && loaded) list.appendChild(h('div', { class: 'empty', text: 'No drafts.' }));
-    scroller.scrollTop = keep;
-  }
-  function card(d) {
-    var editing = OB.editing === d.id;
-    var msgs = msgsOf(d);
+// Edits and undo-able discards are per draft, not per screen: an edit started in the chat shows in the Outbox too.
+var DEDITS = {}, DHIDDEN = {};
+// o.render(): repaint the host. o.reload(): fetch the drafts again. o.mini: the chat's dock (no "from", clamped text).
+function draftKit(o) {
+  var k = { drafts: [], done: [], editing: null, sheet: false, open: {} };
+  k.msgsOf = function (d) { return DEDITS[d.id] || d.messages || []; };
+  k.visible = function () { return k.drafts.filter(function (d) { return !DHIDDEN[d.id]; }); };
+  k.busy = function () { return !!(k.editing || k.sheet); };
+  // A poll's list. While a card is being edited or its sheet is up, the cards stay put: gone ones drop,
+  // new ones queue at the end, and nothing repaints. Returns whether the host should repaint.
+  k.take = function (next) {
+    if (k.busy()) {
+      k.drafts = next.length ? k.drafts.filter(function (x) { return next.some(function (n) { return n.id === x.id; }); }).concat(next.filter(function (n) { return !k.drafts.some(function (x) { return x.id === n.id; }); })) : [];
+      return false;
+    }
+    k.drafts = next;
+    return true;
+  };
+  k.stop = function () { k.editing = null; k.sheet = false; };
+  function verbOf(d) { return d.kind === 'email' ? 'Send' : 'Post'; }
+  function openLink(d) { return d.url ? h('a', { class: 'openlnk', href: d.url, target: '_blank', rel: 'noopener noreferrer', text: d.kind === 'review' ? 'Open PR' : 'Open in Slack' }) : null; }
+  k.card = function (d) {
+    var editing = k.editing === d.id;
+    var msgs = k.msgsOf(d);
     var body;
     if (editing) {
       body = msgs.map(function (m, i) {
-        var t = h('textarea', { rows: '5' }); t.value = m;
-        t.addEventListener('input', function () { var a = msgsOf(d).slice(); a[i] = t.value; OB.edits[d.id] = a; });
+        var t = h('textarea', { rows: o.mini ? '4' : '5' }); t.value = m;
+        t.addEventListener('input', function () { var a = k.msgsOf(d).slice(); a[i] = t.value; DEDITS[d.id] = a; });
         return h('label', { class: 'edit' }, msgs.length > 1 ? 'Message ' + (i + 1) + ' of ' + msgs.length : 'Edit before sending', t);
+      });
+    } else if (o.mini) {
+      var full = !!k.open[d.id];
+      body = msgs.map(function (m) {
+        return h('p', { class: 'dtext' + (full ? '' : ' clamp'), on: { click: function (e) { if (e.target.closest('a')) return; k.open[d.id] = !full; o.render(); } } }, linked(m));
       });
     } else body = msgs.map(function (m) { return h('p', { class: 'dtext' }, linked(m)); });
     var stale = d.stale ? h('div', { class: 'warnband' }, icon('warn'), h('span', { text: d.stale_note || 'There is new activity since this was drafted.' })) : null;
-    return h('article', { class: 'draft' },
-      h('div', { class: 'top' }, h('div', { class: 'l' }, h('span', { class: 'kind', text: KIND[d.kind] || d.kind || 'Draft' }), h('span', { class: 'where', text: d.where || '' })), h('span', { class: 'sage', text: ago(d.created_at) })),
-      h('div', { class: 'ctx' }, (d.ctx || '') + (d.from ? ' · from ' : ''), d.from ? h('span', { class: 'mono', text: d.from }) : null,
-        d.url ? h('a', { class: 'openlnk', href: d.url, target: '_blank', rel: 'noopener noreferrer', text: d.kind === 'review' ? 'Open PR' : 'Open in Slack' }) : null),
-      stale, body,
+    var top = h('div', { class: 'top' }, h('div', { class: 'l' }, h('span', { class: 'kind', text: KIND[d.kind] || d.kind || 'Draft' }), h('span', { class: 'where', text: d.where || '' })), h('span', { class: 'sage', text: ago(d.created_at) }));
+    var ctx = o.mini ? null : h('div', { class: 'ctx' }, (d.ctx || '') + (d.from ? ' · from ' : ''), d.from ? h('span', { class: 'mono', text: d.from }) : null, openLink(d));
+    return h('article', { class: 'draft' + (o.mini ? ' mini' : '') }, top, ctx, stale, body,
       h('div', { class: 'actions' },
-        h('button', { class: 'btn ghost', text: 'Discard', on: { click: function () { discard(d); } } }),
-        h('button', { class: 'btn', text: editing ? 'Done' : 'Edit', on: { click: function () { OB.editing = editing ? null : d.id; render(); } } }),
-        h('button', { class: 'btn pri', text: d.stale ? 'Review' : (d.kind === 'email' ? 'Send' : 'Post'), on: { click: function () { review(d); } } })));
-  }
-  function discard(d) {
-    OB.hidden[d.id] = true; if (OB.editing === d.id) OB.editing = null;
-    render();
+        o.mini ? openLink(d) : null,
+        h('button', { class: 'btn ghost', text: 'Discard', on: { click: function () { k.discard(d); } } }),
+        h('button', { class: 'btn', text: editing ? 'Done' : 'Edit', on: { click: function () { k.editing = editing ? null : d.id; o.render(); } } }),
+        h('button', { class: 'btn pri', text: d.stale ? 'Review' : verbOf(d), on: { click: function () { k.review(d); } } })));
+  };
+  k.discard = function (d) {
+    DHIDDEN[d.id] = true; if (k.editing === d.id) k.editing = null;
+    o.render();
     var timer = setTimeout(function () {
       api('/m/api/outbox/discard', { body: { id: d.id } }).then(function (x) {
-        if (!x.ok && x.status !== 404) { delete OB.hidden[d.id]; toast(errText(x, 'Could not discard')); }
-        loadOutbox();
+        if (!x.ok && x.status !== 404) { delete DHIDDEN[d.id]; toast(errText(x, 'Could not discard')); }
+        o.reload();
       });
     }, 4000);
-    toast('Draft discarded', function () { clearTimeout(timer); delete OB.hidden[d.id]; render(); });
-  }
-  function review(d) {
-    OB.sheet = true; OB.editing = null;
+    toast('Draft discarded', function () { clearTimeout(timer); delete DHIDDEN[d.id]; o.render(); });
+  };
+  k.review = function (d) {
+    k.sheet = true; k.editing = null;
     var after = 'none';
-    var text = msgsOf(d).join('\n\n');
+    var text = k.msgsOf(d).join('\n\n');
     var first = (d.new_messages && d.new_messages[0] && d.new_messages[0].who) || 'Someone';
-    var verb = d.kind === 'email' ? 'Send' : 'Post';
+    var verb = verbOf(d);
+    function gone() { k.drafts = k.drafts.filter(function (z) { return z.id !== d.id; }); }
     openSheet(function (sheet, close) {
-      function done() { close(); }
       sheet.appendChild(h('div', { class: 'ttl', text: d.stale ? first + ' replied after this was drafted' : verb + ' to ' + (d.where || 'destination') + ' as you?' }));
       if (d.stale) {
         var nm = h('div', { style: 'display:flex;flex-direction:column;gap:6px' }, h('div', { class: 'wl', text: 'New since this was drafted' }));
@@ -593,49 +636,69 @@ function outboxScreen(r) {
       if (d.from) {
         var seg = h('div', { class: 'seg' });
         var opts = [['none', 'Keep chat'], ['park', 'Park'], ['close', 'Close']];
-        var paint = function () { clear(seg); opts.forEach(function (o) { seg.appendChild(h('button', { text: o[1], 'aria-pressed': after === o[0] ? 'true' : 'false', on: { click: function () { after = o[0]; paint(); } } })); }); };
+        var paint = function () { clear(seg); opts.forEach(function (x) { seg.appendChild(h('button', { text: x[1], 'aria-pressed': after === x[0] ? 'true' : 'false', on: { click: function () { after = x[0]; paint(); } } })); }); };
         paint();
         sheet.appendChild(h('div', { style: 'display:flex;flex-direction:column;gap:6px' }, h('div', { class: 'muted', style: 'font-size:13px', text: 'Then, for ' + d.from }), seg));
       }
-      var row = h('div', { class: 'ro' }, h('button', { class: 'btn big', text: 'Cancel', on: { click: done } }));
+      var row = h('div', { class: 'ro' }, h('button', { class: 'btn big', text: 'Cancel', on: { click: close } }));
       if (d.stale) row.appendChild(h('button', { class: 'btn big', style: 'font-size:16px;font-weight:600', text: 'Ask to redraft', on: { click: function () {
-        done();
+        close();
         api('/m/api/outbox/redraft', { body: { id: d.id } }).then(function (x) {
-          if (x.ok) { OB.done.push({ text: 'Asked ' + (d.from || 'the chat') + ' to redraft against the new messages', accent: true }); OB.drafts = OB.drafts.filter(function (z) { return z.id !== d.id; }); toast('Asked ' + (d.from || 'the chat') + ' to redraft'); }
+          if (x.ok) { k.done.push({ text: 'Asked ' + (d.from || 'the chat') + ' to redraft against the new messages', accent: true }); gone(); o.render(); toast('Asked ' + (d.from || 'the chat') + ' to redraft'); }
           else toast(errText(x, 'Could not ask for a redraft'));
-          loadOutbox();
+          o.reload();
         });
       } } }));
       row.appendChild(h('button', { class: 'btn big pri', text: d.stale ? verb + ' anyway' : verb, on: { click: function () {
-        var body = { id: d.id, messages: msgsOf(d), after: d.from ? after : 'none' };
+        var body = { id: d.id, messages: k.msgsOf(d), after: d.from ? after : 'none' };
         if (d.stale) body.ack_stale = true;
-        done();
+        close();
         api('/m/api/outbox/send', { body: body }).then(function (x) {
-          if (x.ok) { OB.done.push({ text: (d.kind === 'email' ? 'Sent to ' : 'Posted to ') + (d.where || 'destination') }); OB.drafts = OB.drafts.filter(function (z) { return z.id !== d.id; }); delete OB.edits[d.id]; toast((d.kind === 'email' ? 'Sent to ' : 'Posted to ') + (d.where || 'destination')); }
+          var said = (d.kind === 'email' ? 'Sent to ' : 'Posted to ') + (d.where || 'destination');
+          if (x.ok) { k.done.push({ text: said }); gone(); delete DEDITS[d.id]; o.render(); toast(said); }
           else if (x.status === 409) toast(errText(x, 'This changed since it was drafted. Review it again.'));
           else toast(errText(x, 'Could not send'));
-          loadOutbox();
+          o.reload();
         });
       } } }));
       sheet.appendChild(row);
-    }, function () { OB.sheet = false; });
+    }, function () { k.sheet = false; });
+  };
+  return k;
+}
+
+// ---- outbox ----------------------------------------------------------------------
+function outboxScreen() {
+  var line = h('p', { text: '' });
+  var list = h('div', { class: 'list', style: 'gap:12px' });
+  var scroller = h('div', { class: 'scroll' }, list);
+  screenEl.appendChild(h('div', { class: 'scr' }, h('header', { class: 'hdr' }, h('h1', { text: 'Outbox' }), line), scroller));
+  var alive = true, loaded = false;
+  var kit = draftKit({ render: render, reload: loadOutbox });
+  function render() {
+    if (!alive) return;
+    var vis = kit.visible();
+    line.textContent = vis.length === 0 ? 'Nothing waiting. Drafts land here as sessions write them.' : vis.length + (vis.length === 1 ? ' draft waiting on you.' : ' drafts waiting on you.') + ' Nothing posts until you tap Post.';
+    var keep = scroller.scrollTop;
+    clear(list);
+    vis.forEach(function (d) { list.appendChild(kit.card(d)); });
+    kit.done.forEach(function (x) { list.appendChild(h('div', { class: 'done' }, h('span', { class: 'dot' + (x.accent ? ' accent' : '') }), h('span', { style: 'flex:1', text: x.text }))); });
+    if (!vis.length && !kit.done.length && loaded) list.appendChild(h('div', { class: 'empty', text: 'No drafts.' }));
+    scroller.scrollTop = keep;
   }
   function loadOutbox() {
     if (!alive) return Promise.resolve();
-    return api('/m/api/outbox' + (only ? '?session=' + encodeURIComponent(only) : '')).then(function (x) {
+    return api('/m/api/outbox').then(function (x) {
       if (!x.ok || !alive) return;
       var next = x.json.drafts || [];
       loaded = true;
-      if (!only) { S.outboxPending = next.length; updateBadges(); }
-      if (OB.editing || OB.sheet) { OB.drafts = next.length ? OB.drafts.filter(function (o) { return next.some(function (n) { return n.id === o.id; }); }).concat(next.filter(function (n) { return !OB.drafts.some(function (o) { return o.id === n.id; }); })) : []; return; }
-      OB.drafts = next;
-      render();
+      S.outboxPending = next.length; updateBadges();
+      if (kit.take(next)) render();
     });
   }
-  OB.done = [];
   render();
   var p = poll(loadOutbox, 5000);
-  return { stop: function () { alive = false; p.stop(); OB.editing = null; OB.sheet = false; } };
+  return { stop: function () { alive = false; p.stop(); kit.stop(); } };
 }
 
 // ---- push ------------------------------------------------------------------------

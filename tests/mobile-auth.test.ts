@@ -26,13 +26,19 @@ const tmuxCalls: string[][] = [];
 let paneCmd = '2.1.233';
 const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-uploads-'));
 const outboxCalls: { kind: string; arg: unknown }[] = [];
+const closed: { pane: string; agent: string }[] = [];
+let extraChats: MobileChat[] = [];
 
 const live = (over: Partial<LiveLoc> = {}): LiveLoc => ({ agent: 'claude', session_id: 's1', pane_id: '%7', tmux_session: 'loom-work', window_index: '1', pane_index: '0', running: true, working: false, name: 'blue-vanilla', stage: 'implementation', ...over });
 const chat = (over: Partial<MobileChat> = {}): MobileChat => ({ agent: 'claude', session_id: 's1', title: 'Fix the widget', project: 'demo', state: 'waiting_on_user', jsonl_path: '/nonexistent.jsonl', last_active_at: 1000, last_turn_at: 1000, live: live(), ...over });
 
 function fakeDeps(): Partial<MobileDeps> {
   return {
-    chats: () => [chat(), chat({ session_id: 's2', state: 'working', live: live({ session_id: 's2', pane_id: '%8', working: true }) })],
+    chats: () => [
+      chat(),
+      chat({ session_id: 's2', state: 'working', live: live({ session_id: 's2', pane_id: '%8', working: true }) }),
+      ...extraChats,
+    ],
     tail: () => 'Should I ship it?',
     tmux: (args) => {
       tmuxCalls.push(args);
@@ -43,6 +49,10 @@ function fakeDeps(): Partial<MobileDeps> {
     send: (pane, text) => {
       sent.push({ pane, text });
       return { ok: true, detail: 'sent' };
+    },
+    close: (pane, agent) => {
+      closed.push({ pane, agent });
+      return { ok: true, detail: 'sent Ctrl-C x2' };
     },
     drafts: () => [{ id: 'd1', session_id: 's1', channel: 'C0123', label: '#general', thread_ts: '1.2', messages: ['hello'], status: 'pending', created_at: '2026-01-01T10:00:00' }],
     outboxSend: async (b) => {
@@ -398,6 +408,54 @@ describe('what a paired phone can do', () => {
       { kind: 'discard', arg: 'd1' },
       { kind: 'redraft', arg: 'd1' },
     ]);
+  });
+
+  it('folds the chat\'s own drafts into GET /m/api/session as outbox cards', async () => {
+    const one = await raw('GET', '/m/api/session?key=claude:s1', ph());
+    expect(one.body.drafts).toEqual([expect.objectContaining({ id: 'd1', kind: 'thread', where: '#general', from: 'blue-vanilla', messages: ['hello'], stale: false })]);
+    const other = await raw('GET', '/m/api/session?key=claude:s2', ph());
+    expect(other.body.drafts).toEqual([]);
+    expect((other.body.session as { drafts: number }).drafts).toBe(0);
+  });
+
+  describe('close a chat', () => {
+    beforeEach(() => {
+      closed.length = 0;
+      extraChats = [chat({ agent: 'codex', session_id: 'x1', live: live({ agent: 'codex', session_id: 'x1', pane_id: '%9' }) })];
+    });
+    afterAll(() => {
+      extraChats = [];
+    });
+
+    it('refuses an unpaired phone and a foreign Origin', async () => {
+      expect((await raw('POST', '/m/api/close', { ...JSON_BODY, ...tail }, JSON.stringify({ key: 'claude:s1' }))).status).toBe(401);
+      expect((await raw('POST', '/m/api/close', { ...ph(), origin: 'https://evil.example' }, JSON.stringify({ key: 'claude:s1' }))).status).toBe(403);
+      expect(closed).toEqual([]);
+    });
+
+    it('409 when the chat is not live, 403 when its pane is not running the agent', async () => {
+      expect((await raw('POST', '/m/api/close', ph(), JSON.stringify({ key: 'claude:gone' }))).status).toBe(409);
+      expect((await raw('POST', '/m/api/close', ph(), '{}')).status).toBe(409);
+      for (const cmd of ['zsh', 'nvim', 'node', '']) {
+        paneCmd = cmd;
+        const r = await raw('POST', '/m/api/close', ph(), JSON.stringify({ key: 'claude:s1' }));
+        expect([r.status, r.body.detail], cmd).toEqual([403, 'that pane is not running Claude or Codex']);
+      }
+      for (const cmd of ['2.1.233', 'zsh', 'claude']) {
+        paneCmd = cmd;
+        expect((await raw('POST', '/m/api/close', ph(), JSON.stringify({ key: 'codex:x1' }))).status, 'codex in ' + cmd).toBe(403);
+      }
+      expect(closed).toEqual([]);
+    });
+
+    it('closes through the desktop\'s closeSession with the chat\'s pane and agent', async () => {
+      expect((await raw('POST', '/m/api/close', ph(), JSON.stringify({ key: 'claude:s1' }))).body).toEqual({ ok: true, detail: 'sent Ctrl-C x2' });
+      for (const cmd of ['codex', 'node']) {
+        paneCmd = cmd;
+        expect((await raw('POST', '/m/api/close', ph(), JSON.stringify({ key: 'codex:x1' }))).status, cmd).toBe(200);
+      }
+      expect(closed).toEqual([{ pane: '%7', agent: 'claude' }, { pane: '%9', agent: 'codex' }, { pane: '%9', agent: 'codex' }]);
+    });
   });
 
   it('narrows the outbox to one chat with ?session=, and refuses a malformed key', async () => {
