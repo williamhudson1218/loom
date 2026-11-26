@@ -319,6 +319,8 @@ export async function outboxPayload(drafts: Draft[], chats: MobileChat[], freshF
       };
     }),
   );
+  // Newest first. created_at is local 'YYYY-MM-DDTHH:MM:SS', so string order is time order.
+  rows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
   return { drafts: rows };
 }
 

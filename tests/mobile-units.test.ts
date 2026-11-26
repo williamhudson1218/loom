@@ -7,7 +7,7 @@ import { CODE_ALPHABET, CODE_TTL_MS, DeviceStore, PENDING_TTL_MS, cleanName, dev
 import { encryptPayload, generateVapidKeys, loadVapidKeys, sendPush, validSubscription, vapidAuthorization } from '../src/mobile/webpush.ts';
 import { applyServe, clearLeftoverServe, serveIsLoomOnly, tailscaleStatus, type TailscaleDeps } from '../src/mobile/tailscale.ts';
 import { DraftWatch, PushDispatcher, chatEventPush, inPushQuiet, parseHidIdle, type PushDeps } from '../src/mobile/push-triggers.ts';
-import { draftKind, groupOf, paneTopics, isClaudeCommand, mobileTranscript, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
+import { draftKind, groupOf, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
 import type { Device } from '../src/mobile/devices.ts';
 import type { Draft } from '../src/outbox.ts';
 
@@ -380,5 +380,13 @@ describe('sessions and transcripts for the phone', () => {
     expect(draftKind(base)).toBe('channel');
     expect(draftKind({ ...base, channel: '', messages: [], kind: 'email', email: { to: ['a@example.com'], subject: 's', body: 'b' } })).toBe('email');
     expect(draftKind({ ...base, channel: '', messages: [], review: { repo: 'o/r', pr: 1, commit_id: 'c', event: 'COMMENT', body: 'b', comments: [] } })).toBe('review');
+  });
+});
+
+describe('outboxPayload order', () => {
+  it('lists drafts newest first', async () => {
+    const d = (id: string, created_at: string) => ({ id, session_id: 's', channel: 'C1', messages: ['x'], status: 'pending', created_at }) as Draft;
+    const out = await outboxPayload([d('a', '2026-11-26T09:00:00'), d('c', '2026-11-26T11:00:00'), d('b', '2026-11-26T10:00:00')], []);
+    expect(out.drafts.map((x) => x.id)).toEqual(['c', 'b', 'a']);
   });
 });
