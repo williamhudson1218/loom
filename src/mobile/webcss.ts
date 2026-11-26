@@ -90,6 +90,14 @@ h1, h2, p { margin: 0; }
 .msgs { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .m-user { align-self: flex-end; max-width: 85%; padding: 10px 14px; border-radius: 18px 18px 4px 18px; font-size: 15px; line-height: 1.4; background: var(--bubble); color: #fff; white-space: pre-wrap; word-break: break-word; }
 .m-tool { display: flex; gap: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--muted); word-break: break-word; }
+.m-think { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 0; font: italic 13px/1.45 inherit; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-think.open { white-space: pre-wrap; word-break: break-word; }
+.mlive { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 4px; }
+.mlive-a { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text2); font-family: var(--mono); }
+.mlive-b { display: flex; gap: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--muted); padding-left: 18px; word-break: break-word; }
+.mlive-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: mlivepulse 1.2s ease-in-out infinite; }
+@keyframes mlivepulse { 0%,100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .mlive-dot { animation: none; } }
 .m-asst { font-size: 15px; line-height: 1.5; padding: 12px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; background: var(--surface); border: 1px solid var(--border); }
 .composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); background: var(--bg); }
 .quick { display: flex; gap: 8px; overflow-x: auto; }

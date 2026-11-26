@@ -397,6 +397,21 @@ describe('sessions and transcripts for the phone', () => {
     expect(toolLine('Grep', {})).toBe('Grep');
   });
 
+  it('keeps thinking blocks that carry text and drops signature-only ones', () => {
+    const file = path.join(tmp(), 'think.jsonl');
+    const lines = [
+      { type: 'user', message: { role: 'user', content: 'why is it red?' } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'abc' }] } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '  The lint step fails first.  ', signature: 'def' }, { type: 'text', text: 'Lint.' }] } },
+    ];
+    fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    expect(mobileTranscript('claude', file)).toEqual([
+      { role: 'user', text: 'why is it red?' },
+      { role: 'thinking', text: 'The lint step fails first.' },
+      { role: 'assistant', text: 'Lint.' },
+    ]);
+  });
+
   it('names draft kinds', () => {
     const base = { id: 'd', session_id: 's', channel: 'C1', messages: ['x'], status: 'pending', created_at: '' } as Draft;
     expect(draftKind({ ...base, thread_ts: '1.2' })).toBe('thread');

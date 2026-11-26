@@ -9,6 +9,7 @@ import { readPendingTool } from '../watchers/chatSignals.ts';
 import { deviceCookie, deviceStore } from './devices.ts';
 // Types only: api.ts imports VOICE_ROUTES from here, so a runtime import back would be a cycle.
 import type { MobileChat, MobileMsg } from './api.ts';
+import { paneLiveStatus } from './livestatus.ts';
 import { voicePaths, voiceStatus, whisperBin, WHISPER_MODEL, KOKORO_FILES, type VoiceStatus } from './voice-setup.ts';
 
 // Conversation mode (the phone's Talk overlay, src/mobile/voiceapp.ts). The phone records,
@@ -20,7 +21,7 @@ import { voicePaths, voiceStatus, whisperBin, WHISPER_MODEL, KOKORO_FILES, type 
 //
 //   GET  /m/api/voice/status            { ready, tts }
 //   POST /m/api/voice/transcribe        WAV bytes (10 MB max) -> { text }
-//   GET  /m/api/voice/turn?key=         { working, at_prompt, since_user, last_user, can_reply }
+//   GET  /m/api/voice/turn?key=         { working, at_prompt, since_user, last_user, can_reply, live_status }
 //   POST /m/api/voice/summary {key}     { text, audio: id | null }
 //   GET  /m/api/voice/audio?id=         the audio (device auth, pruned after 15 min)
 
@@ -452,6 +453,8 @@ function getTurn(ctx: RouteCtx): void {
     since_user: turn.length,
     last_user: lastUser.slice(0, 300),
     can_reply: deps.canReply(c),
+    // The pane's spinner line (livestatus.ts), shown under "Agent working…".
+    live_status: working ? paneLiveStatus(deps.tmux, c.live.pane_id) : null,
   });
 }
 

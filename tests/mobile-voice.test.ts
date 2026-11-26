@@ -274,7 +274,7 @@ describe('voice routes', () => {
   it('reports the turn: working, the prompt, what was said since the user', async () => {
     working = true;
     let r = await call('GET', '/m/api/voice/turn?key=claude:s1');
-    expect(r.body).toEqual({ working: true, at_prompt: false, since_user: 1, last_user: 'fix the bug', can_reply: true });
+    expect(r.body).toEqual({ working: true, at_prompt: false, since_user: 1, last_user: 'fix the bug', can_reply: true, live_status: null });
     working = false;
     pending = true;
     r = await call('GET', '/m/api/voice/turn?key=claude:s1');

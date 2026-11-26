@@ -331,7 +331,8 @@ function detailScreen(r) {
   var talkBtn = h('button', { class: 'iconbtn talkbtn', 'aria-label': 'Talk (conversation mode)', title: 'Talk' }, icon('talk'));
   var title = h('div', { class: 'a' }), sub = h('div', { class: 'b' }), chip = h('span', { class: 'stagechip' });
   var status = h('span'), pane = h('span', { class: 'mono' });
-  var msgsEl = h('div', { class: 'msgs' }), scroller = h('div', { class: 'scroll' }, msgsEl);
+  var msgsEl = h('div', { class: 'msgs' }), liveEl = h('div', { class: 'mlive', 'aria-live': 'polite' });
+  var scroller = h('div', { class: 'scroll' }, msgsEl, liveEl);
   var ta = h('textarea', { class: 'tinput', rows: '1', placeholder: 'Reply', enterkeyhint: 'send', 'aria-label': 'Reply' });
   var sendBtn = h('button', { class: 'sendbtn', 'aria-label': 'Send reply' }, icon('send'));
   var stopBtn = h('button', { class: 'stopbtn', 'aria-label': 'Interrupt (sends Esc)', title: 'Interrupt (Esc)' }, icon('stop'));
@@ -342,6 +343,9 @@ function detailScreen(r) {
   var composer = h('div', { class: 'composer' }, quick, thumbs, h('div', { class: 'crow' }, stopBtn, attachBtn, ta, sendBtn, fileIn));
   var pending = [];
   var canReply = true, lastSig = '', busy = false, alive = true;
+  // The live row: while the chat works (or for a minute after a reply, before the board catches
+  // up) the server sends Claude Code's spinner line, and this screen polls every 1.5 s, else 3 s.
+  var sentAt = 0, liveOn = false, lastLoad = 0, lastTool = '', openThinking = {};
   // Follow new messages only while the reader is at the bottom. Scrolling up, even a little,
   // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
   // repaint waits for the touch (and its momentum) to end, so it can't snap the view back down.
@@ -436,13 +440,36 @@ function detailScreen(r) {
     lastSig = sig;
     var first = !msgsEl.firstChild, keep = scroller.scrollTop;
     clear(msgsEl);
+    lastTool = '';
+    for (var i = msgs.length - 1; i >= 0 && msgs[i].role !== 'user'; i--) if (msgs[i].role === 'tool') { lastTool = msgs[i].text; break; }
     msgs.forEach(function (m) {
       if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
+      else if (m.role === 'thinking') msgsEl.appendChild(thinkingRow(m.text));
       else if (m.role === 'tool') msgsEl.appendChild(h('div', { class: 'm-tool' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: m.text })));
       else msgsEl.appendChild(h('div', { class: 'm-asst' }, linked(m.text)));
     });
     if (!msgs.length) msgsEl.appendChild(h('div', { class: 'empty', text: 'No messages yet.' }));
     scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
+  }
+  // A thinking block: one muted line, tap to read it all. Open ones stay open across repaints.
+  function thinkingRow(text) {
+    var short = text.replace(/\s+/g, ' ');
+    if (short.length > 80) short = short.slice(0, 80) + '…';
+    var row = h('button', { class: 'm-think' + (openThinking[text] ? ' open' : ''), 'aria-expanded': openThinking[text] ? 'true' : 'false' });
+    function fill() { row.textContent = openThinking[text] ? 'Thinking: ' + text : 'Thinking: ' + short; }
+    row.addEventListener('click', function () { openThinking[text] = !openThinking[text]; row.classList.toggle('open', !!openThinking[text]); row.setAttribute('aria-expanded', openThinking[text] ? 'true' : 'false'); fill(); });
+    fill();
+    return row;
+  }
+  function paintLive(ls) {
+    var on = !!(ls && ls.text) || sess.group === 'working';
+    liveOn = on || Date.now() - sentAt < 60000;
+    clear(liveEl);
+    liveEl.style.display = on ? '' : 'none';
+    if (!on) return;
+    liveEl.appendChild(h('div', { class: 'mlive-a' }, h('span', { class: 'mlive-dot', 'aria-hidden': 'true' }), h('span', { text: ls && ls.text ? ls.text : 'Working…' })));
+    if (lastTool) liveEl.appendChild(h('div', { class: 'mlive-b' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: lastTool })));
+    if (stick && !touching) scroller.scrollTop = scroller.scrollHeight;
   }
   function paintEnabled() {
     talkBtn.disabled = !canReply; ta.disabled = !canReply; attachBtn.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
@@ -450,13 +477,15 @@ function detailScreen(r) {
     paintQuick();
   }
   function load() {
-    return api('/m/api/session?key=' + encodeURIComponent(key)).then(function (x) {
+    lastLoad = Date.now();
+    var live = Date.now() - sentAt < 60000 ? '&live=1' : '';
+    return api('/m/api/session?key=' + encodeURIComponent(key) + live).then(function (x) {
       if (!alive) return;
       if (x.status === 404) { toast0('That session has ended'); location.hash = '#sessions'; return; }
       if (!x.ok) return;
       if (x.json.session) sess = x.json.session;
       canReply = x.json.can_reply !== false;
-      paintHead(); paintEnabled(); paintMsgs(x.json.messages || []);
+      paintHead(); paintEnabled(); paintMsgs(x.json.messages || []); paintLive(x.json.live_status);
       if (Array.isArray(x.json.drafts)) takeDrafts(x.json.drafts);
     });
   }
@@ -474,7 +503,7 @@ function detailScreen(r) {
       if (x.ok) {
         ta.value = ''; drafts[key] = ''; grow();
         if (own) { pending.forEach(function (p) { URL.revokeObjectURL(p.url); }); pending = []; paintThumbs(); }
-        stick = true;
+        stick = true; sentAt = Date.now(); liveOn = true;
         toast('Sent to ' + (sess.name || 'session'));
         setTimeout(load, 700);
       } else if (x.status === 409) { toast('That session isn’t live anymore'); load(); }
@@ -561,7 +590,7 @@ function detailScreen(r) {
     window.LoomTalk.open({ key: key, name: sess.name || sess.topic || 'session', onClose: function () { if (alive) load(); } });
   });
   paintHead(); paintEnabled(); grow();
-  var p = poll(load, 3000);
+  var p = poll(function () { if (liveOn || Date.now() - lastLoad >= 2900) load(); }, 1500);
   return { stop: function () { alive = false; p.stop(); kit.stop(); if (window.LoomTalk) window.LoomTalk.close(); } };
 }
 

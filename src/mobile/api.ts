@@ -15,6 +15,7 @@ import { portRange, preferredPort } from '../serverport.ts';
 import { loadVapidKeys, validSubscription } from './webpush.ts';
 import { mobileFile } from './web.ts';
 import { VOICE_ROUTES, setVoiceDeps } from './voice.ts';
+import { paneLiveStatus } from './livestatus.ts';
 
 // The phone's API (/m/api/*). The gate (src/routes/index.ts) has already checked
 // Host, the same-origin Origin on writes, and (kind `device`) the device cookie
@@ -300,7 +301,8 @@ export function toolLine(name: string, input: unknown): string {
 }
 
 export interface MobileMsg {
-  role: 'user' | 'assistant' | 'tool';
+  /** 'thinking': a thinking block that carries text (most are signature-only and dropped). */
+  role: 'user' | 'assistant' | 'tool' | 'thinking';
   text: string;
 }
 
@@ -345,6 +347,7 @@ export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): 
       for (const b of content) {
         if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ role: 'assistant', text: b.text.trim() });
         else if (b?.type === 'tool_use' && typeof b.name === 'string') out.push({ role: 'tool', text: toolLine(b.name, b.input) });
+        else if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) out.push({ role: 'thinking', text: b.thinking.trim() });
       }
     }
   }
@@ -465,7 +468,9 @@ function getSessions(ctx: RouteCtx): void {
   ctx.json(200, sessionsPayload(deps.chats(), deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()));
 }
 
-/** One chat: its row, transcript, and its pending drafts (the outbox cards, so the chat screen docks them without a second poll). */
+/** One chat: its row, transcript, and its pending drafts (the outbox cards, so the chat screen docks them without a second poll).
+ *  live_status is Claude Code's spinner line off the pane, captured only while the chat is working
+ *  or the phone says it just sent a reply (`&live=1`, before the board has caught up). */
 async function getSession(ctx: RouteCtx): Promise<void> {
   me(ctx);
   const c = findChat(ctx.url.searchParams.get('key'));
@@ -473,7 +478,9 @@ async function getSession(ctx: RouteCtx): Promise<void> {
   const can = c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id));
   const mine = deps.drafts().filter((d) => d.session_id === c.session_id);
   const { drafts } = await outboxPayload(mine, deps.chats(), deps.fresh);
-  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux), mine.length), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can, drafts });
+  const wantLive = can && (!!c.live.working || ctx.url.searchParams.get('live') === '1');
+  const live_status = wantLive ? paneLiveStatus(deps.tmux, c.live.pane_id) : null;
+  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux), mine.length), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can, drafts, live_status });
 }
 
 /** Reply and interrupt: the chat must be live and its pane running Claude right now. */
@@ -700,7 +707,7 @@ async function pushUnsubscribe(ctx: RouteCtx): Promise<void> {
 setVoiceDeps({
   chats: () => deps.chats(),
   tmux: (args) => deps.tmux(args),
-  messages: (c) => mobileTranscript(c.agent, c.jsonl_path, 200),
+  messages: (c) => mobileTranscript(c.agent, c.jsonl_path, 200).filter((m) => m.role !== 'thinking'),
   canReply: (c) => c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id)),
 });
 

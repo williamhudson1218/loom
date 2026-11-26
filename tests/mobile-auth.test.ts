@@ -44,6 +44,7 @@ function fakeDeps(): Partial<MobileDeps> {
       tmuxCalls.push(args);
       if (args[0] === 'display-message') return paneCmd + '\n';
       if (args[0] === 'list-panes') return '%7\tShip the widget\n%8\t\n%9\tSomeone else\n';
+      if (args[0] === 'capture-pane') return '⏺ Running the tests\n\n✻ Cogitating… (12s · ↓ 340 tokens · esc to interrupt)\n\n> \n';
       return '';
     },
     send: (pane, text) => {
@@ -368,6 +369,19 @@ describe('what a paired phone can do', () => {
     const one = await raw('GET', '/m/api/session?key=claude:s1', ph());
     expect(one.body.can_reply).toBe(true);
     expect((one.body.session as { drafts: number }).drafts).toBe(1);
+    expect(one.body.live_status).toBeNull();
+  });
+
+  it('sends the live spinner line only while the chat works, or right after a reply', async () => {
+    tmuxCalls.length = 0;
+    expect((await raw('GET', '/m/api/session?key=claude:s1', ph())).body.live_status).toBeNull();
+    expect(tmuxCalls.some((a) => a[0] === 'capture-pane')).toBe(false);
+    const working = (await raw('GET', '/m/api/session?key=claude:s2', ph())).body.live_status as { text: string; since: number };
+    expect(working.text).toBe('Cogitating… 12s · 340 tokens');
+    expect(Math.abs(Date.now() - 12_000 - working.since)).toBeLessThan(5_000);
+    expect(tmuxCalls.filter((a) => a[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%8']]);
+    const justSent = (await raw('GET', '/m/api/session?key=claude:s1&live=1', ph())).body.live_status as { text: string };
+    expect(justSent.text).toBe('Cogitating… 12s · 340 tokens');
   });
 
   it('takes the topic from the pane\'s @topic with one list-panes call, falling back to the title', async () => {

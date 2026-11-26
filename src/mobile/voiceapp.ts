@@ -108,10 +108,10 @@ function open(opts) {
   top.appendChild(btn('talkend', 'End', close, 'End conversation'));
   t.orb = btn('talkorb', '', function () { orbTap(t); }, 'Talk');
   t.ring = el('span', 'talkring'); t.orb.appendChild(t.ring);
-  t.label = el('div', 'talklabel'); t.hint = el('div', 'talkhint'); t.live = el('div', 'talklive');
+  t.label = el('div', 'talklabel'); t.status = el('div', 'talkstatus'); t.hint = el('div', 'talkhint'); t.live = el('div', 'talklive');
   t.stopBtn = btn('talkchip', 'Stop agent', function () { req('/m/api/interrupt', { json: { key: t.key } }); }, 'Interrupt the agent (sends Esc)');
   t.logEl = el('div', 'talklog');
-  var mid = el('div', 'talkmid'); mid.appendChild(t.orb); mid.appendChild(t.label); mid.appendChild(t.hint); mid.appendChild(t.live); mid.appendChild(t.stopBtn);
+  var mid = el('div', 'talkmid'); mid.appendChild(t.orb); mid.appendChild(t.label); mid.appendChild(t.status); mid.appendChild(t.hint); mid.appendChild(t.live); mid.appendChild(t.stopBtn);
   t.ov.appendChild(top); t.ov.appendChild(mid); t.ov.appendChild(t.logEl);
   document.body.appendChild(t.ov);
   wake(t);
@@ -123,7 +123,7 @@ function open(opts) {
     if (!r.ok || !r.json.ready) { set(t, 'setup', r.json.hint); return; }
     return req('/m/api/voice/turn?key=' + encodeURIComponent(t.key)).then(function (x) {
       if (!t.alive) return;
-      if (x.ok && x.json.working) { t.seenWorking = true; t.sent = ''; working(t); }
+      if (x.ok && x.json.working) { t.seenWorking = true; t.sent = ''; working(t); if (x.json.live_status) t.status.textContent = x.json.live_status.text || ''; }
       else listen(t);
     });
   });
@@ -133,6 +133,7 @@ function set(t, state, hint) {
   t.state = state;
   t.ov.setAttribute('data-state', state);
   t.label.textContent = LABEL[state] || '';
+  if (state !== 'working') t.status.textContent = '';
   t.hint.textContent = hint != null ? hint : (HINT[state] || '');
   t.stopBtn.style.display = state === 'working' ? '' : 'none';
   t.catchBtn.style.display = state === 'listening' || state === 'idle' ? '' : 'none';
@@ -268,6 +269,7 @@ function working(t) {
       if (!r.ok) return;
       var j = r.json;
       var mine = !t.sent || flat(j.last_user).indexOf(t.sent) === 0;
+      t.status.textContent = j.live_status && j.live_status.text ? j.live_status.text : '';
       if (j.working) { t.seenWorking = true; t.idleStreak = 0; return; }
       // Idle: the turn is over once our words are in the transcript (or the agent was seen working)
       // and it has said or done something since, or it is stopped at a prompt. Two idle reads in a row.
@@ -326,6 +328,7 @@ export const VOICE_CSS = String.raw`
 @keyframes talkpulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } }
 @media (prefers-reduced-motion:reduce) { .talkorb { animation:none !important; } .talkring { transition:none; } }
 .talklabel { font-weight:600; font-size:20px; margin-top:8px; }
+.talkstatus { color:var(--text2, #c5cbd8); font-family:var(--mono, ui-monospace, monospace); font-size:13px; max-width:340px; min-height:1.4em; margin-top:-6px; }
 .talkhint { color:var(--muted, #9aa3b5); font-size:14px; max-width:320px; line-height:1.4; }
 .talklive { font-size:16px; line-height:1.45; max-width:340px; min-height:1.45em; }
 .talklog { flex:none; max-height:34vh; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:8px; -webkit-overflow-scrolling:touch; }
