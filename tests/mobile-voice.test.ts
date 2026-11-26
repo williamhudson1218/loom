@@ -9,7 +9,7 @@ import type { MobileChat, MobileMsg } from '../src/mobile/api.ts';
 import type { LiveLoc } from '../src/dashboard.ts';
 import type { RouteCtx } from '../src/routes/index.ts';
 import {
-  VOICE_ROUTES, VOICE, buildSummaryAsk, checkWav, cleanTranscript, fallbackSummary, pruneAudio, resetVoiceForTests, setVoiceDeps, speakable, turnSince, turnText,
+  VOICE_ROUTES, VOICE, alreadySpeakable, buildSummaryAsk, checkWav, cleanTranscript, fallbackSummary, pruneAudio, resetVoiceForTests, setVoiceDeps, speakable, turnSince, turnText,
   type VoiceDeps,
 } from '../src/mobile/voice.ts';
 import { KOKORO_FILES, WHISPER_MODEL, installJob, silentWav, resetInstallJob, setVoiceDir, startVoiceInstall, voicePaths, voiceStatus, type InstallDeps } from '../src/mobile/voice-setup.ts';
@@ -91,6 +91,12 @@ describe('text shaping', () => {
   it('keeps code, links and paths out of the spoken text', () => {
     const s = speakable('**Done.** See `foo()` in /Users/x/dev/app/src/a.ts and https://example.com/pr/1\n```js\nrm -rf /\n```\n# Next');
     expect(s).toBe('Done. See foo() in a file and a link Next');
+  });
+  it('speaks a short plain reply as it is, and nothing with code, paths or links', () => {
+    const a = (text: string): MobileMsg[] => [{ role: 'tool', text: 'Bash: x' }, { role: 'assistant', text }];
+    expect(alreadySpeakable(a('All tests pass.  Want me to push it?'))).toBe('All tests pass. Want me to push it?');
+    for (const bad of ['Changed `foo`.', 'See https://x.io', 'Edited src/a/b.ts', '**Done**', '- one\n- two', 'x'.repeat(300)]) expect(alreadySpeakable(a(bad)), bad).toBe('');
+    expect(alreadySpeakable([{ role: 'tool', text: 'Bash: x' }])).toBe('');
   });
   it('falls back to the last thing the agent said, and the prompt', () => {
     expect(fallbackSummary([{ role: 'assistant', text: 'One. Two! Three?' }], false)).toBe('One. Two!');
@@ -276,11 +282,19 @@ describe('voice routes', () => {
     expect((await call('GET', '/m/api/voice/turn?key=claude:nope')).status).toBe(404);
   });
 
+  it('speaks a short plain reply without asking the model', async () => {
+    messages = [{ role: 'user', text: 'status?' }, { role: 'assistant', text: 'Tests are green. Should I merge?' }];
+    const r = await post('/m/api/voice/summary', { key: 'claude:s1' });
+    expect(r.body.text).toBe('Tests are green. Should I merge?');
+    expect(asks).toHaveLength(0);
+  });
+
   it('summarizes the turn once, speaks it, and reuses it for the same turn', async () => {
+    messages = [{ role: 'user', text: 'fix the bug' }, { role: 'tool', text: 'Bash: test' }, { role: 'assistant', text: 'Fixed it in `src/a.ts`.' }];
     const a = await post('/m/api/voice/summary', { key: 'claude:s1' });
     expect(a.body).toEqual({ ok: true, text: 'It fixed the bug. Should it push?', audio: 'ab'.repeat(16) });
     expect(asks).toHaveLength(1);
-    expect(asks[0]).toContain('<turn>\nFixed.\n</turn>');
+    expect(asks[0]).toContain('Fixed it in');
     expect(asks[0]).not.toContain('<screen>');
     expect(spoken).toEqual(['It fixed the bug. Should it push?']);
     await post('/m/api/voice/summary', { key: 'claude:s1' });

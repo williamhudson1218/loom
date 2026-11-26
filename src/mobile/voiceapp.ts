@@ -71,6 +71,24 @@ function unlockAudio() {
   } catch (e) { /* playback may still work later */ }
 }
 
+// A soft two-note chime when the agent's turn ends, so the ear knows the summary is coming.
+function earcon(ctx) {
+  if (!ctx) return;
+  try {
+    if (ctx.resume) ctx.resume();
+    var t0 = ctx.currentTime + 0.02;
+    [[660, 0], [880, 0.14]].forEach(function (n) {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = n[0];
+      g.gain.setValueAtTime(0.0001, t0 + n[1]);
+      g.gain.exponentialRampToValueAtTime(0.12, t0 + n[1] + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + n[1] + 0.22);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t0 + n[1]); o.stop(t0 + n[1] + 0.25);
+    });
+  } catch (e) { /* no chime, no harm */ }
+}
+
 // ---- the overlay -----------------------------------------------------------------------
 var LABEL = { idle: 'Tap to talk', listening: 'Listening…', heard: 'Listening…', transcribing: 'Transcribing…', sending: 'Sending…', working: 'Agent working…',
   summarizing: 'Summarizing…', speaking: 'Speaking', setup: 'Voice isn’t set up', error: 'Something went wrong' };
@@ -256,7 +274,7 @@ function working(t) {
       var began = t.seenWorking || mine || Date.now() - t.sentAt > 20000;
       if (began && mine && (j.since_user > 0 || j.at_prompt)) t.idleStreak++;
       else t.idleStreak = 0;
-      if (t.idleStreak >= 2) { clearInterval(t.poll); summarize(t); }
+      if (t.idleStreak >= 2) { clearInterval(t.poll); earcon(t.ctx); summarize(t); }
     });
   }, 1500);
 }
@@ -284,7 +302,7 @@ function speak(t, id, text) {
   if (p && p.catch) p.catch(function () { t.hint.textContent = 'Couldn’t play the voice. Tap to continue.'; set(t, 'speaking', 'Couldn’t play the voice. Tap to continue.'); });
 }
 
-window.LoomTalk = { open: open, close: close, _wav: wavBlob, _resample: resample };
+window.LoomTalk = { open: open, close: close, _wav: wavBlob, _resample: resample, _earcon: earcon };
 })();
 `;
 

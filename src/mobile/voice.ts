@@ -301,6 +301,14 @@ export function speakable(s: string): string {
   ).slice(0, 600);
 }
 
+/** A short reply the agent already wrote for a person (no code, links, paths or markdown) can be spoken as it is. */
+export function alreadySpeakable(turn: MobileMsg[]): string {
+  const text = turn.filter((m) => m.role === 'assistant').map((m) => m.text.trim()).join(' ').trim();
+  if (!text || text.length >= 300) return '';
+  if (/`|https?:\/\/|(^|\s)[~.]?\/?[\w.@-]+\/[\w.@/-]+|[*#|<>{}\[\]]|^\s*(?:[-•]|\d+[.)])\s/m.test(text)) return '';
+  return flat(text);
+}
+
 /** When the model is unavailable: the last thing the agent wrote, trimmed to two sentences. */
 export function fallbackSummary(turn: MobileMsg[], atPrompt: boolean): string {
   const last = [...turn].reverse().find((m) => m.role === 'assistant');
@@ -459,11 +467,14 @@ async function summarize(c: MobileChat): Promise<{ text: string; audio: string |
   const hit = summaries.get(sig);
   if (hit) return hit;
   const p = (async () => {
-    let text = '';
-    try {
-      text = speakable(await deps.ask(buildSummaryAsk(lastUser, body, screen)));
-    } catch (e) {
-      console.error('[loom] voice summary failed:', (e as Error).message);
+    // A short plain reply skips the model (~5 s): it is already what we would say. A prompt always asks, to describe it.
+    let text = atPrompt ? '' : alreadySpeakable(turn);
+    if (!text) {
+      try {
+        text = speakable(await deps.ask(buildSummaryAsk(lastUser, body, screen)));
+      } catch (e) {
+        console.error('[loom] voice summary failed:', (e as Error).message);
+      }
     }
     if (!text) text = fallbackSummary(turn, atPrompt);
     let audio: string | null = null;
