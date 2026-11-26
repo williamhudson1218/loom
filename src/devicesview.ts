@@ -10,7 +10,9 @@
 //              phoneAccess, paired, notifications },
 //     devices: [{ id, name, created_at, last_seen_at, push }],
 //     pending: [{ id, name, requested_at }],
-//     pairing: { code, url, expires_at } | null }
+//     pairing: { code, url, expires_at } | null,
+//     voice: { ready, tts: kokoro|macos, whisper: { bin, model }, kokoro: { ready, venv, model },
+//              install: { running, steps: [{ key, label, state, detail, progress? }], error } | null } }
 // Writes go through the same fetch wrapper as the rest of the page (it adds the launch token).
 
 import { QR_JS } from './vendor/qrcode.ts';
@@ -93,6 +95,22 @@ function sxDevices(){var d=DEV.d;
   var devs=d.devices||[];
   if(!devs.length)h+='<p class="sxempty">No phones paired yet.</p>';
   devs.forEach(function(v){h+=sxRow(sxEsc(v.name||'Phone'),'Paired '+sxWhen(devMs(v.created_at))+' · last seen '+devAgo(v.last_seen_at)+' · notifications '+(v.push?'on':'off'),sxBtn('dev_revoke','Revoke',{arg:v.id,danger:true}));});
+  h+=devVoice(d.voice);
+  return h;}
+function devVoice(v){if(!v)return '';var h=sxGrp('Conversation mode'),job=v.install,run=!!(job&&job.running);
+  var pill=run?sxPill('warn','Installing'):v.ready?sxPill('ok',v.tts==='kokoro'?'Ready':'Ready · macOS voice'):sxPill('off','Not set up');
+  var full=v.ready&&v.kokoro&&v.kokoro.ready;
+  h+=sxRow('Talk to a chat from your phone','Tap Talk in a chat on the phone and speak: your words go to the agent, and when its turn ends you hear a short spoken summary. Speech-to-text (whisper.cpp) and the voice (Kokoro, or the built-in macOS voice) run on this Mac. Nothing goes to the cloud except the summary, which uses the same model as pane topics.',
+    pill+(full?'':sxBtn('dev_voice',run?'Installing…':v.ready?'Install Kokoro voice':'Install voice models',{pri:!v.ready,dis:run})));
+  var items=[['Speech-to-text (whisper.cpp)',!!(v.whisper&&v.whisper.bin)],['Speech model (large-v3-turbo)',!!(v.whisper&&v.whisper.model)],['Kokoro voice',!!(v.kokoro&&v.kokoro.ready)]];
+  h+='<div class="devsteps">';
+  items.forEach(function(it,n){var st=job&&job.steps&&job.steps[n],cls=it[1]?'done':st&&st.state==='running'?'cur':'pend',txt='';
+    if(st&&st.state==='running')txt=(st.detail?sxEsc(st.detail):'Working')+(st.progress!=null?' · '+Math.round(st.progress*100)+'%':'');
+    else if(st&&st.state==='error')txt='<span style="color:var(--sx-red,#e5534b)">'+sxEsc(st.detail||'Failed')+'</span>';
+    else if(!it[1]&&n===2)txt='Optional. Without it the phone hears the built-in macOS voice.';
+    h+='<div class="devstep '+cls+'"><div class="devnum">'+(it[1]?'✓':(n+1))+'</div><div class="devbody"><div class="devttl">'+sxEsc(it[0])+'</div>'+(txt?'<div class="devtxt">'+txt+'</div>':'')+'</div></div>';});
+  h+='</div>';
+  if(!v.ready&&!run)h+=sxNote('Installs whisper.cpp with Homebrew and downloads about 900 MB of models into the Loom folder. It runs in the background; you can leave this page.');
   return h;}
 function devLink(url,label){return '<a href="'+sxEsc(url)+'" target="_blank" rel="noopener">'+sxEsc(label)+'</a>';}
 function devApproveUrl(pa){var m=/https:[/][/]login[.]tailscale[.]com[/][^ "'<>)]+/.exec((pa&&(pa.approveUrl||pa.detail))||'');return m?m[0].replace(/[.,;]+$/,''):'';}
@@ -133,6 +151,7 @@ function devAct(a,arg,btn){
   var fail=function(j){sxBad(sxErr(j));return devLoad();};
   if(a==='dev_access'){DEV.busy=true;sxRerender(true);sxPost('/api/devices/phone-access',{on:arg==='on'}).then(function(j){DEV.busy=false;if(j&&j.phoneAccess){devApply(j);sxRerender(true);}else fail(j).then(function(){sxRerender(true);});});return;}
   if(a==='dev_pair'){DEV.busy=true;sxRerender(true);sxPost('/api/devices/pair-start',{}).then(function(j){DEV.busy=false;DEV.hide='';if(j&&j.code){if(DEV.d)DEV.d.pairing={code:j.code,url:j.url,expires_at:j.expires_at};}else sxBad(sxErr(j));devLoad().then(function(){sxRerender(true);});});return;}
+  if(a==='dev_voice'){DEV.busy=true;sxRerender(true);sxPost('/api/devices/voice-install',{}).then(function(j){DEV.busy=false;if(j&&j.phoneAccess){devApply(j);sxRerender(true);}else fail(j).then(function(){sxRerender(true);});});return;}
   if(a==='dev_step'){DEV.exp[arg]=!DEV.exp[arg];sxRerender(true);return;}
   if(a==='dev_all'){DEV.all=!DEV.all;sxRerender(true);return;}
   if(a==='dev_hide'){var pp=DEV.d&&DEV.d.pairing;DEV.hide=pp?pp.code:'';sxRerender(true);return;}
