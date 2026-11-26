@@ -1581,10 +1581,12 @@ function mobileChats(): MobileChat[] {
   const { views, live } = snapshot();
   const { board } = boardSplit(views, live);
   let orchSid = '';
+  const parked = new Map<string, '' | 'waiting' | 'replied'>();
   try {
     const db = openDb();
     try {
       orchSid = orchSettings.sessionId(db);
+      for (const p of listParked(db)) parked.set(agentSessionKey(p.agent as Agent, p.session_id), p.state === 'replied' ? 'replied' : p.state === 'waiting' ? 'waiting' : '');
     } finally {
       db.close();
     }
@@ -1599,6 +1601,7 @@ function mobileChats(): MobileChat[] {
       agent: v.agent, session_id: v.session_id, title: v.title || v.first_message, project: v.project,
       state: v.summary_pending ? 'pending' : v.state || 'done', jsonl_path: v.jsonl_path,
       last_active_at: v.last_active_at, last_turn_at: v.last_turn_at, live: L,
+      saved: v.saved, parked: parked.get(agentSessionKey(v.agent, v.session_id)) ?? '', group: v.group ?? null,
     });
   }
   return out;
@@ -1618,6 +1621,18 @@ function wireMobile(): void {
   }
   setMobileDeps({
     chats: mobileChats,
+    groups: () => {
+      try {
+        const db = openDb();
+        try {
+          return listGroups(db).map((g) => ({ id: g.id, name: g.name }));
+        } finally {
+          db.close();
+        }
+      } catch {
+        return [];
+      }
+    },
     tail: (c) => lastMessageTail(c as unknown as ChatView),
     tmux: (args) => tmux(args),
     send: (paneId, text, agent) => sendToPane(paneId, text, agent),

@@ -117,6 +117,6 @@ describe('devices view checklist script', () => {
   it('collapses to one line when everything is done', () => {
     const h = render({ ...base, setup: { ...setup, httpsCerts: true, iphone: 'online', phoneAccess: true, paired: true, notifications: true } });
     expect(h).toContain('Phone set up ✓');
-    expect(h).not.toContain('devstep');
+    expect(h).not.toContain('class="devstep ');
   });
 });

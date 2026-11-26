@@ -113,7 +113,7 @@ function applyTheme(t) {
 try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeColor); } catch (e) {}
 
 // ---- api -------------------------------------------------------------------------
-var S = { me: null, sessions: [], counts: { working: 0, needs: 0, blocked: 0 }, outboxPending: 0, live: true, onSessions: null, tabs: null };
+var S = { me: null, sections: [], sessions: [], counts: { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 }, outboxPending: 0, live: true, onSessions: null, tabs: null };
 var shellUp = false;
 
 function api(path, opt) {
@@ -217,7 +217,7 @@ function buildShell() {
   shellUp = true;
 }
 function updateBadges() {
-  var n = S.counts.needs || 0, o = S.outboxPending || 0;
+  var n = S.counts.turn || 0, o = S.outboxPending || 0;
   function set(k, v, label) {
     var t = tabBtns[k]; if (!t) return;
     t.badge.textContent = String(v); t.badge.style.display = v > 0 ? '' : 'none';
@@ -235,6 +235,7 @@ function parseHash() {
   var x = (location.hash || '').replace(/^#/, '');
   if (x.indexOf('s=') === 0) { try { return { screen: 'detail', key: decodeURIComponent(x.slice(2)) }; } catch (e) {} }
   if (x === 'outbox') return { screen: 'outbox' };
+  if (x.indexOf('outbox?s=') === 0) { try { return { screen: 'outbox', key: decodeURIComponent(x.slice(9)) }; } catch (e) {} }
   if (x === 'settings') return { screen: 'settings' };
   return { screen: 'sessions' };
 }
@@ -251,17 +252,23 @@ function route() {
 }
 
 // ---- sessions --------------------------------------------------------------------
-var GROUPS = [
-  { key: 'needs', label: 'Needs you', color: 'var(--accent)', prefix: 'asked:' },
-  { key: 'blocked', label: 'Waiting on someone', color: 'var(--warn)', prefix: 'waiting:' },
-  { key: 'working', label: 'Working', color: 'var(--green)', prefix: 'last:' }
-];
+// Status sections match the desktop sidebar's (src/grouping.ts); user groups get a neutral heading.
+var STATUS = {
+  working: { color: 'var(--green)', prefix: 'last:' },
+  turn: { color: 'var(--accent)', prefix: 'asked:' },
+  waiting: { color: 'var(--warn)', prefix: 'waiting:' },
+  saved: { color: 'var(--muted)', prefix: 'last:' },
+  recent: { color: 'var(--muted)', prefix: 'last:' }
+};
+function statusInfo(k) { return STATUS[k] || STATUS.recent; }
+function sessionByKey(key) { return S.sessions.filter(function (s) { return s.key === key; })[0] || null; }
 function loadSessions() {
   return api('/m/api/sessions').then(function (r) {
     if (r.ok) {
       S.live = true;
-      S.sessions = r.json.sessions || [];
-      S.counts = r.json.counts || { working: 0, needs: 0, blocked: 0 };
+      S.sections = r.json.sections || [];
+      S.sessions = [].concat.apply([], S.sections.map(function (x) { return x.sessions || []; }));
+      S.counts = r.json.counts || { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 };
       S.outboxPending = r.json.outbox_pending || 0;
     } else if (r.status !== 401) S.live = false;
     updateBadges();
@@ -281,15 +288,15 @@ function sessionsScreen() {
     chipDot.className = 'dot' + (S.live ? '' : ' off');
     chipText.textContent = S.live ? 'Mac · live' : 'Mac · offline';
     var c = S.counts;
-    line.textContent = '~ ' + (c.working || 0) + ' working · ● ' + (c.needs || 0) + ' your turn · ‖ ' + (c.blocked || 0) + ' waiting';
-    var sig = JSON.stringify([S.live, S.sessions.map(function (s) { return [s.key, s.group, s.topic, s.tail, s.stage, ago(s.last_active_at)]; })]);
+    line.textContent = '~ ' + (c.working || 0) + ' working · ● ' + (c.turn || 0) + ' your turn · ‖ ' + (c.waiting || 0) + ' waiting';
+    var sig = JSON.stringify([S.live, S.sections.map(function (x) { return [x.key, x.name, x.sessions.map(function (s) { return [s.key, s.group, s.topic, s.tail, s.stage, ago(s.last_active_at)]; })]; })]);
     if (sig === last) return;
     last = sig;
     var keep = scroller.scrollTop;
     clear(list);
     var any = false;
-    GROUPS.forEach(function (g) {
-      var items = S.sessions.filter(function (s) { return s.group === g.key; });
+    S.sections.forEach(function (g) {
+      var items = g.sessions || [];
       if (!items.length) return;
       any = true;
       var card = h('div', { class: 'card' });
@@ -299,9 +306,10 @@ function sessionsScreen() {
           h('span', { class: 'sbody' },
             h('span', { class: 'sline' }, h('span', { class: 'stopic', text: s.topic || s.name || s.key }), h('span', { class: 'sage', text: ago(s.last_active_at) })),
             h('span', { class: 'smeta' }, h('span', { class: 'pill', text: s.name || '' }), h('span', { text: s.project || '' })),
-            s.tail ? h('span', { class: 'stail' }, h('span', { class: 'pfx', text: g.prefix }), ' ' + s.tail) : null)));
+            s.tail ? h('span', { class: 'stail' }, h('span', { class: 'pfx', text: statusInfo(s.group).prefix }), ' ' + s.tail) : null)));
       });
-      list.appendChild(h('section', { class: 'grp' }, h('h2', { style: 'color:' + g.color, text: g.label + ' · ' + items.length }), card));
+      var color = g.kind === 'status' ? statusInfo(g.key).color : 'var(--text2)';
+      list.appendChild(h('section', { class: 'grp' + (g.kind === 'group' ? ' ugrp' : '') }, h('h2', { style: 'color:' + color, text: g.name + ' · ' + items.length }), card));
     });
     if (!any) list.appendChild(h('div', { class: 'empty', text: S.live ? 'No live sessions on your Mac right now.' : 'Can’t reach Loom on your Mac. Check that it is running and that Phone access is on.' }));
     scroller.scrollTop = keep;
@@ -314,7 +322,8 @@ function sessionsScreen() {
 // ---- session detail --------------------------------------------------------------
 var drafts = {};
 function detailScreen(r) {
-  var key = r.key, sess = (S.sessions.filter(function (s) { return s.key === key; })[0]) || { key: key, name: '', topic: '', project: '', stage: 'implementation', group: 'working' };
+  var key = r.key, sess = sessionByKey(key) || { key: key, name: '', topic: '', project: '', stage: 'implementation', group: 'working', drafts: 0 };
+  var draftsBtn = h('button', { class: 'draftsbtn', on: { click: function () { location.hash = '#outbox?s=' + encodeURIComponent(key); } } });
   var title = h('div', { class: 'a' }), sub = h('div', { class: 'b' }), chip = h('span', { class: 'stagechip' });
   var status = h('span'), pane = h('span', { class: 'mono' });
   var msgsEl = h('div', { class: 'msgs' }), scroller = h('div', { class: 'scroll' }, msgsEl);
@@ -402,9 +411,13 @@ function detailScreen(r) {
     chip.appendChild(h('span', { class: 'mono', text: GLYPH[st] }));
     chip.appendChild(document.createTextNode(' ' + STAGE[st]));
     var age = ago(sess.last_active_at);
-    var g = sess.group;
-    status.textContent = g === 'working' ? '~ working' : g === 'blocked' ? '‖ waiting on someone' + (age ? ' · ' + age : '') : '● your turn' + (age ? ' · ' + age : '');
-    status.style.color = g === 'working' ? 'var(--green)' : g === 'blocked' ? 'var(--warn)' : 'var(--accent)';
+    var g = sess.group, at = age ? ' · ' + age : '';
+    status.textContent = g === 'working' ? '~ working' : g === 'waiting' ? '‖ waiting on others' + at : g === 'turn' ? '● your turn' + at : g === 'saved' ? '○ saved for later' + at : '○ idle' + at;
+    status.style.color = statusInfo(g).color;
+    var nd = sess.drafts || 0;
+    draftsBtn.style.display = nd > 0 ? '' : 'none';
+    draftsBtn.textContent = 'Drafts ' + nd;
+    draftsBtn.setAttribute('aria-label', nd + (nd === 1 ? ' draft' : ' drafts') + ' from this chat');
     status.style.fontWeight = '600';
     pane.textContent = sess.pane || '';
     ta.placeholder = 'Reply to ' + (sess.name || 'session');
@@ -478,7 +491,7 @@ function detailScreen(r) {
   screenEl.appendChild(h('div', { class: 'scr' },
     h('header', { class: 'dhdr' },
       h('button', { class: 'iconbtn', 'aria-label': 'Back to sessions', on: { click: function () { location.hash = '#sessions'; } } }, icon('back')),
-      h('div', { class: 'dtitle' }, title, sub), chip),
+      h('div', { class: 'dtitle' }, title, sub), draftsBtn, chip),
     h('div', { class: 'band' }, status, pane),
     scroller, composer));
   paintHead(); paintEnabled(); grow();
@@ -488,20 +501,39 @@ function detailScreen(r) {
 
 // ---- outbox ----------------------------------------------------------------------
 var KIND = { thread: 'Thread', dm: 'DM', channel: 'Channel', email: 'Email', review: 'PR review' };
-var OB = { drafts: [], done: [], editing: null, edits: {}, hidden: {}, sheet: false };
-function outboxScreen() {
+var OB = { drafts: [], done: [], editing: null, edits: {}, hidden: {}, sheet: false, only: null };
+function outboxScreen(r) {
+  // r.key set: one chat's drafts (#outbox?s=<key>), from the Drafts button on its detail screen.
+  var only = r && r.key ? r.key : null;
   var line = h('p', { text: '' });
   var list = h('div', { class: 'list', style: 'gap:12px' });
   var scroller = h('div', { class: 'scroll' }, list);
-  screenEl.appendChild(h('div', { class: 'scr' }, h('header', { class: 'hdr' }, h('h1', { text: 'Outbox' }), line), scroller));
+  var heading = h('h1', { text: 'Outbox' });
+  var hdr;
+  if (only) {
+    hdr = h('header', { class: 'hdr' },
+      h('div', { class: 'obnav' },
+        h('button', { class: 'linkbtn', 'aria-label': 'Back to the chat', on: { click: function () { location.hash = '#s=' + encodeURIComponent(only); } } }, icon('back'), 'Chat'),
+        h('button', { class: 'linkbtn', text: 'All drafts', on: { click: function () { location.hash = '#outbox'; } } })),
+      heading, line);
+    heading.className = 'sub';
+  } else hdr = h('header', { class: 'hdr' }, heading, line);
+  screenEl.appendChild(h('div', { class: 'scr' }, hdr, scroller));
+  if (OB.only !== only) { OB.drafts = []; OB.edits = {}; OB.only = only; }
   var alive = true, loaded = false;
+  function paintHeading() {
+    if (!only) return;
+    var s = sessionByKey(only), d0 = OB.drafts[0];
+    heading.textContent = 'Drafts from ' + ((s && (s.name || s.topic)) || (d0 && d0.from) || 'this chat');
+  }
 
   function msgsOf(d) { return OB.edits[d.id] || d.messages || []; }
   function visible() { return OB.drafts.filter(function (d) { return !OB.hidden[d.id]; }); }
   function render() {
     if (!alive) return;
     var vis = visible();
-    line.textContent = vis.length === 0 ? 'Nothing waiting. Drafts land here as sessions write them.' : vis.length + (vis.length === 1 ? ' draft waiting on you.' : ' drafts waiting on you.') + ' Nothing posts until you tap Post.';
+    paintHeading();
+    line.textContent = vis.length === 0 ? (only ? 'No drafts from this chat.' : 'Nothing waiting. Drafts land here as sessions write them.') : vis.length + (vis.length === 1 ? ' draft waiting on you.' : ' drafts waiting on you.') + ' Nothing posts until you tap Post.';
     var keep = scroller.scrollTop;
     clear(list);
     vis.forEach(function (d) { list.appendChild(card(d)); });
@@ -590,10 +622,11 @@ function outboxScreen() {
   }
   function loadOutbox() {
     if (!alive) return Promise.resolve();
-    return api('/m/api/outbox').then(function (x) {
+    return api('/m/api/outbox' + (only ? '?session=' + encodeURIComponent(only) : '')).then(function (x) {
       if (!x.ok || !alive) return;
       var next = x.json.drafts || [];
-      loaded = true; S.outboxPending = next.length; updateBadges();
+      loaded = true;
+      if (!only) { S.outboxPending = next.length; updateBadges(); }
       if (OB.editing || OB.sheet) { OB.drafts = next.length ? OB.drafts.filter(function (o) { return next.some(function (n) { return n.id === o.id; }); }).concat(next.filter(function (n) { return !OB.drafts.some(function (o) { return o.id === n.id; }); })) : []; return; }
       OB.drafts = next;
       render();

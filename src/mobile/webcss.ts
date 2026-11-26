@@ -81,6 +81,11 @@ h1, h2, p { margin: 0; }
 .dhdr { display: flex; align-items: center; gap: 6px; padding: 0 12px 10px 4px; border-bottom: 1px solid var(--border); }
 .iconbtn { width: 44px; height: 44px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--accent); flex: none; }
 .dtitle { flex: 1; min-width: 0; }
+.draftsbtn { flex: none; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 600; background: var(--warn-bg); color: var(--warn); border: 1px solid var(--border); }
+.obnav { display: flex; justify-content: space-between; align-items: center; margin: 0 -12px; }
+.linkbtn { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 12px; border: 0; background: transparent; color: var(--accent); font-size: 16px; }
+.linkbtn svg { width: 22px; height: 22px; }
+.hdr h1.sub { font-size: 24px; letter-spacing: -.3px; overflow-wrap: anywhere; }
 .dtitle .a { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dtitle .b { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stagechip { flex: none; font-size: 12px; font-weight: 600; padding: 5px 9px; border-radius: 8px; }

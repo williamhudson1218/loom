@@ -7,7 +7,7 @@ import { CODE_ALPHABET, CODE_TTL_MS, DeviceStore, PENDING_TTL_MS, cleanName, dev
 import { encryptPayload, generateVapidKeys, loadVapidKeys, sendPush, validSubscription, vapidAuthorization } from '../src/mobile/webpush.ts';
 import { applyServe, clearLeftoverServe, serveIsLoomOnly, tailscaleStatus, type TailscaleDeps } from '../src/mobile/tailscale.ts';
 import { DraftWatch, PushDispatcher, chatEventPush, inPushQuiet, parseHidIdle, type PushDeps } from '../src/mobile/push-triggers.ts';
-import { draftKind, draftUrl, groupOf, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
+import { draftKind, draftUrl, statusOf, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
 import type { Device } from '../src/mobile/devices.ts';
 import type { Draft } from '../src/outbox.ts';
 
@@ -319,20 +319,44 @@ describe('sessions and transcripts for the phone', () => {
   const live = (o: object = {}) => ({ agent: 'claude' as const, session_id: 'x', pane_id: '%1', tmux_session: 'loom-a', window_index: '1', pane_index: '2', running: true, ...o });
   const c = (sid: string, state: string, at: number, l: object = {}): MobileChat => ({ agent: 'claude', session_id: sid, title: sid, project: 'p', state, jsonl_path: '', last_active_at: at, last_turn_at: 0, live: live(l) });
 
-  it('folds the board columns into three groups', () => {
-    expect(groupOf('waiting_on_user', { working: true })).toBe('working');
-    expect(groupOf('waiting_on_user', { stage: 'blocked' })).toBe('blocked');
-    expect(groupOf('waiting_on_user', {})).toBe('needs');
-    expect(groupOf('done', { stage: 'thread' })).toBe('needs');
-    expect(groupOf('done', { stage: 'shipping' })).toBe('working');
+  it('classifies like the desktop sidebar: parked, saved, working, your turn, else recent', () => {
+    const at = (state: string, o: Partial<MobileChat> = {}, l: object = {}) => statusOf({ ...c('x', state, 1, l), ...o });
+    expect(at('waiting_on_user', {}, { working: true })).toBe('working');
+    expect(at('waiting_on_user')).toBe('turn');
+    expect(at('done')).toBe('recent');
+    expect(at('pending')).toBe('recent');
+    expect(at('done', {}, { stage: 'blocked' })).toBe('recent');
+    expect(at('done', { parked: 'waiting' }, { working: true })).toBe('waiting');
+    expect(at('done', { parked: 'replied' })).toBe('turn');
+    expect(at('waiting_on_user', { saved: true })).toBe('saved');
   });
 
-  it('sorts needs and blocked longest-waiting first, working newest first', () => {
-    const p = sessionsPayload([c('n-new', 'waiting_on_user', 30), c('w-old', 'done', 1, { working: true }), c('n-old', 'waiting_on_user', 10), c('b', 'done', 5, { stage: 'blocked' }), c('w-new', 'done', 50, { working: true })], () => 'tail', 2);
-    expect(p.sessions.map((s) => s.key)).toEqual(['claude:n-old', 'claude:n-new', 'claude:b', 'claude:w-new', 'claude:w-old']);
-    expect(p.counts).toEqual({ working: 2, needs: 2, blocked: 1 });
-    expect(p.sessions.find((s) => s.key === 'claude:w-new')!.tail).toBe('');
-    expect(p.sessions[0].pane).toBe('loom-a:1.2');
+  it('lays out user groups first in their order, then status sections; newest first everywhere', () => {
+    const G1 = { id: 7, name: 'Billing' }, G2 = { id: 3, name: 'Infra' }, GONE = { id: 99, name: 'Deleted' };
+    const chats = [
+      c('t-old', 'waiting_on_user', 10), c('t-new', 'waiting_on_user', 30), c('w-old', 'done', 1, { working: true }), c('w-new', 'done', 50, { working: true }),
+      c('r', 'done', 5), { ...c('p', 'done', 6), parked: 'waiting' as const },
+      { ...c('g1-a', 'waiting_on_user', 20), group: G1 }, { ...c('g1-b', 'done', 40, { working: true }), group: G1 },
+      { ...c('g2', 'done', 2), group: G2 }, { ...c('orphan', 'done', 3), group: GONE },
+      c('tie-b', 'done', 4), c('tie-a', 'done', 4),
+    ];
+    const p = sessionsPayload(chats, () => 'tail', [{ session_id: 't-new' }, { session_id: 't-new' }, { session_id: 'g2' }], new Map(), [G2, G1, { id: 5, name: 'Empty' }]);
+    expect(p.sections.map((s) => [s.key, s.name, s.kind, s.sessions.map((r) => r.key.slice(7))])).toEqual([
+      ['g:3', 'Infra', 'group', ['g2']],
+      ['g:7', 'Billing', 'group', ['g1-b', 'g1-a']],
+      ['working', 'Working', 'status', ['w-new', 'w-old']],
+      ['turn', 'Your turn', 'status', ['t-new', 't-old']],
+      ['waiting', 'Waiting on others', 'status', ['p']],
+      ['recent', 'Recent', 'status', ['r', 'tie-a', 'tie-b', 'orphan']],
+    ]);
+    expect(p.counts).toEqual({ working: 3, turn: 3, waiting: 1, saved: 0, recent: 5 });
+    expect(p.outbox_pending).toBe(3);
+    const rows = p.sections.flatMap((s) => s.sessions);
+    expect(rows.find((r) => r.key === 'claude:t-new')!.drafts).toBe(2);
+    expect(rows.find((r) => r.key === 'claude:g2')!.drafts).toBe(1);
+    expect(rows.find((r) => r.key === 'claude:w-new')!.tail).toBe('');
+    expect(rows.find((r) => r.key === 'claude:g1-a')).toMatchObject({ group: 'turn', tail: 'tail' });
+    expect(rows[0].pane).toBe('loom-a:1.2');
   });
 
   it('reads pane topics from one list-panes call, and survives tmux failing', () => {
@@ -344,8 +368,8 @@ describe('sessions and transcripts for the phone', () => {
     expect([...t]).toEqual([['%1', 'Ship it'], ['%3', 'Topic with\ttab']]);
     expect(calls.length).toBe(1);
     expect(paneTopics(() => { throw new Error('no server'); }).size).toBe(0);
-    const p = sessionsPayload([c('a', 'waiting_on_user', 1, { pane_id: '%1' }), c('b', 'waiting_on_user', 2, { pane_id: '%2' })], () => '', 0, new Map([['%1', 'Ship it']]));
-    expect(p.sessions.map((s) => s.topic)).toEqual(['Ship it', 'b']);
+    const p = sessionsPayload([c('a', 'waiting_on_user', 1, { pane_id: '%1' }), c('b', 'waiting_on_user', 2, { pane_id: '%2' })], () => '', [], new Map([['%1', 'Ship it']]));
+    expect(p.sections.flatMap((s) => s.sessions).map((s) => s.topic)).toEqual(['b', 'Ship it']);
   });
 
   it('recognises Claude panes only by their command', () => {

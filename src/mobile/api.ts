@@ -35,6 +35,17 @@ export interface MobileChat {
   last_active_at: number;
   last_turn_at: number;
   live: LiveLoc;
+  /** Saved for later (a live saved chat is rare: saving one frees its pane). */
+  saved?: boolean;
+  /** Send & park: 'waiting' on someone, or 'replied' (someone answered). */
+  parked?: '' | 'waiting' | 'replied';
+  /** The sidebar group the chat was moved into (chatgroups.ts). */
+  group?: { id: number; name: string } | null;
+}
+
+export interface SidebarGroup {
+  id: number;
+  name: string;
 }
 
 export interface OutboxResult {
@@ -44,6 +55,8 @@ export interface OutboxResult {
 
 export interface MobileDeps {
   chats(): MobileChat[];
+  /** The user's sidebar groups in display order (chatgroups.ts listGroups). */
+  groups(): SidebarGroup[];
   tail(c: MobileChat): string;
   /** tmux, for `display-message` and the interrupt's `send-keys`. Tests inject a fake: never a real pane. */
   tmux(args: string[]): string;
@@ -67,6 +80,7 @@ const unwired = (): never => {
 
 let deps: MobileDeps = {
   chats: () => [],
+  groups: () => [],
   tail: () => '',
   tmux: unwired,
   send: () => ({ ok: false, detail: 'not wired' }),
@@ -142,14 +156,25 @@ export function resetPhoneAccessCache(): void {
 
 /* ------------------------------------------------------------------ sessions */
 
-export type Group = 'needs' | 'blocked' | 'working';
+// The desktop sidebar's status sections (src/grouping.ts STATUS_GROUPS / statusGroupOf), for
+// the live chats the phone lists. Closed never applies: a Send & close chat is off the phone.
+export type Status = 'working' | 'turn' | 'waiting' | 'saved' | 'recent';
+export const STATUS_SECTIONS: { key: Status; name: string }[] = [
+  { key: 'working', name: 'Working' },
+  { key: 'turn', name: 'Your turn' },
+  { key: 'waiting', name: 'Waiting on others' },
+  { key: 'saved', name: 'Saved for later' },
+  { key: 'recent', name: 'Recent' },
+];
 
-/** The board's kbCol, folded to three groups. */
-export function groupOf(state: string, live: Pick<LiveLoc, 'working' | 'stage'>): Group {
-  if (live.working) return 'working';
-  if (live.stage === 'blocked') return 'blocked';
-  if (state === 'waiting_on_user' || live.stage === 'thread') return 'needs';
-  return 'working';
+/** statusGroupOf with the dashboard's predicates: parked first, then saved, working, your turn (live and waiting_on_user), else Recent. */
+export function statusOf(c: Pick<MobileChat, 'state' | 'parked' | 'saved'> & { live: Pick<LiveLoc, 'working'> }): Status {
+  if (c.parked === 'waiting') return 'waiting';
+  if (c.parked === 'replied') return 'turn';
+  if (c.saved) return 'saved';
+  if (c.live.working) return 'working';
+  if (c.state === 'waiting_on_user') return 'turn';
+  return 'recent';
 }
 
 const fresh = (c: MobileChat): number => c.last_turn_at || c.last_active_at;
@@ -176,8 +201,8 @@ export function paneTopics(tmux: (args: string[]) => string): Map<string, string
   return out;
 }
 
-export function sessionRow(c: MobileChat, tail: string, topics: Map<string, string> = new Map()) {
-  const g = groupOf(c.state, c.live);
+export function sessionRow(c: MobileChat, tail: string, topics: Map<string, string> = new Map(), drafts = 0) {
+  const g = statusOf(c);
   return {
     key: sessionKey(c),
     name: c.live.name ?? '',
@@ -188,16 +213,62 @@ export function sessionRow(c: MobileChat, tail: string, topics: Map<string, stri
     last_active_at: fresh(c),
     tail: g === 'working' ? '' : tail,
     pane: paneRef(c.live),
+    drafts,
   };
 }
 
-export function sessionsPayload(chats: MobileChat[], tail: (c: MobileChat) => string, outboxPending: number, topics: Map<string, string> = new Map()) {
-  const rows = chats.map((c) => ({ c, g: groupOf(c.state, c.live) }));
-  const order: Record<Group, number> = { needs: 0, blocked: 1, working: 2 };
-  rows.sort((a, b) => order[a.g] - order[b.g] || (a.g === 'working' ? fresh(b.c) - fresh(a.c) : fresh(a.c) - fresh(b.c)));
-  const counts = { working: 0, needs: 0, blocked: 0 };
-  for (const r of rows) counts[r.g]++;
-  return { sessions: rows.map((r) => sessionRow(r.c, r.g === 'working' ? '' : tail(r.c), topics)), counts, outbox_pending: outboxPending };
+export type SessionRow = ReturnType<typeof sessionRow>;
+export interface SessionSection {
+  key: string;
+  name: string;
+  kind: 'group' | 'status';
+  sessions: SessionRow[];
+}
+
+/** Pending drafts per session id. */
+export function draftCounts(drafts: Pick<Draft, 'session_id'>[]): Map<string, number> {
+  const n = new Map<string, number>();
+  for (const d of drafts) if (d.session_id) n.set(d.session_id, (n.get(d.session_id) ?? 0) + 1);
+  return n;
+}
+
+/**
+ * The phone's list, laid out like the desktop sidebar: the user's groups first (drag order,
+ * only those with a live chat here), then the status sections in desktop order for the rest.
+ * Every section is most recently active first, ties on key. counts are by status over every
+ * chat, grouped or not, so the badge still counts every chat whose turn it is.
+ */
+export function sessionsPayload(
+  chats: MobileChat[],
+  tail: (c: MobileChat) => string,
+  drafts: Pick<Draft, 'session_id'>[],
+  topics: Map<string, string> = new Map(),
+  groups: SidebarGroup[] = [],
+) {
+  const nDrafts = draftCounts(drafts);
+  const rows = chats.map((c) => ({ c, st: statusOf(c), key: sessionKey(c) }));
+  rows.sort((a, b) => fresh(b.c) - fresh(a.c) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const counts: Record<Status, number> = { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 };
+  for (const r of rows) counts[r.st]++;
+  const known = new Set(groups.map((g) => g.id));
+  const byGroup = new Map<number, SessionRow[]>();
+  const byStatus = new Map<Status, SessionRow[]>();
+  for (const r of rows) {
+    const row = sessionRow(r.c, r.st === 'working' ? '' : tail(r.c), topics, nDrafts.get(r.c.session_id) ?? 0);
+    const gid = r.c.group?.id;
+    if (gid && known.has(gid)) (byGroup.get(gid) ?? byGroup.set(gid, []).get(gid)!).push(row);
+    else (byStatus.get(r.st) ?? byStatus.set(r.st, []).get(r.st)!).push(row);
+  }
+  const sections: SessionSection[] = [];
+  for (const g of groups) {
+    const s = byGroup.get(g.id);
+    if (s?.length) sections.push({ key: `g:${g.id}`, name: g.name, kind: 'group', sessions: s });
+  }
+  for (const st of STATUS_SECTIONS) {
+    const s = byStatus.get(st.key);
+    if (s?.length) sections.push({ key: st.key, name: st.name, kind: 'status', sessions: s });
+  }
+  return { sections, counts, outbox_pending: drafts.length };
 }
 
 /** Claude Code shows in tmux as its version string (2.1.233) or `claude`. */
@@ -385,7 +456,7 @@ function getMe(ctx: RouteCtx): void {
 
 function getSessions(ctx: RouteCtx): void {
   me(ctx);
-  ctx.json(200, sessionsPayload(deps.chats(), deps.tail, deps.drafts().length, paneTopics(deps.tmux)));
+  ctx.json(200, sessionsPayload(deps.chats(), deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()));
 }
 
 function getSession(ctx: RouteCtx): void {
@@ -393,7 +464,7 @@ function getSession(ctx: RouteCtx): void {
   const c = findChat(ctx.url.searchParams.get('key'));
   if (!c) return ctx.json(404, { ok: false, detail: 'no such live chat' });
   const can = c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id));
-  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux)), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can });
+  ctx.json(200, { session: sessionRow(c, deps.tail(c), paneTopics(deps.tmux), draftCounts(deps.drafts()).get(c.session_id) ?? 0), messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can });
 }
 
 /** Reply and interrupt: the chat must be live and its pane running Claude right now. */
@@ -521,9 +592,16 @@ async function interrupt(ctx: RouteCtx): Promise<void> {
   }
 }
 
+/** `?session=<agent>:<session id>` narrows the outbox to one chat's drafts. */
+export const SESSION_KEY_RE = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._-]{1,128}$/;
+
 async function getOutbox(ctx: RouteCtx): Promise<void> {
   me(ctx);
-  ctx.json(200, await outboxPayload(deps.drafts(), deps.chats(), deps.fresh));
+  const want = ctx.url.searchParams.get('session');
+  if (want !== null && !SESSION_KEY_RE.test(want)) return ctx.json(400, { ok: false, detail: 'bad session key' });
+  const sid = want === null ? null : want.slice(want.indexOf(':') + 1);
+  const drafts = deps.drafts().filter((d) => sid === null || d.session_id === sid);
+  ctx.json(200, await outboxPayload(drafts, deps.chats(), deps.fresh));
 }
 
 async function outboxSend(ctx: RouteCtx): Promise<void> {
