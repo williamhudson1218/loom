@@ -1029,23 +1029,26 @@ function detailScreen(r) {
   });
 
   // This chat's drafts, docked between the transcript and the composer. Collapsed or open is
-  // remembered per chat; a draft this phone hasn't seen before opens it again.
+  // remembered per chat; closed by default, and a draft this phone hasn't seen only pulses the bar.
   var kit = draftKit({ mini: true, render: paintDock, reload: load });
-  var dockBar = h('button', { class: 'dockbar', on: { click: function () { mem.open = !mem.open; saveMem(); paintDock(); } } });
+  var dockBar = h('button', { class: 'dockbar', on: { click: function () { mem.open = !mem.open; saveMem(); dockBar.classList.remove('pulse'); paintDock(); } } });
   var dockList = h('div', { class: 'docklist' });
   var dock = h('div', { class: 'dock' }, dockBar, dockList);
   dock.style.display = 'none';
   var memKey = 'loom.dock.' + key, mem = null, dockSig = '';
   try { mem = JSON.parse(ls(memKey) || 'null'); } catch (e) {}
-  if (!mem || typeof mem !== 'object' || !Array.isArray(mem.seen)) mem = { open: true, seen: [] };
+  if (!mem || typeof mem !== 'object' || !Array.isArray(mem.seen)) mem = { open: false, seen: [] };
   function saveMem() { ls(memKey, JSON.stringify(mem)); }
   function takeDrafts(list) {
     var ids = list.map(function (d) { return d.id; });
-    var fresh = ids.some(function (id) { return mem.seen.indexOf(id) < 0; });
-    if (fresh) mem.open = true;
-    if (fresh || ids.length !== mem.seen.length) { mem.seen = ids; if (ids.length) saveMem(); else ls(memKey, null); }
+    var t = dockTake(mem, ids);
+    mem = t.mem;
+    if (t.changed) { if (ids.length) saveMem(); else ls(memKey, null); }
+    if (t.fresh && !mem.open && dockPrimed) { dockBar.classList.remove('pulse'); void dockBar.offsetWidth; dockBar.classList.add('pulse'); }
+    dockPrimed = true;
     if (kit.take(list)) paintDock();
   }
+  var dockPrimed = false;
   function paintDock() {
     if (!alive) return;
     var vis = kit.visible(), n = vis.length;
@@ -1054,14 +1057,16 @@ function detailScreen(r) {
     dockSig = sig;
     dock.style.display = n ? '' : 'none';
     clear(dockBar);
-    dockBar.appendChild(h('span', { text: n + (n === 1 ? ' draft' : ' drafts') + ' from this chat' }));
-    dockBar.appendChild(h('span', { class: 'chev', 'aria-hidden': 'true', text: mem.open ? '▴' : '▾' }));
+    dockBar.appendChild(h('span', { text: 'Outbox · ' + n }));
+    dockBar.appendChild(h('span', { class: 'chev', 'aria-hidden': 'true', text: mem.open ? '▾' : '▴' }));
     dockBar.setAttribute('aria-expanded', mem.open ? 'true' : 'false');
     var keep = dockList.scrollTop;
     clear(dockList);
     dockList.style.display = mem.open && n ? '' : 'none';
     if (mem.open) vis.forEach(function (d) { dockList.appendChild(kit.card(d)); });
     dockList.scrollTop = keep;
+    // The dock resizes the message list: a reader at the bottom stays there, anyone else keeps their place.
+    if (follow) toBottom();
   }
 
   screenEl.appendChild(h('div', { class: 'scr' },

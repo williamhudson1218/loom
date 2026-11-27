@@ -199,6 +199,8 @@ button.attachbtn { position: absolute; left: 1px; bottom: 1px; z-index: 1; width
 .dock { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
 .dockbar { flex: none; height: 40px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: var(--warn-bg); color: var(--warn); font-size: 14px; font-weight: 600; }
 .dockbar .chev { font-size: 12px; }
+.dockbar.pulse { animation: dockpulse 1.2s ease-out 2; }
+@keyframes dockpulse { 0%,100% { box-shadow: inset 0 0 0 0 transparent; } 40% { box-shadow: inset 0 0 0 2px var(--warn); } }
 .docklist { max-height: 45vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
 .draft.mini { flex: none; padding: 12px; gap: 8px; border-radius: 14px; }
 .draft.mini .where { font-size: 15px; }

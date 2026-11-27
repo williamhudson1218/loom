@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SCROLLFOLLOW_JS } from '../src/mobile/scrollfollow.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const lib = new Function(`${SCROLLFOLLOW_JS}; return { nearBottom, scrollBusy, ownScroll, followAfterScroll, afterPaint, firstChange, FOLLOW_IDLE_MS };`)() as any;
+const lib = new Function(`${SCROLLFOLLOW_JS}; return { nearBottom, scrollBusy, ownScroll, followAfterScroll, afterPaint, firstChange, dockTake, FOLLOW_IDLE_MS };`)() as any;
 
 describe('phone chat scroll follow', () => {
   it('follows only near the bottom', () => {
@@ -36,5 +36,22 @@ describe('phone chat scroll follow', () => {
     expect(lib.firstChange(['a', 'b'], ['a', 'x', 'c'])).toBe(1);
     expect(lib.firstChange(['a', 'b', 'c'], ['a', 'b'])).toBe(2);
     expect(lib.firstChange([], [])).toBe(-1);
+  });
+});
+
+describe('dockTake', () => {
+  it('never opens the dock for a new draft, only flags it fresh', () => {
+    const r = lib.dockTake({ open: false, seen: ['a'] }, ['a', 'b']);
+    expect(r.fresh).toBe(true);
+    expect(r.mem).toEqual({ open: false, seen: ['a', 'b'] });
+  });
+  it('keeps the open flag the reader chose', () => {
+    expect(lib.dockTake({ open: true, seen: ['a'] }, ['a']).mem.open).toBe(true);
+    expect(lib.dockTake({ open: true, seen: ['a'] }, ['a']).changed).toBe(false);
+  });
+  it('records a shrink without flagging fresh', () => {
+    const r = lib.dockTake({ open: false, seen: ['a', 'b'] }, ['a']);
+    expect(r.fresh).toBe(false);
+    expect(r.changed).toBe(true);
   });
 });

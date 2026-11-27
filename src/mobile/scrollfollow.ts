@@ -23,4 +23,7 @@ function followAfterScroll(scrollHeight,scrollTop,clientHeight){return nearBotto
 function afterPaint(first,follow,prepended){if(prepended)return 'anchor';if(first||follow)return 'bottom';return 'keep';}
 // The first index where the new message keys differ from the rendered ones; -1 when the same.
 function firstChange(oldKeys,newKeys){var n=Math.min(oldKeys.length,newKeys.length);for(var i=0;i<n;i++)if(oldKeys[i]!==newKeys[i])return i;return oldKeys.length===newKeys.length?-1:n;}
+// The chat's outbox dock memory {open, seen:[draft ids]}. Collapsed by default; a draft not seen
+// before never opens it, it only flags 'fresh' (the bar pulses). Returns {mem, fresh, changed}.
+function dockTake(mem,ids){var seen=Array.isArray(mem&&mem.seen)?mem.seen:[];var open=!!(mem&&mem.open);var fresh=ids.some(function(id){return seen.indexOf(id)<0;});var changed=fresh||ids.length!==seen.length;return {mem:{open:open,seen:changed?ids.slice():seen},fresh:fresh,changed:changed};}
 `;
