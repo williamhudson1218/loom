@@ -331,7 +331,7 @@ describe('sessions and transcripts for the phone', () => {
     expect(at('waiting_on_user', { saved: true })).toBe('saved');
   });
 
-  it('lays out user groups first in their order, then status sections; newest first everywhere', () => {
+  it('lays out Recent first, then user groups in their order, then the other status sections; newest first everywhere', () => {
     const G1 = { id: 7, name: 'Billing' }, G2 = { id: 3, name: 'Infra' }, GONE = { id: 99, name: 'Deleted' };
     const chats = [
       c('t-old', 'waiting_on_user', 10), c('t-new', 'waiting_on_user', 30), c('w-old', 'done', 1, { working: true }), c('w-new', 'done', 50, { working: true }),
@@ -342,13 +342,16 @@ describe('sessions and transcripts for the phone', () => {
     ];
     const p = sessionsPayload(chats, () => 'tail', [{ session_id: 't-new' }, { session_id: 't-new' }, { session_id: 'g2' }], new Map(), [G2, G1, { id: 5, name: 'Empty' }]);
     expect(p.sections.map((s) => [s.key, s.name, s.kind, s.sessions.map((r) => r.key.slice(7))])).toEqual([
+      ['recent', 'Recent', 'status', ['r', 'tie-a', 'tie-b', 'orphan']],
       ['g:3', 'Infra', 'group', ['g2']],
       ['g:7', 'Billing', 'group', ['g1-b', 'g1-a']],
       ['working', 'Working', 'status', ['w-new', 'w-old']],
       ['turn', 'Your turn', 'status', ['t-new', 't-old']],
       ['waiting', 'Waiting on others', 'status', ['p']],
-      ['recent', 'Recent', 'status', ['r', 'tie-a', 'tie-b', 'orphan']],
     ]);
+    expect(p.sections.filter((s) => s.kind === 'group').map((s) => s.group_id)).toEqual([3, 7]);
+    expect(p.sections.filter((s) => s.kind === 'status').every((s) => s.group_id === undefined)).toBe(true);
+    expect(p.groups).toEqual([G2, G1, { id: 5, name: 'Empty' }]);
     expect(p.counts).toEqual({ working: 3, turn: 3, waiting: 1, saved: 0, recent: 5 });
     expect(p.outbox_pending).toBe(3);
     const rows = p.sections.flatMap((s) => s.sessions);

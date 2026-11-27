@@ -2,10 +2,18 @@
 // Written for a CSP of script-src 'self': no inline handlers, everything is wired with
 // addEventListener, and text goes in through textContent. Plain ES2017 inside a template
 // string, so it must never contain a backtick or a dollar-brace; strings are joined with +.
+// The desktop sidebar's drag-and-drop helpers (src/grouping.ts: reorderIds, applyGroupHoldsTo,
+// dndScrollSpeed) are spliced in ahead of the app, so the phone moves groups the same way.
 
-export const APP_JS = String.raw`
+import { GROUPING_JS } from '../grouping.ts';
+
+export const APP_JS =
+  String.raw`
 (function () {
 'use strict';
+` +
+  GROUPING_JS +
+  String.raw`
 
 var app = document.getElementById('app');
 var ROOT = document.documentElement;
@@ -114,7 +122,7 @@ function applyTheme(t) {
 try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeColor); } catch (e) {}
 
 // ---- api -------------------------------------------------------------------------
-var S = { me: null, sections: [], sessions: [], counts: { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 }, outboxPending: 0, live: true, onSessions: null, tabs: null };
+var S = { me: null, raw: null, groups: [], sections: [], sessions: [], counts: { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 }, outboxPending: 0, live: true, onSessions: null, tabs: null };
 var shellUp = false;
 
 function api(path, opt) {
@@ -269,8 +277,8 @@ function loadSessions() {
   return api('/m/api/sessions').then(function (r) {
     if (r.ok) {
       S.live = true;
-      S.sections = r.json.sections || [];
-      S.sessions = [].concat.apply([], S.sections.map(function (x) { return x.sessions || []; }));
+      S.raw = r.json;
+      relayout();
       S.counts = r.json.counts || { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 };
       S.outboxPending = r.json.outbox_pending || 0;
     } else if (r.status !== 401) S.live = false;
@@ -278,6 +286,91 @@ function loadSessions() {
     if (S.onSessions) S.onSessions();
   });
 }
+// ---- groups: optimistic moves, held over polls until the server agrees (grouping.ts) ----
+var GH = { chats: {}, order: null };
+var HOLD_MS = 15000;
+var STATUS_NAME = { working: 'Working', turn: 'Your turn', waiting: 'Waiting on others', saved: 'Saved for later', recent: 'Recent' };
+function newestFirst(a, b) { return (toMs(b.last_active_at) || 0) - (toMs(a.last_active_at) || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); }
+// The server's layout (Recent, the user groups, the other status sections), rebuilt from rows
+// whose group a pending move has changed.
+function buildSections(chats, groups) {
+  var known = {}, byG = {}, bySt = {}, out = [];
+  groups.forEach(function (g) { known[g.id] = 1; });
+  chats.forEach(function (c) {
+    var gid = c.group ? c.group.id : 0;
+    if (gid && known[gid]) (byG[gid] = byG[gid] || []).push(c.row);
+    else { var st = STATUS_NAME[c.row.group] ? c.row.group : 'recent'; (bySt[st] = bySt[st] || []).push(c.row); }
+  });
+  function status(k) { if (bySt[k]) out.push({ key: k, name: STATUS_NAME[k], kind: 'status', sessions: bySt[k].sort(newestFirst) }); }
+  status('recent');
+  groups.forEach(function (g) { if (byG[g.id]) out.push({ key: 'g:' + g.id, name: g.name, kind: 'group', group_id: g.id, sessions: byG[g.id].sort(newestFirst) }); });
+  ['working', 'turn', 'waiting', 'saved'].forEach(status);
+  return out;
+}
+function relayout() {
+  if (!S.raw) return;
+  var secs = S.raw.sections || [], groups = (S.raw.groups || []).slice();
+  if (Object.keys(GH.chats).length || GH.order) {
+    var chats = [];
+    secs.forEach(function (x) { (x.sessions || []).forEach(function (s) { chats.push({ key: s.key, row: s, group: x.kind === 'group' && x.group_id ? { id: x.group_id } : null }); }); });
+    groups = applyGroupHoldsTo(GH, chats, groups, function (c) { return c.key; }, Date.now()).filter(Boolean);
+    secs = buildSections(chats, groups);
+  }
+  S.groups = groups;
+  S.sections = secs;
+  S.sessions = [].concat.apply([], secs.map(function (x) { return x.sessions || []; }));
+}
+function redraw() { relayout(); if (S.onSessions) S.onSessions(); }
+function groupName(id) { var g = S.groups.filter(function (x) { return x.id === id; })[0]; return g ? g.name : 'group'; }
+function moveChat(key, gid, from) {
+  gid = gid || 0;
+  var name = gid ? groupName(gid) : '';
+  GH.chats[key] = { gid: gid, until: Date.now() + HOLD_MS, acked: false };
+  redraw();
+  api('/m/api/groups/move', { body: { key: key, group_id: gid || null } }).then(function (r) {
+    if (r.ok) {
+      if (GH.chats[key]) GH.chats[key].acked = true;
+      toast(gid ? 'Moved to ' + name : 'Removed from group', from === undefined ? null : function () { moveChat(key, from); });
+      loadSessions();
+    } else {
+      delete GH.chats[key];
+      redraw();
+      toast(errText(r, 'Could not move that chat'));
+    }
+  });
+}
+function reorderGroup(dragId, targetId, after) {
+  var ids = S.groups.map(function (g) { return g.id; });
+  var next = reorderIds(ids, dragId, targetId, after);
+  if (next.join(',') === ids.join(',')) return;
+  GH.order = { ids: next, until: Date.now() + HOLD_MS, acked: false };
+  redraw();
+  api('/m/api/groups/order', { body: { ids: next } }).then(function (r) {
+    if (r.ok) { if (GH.order) GH.order.acked = true; loadSessions(); }
+    else { GH.order = null; redraw(); toast(errText(r, 'Could not reorder groups')); }
+  });
+}
+function moveSheet(key, cur) {
+  var s = sessionByKey(key);
+  openSheet(function (sheet, close) {
+    sheet.appendChild(h('div', { class: 'ttl', text: 'Move to group' }));
+    if (s) sheet.appendChild(h('div', { class: 'muted', text: s.topic || s.name || s.key }));
+    var opts = h('div', { class: 'mvlist' });
+    function opt(id, label) {
+      opts.appendChild(h('button', { class: 'mvopt' + (id === cur ? ' on' : ''), on: { click: function () { close(); if (id !== cur) moveChat(key, id, cur); } } },
+        h('span', { text: label }), id === cur ? h('span', { class: 'chk', text: '✓' }) : null));
+    }
+    S.groups.forEach(function (g) { opt(g.id, g.name); });
+    opt(0, 'No group');
+    sheet.appendChild(opts);
+    if (!S.groups.length) sheet.appendChild(h('div', { class: 'muted', text: 'No groups yet. Make one in the sidebar on your Mac.' }));
+    sheet.appendChild(h('div', { class: 'ro' }, h('button', { class: 'btn big', text: 'Cancel', on: { click: close } })));
+  });
+}
+// Collapsed sections, per phone: user groups by id (a rename keeps it), status sections by name.
+var COLLAPSE_KEY = 'loom.m.collapsed';
+function collapsedMap() { try { var v = JSON.parse(ls(COLLAPSE_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } }
+function setCollapsed(k, on) { var m = collapsedMap(); if (on) m[k] = 1; else delete m[k]; ls(COLLAPSE_KEY, JSON.stringify(m)); }
 function sessionsScreen() {
   var chipDot = h('span', { class: 'dot' }), chipText = h('span', { text: 'Mac · live' });
   var line = h('p', { text: '' });
@@ -286,13 +379,15 @@ function sessionsScreen() {
   screenEl.appendChild(h('div', { class: 'scr' },
     h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'chip' }, chipDot, chipText)), line),
     scroller));
-  var last = '';
+  var last = '', deferred = false, justDragged = 0;
   function render() {
     chipDot.className = 'dot' + (S.live ? '' : ' off');
     chipText.textContent = S.live ? 'Mac · live' : 'Mac · offline';
     var c = S.counts;
     line.textContent = '~ ' + (c.working || 0) + ' working · ● ' + (c.turn || 0) + ' your turn · ‖ ' + (c.waiting || 0) + ' waiting';
-    var sig = JSON.stringify([S.live, S.sections.map(function (x) { return [x.key, x.name, x.sessions.map(function (s) { return [s.key, s.group, s.topic, s.tail, s.stage, ago(s.last_active_at)]; })]; })]);
+    if (D) { deferred = true; return; } // never rebuild the list under a finger
+    var shut = collapsedMap();
+    var sig = JSON.stringify([S.live, shut, S.sections.map(function (x) { return [x.key, x.name, x.sessions.map(function (s) { return [s.key, s.group, s.topic, s.tail, s.stage, ago(s.last_active_at)]; })]; })]);
     if (sig === last) return;
     last = sig;
     var keep = scroller.scrollTop;
@@ -302,24 +397,134 @@ function sessionsScreen() {
       var items = g.sessions || [];
       if (!items.length) return;
       any = true;
-      var card = h('div', { class: 'card' });
-      items.forEach(function (s) {
-        card.appendChild(h('button', { class: 'srow', on: { click: function () { location.hash = '#s=' + encodeURIComponent(s.key); } } },
-          glyphEl(s),
-          h('span', { class: 'sbody' },
-            h('span', { class: 'sline' }, h('span', { class: 'stopic', text: s.topic || s.name || s.key }), h('span', { class: 'sage', text: ago(s.last_active_at) })),
-            h('span', { class: 'smeta' }, h('span', { class: 'pill', text: s.name || '' }), h('span', { text: s.project || '' })),
-            s.tail ? h('span', { class: 'stail' }, h('span', { class: 'pfx', text: statusInfo(s.group).prefix }), ' ' + s.tail) : null)));
-      });
+      var open = !shut[g.key];
       var color = g.kind === 'status' ? statusInfo(g.key).color : 'var(--text2)';
-      list.appendChild(h('section', { class: 'grp' + (g.kind === 'group' ? ' ugrp' : '') }, h('h2', { style: 'color:' + color, text: g.name + ' · ' + items.length }), card));
+      var hd = h('h2', { class: 'gh', role: 'button', tabindex: '0', 'aria-expanded': open ? 'true' : 'false', 'data-sec': g.key, style: 'color:' + color, on: { click: function () {
+        if (Date.now() - justDragged < 600) return;
+        setCollapsed(g.key, open); render();
+      } } }, h('span', { class: 'caret', 'aria-hidden': 'true', text: open ? '▾' : '▸' }), h('span', { text: g.name + ' · ' + items.length }));
+      var sec = h('section', { class: 'grp' + (g.kind === 'group' ? ' ugrp' : '') + (open ? '' : ' shut'), 'data-gid': g.kind === 'group' ? String(g.group_id) : null }, hd);
+      if (open) {
+        var card = h('div', { class: 'card' });
+        items.forEach(function (s) {
+          card.appendChild(h('button', { class: 'srow', 'data-key': s.key, on: { click: function () {
+            if (Date.now() - justDragged < 600) return;
+            location.hash = '#s=' + encodeURIComponent(s.key);
+          } } },
+            glyphEl(s),
+            h('span', { class: 'sbody' },
+              h('span', { class: 'sline' }, h('span', { class: 'stopic', text: s.topic || s.name || s.key }), h('span', { class: 'sage', text: ago(s.last_active_at) })),
+              h('span', { class: 'smeta' }, h('span', { class: 'pill', text: s.name || '' }), h('span', { text: s.project || '' })),
+              s.tail ? h('span', { class: 'stail' }, h('span', { class: 'pfx', text: statusInfo(s.group).prefix }), ' ' + s.tail) : null)));
+        });
+        sec.appendChild(card);
+      }
+      list.appendChild(sec);
     });
     if (!any) list.appendChild(h('div', { class: 'empty', text: S.live ? 'No live sessions on your Mac right now.' : 'Can’t reach Loom on your Mac. Check that it is running and that Phone access is on.' }));
     scroller.scrollTop = keep;
   }
+
+  // ---- drag and drop (touch). A press held 350 ms without moving lifts a chat row or a group
+  // header; any move before that is an ordinary scroll. A lifted chat drops onto a section (a
+  // user group moves it in, a status section takes it out of its group); a lifted group drops
+  // above or below another group. Lifted and let go without moving: the Move to group sheet.
+  var D = null, HOLD = 350, SLOP = 8;
+  function gidOf(el) { var sec = el && el.closest ? el.closest('.grp') : null; return sec ? dropGroupOf(sec.getAttribute('data-gid')) : 0; }
+  function unmark() { Array.prototype.forEach.call(list.querySelectorAll('.dropin,.dropbefore,.dropafter'), function (x) { x.classList.remove('dropin', 'dropbefore', 'dropafter'); }); }
+  function endDrag() {
+    if (!D) return;
+    clearTimeout(D.timer);
+    if (D.raf) cancelAnimationFrame(D.raf);
+    if (D.ghost) D.ghost.remove();
+    if (D.dim) D.dim.classList.remove('dsrc');
+    unmark();
+    ROOT.classList.remove('dragging');
+    D = null;
+    if (deferred) { deferred = false; render(); }
+  }
+  function lift() {
+    if (!D || !D.src.isConnected) { endDrag(); return; }
+    D.lifted = true; D.lx = D.x; D.ly = D.y;
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+    var r = D.src.getBoundingClientRect();
+    D.off = D.y - r.top;
+    D.ghost = D.src.cloneNode(true);
+    D.ghost.className += ' dghost';
+    D.ghost.style.width = r.width + 'px';
+    D.ghost.style.left = r.left + 'px';
+    D.ghost.style.top = r.top + 'px';
+    document.body.appendChild(D.ghost);
+    D.dim.classList.add('dsrc');
+    ROOT.classList.add('dragging');
+    D.raf = requestAnimationFrame(autoScroll);
+  }
+  function autoScroll() {
+    if (!D || !D.lifted) return;
+    var r = scroller.getBoundingClientRect();
+    var v = D.moved ? dndScrollSpeed(r.top, r.bottom, D.y) : 0;
+    if (v) { var before = scroller.scrollTop; scroller.scrollTop += v; if (scroller.scrollTop !== before) hit(); }
+    D.raf = requestAnimationFrame(autoScroll);
+  }
+  function hit() {
+    unmark();
+    D.target = null;
+    var el = document.elementFromPoint(D.x, D.y);
+    var sec = el && el.closest ? el.closest('.grp') : null;
+    if (!sec || !list.contains(sec)) return;
+    var gid = dropGroupOf(sec.getAttribute('data-gid'));
+    if (D.kind === 'chat') {
+      if (gid === D.gid) return;
+      D.target = { gid: gid };
+      sec.classList.add('dropin');
+    } else {
+      if (!gid || gid === D.gid) return;
+      var r = sec.getBoundingClientRect();
+      var after = D.y > r.top + r.height / 2;
+      D.target = { gid: gid, after: after };
+      sec.classList.add(after ? 'dropafter' : 'dropbefore');
+    }
+  }
+  list.addEventListener('touchstart', function (e) {
+    if (D) endDrag();
+    if (e.touches.length !== 1) return;
+    var t = e.touches[0];
+    var row = e.target.closest ? e.target.closest('.srow') : null;
+    var hd = !row && e.target.closest ? e.target.closest('.gh') : null;
+    if (row) D = { kind: 'chat', key: row.getAttribute('data-key'), gid: gidOf(row), src: row, dim: row };
+    else if (hd && dropGroupOf(hd.parentNode.getAttribute('data-gid'))) D = { kind: 'group', gid: dropGroupOf(hd.parentNode.getAttribute('data-gid')), src: hd, dim: hd.parentNode };
+    else return;
+    D.sx = D.x = t.clientX; D.sy = D.y = t.clientY;
+    D.timer = setTimeout(lift, HOLD);
+  }, { passive: true });
+  list.addEventListener('touchmove', function (e) {
+    if (!D) return;
+    var t = e.touches[0];
+    D.x = t.clientX; D.y = t.clientY;
+    if (!D.lifted) { if (Math.abs(D.x - D.sx) > SLOP || Math.abs(D.y - D.sy) > SLOP) endDrag(); return; }
+    e.preventDefault();
+    if (!D.moved && (Math.abs(D.x - D.lx) > SLOP || Math.abs(D.y - D.ly) > SLOP)) D.moved = true;
+    D.ghost.style.top = (D.y - D.off) + 'px';
+    hit();
+  }, { passive: false });
+  list.addEventListener('touchend', function (e) {
+    if (!D) return;
+    if (!D.lifted) { endDrag(); return; }
+    e.preventDefault();
+    justDragged = Date.now();
+    var d = D;
+    endDrag();
+    if (d.kind === 'chat') {
+      if (!d.moved) moveSheet(d.key, d.gid);
+      else if (d.target) moveChat(d.key, d.target.gid, d.gid);
+    } else if (d.moved && d.target) reorderGroup(d.gid, d.target.gid, d.target.after);
+  }, { passive: false });
+  list.addEventListener('touchcancel', function () { if (D && D.lifted) justDragged = Date.now(); endDrag(); });
+  list.addEventListener('contextmenu', function (e) { if (D) e.preventDefault(); });
+
   S.onSessions = render;
   render();
-  return { stop: function () { S.onSessions = null; } };
+  return { stop: function () { endDrag(); S.onSessions = null; } };
 }
 
 // ---- session detail --------------------------------------------------------------

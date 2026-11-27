@@ -16,6 +16,9 @@ import { loadVapidKeys, validSubscription } from './webpush.ts';
 import { mobileFile } from './web.ts';
 import { VOICE_ROUTES, setVoiceDeps } from './voice.ts';
 import { paneLiveStatus } from './livestatus.ts';
+import type Database from 'better-sqlite3';
+import { openDb as realOpenDb } from '../db.ts';
+import { listGroups, reorderGroups, setChatGroup, type GroupResult } from '../chatgroups.ts';
 
 // The phone's API (/m/api/*). The gate (src/routes/index.ts) has already checked
 // Host, the same-origin Origin on writes, and (kind `device`) the device cookie
@@ -59,6 +62,8 @@ export interface MobileDeps {
   chats(): MobileChat[];
   /** The user's sidebar groups in display order (chatgroups.ts listGroups). */
   groups(): SidebarGroup[];
+  /** Run f against Loom's db, for the group moves (chatgroups.ts). Tests pass an in-memory db. */
+  withDb<T>(f: (db: Database.Database) => T): T;
   tail(c: MobileChat): string;
   /** tmux, for `display-message` and the interrupt's `send-keys`. Tests inject a fake: never a real pane. */
   tmux(args: string[]): string;
@@ -85,6 +90,14 @@ const unwired = (): never => {
 let deps: MobileDeps = {
   chats: () => [],
   groups: () => [],
+  withDb: (f) => {
+    const db = realOpenDb();
+    try {
+      return f(db);
+    } finally {
+      db.close();
+    }
+  },
   tail: () => '',
   tmux: unwired,
   send: () => ({ ok: false, detail: 'not wired' }),
@@ -227,6 +240,8 @@ export interface SessionSection {
   key: string;
   name: string;
   kind: 'group' | 'status';
+  /** The user group's id (kind 'group'), for the phone's drag and drop. */
+  group_id?: number;
   sessions: SessionRow[];
 }
 
@@ -238,8 +253,9 @@ export function draftCounts(drafts: Pick<Draft, 'session_id'>[]): Map<string, nu
 }
 
 /**
- * The phone's list, laid out like the desktop sidebar: the user's groups first (drag order,
- * only those with a live chat here), then the status sections in desktop order for the rest.
+ * The phone's list, laid out like the desktop sidebar: Recent on top (what the phone reaches for
+ * first), then the user's groups (drag order, only those with a live chat here), then the other
+ * status sections in desktop order. `groups` is every group, empty ones too, for the move sheet.
  * Every section is most recently active first, ties on key. counts are by status over every
  * chat, grouped or not, so the badge still counts every chat whose turn it is.
  */
@@ -265,15 +281,17 @@ export function sessionsPayload(
     else (byStatus.get(r.st) ?? byStatus.set(r.st, []).get(r.st)!).push(row);
   }
   const sections: SessionSection[] = [];
-  for (const g of groups) {
-    const s = byGroup.get(g.id);
-    if (s?.length) sections.push({ key: `g:${g.id}`, name: g.name, kind: 'group', sessions: s });
-  }
-  for (const st of STATUS_SECTIONS) {
+  const status = (st: { key: Status; name: string }) => {
     const s = byStatus.get(st.key);
     if (s?.length) sections.push({ key: st.key, name: st.name, kind: 'status', sessions: s });
+  };
+  STATUS_SECTIONS.filter((st) => st.key === 'recent').forEach(status);
+  for (const g of groups) {
+    const s = byGroup.get(g.id);
+    if (s?.length) sections.push({ key: `g:${g.id}`, name: g.name, kind: 'group', group_id: g.id, sessions: s });
   }
-  return { sections, counts, outbox_pending: drafts.length };
+  STATUS_SECTIONS.filter((st) => st.key !== 'recent').forEach(status);
+  return { sections, groups: groups.map((g) => ({ id: g.id, name: g.name })), counts, outbox_pending: drafts.length };
 }
 
 /** Claude Code shows in tmux as its version string (2.1.233) or `claude`. */
@@ -660,6 +678,35 @@ async function outboxRedraft(ctx: RouteCtx): Promise<void> {
   ctx.json(r.status, r.body);
 }
 
+/* ------------------------------------------------------------------ groups */
+
+// The desktop sidebar's group moves (src/routes/groups.ts), through the same chatgroups.ts
+// calls. The reply carries the group list, like the desktop's.
+function groupReply(ctx: RouteCtx, db: Database.Database, r: GroupResult<object>): void {
+  if (!r.ok) return ctx.json(r.code, { ok: false, detail: r.detail });
+  ctx.json(200, { ...r, groups: listGroups(db).map((g) => ({ id: g.id, name: g.name })) });
+}
+
+/** POST /m/api/groups/move {key: '<agent>:<session>', group_id: number | null}. */
+async function moveToGroup(ctx: RouteCtx): Promise<void> {
+  me(ctx);
+  const b = (await ctx.body()) ?? {};
+  const key = str(b.key);
+  if (!SESSION_KEY_RE.test(key)) return ctx.json(400, { ok: false, detail: 'bad session key' });
+  const agent = key.slice(0, key.indexOf(':'));
+  if (agent !== 'claude' && agent !== 'codex') return ctx.json(400, { ok: false, detail: 'unknown agent' });
+  const gid = b.group_id ?? null;
+  if (gid !== null && !Number.isInteger(gid)) return ctx.json(400, { ok: false, detail: 'group_id must be a group id or null' });
+  deps.withDb((db) => groupReply(ctx, db, setChatGroup(db, agent, key.slice(key.indexOf(':') + 1), gid)));
+}
+
+/** POST /m/api/groups/order {ids}: every group id once, in the new order. */
+async function orderGroups(ctx: RouteCtx): Promise<void> {
+  me(ctx);
+  const b = (await ctx.body()) ?? {};
+  deps.withDb((db) => groupReply(ctx, db, reorderGroups(db, b.ids)));
+}
+
 function getPrefs(ctx: RouteCtx): void {
   ctx.json(200, { prefs: me(ctx).prefs });
 }
@@ -730,6 +777,8 @@ export const MOBILE_ROUTES: RouteDef[] = [
   dv('POST', '/m/api/outbox/send', outboxSend),
   dv('POST', '/m/api/outbox/discard', outboxDiscard),
   dv('POST', '/m/api/outbox/redraft', outboxRedraft),
+  dv('POST', '/m/api/groups/move', moveToGroup),
+  dv('POST', '/m/api/groups/order', orderGroups),
   dv('GET', '/m/api/prefs', getPrefs),
   dv('PUT', '/m/api/prefs', putPrefs),
   dv('GET', '/m/api/devices', getDevices),

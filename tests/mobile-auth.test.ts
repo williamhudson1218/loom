@@ -10,6 +10,11 @@ import { MOBILE_ROUTES, resetPairRate, setMobileDeps, type MobileChat, type Mobi
 import { DeviceStore, setDeviceStore } from '../src/mobile/devices.ts';
 import { setTailscaleSetupDeps } from '../src/mobile/tailscale.ts';
 import type { LiveLoc } from '../src/dashboard.ts';
+import { openDb } from '../src/db.ts';
+import { parseJsonlFile } from '../src/parser.ts';
+import { upsertChat } from '../src/indexer.ts';
+import { chatGroupMap, createGroup, listGroups } from '../src/chatgroups.ts';
+import type Database from 'better-sqlite3';
 
 // The phone's door. Every /m/api route except the two pairing calls refuses a
 // missing, revoked or forged device cookie; every phone write refuses a foreign
@@ -30,6 +35,9 @@ const closed: { pane: string; agent: string }[] = [];
 let extraChats: MobileChat[] = [];
 /** Panes whose capture shows Claude Code's spinner. */
 const busyPanes = new Set(['%8']);
+/** The group routes' db: in memory, never Loom's real one. Seeded in beforeAll. */
+let gdb: Database.Database;
+let gChat = { agent: 'claude', sid: '' };
 
 const live = (over: Partial<LiveLoc> = {}): LiveLoc => ({ agent: 'claude', session_id: 's1', pane_id: '%7', tmux_session: 'loom-work', window_index: '1', pane_index: '0', running: true, working: false, name: 'blue-vanilla', stage: 'implementation', ...over });
 const chat = (over: Partial<MobileChat> = {}): MobileChat => ({ agent: 'claude', session_id: 's1', title: 'Fix the widget', project: 'demo', state: 'waiting_on_user', jsonl_path: '/nonexistent.jsonl', last_active_at: 1000, last_turn_at: 1000, live: live(), ...over });
@@ -71,6 +79,7 @@ function fakeDeps(): Partial<MobileDeps> {
       return { status: 200, body: { ok: true } };
     },
     uploadsDir: () => uploadsDir,
+    withDb: (f) => f(gdb),
     tailscale: { exists: () => false, run: async () => ({ code: 1, stdout: '', stderr: 'no' }) },
   };
 }
@@ -80,6 +89,10 @@ beforeAll(async () => {
   store = new DeviceStore({ file: path.join(dir, 'devices.json') });
   setDeviceStore(store);
   setTailnetHostSource(() => (tailOn ? TAILNET : null));
+  gdb = openDb(':memory:');
+  const parsed = await parseJsonlFile(path.join(__dirname, 'fixtures', 'sample-chat.jsonl'));
+  upsertChat(gdb, parsed, 1000, 5000);
+  gChat = { agent: parsed.agent, sid: parsed.session_id };
   server = createServer();
   setMobileDeps(fakeDeps());
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -596,4 +609,54 @@ describe('what a paired phone can do', () => {
     }
   });
 
+});
+
+describe('phone group moves', () => {
+  let cookie = '';
+  const ph = () => ({ ...JSON_BODY, ...tail, cookie: `loom_device=${cookie}` });
+  beforeAll(async () => {
+    cookie = (await pairDevice('Group phone')).cookie;
+  });
+
+  it('refuses an unpaired phone and a foreign Origin', async () => {
+    for (const p of ['/m/api/groups/move', '/m/api/groups/order']) {
+      expect((await raw('POST', p, { ...JSON_BODY, ...tail }, '{}')).status, p).toBe(401);
+      expect((await raw('POST', p, { ...ph(), origin: 'https://evil.example' }, '{}')).status, p).toBe(403);
+    }
+  });
+
+  it('moves a chat into a group and back out through chatgroups.ts', async () => {
+    const g = createGroup(gdb, 'Alpha') as { group: { id: number } };
+    const key = `${gChat.agent}:${gChat.sid}`;
+    const r = await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key, group_id: g.group.id }));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, group: { id: g.group.id, name: 'Alpha' } });
+    expect(chatGroupMap(gdb).get(key)).toMatchObject({ id: g.group.id });
+    expect((r.body.groups as { name: string }[]).map((x) => x.name)).toContain('Alpha');
+    expect((await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key, group_id: null }))).body).toMatchObject({ ok: true, group: null });
+    expect(chatGroupMap(gdb).has(key)).toBe(false);
+  });
+
+  it('refuses a bad key, an unknown group, an unknown chat and a non-integer group id', async () => {
+    const key = `${gChat.agent}:${gChat.sid}`;
+    expect((await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key: 'nope', group_id: null }))).status).toBe(400);
+    expect((await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key: 'shell:abc', group_id: null }))).status).toBe(400);
+    expect((await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key, group_id: 'x' }))).status).toBe(400);
+    expect((await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key, group_id: 9999 }))).status).toBe(404);
+    const g = listGroups(gdb)[0];
+    expect((await raw('POST', '/m/api/groups/move', ph(), JSON.stringify({ key: 'claude:no-such-chat', group_id: g.id }))).status).toBe(404);
+  });
+
+  it('reorders the groups, and refuses a list that is not every group once', async () => {
+    createGroup(gdb, 'Beta');
+    const ids = listGroups(gdb).map((g) => g.id);
+    const rev = ids.slice().reverse();
+    const r = await raw('POST', '/m/api/groups/order', ph(), JSON.stringify({ ids: rev }));
+    expect(r.status).toBe(200);
+    expect(listGroups(gdb).map((g) => g.id)).toEqual(rev);
+    expect((r.body.groups as { id: number }[]).map((g) => g.id)).toEqual(rev);
+    expect((await raw('POST', '/m/api/groups/order', ph(), JSON.stringify({ ids: rev.slice(1) }))).status).toBe(400);
+    expect((await raw('POST', '/m/api/groups/order', ph(), JSON.stringify({ ids: 'x' }))).status).toBe(400);
+    expect(listGroups(gdb).map((g) => g.id)).toEqual(rev);
+  });
 });
