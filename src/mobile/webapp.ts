@@ -289,9 +289,10 @@ function loadSessions() {
 // ---- groups: optimistic moves, held over polls until the server agrees (grouping.ts) ----
 var GH = { chats: {}, order: null };
 var HOLD_MS = 15000;
-var STATUS_NAME = { working: 'Working', turn: 'Your turn', waiting: 'Waiting on others', saved: 'Saved for later', recent: 'Recent' };
+var STATUS_NAME = { working: 'Working', turn: 'Your turn', waiting: 'Waiting on others', saved: 'Saved for later', recent: 'Recent', stale: 'Stale' };
 function newestFirst(a, b) { return (toMs(b.last_active_at) || 0) - (toMs(a.last_active_at) || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); }
-// The server's layout (Recent, the user groups, the other status sections), rebuilt from rows
+// The server's layout (Recent = every fresh ungrouped chat, the user groups, then the stale ones by
+// status, idle ones under Stale; sessionsPayload in api.ts), rebuilt from rows
 // whose group a pending move has changed.
 function buildSections(chats, groups) {
   var known = {}, byG = {}, bySt = {}, out = [];
@@ -299,12 +300,12 @@ function buildSections(chats, groups) {
   chats.forEach(function (c) {
     var gid = c.group ? c.group.id : 0;
     if (gid && known[gid]) (byG[gid] = byG[gid] || []).push(c.row);
-    else { var st = STATUS_NAME[c.row.group] ? c.row.group : 'recent'; (bySt[st] = bySt[st] || []).push(c.row); }
+    else { var st = !c.row.stale ? 'recent' : c.row.group === 'recent' || !STATUS_NAME[c.row.group] ? 'stale' : c.row.group; (bySt[st] = bySt[st] || []).push(c.row); }
   });
   function status(k) { if (bySt[k]) out.push({ key: k, name: STATUS_NAME[k], kind: 'status', sessions: bySt[k].sort(newestFirst) }); }
   status('recent');
   groups.forEach(function (g) { if (byG[g.id]) out.push({ key: 'g:' + g.id, name: g.name, kind: 'group', group_id: g.id, sessions: byG[g.id].sort(newestFirst) }); });
-  ['working', 'turn', 'waiting', 'saved'].forEach(status);
+  ['working', 'turn', 'waiting', 'saved', 'stale'].forEach(status);
   return out;
 }
 function relayout() {

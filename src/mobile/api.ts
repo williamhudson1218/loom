@@ -236,7 +236,7 @@ export function sessionRow(c: MobileChat, tail: string, topics: Map<string, stri
   };
 }
 
-export type SessionRow = ReturnType<typeof sessionRow>;
+export type SessionRow = ReturnType<typeof sessionRow> & { stale?: boolean };
 export interface SessionSection {
   key: string;
   name: string;
@@ -253,12 +253,24 @@ export function draftCounts(drafts: Pick<Draft, 'session_id'>[]): Map<string, nu
   return n;
 }
 
+/** THE stale rule, as the desktop sidebar's isStaleAge (src/sidesort.ts): last activity before the
+ *  start of yesterday (wall-clock day, not a rolling 24 h), and over an hour ago. No time is never stale. */
+export function isStaleAge(t: number, now: number): boolean {
+  if (!t) return false;
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - 1);
+  return t < d.getTime() && now - t >= 3_600_000;
+}
+
 /**
- * The phone's list, laid out like the desktop sidebar: Recent on top (what the phone reaches for
- * first), then the user's groups (drag order, only those with a live chat here), then the other
- * status sections in desktop order. `groups` is every group, empty ones too, for the move sheet.
- * Every section is most recently active first, ties on key. counts are by status over every
- * chat, grouped or not, so the badge still counts every chat whose turn it is.
+ * The phone's list, laid out like the desktop sidebar (default sort, Recent activity): Recent on
+ * top is every ungrouped chat active since the start of yesterday, whatever its status (working,
+ * your turn, idle), as the desktop's flat recency list is. Then the user's groups (drag order,
+ * only those with a live chat here), then the ungrouped chats older than that (the desktop's
+ * Stale), split into the status sections in desktop order, idle ones under Stale. `groups` is every group, empty ones
+ * too, for the move sheet. Every section is most recently active first, ties on key. counts are
+ * by status over every chat, grouped or not, so the badge still counts every chat whose turn it is.
  */
 export function sessionsPayload(
   chats: MobileChat[],
@@ -266,6 +278,7 @@ export function sessionsPayload(
   drafts: Pick<Draft, 'session_id'>[],
   topics: Map<string, string> = new Map(),
   groups: SidebarGroup[] = [],
+  now: number = Date.now(),
 ) {
   const nDrafts = draftCounts(drafts);
   const rows = chats.map((c) => ({ c, st: statusOf(c), key: sessionKey(c) }));
@@ -275,23 +288,27 @@ export function sessionsPayload(
   const known = new Set(groups.map((g) => g.id));
   const byGroup = new Map<number, SessionRow[]>();
   const byStatus = new Map<Status, SessionRow[]>();
+  const recent: SessionRow[] = [];
   for (const r of rows) {
-    const row = sessionRow(r.c, r.st === 'working' ? '' : tail(r.c), topics, nDrafts.get(r.c.session_id) ?? 0);
+    const stale = isStaleAge(fresh(r.c), now);
+    const row = { ...sessionRow(r.c, r.st === 'working' ? '' : tail(r.c), topics, nDrafts.get(r.c.session_id) ?? 0), stale };
     const gid = r.c.group?.id;
     if (gid && known.has(gid)) (byGroup.get(gid) ?? byGroup.set(gid, []).get(gid)!).push(row);
+    else if (!stale) recent.push(row);
     else (byStatus.get(r.st) ?? byStatus.set(r.st, []).get(r.st)!).push(row);
   }
   const sections: SessionSection[] = [];
   const status = (st: { key: Status; name: string }) => {
     const s = byStatus.get(st.key);
-    if (s?.length) sections.push({ key: st.key, name: st.name, kind: 'status', sessions: s });
+    // An old idle chat is the desktop's Stale, not a second Recent.
+    if (s?.length) sections.push(st.key === 'recent' ? { key: 'stale', name: 'Stale', kind: 'status', sessions: s } : { key: st.key, name: st.name, kind: 'status', sessions: s });
   };
-  STATUS_SECTIONS.filter((st) => st.key === 'recent').forEach(status);
+  if (recent.length) sections.push({ key: 'recent', name: 'Recent', kind: 'status', sessions: recent });
   for (const g of groups) {
     const s = byGroup.get(g.id);
     if (s?.length) sections.push({ key: `g:${g.id}`, name: g.name, kind: 'group', group_id: g.id, sessions: s });
   }
-  STATUS_SECTIONS.filter((st) => st.key !== 'recent').forEach(status);
+  STATUS_SECTIONS.forEach(status);
   return { sections, groups: groups.map((g) => ({ id: g.id, name: g.name })), counts, outbox_pending: drafts.length };
 }
 

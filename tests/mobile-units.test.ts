@@ -7,7 +7,7 @@ import { CODE_ALPHABET, CODE_TTL_MS, DeviceStore, PENDING_TTL_MS, cleanName, dev
 import { encryptPayload, generateVapidKeys, loadVapidKeys, sendPush, validSubscription, vapidAuthorization } from '../src/mobile/webpush.ts';
 import { applyServe, clearLeftoverServe, serveIsLoomOnly, tailscaleStatus, type TailscaleDeps } from '../src/mobile/tailscale.ts';
 import { DraftWatch, PushDispatcher, chatEventPush, inPushQuiet, parseHidIdle, type PushDeps } from '../src/mobile/push-triggers.ts';
-import { draftKind, draftUrl, statusOf, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
+import { draftKind, draftUrl, statusOf, isStaleAge, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
 import type { Device } from '../src/mobile/devices.ts';
 import type { Draft } from '../src/outbox.ts';
 
@@ -317,6 +317,7 @@ describe('push triggers', () => {
 
 describe('sessions and transcripts for the phone', () => {
   const live = (o: object = {}) => ({ agent: 'claude' as const, session_id: 'x', pane_id: '%1', tmux_session: 'loom-a', window_index: '1', pane_index: '2', running: true, ...o });
+  const NOW = new Date(2026, 5, 10, 14, 0, 0).getTime();
   const c = (sid: string, state: string, at: number, l: object = {}): MobileChat => ({ agent: 'claude', session_id: sid, title: sid, project: 'p', state, jsonl_path: '', last_active_at: at, last_turn_at: 0, live: live(l) });
 
   it('classifies like the desktop sidebar: parked, saved, working, your turn, else recent', () => {
@@ -331,7 +332,7 @@ describe('sessions and transcripts for the phone', () => {
     expect(at('waiting_on_user', { saved: true })).toBe('saved');
   });
 
-  it('lays out Recent first, then user groups in their order, then the other status sections; newest first everywhere', () => {
+  it('lays out user groups in their order, then old ungrouped chats by status (idle ones under Stale); newest first everywhere', () => {
     const G1 = { id: 7, name: 'Billing' }, G2 = { id: 3, name: 'Infra' }, GONE = { id: 99, name: 'Deleted' };
     const chats = [
       c('t-old', 'waiting_on_user', 10), c('t-new', 'waiting_on_user', 30), c('w-old', 'done', 1, { working: true }), c('w-new', 'done', 50, { working: true }),
@@ -340,14 +341,14 @@ describe('sessions and transcripts for the phone', () => {
       { ...c('g2', 'done', 2), group: G2 }, { ...c('orphan', 'done', 3), group: GONE },
       c('tie-b', 'done', 4), c('tie-a', 'done', 4),
     ];
-    const p = sessionsPayload(chats, () => 'tail', [{ session_id: 't-new' }, { session_id: 't-new' }, { session_id: 'g2' }], new Map(), [G2, G1, { id: 5, name: 'Empty' }]);
+    const p = sessionsPayload(chats, () => 'tail', [{ session_id: 't-new' }, { session_id: 't-new' }, { session_id: 'g2' }], new Map(), [G2, G1, { id: 5, name: 'Empty' }], NOW);
     expect(p.sections.map((s) => [s.key, s.name, s.kind, s.sessions.map((r) => r.key.slice(7))])).toEqual([
-      ['recent', 'Recent', 'status', ['r', 'tie-a', 'tie-b', 'orphan']],
       ['g:3', 'Infra', 'group', ['g2']],
       ['g:7', 'Billing', 'group', ['g1-b', 'g1-a']],
       ['working', 'Working', 'status', ['w-new', 'w-old']],
       ['turn', 'Your turn', 'status', ['t-new', 't-old']],
       ['waiting', 'Waiting on others', 'status', ['p']],
+      ['stale', 'Stale', 'status', ['r', 'tie-a', 'tie-b', 'orphan']],
     ]);
     expect(p.sections.filter((s) => s.kind === 'group').map((s) => s.group_id)).toEqual([3, 7]);
     expect(p.sections.filter((s) => s.kind === 'status').every((s) => s.group_id === undefined)).toBe(true);
@@ -360,6 +361,32 @@ describe('sessions and transcripts for the phone', () => {
     expect(rows.find((r) => r.key === 'claude:w-new')!.tail).toBe('');
     expect(rows.find((r) => r.key === 'claude:g1-a')).toMatchObject({ group: 'turn', tail: 'tail' });
     expect(rows[0].pane).toBe('loom-a:1.2');
+  });
+
+  it('puts every chat active since the start of yesterday in Recent on top, whatever its status, like the desktop list', () => {
+    const h = 3_600_000;
+    const G = { id: 4, name: 'Ops' };
+    const chats = [
+      c('live-now', 'done', NOW - 60_000, { working: true }), c('turn-today', 'waiting_on_user', NOW - 3 * h), c('idle-yday', 'done', NOW - 20 * h),
+      { ...c('parked', 'done', NOW - 2 * h), parked: 'waiting' as const }, { ...c('grouped', 'done', NOW - h), group: G },
+      c('old-idle', 'done', NOW - 5 * 24 * h), c('old-turn', 'waiting_on_user', NOW - 4 * 24 * h), c('old-working', 'done', NOW - 6 * 24 * h, { working: true }),
+      { ...c('turned', 'done', NOW - 9 * 24 * h), last_turn_at: NOW - 5 * 60_000 },
+    ];
+    const p = sessionsPayload(chats, () => '', [], new Map(), [G], NOW);
+    expect(p.sections.map((s) => [s.key, s.sessions.map((r) => r.key.slice(7))])).toEqual([
+      ['recent', ['live-now', 'turned', 'parked', 'turn-today', 'idle-yday']],
+      ['g:4', ['grouped']],
+      ['working', ['old-working']],
+      ['turn', ['old-turn']],
+      ['stale', ['old-idle']],
+    ]);
+    expect(p.sections[0].sessions.map((r) => r.group)).toEqual(['working', 'recent', 'waiting', 'turn', 'recent']);
+    expect(p.counts).toEqual({ working: 2, turn: 2, waiting: 1, saved: 0, recent: 4 });
+    // Yesterday is a wall-clock day: 11pm the day before yesterday is already stale, 1am yesterday is not.
+    const d = new Date(NOW); d.setHours(0, 0, 0, 0); const today = d.getTime();
+    expect(isStaleAge(today - 22 * h, NOW)).toBe(false);
+    expect(isStaleAge(today - 25 * h, NOW)).toBe(true);
+    expect(isStaleAge(0, NOW)).toBe(false);
   });
 
   it('reads pane topics from one list-panes call, and survives tmux failing', () => {
