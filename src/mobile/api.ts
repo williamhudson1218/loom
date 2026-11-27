@@ -20,6 +20,7 @@ import { paneLiveStatus } from './livestatus.ts';
 import type Database from 'better-sqlite3';
 import { openDb as realOpenDb } from '../db.ts';
 import { userTurn, type InjectedSrc } from '../injected.ts';
+import { currentUpdateHost, updateApplyReply, updateCheckReply, updateStateReply, type UpdateHost, type UpdateReply } from '../routes/update.ts';
 import { listGroups, reorderGroups, setChatGroup, type GroupResult } from '../chatgroups.ts';
 
 // The phone's API (/m/api/*). The gate (src/routes/index.ts) has already checked
@@ -102,6 +103,8 @@ export interface MobileDeps {
   /** Where phone photo uploads land (0700). Tests point it at a temp dir. */
   uploadsDir(): string;
   tailscale: TailscaleDeps;
+  /** The desktop updater (routes/update.ts UpdateHost); null outside the Loom app. Tests stub it: never a real restart. */
+  update(): UpdateHost | null;
 }
 
 const unwired = (): never => {
@@ -136,6 +139,7 @@ let deps: MobileDeps = {
   port: () => 4317,
   uploadsDir: () => path.join(TOOL_DIR, 'uploads', 'mobile'),
   tailscale: realTailscaleDeps,
+  update: () => null,
 };
 
 /** server.ts fills these in; tests pass fakes. Returns the previous set. */
@@ -561,6 +565,18 @@ function getMe(ctx: RouteCtx): void {
   ctx.json(200, { device: { id: d.id, name: d.name }, prefs: d.prefs, tailnetHost: tailnetHostNow(), version: buildInfo().version });
 }
 
+function sendReply(ctx: RouteCtx, r: UpdateReply): void {
+  ctx.json(r.status, r.body);
+}
+const updateGet = (ctx: RouteCtx): void => { me(ctx); sendReply(ctx, updateStateReply(deps.update())); };
+const updateCheck = (ctx: RouteCtx): void => { me(ctx); sendReply(ctx, updateCheckReply(deps.update())); };
+const updateApply = (ctx: RouteCtx): void => {
+  me(ctx);
+  const r = updateApplyReply(deps.update());
+  // The restart quits the app a moment after this answer: the phone then polls for the new version.
+  sendReply(ctx, r);
+};
+
 function getSessions(ctx: RouteCtx): void {
   me(ctx);
   // version: the running Loom, so a phone page loaded before an update can offer a reload.
@@ -947,6 +963,9 @@ export const MOBILE_ROUTES: RouteDef[] = [
   dv('POST', '/m/api/outbox/redraft', outboxRedraft),
   dv('POST', '/m/api/groups/move', moveToGroup),
   dv('POST', '/m/api/groups/order', orderGroups),
+  dv('GET', '/m/api/update', updateGet),
+  dv('POST', '/m/api/update/check', updateCheck),
+  dv('POST', '/m/api/update/apply', updateApply),
   dv('GET', '/m/api/prefs', getPrefs),
   dv('PUT', '/m/api/prefs', putPrefs),
   dv('GET', '/m/api/devices', getDevices),

@@ -34,7 +34,7 @@ export const APP_CSS = String.raw`
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+html, body { margin: 0; height: 100%; min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--text); }
 body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
 button { font: inherit; cursor: pointer; color: inherit; }
 textarea, input { font: inherit; color: inherit; }
@@ -45,7 +45,9 @@ h1, h2, p { margin: 0; }
 .accent { color: var(--accent); }
 .ico { display: inline-flex; vertical-align: middle; }
 
-#app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); position: relative; overflow: hidden; }
+#app { position: fixed; top: 0; right: 0; bottom: 0; left: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
+#app.kb { bottom: auto; }
+#app.kb .composer { padding-bottom: 10px; }
 .scr { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .hdr { padding: 6px 20px 12px; display: flex; flex-direction: column; gap: 4px; }
@@ -276,4 +278,14 @@ button.attachbtn { position: absolute; left: 1px; bottom: 1px; z-index: 1; width
 .toast button { border: 0; background: transparent; font-size: 14px; font-weight: 700; color: #9cc3ff; }
 .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
 .center p { color: var(--muted); font-size: 15px; line-height: 1.5; }
+
+.scroll.noover { overscroll-behavior-y: contain; }
+.ptr { height: 0; overflow: hidden; display: flex; align-items: flex-end; justify-content: center; color: var(--muted); font-size: 13px; }
+.ptr .ptrt { padding-bottom: 10px; opacity: 0; }
+.ptr.on .ptrt { opacity: 1; }
+.rsov { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: var(--bg); }
+.rsbox { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px; text-align: center; }
+.rstt { font-size: 20px; font-weight: 600; }
+.rsspin { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent); animation: rsspin 0.9s linear infinite; }
+@keyframes rsspin { to { transform: rotate(360deg); } }
 `;

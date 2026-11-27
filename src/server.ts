@@ -91,6 +91,7 @@ import { autoResumeParked, settingsGet, settingsPut } from './settings.ts';
 import { orchSettings } from './orchestrator.ts';
 import { reapplyPhoneAccess, serveMobileStatic, setMobileDeps, setMobileHeaders, type MobileChat } from './mobile/api.ts';
 import { deviceStore } from './mobile/devices.ts';
+import { currentUpdateHost } from './routes/update.ts';
 import { DraftWatch, chatEventPush, pushSoon, watcherPush } from './mobile/push-triggers.ts';
 import { provisionalViews, spawnTitles } from './liveindex.ts';
 import { isOrchestratorRef } from './orchsession.ts';
@@ -1678,6 +1679,7 @@ function wireMobile(): void {
     outboxDiscard: outboxDiscardAction,
     outboxRedraft: outboxRedraftAction,
     port: () => serverPort(),
+    update: () => currentUpdateHost(),
   });
   setChatEventListener((ev, background) => {
     // No phone listening: skip the tmux and DB reads the suppression rules need.

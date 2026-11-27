@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SCROLLFOLLOW_JS } from '../src/mobile/scrollfollow.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const lib = new Function(`${SCROLLFOLLOW_JS}; return { nearBottom, scrollBusy, ownScroll, followAfterScroll, afterPaint, firstChange, dockTake, FOLLOW_IDLE_MS };`)() as any;
+const lib = new Function(`${SCROLLFOLLOW_JS}; return { nearBottom, scrollBusy, ownScroll, followAfterScroll, afterPaint, firstChange, dockTake, FOLLOW_IDLE_MS, PULL_AT, pullDist, pullArmed };`)() as any;
 
 describe('phone chat scroll follow', () => {
   it('follows only near the bottom', () => {
@@ -53,5 +53,19 @@ describe('dockTake', () => {
     const r = lib.dockTake({ open: false, seen: ['a', 'b'] }, ['a']);
     expect(r.fresh).toBe(false);
     expect(r.changed).toBe(true);
+  });
+});
+
+describe('phone pull to refresh', () => {
+  it('arms only past the threshold and only from the top', () => {
+    expect(lib.pullArmed(lib.PULL_AT - 1, 0)).toBe(false);
+    expect(lib.pullArmed(lib.PULL_AT, 0)).toBe(true);
+    expect(lib.pullArmed(300, 1)).toBe(false);
+  });
+  it('damps the pull and ignores upward or scrolled drags', () => {
+    expect(lib.pullDist(40, 0)).toBe(20);
+    expect(lib.pullDist(1000, 0)).toBeLessThan(lib.PULL_AT);
+    expect(lib.pullDist(-30, 0)).toBe(0);
+    expect(lib.pullDist(80, 5)).toBe(0);
   });
 });

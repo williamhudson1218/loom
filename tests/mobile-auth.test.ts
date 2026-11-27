@@ -6,6 +6,8 @@ import path from 'node:path';
 import { createServer } from '../src/server.ts';
 import { termToken } from '../src/ptybridge.ts';
 import { ROUTES, setTailnetHostSource } from '../src/routes/index.ts';
+import type { UpdateHost } from '../src/routes/update.ts';
+import type { UpdateState } from '../src/updater.ts';
 import { MOBILE_ROUTES, resetPairRate, setMobileDeps, type MobileChat, type MobileDeps } from '../src/mobile/api.ts';
 import { DeviceStore, setDeviceStore } from '../src/mobile/devices.ts';
 import { setTailscaleSetupDeps } from '../src/mobile/tailscale.ts';
@@ -44,6 +46,9 @@ let gChat = { agent: 'claude', sid: '' };
 
 const live = (over: Partial<LiveLoc> = {}): LiveLoc => ({ agent: 'claude', session_id: 's1', pane_id: '%7', tmux_session: 'loom-work', window_index: '1', pane_index: '0', running: true, working: false, name: 'blue-vanilla', stage: 'implementation', ...over });
 const chat = (over: Partial<MobileChat> = {}): MobileChat => ({ agent: 'claude', session_id: 's1', title: 'Fix the widget', project: 'demo', state: 'waiting_on_user', jsonl_path: '/nonexistent.jsonl', last_active_at: 1000, last_turn_at: 1000, live: live(), ...over });
+
+const updateCalls: string[] = [];
+let updateHost: UpdateHost | null = null;
 
 function fakeDeps(): Partial<MobileDeps> {
   return {
@@ -97,6 +102,7 @@ function fakeDeps(): Partial<MobileDeps> {
       return { status: 200, body: { ok: true } };
     },
     uploadsDir: () => uploadsDir,
+    update: () => updateHost,
     withDb: (f) => f(gdb),
     tailscale: { exists: () => false, run: async () => ({ code: 1, stdout: '', stderr: 'no' }) },
   };
@@ -771,5 +777,49 @@ describe('phone group moves', () => {
     expect((await raw('POST', '/m/api/groups/order', ph(), JSON.stringify({ ids: rev.slice(1) }))).status).toBe(400);
     expect((await raw('POST', '/m/api/groups/order', ph(), JSON.stringify({ ids: 'x' }))).status).toBe(400);
     expect(listGroups(gdb).map((g) => g.id)).toEqual(rev);
+  });
+});
+
+
+describe('phone update routes', () => {
+  let cookie = '';
+  const ph = () => ({ ...JSON_BODY, ...tail, cookie: `loom_device=${cookie}` });
+  beforeAll(async () => {
+    cookie = (await pairDevice('Updater')).cookie;
+  });
+  const state = { status: 'ready', writable: true, ready: { version: '0.1.301', app: '/x', notes: [] } } as unknown as UpdateState;
+  beforeEach(() => {
+    updateCalls.length = 0;
+    updateHost = {
+      state: () => { updateCalls.push('state'); return state; },
+      check: async () => { updateCalls.push('check'); return state; },
+      restart: () => { updateCalls.push('restart'); return { ok: true, version: '0.1.301' }; },
+    };
+  });
+  afterAll(() => { updateHost = null; });
+
+  it('refuses an unpaired phone and a foreign Origin, touching no updater', async () => {
+    for (const [m, p] of [['GET', '/m/api/update'], ['POST', '/m/api/update/check'], ['POST', '/m/api/update/apply']] as const) {
+      expect((await raw(m, p, { ...JSON_BODY, ...tail }, m === 'POST' ? '{}' : undefined)).status, p).toBe(401);
+      if (m === 'POST') expect((await raw(m, p, { ...ph(), origin: 'https://evil.example' }, '{}')).status, p).toBe(403);
+    }
+    expect(updateCalls).toEqual([]);
+  });
+
+  it('reads, checks and applies through the desktop updater functions', async () => {
+    expect((await raw('GET', '/m/api/update', ph())).body).toMatchObject({ ok: true, state: { status: 'ready' } });
+    expect((await raw('POST', '/m/api/update/check', ph(), '{}')).body).toMatchObject({ ok: true, state: { status: 'ready' } });
+    expect((await raw('POST', '/m/api/update/apply', ph(), '{}')).body).toEqual({ ok: true, version: '0.1.301' });
+    expect(updateCalls).toEqual(['state', 'check', 'state', 'restart']);
+  });
+
+  it('reports an app-less server as disabled, and a refused restart as 409', async () => {
+    updateHost = null;
+    expect((await raw('GET', '/m/api/update', ph())).body).toMatchObject({ state: { status: 'disabled' } });
+    expect((await raw('POST', '/m/api/update/apply', ph(), '{}')).status).toBe(409);
+    updateHost = { state: () => state, check: async () => state, restart: () => ({ ok: false, detail: 'not writable' }) };
+    const r = await raw('POST', '/m/api/update/apply', ph(), '{}');
+    expect(r.status).toBe(409);
+    expect(r.body).toEqual({ ok: false, detail: 'not writable' });
   });
 });

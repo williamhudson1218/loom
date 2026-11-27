@@ -26,4 +26,10 @@ function firstChange(oldKeys,newKeys){var n=Math.min(oldKeys.length,newKeys.leng
 // The chat's outbox dock memory {open, seen:[draft ids]}. Collapsed by default; a draft not seen
 // before never opens it, it only flags 'fresh' (the bar pulses). Returns {mem, fresh, changed}.
 function dockTake(mem,ids){var seen=Array.isArray(mem&&mem.seen)?mem.seen:[];var open=!!(mem&&mem.open);var fresh=ids.some(function(id){return seen.indexOf(id)<0;});var changed=fresh||ids.length!==seen.length;return {mem:{open:open,seen:changed?ids.slice():seen},fresh:fresh,changed:changed};}
+// Pull to refresh on the Sessions list: only from the very top, and the pull is damped so it
+// takes a long drag (PULL_AT px of finger) to arm. pullDist maps the finger's travel to the
+// indicator's travel (0 when not at the top or pulling up); pullArmed is true past the threshold.
+var PULL_AT=90;
+function pullDist(dy,scrollTop){if(scrollTop>0||dy<=0)return 0;return Math.min(dy*0.5,PULL_AT*0.9);}
+function pullArmed(dy,scrollTop){return scrollTop<=0&&dy>=PULL_AT;}
 `;

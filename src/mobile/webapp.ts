@@ -127,6 +127,22 @@ try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change
 var S = { me: null, raw: null, groups: [], sections: [], sessions: [], counts: { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 }, outboxPending: 0, live: true, onSessions: null, tabs: null };
 var shellUp = false;
 
+// Fill the screen: #app is fixed to the layout viewport (CSS). With the keyboard up, iOS keeps the
+// layout viewport full height and pans the page; pin #app to the visible part instead so the
+// composer sits right above the keyboard (and drop its home-indicator padding, which the keyboard covers).
+(function () {
+  var vv = window.visualViewport;
+  if (!vv) return;
+  function fit() {
+    var kb = window.innerHeight - vv.height > 120;
+    app.classList.toggle('kb', kb);
+    app.style.height = kb ? vv.height + 'px' : '';
+    if (kb && (window.scrollY || vv.offsetTop)) window.scrollTo(0, 0);
+  }
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+})();
+
 function api(path, opt) {
   opt = opt || {};
   var init = { method: opt.method || 'GET', credentials: 'same-origin', cache: 'no-store', headers: {} };
@@ -484,20 +500,17 @@ function setCollapsed(k, on) { var m = collapsedMap(); if (on) m[k] = 1; else de
 function sessionsScreen() {
   var chipDot = h('span', { class: 'dot' }), chipText = h('span', { text: 'Mac · live' });
   var line = h('p', { text: '' });
-  var verEl = h('span', { class: 'ver' });
-  var reloadBtn = h('button', { class: 'reloadbtn', 'aria-label': 'Reload app', title: 'Reload app', on: { click: hardReload } }, h('span', { 'aria-hidden': 'true', text: '↻' }), verEl);
   var newBtn = h('button', { class: 'reloadbtn newbtn', 'aria-label': 'New chat', title: 'New chat', on: { click: newChatSheet } }, h('span', { 'aria-hidden': 'true', text: '+' }));
   var list = h('div', { class: 'list' });
-  var scroller = h('div', { class: 'scroll' }, list);
+  var ptr = h('div', { class: 'ptr' }, h('span', { class: 'ptrt', text: 'Pull to refresh' }));
+  var scroller = h('div', { class: 'scroll noover' }, ptr, list);
   screenEl.appendChild(h('div', { class: 'scr' },
-    h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'hdrr' }, newBtn, reloadBtn, h('span', { class: 'chip' }, chipDot, chipText))), line),
+    h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'hdrr' }, newBtn, h('span', { class: 'chip' }, chipDot, chipText))), line),
     scroller));
   var last = '', deferred = false, justDragged = 0;
   function render() {
     chipDot.className = 'dot' + (S.live ? '' : ' off');
     chipText.textContent = S.live ? 'Mac · live' : 'Mac · offline';
-    verEl.textContent = stalePage() ? 'Update' : (S.version || '');
-    reloadBtn.classList.toggle('stale', stalePage());
     var c = S.counts;
     line.textContent = '~ ' + (c.working || 0) + ' working · ● ' + (c.turn || 0) + ' your turn · ‖ ' + (c.waiting || 0) + ' waiting';
     if (D) { deferred = true; return; } // never rebuild the list under a finger
@@ -587,7 +600,7 @@ function sessionsScreen() {
     });
   }
   scroller.addEventListener('scroll', function () { if (SW && !D) swipeShut(); }, { passive: true });
-  var D = null, HOLD = 350, SLOP = 8;
+  var D = null, HOLD = 350, SLOP = 8, pulling = false;
   function gidOf(el) { var sec = el && el.closest ? el.closest('.grp') : null; return sec ? dropGroupOf(sec.getAttribute('data-gid')) : 0; }
   function unmark() { Array.prototype.forEach.call(list.querySelectorAll('.dropin,.dropbefore,.dropafter'), function (x) { x.classList.remove('dropin', 'dropbefore', 'dropafter'); }); }
   function endDrag() {
@@ -703,6 +716,47 @@ function sessionsScreen() {
     } else if (d.moved && d.target) reorderGroup(d.gid, d.target.gid, d.target.after);
   }, { passive: false });
   list.addEventListener('touchcancel', function () { if (D && D.axis === 'x') { swipeSet(D.src, SW && SW.row === D.src ? -SWIPE_W : 0, true); } if (D && D.lifted) justDragged = Date.now(); endDrag(); });
+
+  // Pull to refresh: a long pull-down from the very top reloads the app (hardReload). The pull is
+  // its own tracker beside D: it starts only with the list at the top, locks to a downward drag,
+  // and stands down the moment D is a swipe or a lifted drag, so neither of those can arm it.
+  var P = null;
+  function ptrSet(dist, txt, anim) {
+    ptr.style.transition = anim ? 'height .2s ease' : 'none';
+    ptr.style.height = dist + 'px';
+    ptr.classList.toggle('on', dist > 0);
+    if (txt) ptr.firstChild.textContent = txt;
+  }
+  scroller.addEventListener('touchstart', function (e) {
+    P = null;
+    if (e.touches.length !== 1 || scroller.scrollTop > 0 || pulling) return;
+    P = { sx: e.touches[0].clientX, sy: e.touches[0].clientY, dy: 0, on: false };
+  }, { passive: true });
+  scroller.addEventListener('touchmove', function (e) {
+    if (!P) return;
+    if ((D && (D.lifted || D.axis === 'x')) || scroller.scrollTop > 0) { if (P.on) ptrSet(0, 'Pull to refresh', true); P = null; return; }
+    var t = e.touches[0], dx = t.clientX - P.sx, dy = t.clientY - P.sy;
+    if (!P.on) {
+      if (Math.abs(dx) <= SLOP && Math.abs(dy) <= SLOP) return;
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) { P = null; return; }
+      P.on = true;
+      if (D) endDrag(); // a held row must not lift under a pull
+      swipeShut();
+    }
+    P.dy = dy;
+    e.preventDefault();
+    ptrSet(pullDist(dy, 0), pullArmed(dy, 0) ? 'Release to reload app' : 'Pull to refresh');
+  }, { passive: false });
+  function pullEnd() {
+    if (!P) return;
+    var p = P; P = null;
+    if (!p.on) return;
+    justDragged = Date.now();
+    if (pullArmed(p.dy, 0)) { pulling = true; ptrSet(48, 'Reloading…', true); hardReload(); }
+    else ptrSet(0, 'Pull to refresh', true);
+  }
+  scroller.addEventListener('touchend', pullEnd, { passive: true });
+  scroller.addEventListener('touchcancel', function () { if (P && P.on) ptrSet(0, 'Pull to refresh', true); P = null; }, { passive: true });
   list.addEventListener('contextmenu', function (e) { if (D) e.preventDefault(); });
 
   S.onSessions = render;
@@ -1298,10 +1352,26 @@ function hardReload() {
   setTimeout(done, 2500);
 }
 // The running Loom's version, and whether this page predates it (Loom updated since it loaded).
+// After Restart to update: cover the app, poll until Loom answers again with the new version
+// (or answers at all after having gone away), then reload the page onto it.
+function restartWait() {
+  var ov = h('div', { class: 'rsov' }, h('div', { class: 'rsbox' }, h('div', { class: 'rsspin' }), h('div', { class: 'rstt', text: 'Restarting…' }), h('div', { class: 'muted', text: 'Chats keep running in tmux.' })));
+  app.appendChild(ov);
+  var sawDown = false, t0 = Date.now(), timer = 0;
+  function tick() {
+    api('/m/api/me', { pub: true }).then(function (x) {
+      if (!x.ok && x.status === 0) sawDown = true;
+      else if (x.ok && ((x.json.version && x.json.version !== S.bootVersion) || sawDown)) { clearTimeout(timer); ov.querySelector('.rstt').textContent = 'Updated'; hardReload(); return; }
+      if (Date.now() - t0 > 180000) { ov.querySelector('.rstt').textContent = 'Still restarting…'; ov.appendChild(h('button', { class: 'btn big', text: 'Reload app', on: { click: hardReload } })); return; }
+      timer = setTimeout(tick, 1500);
+    });
+  }
+  timer = setTimeout(tick, 1500);
+}
 function versionLabel() { return S.version ? 'Loom ' + S.version : ''; }
 function stalePage() { return !!(S.version && S.bootVersion && S.version !== S.bootVersion); }
 function settingsScreen() {
-  var alive = true, devices = [], pstate = 'off';
+  var alive = true, devices = [], pstate = 'off', upd = null, updTimer = 0, updBusy = false;
   var body = h('div', { class: 'list', style: 'gap:22px;padding-bottom:24px' });
   screenEl.appendChild(h('div', { class: 'scr' }, h('header', { class: 'hdr' }, h('h1', { text: 'Settings' })), h('div', { class: 'scroll' }, body)));
 
@@ -1356,13 +1426,63 @@ function settingsScreen() {
     body.appendChild(h('section', { class: 'setgrp' }, h('h2', { text: 'Connection' }),
       h('div', { class: 'card conn' }, h('div', {}, h('span', { text: 'Loom on' }), h('span', { class: 'mono', text: host })), h('div', { class: 'muted' }, h('span', { text: 'Via' }), h('span', { text: location.protocol === 'https:' ? 'Tailscale · HTTPS' : 'Local · HTTP' }))),
       h('div', { class: 'note', style: 'display:flex;align-items:center;gap:10px' }, h('button', { class: 'btn link', style: 'padding:0;height:auto;font-size:15px', text: stalePage() ? 'Reload to update' : 'Reload app', on: { click: hardReload } }), h('span', { class: 'muted mono', style: 'font-size:12px', text: versionLabel() }))));
+
+    // updates: the desktop updater's state, check and restart (same functions as Loom's own Settings)
+    var us = upd || {}, ready = us.status === 'ready' && us.ready ? us.ready : null;
+    var busy = us.status === 'checking' || us.status === 'downloading' || us.status === 'verifying';
+    var utext = us.status === 'applying' ? 'Restarting…'
+      : ready ? 'Loom ' + ready.version + ' is ready — Restart to update'
+      : us.status === 'checking' ? 'Checking for updates…'
+      : us.status === 'downloading' ? 'Downloading' + (us.latest && us.latest.version ? ' ' + us.latest.version : '') + (us.progress != null ? ' · ' + us.progress + '%' : '…')
+      : us.status === 'verifying' ? 'Verifying the download…'
+      : us.status === 'current' ? 'Loom is up to date'
+      : us.status === 'disabled' ? (us.detail || 'Updates are only available in the Loom app.')
+      : us.status === 'error' ? (us.detail || 'The last check failed.')
+      : upd ? 'Not checked yet' : '…';
+    var ucard = h('div', { class: 'card conn' },
+      h('div', {}, h('span', { text: 'Version' }), h('span', { class: 'mono', text: S.version || '…' })),
+      h('div', ready ? { class: 'accent' } : { class: 'muted' }, h('span', { text: utext })));
+    var uact = h('div', { class: 'note', style: 'display:flex;align-items:center;gap:14px' });
+    if (ready) uact.appendChild(h('button', { class: 'btn pri', text: 'Restart to update', disabled: us.writable === false || updBusy ? 'disabled' : null, on: { click: applyUpdate } }));
+    if (us.status !== 'disabled') uact.appendChild(h('button', { class: 'btn link', style: 'padding:0;height:auto;font-size:15px', text: 'Check for updates', disabled: busy || updBusy || us.status === 'applying' ? 'disabled' : null, on: { click: checkUpdate } }));
+    body.appendChild(h('section', { class: 'setgrp' }, h('h2', { text: 'Updates' }), ucard, uact.childNodes.length ? uact : null));
+  }
+  function loadUpdate() {
+    api('/m/api/update').then(function (x) { if (!alive) return; if (x.ok) upd = x.json.state || null; render(); keepUpdPolling(); });
+  }
+  function keepUpdPolling() {
+    clearTimeout(updTimer);
+    var st = upd && upd.status;
+    if (alive && (st === 'checking' || st === 'downloading' || st === 'verifying')) updTimer = setTimeout(loadUpdate, 1500);
+  }
+  function checkUpdate() {
+    updBusy = true; render();
+    api('/m/api/update/check', { body: {} }).then(function (x) {
+      updBusy = false;
+      if (!x.ok) toast(errText(x, 'Could not check for updates'));
+      else if (x.json.state) upd = x.json.state;
+      if (alive) { render(); keepUpdPolling(); }
+    });
+  }
+  function applyUpdate() {
+    var v = upd && upd.ready ? upd.ready.version : '';
+    confirmSheet('Restart Loom' + (v ? ' ' + v : '') + '?', 'Loom will restart; chats keep running in tmux.', 'Restart').then(function (ok) {
+      if (!ok) return;
+      updBusy = true; render();
+      api('/m/api/update/apply', { body: {} }).then(function (x) {
+        updBusy = false;
+        if (!x.ok) { toast(errText(x, 'Could not restart Loom')); render(); return; }
+        restartWait();
+      });
+    });
   }
   function refresh() {
+    loadUpdate();
     api('/m/api/devices').then(function (x) { if (x.ok) devices = x.json.devices || []; render(); });
     pushState().then(function (s) { pstate = s; render(); });
   }
   render(); refresh();
-  return { stop: function () { alive = false; } };
+  return { stop: function () { alive = false; clearTimeout(updTimer); } };
 }
 
 // ---- pairing ---------------------------------------------------------------------
