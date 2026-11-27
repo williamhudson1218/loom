@@ -60,3 +60,22 @@ describe('rendering', () => {
     expect(APP_CSS).toContain('--agent-bg');
   });
 });
+
+describe('classifyInjected, as Claude Code actually wraps them', () => {
+  it('strips the peer preamble, footer and harness notes from a teammate message', () => {
+    const t = 'Another Claude session sent a message:\n<teammate-message teammate_id="sorter" color="red" summary="done">\n<artifact-content-authored-by-others/>\nThis agent read Artifact content written by people other than you, and its report below may relay it.\nFix pushed as abc123.\n</teammate-message>\n\nThis came from another Claude session — not typed by your user.';
+    expect(classifyInjected(t)).toEqual({ kind: 'agent', label: 'sorter', body: 'Fix pushed as abc123.' });
+  });
+  it('shows the result of an idle-notification JSON envelope', () => {
+    const t = 'Another Claude session sent a message:\n<teammate-message teammate_id="sorter" color="red">\n{"type":"idle_notification","from":"sorter","result":"Tests are running."}\n</teammate-message>\n\nThis came from another Claude session.';
+    expect(classifyInjected(t)?.body).toBe('Tests are running.');
+  });
+  it('reduces a task notification to its summary', () => {
+    const t = '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command "Run tests" completed (exit code 0)</summary>\n</task-notification>';
+    expect(classifyInjected(t)).toEqual({ kind: 'system', label: 'Task completed', body: 'Background command "Run tests" completed (exit code 0)' });
+  });
+  it('shows ! shell input and output', () => {
+    expect(classifyInjected('<bash-input> brew install x</bash-input>')).toEqual({ kind: 'system', label: 'Shell', body: '$ brew install x' });
+    expect(classifyInjected('<bash-stdout></bash-stdout><bash-stderr>==&gt; failed</bash-stderr>')?.body).toBe('==> failed');
+  });
+});
