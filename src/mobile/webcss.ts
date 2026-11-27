@@ -127,6 +127,10 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .mlive-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: mlivepulse 1.2s ease-in-out infinite; }
 @keyframes mlivepulse { 0%,100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .mlive-dot { animation: none; } }
+.msgs-top { display: flex; justify-content: center; padding: 12px 16px 0; }
+.msgs-top:has(> .m-earlier[style*="none"]) { display: none; }
+.pillwrap { position: sticky; bottom: 10px; height: 0; display: flex; justify-content: center; overflow: visible; }
+.newpill { transform: translateY(-100%); min-height: 32px; padding: 0 14px; border-radius: 16px; font-size: 13px; font-weight: 600; color: #fff; background: var(--primary); border: 0; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
 .m-earlier { align-self: center; padding: 6px 14px; border-radius: 16px; font-size: 13px; color: var(--accent); background: var(--surface); border: 1px solid var(--border); }
 .m-event { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
 .m-event::before, .m-event::after { content: ''; flex: 1; border-top: 1px solid var(--border); }

@@ -6,6 +6,7 @@
 // dndScrollSpeed) are spliced in ahead of the app, so the phone moves groups the same way.
 
 import { GROUPING_JS } from '../grouping.ts';
+import { SCROLLFOLLOW_JS } from './scrollfollow.ts';
 
 export const APP_JS =
   String.raw`
@@ -13,6 +14,7 @@ export const APP_JS =
 'use strict';
 ` +
   GROUPING_JS +
+  SCROLLFOLLOW_JS +
   String.raw`
 
 var app = document.getElementById('app');
@@ -542,7 +544,10 @@ function detailScreen(r) {
   var title = h('div', { class: 'a' }), sub = h('div', { class: 'b' }), chip = h('span', { class: 'stagechip' });
   var status = h('span'), pane = h('span', { class: 'mono' });
   var msgsEl = h('div', { class: 'msgs' }), optEl = h('div', { class: 'optmsgs' }), liveEl = h('div', { class: 'mlive', 'aria-live': 'polite' });
-  var scroller = h('div', { class: 'scroll' }, msgsEl, optEl, liveEl);
+  var earlierEl = h('button', { class: 'm-earlier', style: 'display:none' });
+  var emptyEl = h('div', { class: 'empty', text: 'No messages yet.', style: 'display:none' });
+  var pillEl = h('button', { class: 'newpill', style: 'display:none', text: '↓ New messages' });
+  var scroller = h('div', { class: 'scroll' }, h('div', { class: 'msgs-top' }, earlierEl), msgsEl, emptyEl, optEl, liveEl, h('div', { class: 'pillwrap' }, pillEl));
   var ta = h('textarea', { class: 'tinput', rows: '1', placeholder: 'Reply', enterkeyhint: 'send', 'aria-label': 'Reply' });
   var sendBtn = h('button', { class: 'sendbtn', 'aria-label': 'Send reply' }, icon('send'));
   var stopBtn = h('button', { class: 'stopbtn', 'aria-label': 'Interrupt (sends Esc)', title: 'Interrupt (Esc)' }, icon('stop'));
@@ -559,32 +564,56 @@ function detailScreen(r) {
   // Replies sent from here, shown at once as dimmed bubbles until the transcript has them (or 20 s).
   // base: how many user messages the transcript had at send time, so an older identical line can't match.
   var sentQ = [], lastMsgs = [];
-  // Follow new messages only while the reader is at the bottom. Scrolling up, even a little,
-  // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
-  // repaint waits for the touch (and its momentum) to end, so it can't snap the view back down.
-  var stick = true, touching = false, pendingMsgs = null, settleTimer = 0;
+  // Scrolling (rules in src/mobile/scrollfollow.ts): follow the bottom only until the reader scrolls
+  // away; never move scrollTop while a finger is down or the list is still coasting; a poll only
+  // rebuilds the messages that changed. A repaint that arrives mid-scroll waits for the list to go idle.
+  var follow = true, touching = false, lastScrollAt = 0, wantTop = null, idleTimer = 0, pendingMsgs = null;
+  var rendered = [], renderedStart = 0, painted = false;
   // History paging: a poll returns the last 100 messages (histStart = the first one's index in the
-  // whole chat). Load earlier sets fromIdx, and from then on every poll asks for everything from
-  // there, so the older pages stay while new messages arrive. anchor holds the distance from the
-  // bottom across the repaint, so the prepended page lands above what was on screen.
-  var histStart = 0, fromIdx = null, anchor = null, paging = false;
+  // whole chat). Once the reader scrolls up or loads earlier, fromIdx pins the window's start, and
+  // every poll asks for everything from there, so older pages stay put while new messages arrive.
+  var histStart = 0, fromIdx = null, paging = false;
+  function busyNow() { return scrollBusy(touching, lastScrollAt, Date.now()); }
+  function setTop(v) { wantTop = Math.max(0, Math.min(v, scroller.scrollHeight - scroller.clientHeight)); scroller.scrollTop = wantTop; }
+  function toBottom() { setTop(scroller.scrollHeight); }
+  function toBottomIfFollowing() { if (!follow) return; if (busyNow()) scheduleIdle(); else toBottom(); }
+  function scheduleIdle() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () {
+      if (!alive) return;
+      if (busyNow()) { scheduleIdle(); return; }
+      if (pendingMsgs) { var m = pendingMsgs; pendingMsgs = null; paintMsgs(m); }
+      else if (follow) toBottom();
+    }, FOLLOW_IDLE_MS + 30);
+  }
+  function showPill(on) { pillEl.style.display = on ? '' : 'none'; }
+  pillEl.addEventListener('click', function () { follow = true; showPill(false); toBottom(); });
   function loadEarlier() {
     if (paging || histStart <= 0) return;
     paging = true;
     fromIdx = Math.max(0, histStart - 100);
-    anchor = scroller.scrollHeight - scroller.scrollTop;
-    load().then(function () { paging = false; }, function () { paging = false; anchor = null; });
+    paintEarlier();
+    load().then(function () { paging = false; paintEarlier(); }, function () { paging = false; paintEarlier(); });
+  }
+  earlierEl.addEventListener('click', loadEarlier);
+  function paintEarlier() {
+    earlierEl.style.display = histStart > 0 ? '' : 'none';
+    earlierEl.textContent = paging ? 'Loading…' : 'Load earlier messages';
   }
   scroller.addEventListener('scroll', function () {
-    stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
-    if (scroller.scrollTop < 80 && histStart > 0 && !touching) loadEarlier();
-    if (pendingMsgs && !touching) { clearTimeout(settleTimer); settleTimer = setTimeout(flushPending, 250); }
+    lastScrollAt = Date.now();
+    if (ownScroll(wantTop, scroller.scrollTop)) { wantTop = null; return; }
+    wantTop = null;
+    follow = followAfterScroll(scroller.scrollHeight, scroller.scrollTop, scroller.clientHeight);
+    if (follow) showPill(false);
+    else if (fromIdx === null) fromIdx = histStart; // reading back: the window stops sliding under the reader
+    if (scroller.scrollTop < 80 && histStart > 0) loadEarlier();
+    scheduleIdle();
   }, { passive: true });
   scroller.addEventListener('touchstart', function () { touching = true; }, { passive: true });
-  function touchEnd() { touching = false; clearTimeout(settleTimer); settleTimer = setTimeout(flushPending, 250); }
+  function touchEnd() { touching = false; lastScrollAt = Date.now(); scheduleIdle(); }
   scroller.addEventListener('touchend', touchEnd, { passive: true });
   scroller.addEventListener('touchcancel', touchEnd, { passive: true });
-  function flushPending() { if (touching || !pendingMsgs) return; var m = pendingMsgs; pendingMsgs = null; paintMsgs(m); }
 
   ta.value = drafts[key] || '';
   function grow() { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; }
@@ -659,29 +688,52 @@ function detailScreen(r) {
       quick.appendChild(h('button', { class: 'qbtn', text: q, disabled: !canReply, on: { click: function () { send(q); } } }));
     });
   }
+  function msgKey(m) { return m.role + '\u0001' + (m.src ? m.src.kind + ':' + m.src.label : '') + '\u0001' + m.text; }
+  function msgEl(m) {
+    if (m.role === 'user' && m.src) return h('div', { class: 'm-agent k-' + m.src.kind }, h('div', { class: 'm-from', text: m.src.kind === 'agent' ? 'from ' + m.src.label : m.src.label }), linked(m.text));
+    if (m.role === 'user') return h('div', { class: 'm-user' }, linked(m.text));
+    if (m.role === 'thinking') return thinkingRow(m.text);
+    if (m.role === 'event') return h('div', { class: 'm-event', role: 'separator' }, h('span', { text: m.text }));
+    if (m.role === 'tool') return h('div', { class: 'm-tool' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: m.text }));
+    return h('div', { class: 'm-asst' }, linked(m.text));
+  }
   function paintMsgs(msgs) {
-    var sig = histStart + ':' + JSON.stringify(msgs);
-    if (sig === lastSig) { anchor = null; return; }
-    if (touching && anchor === null) { pendingMsgs = msgs; return; }
-    lastSig = sig;
-    var first = !msgsEl.firstChild, keep = scroller.scrollTop;
-    clear(msgsEl);
-    if (histStart > 0) msgsEl.appendChild(h('button', { class: 'm-earlier', text: paging ? 'Loading…' : 'Load earlier messages', on: { click: loadEarlier } }));
+    var keys = msgs.map(msgKey);
     lastTool = '';
     for (var i = msgs.length - 1; i >= 0 && msgs[i].role !== 'user'; i--) if (msgs[i].role === 'tool') { lastTool = msgs[i].text; break; }
     // Already the transcript's last line: the live row doesn't repeat it.
     if (msgs.length && msgs[msgs.length - 1].role === 'tool') lastTool = '';
-    msgs.forEach(function (m) {
-      if (m.role === 'user' && m.src) msgsEl.appendChild(h('div', { class: 'm-agent k-' + m.src.kind }, h('div', { class: 'm-from', text: m.src.kind === 'agent' ? 'from ' + m.src.label : m.src.label }), linked(m.text)));
-      else if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
-      else if (m.role === 'thinking') msgsEl.appendChild(thinkingRow(m.text));
-      else if (m.role === 'event') msgsEl.appendChild(h('div', { class: 'm-event', role: 'separator' }, h('span', { text: m.text })));
-      else if (m.role === 'tool') msgsEl.appendChild(h('div', { class: 'm-tool' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: m.text })));
-      else msgsEl.appendChild(h('div', { class: 'm-asst' }, linked(m.text)));
-    });
-    if (!msgs.length) msgsEl.appendChild(h('div', { class: 'empty', text: 'No messages yet.' }));
-    if (anchor !== null) { scroller.scrollTop = scroller.scrollHeight - anchor; anchor = null; }
-    else scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
+    paintEarlier();
+    if (painted && histStart === renderedStart && firstChange(rendered, keys) < 0) { pendingMsgs = null; return; }
+    if (painted && busyNow()) { pendingMsgs = msgs; scheduleIdle(); return; }
+    pendingMsgs = null;
+    var first = !painted, top0 = scroller.scrollTop;
+    // Older messages put above (Load earlier), the window slid (a full rebuild), or the same start.
+    var shift = painted && histStart <= renderedStart ? renderedStart - histStart : -1;
+    var appended = false;
+    if (shift < 0) {
+      clear(msgsEl);
+      msgs.forEach(function (m) { msgsEl.appendChild(msgEl(m)); });
+    } else {
+      var tailKeys = keys.slice(shift), fc = firstChange(rendered, tailKeys);
+      if (fc >= 0) {
+        while (msgsEl.children.length > fc) msgsEl.removeChild(msgsEl.lastChild);
+        for (var j = fc; j < tailKeys.length; j++) msgsEl.appendChild(msgEl(msgs[shift + j]));
+        appended = tailKeys.length > rendered.length || fc < rendered.length;
+      }
+      if (shift > 0) {
+        var h0 = scroller.scrollHeight, frag = document.createDocumentFragment();
+        for (var k = 0; k < shift; k++) frag.appendChild(msgEl(msgs[k]));
+        msgsEl.insertBefore(frag, msgsEl.firstChild);
+        var grew = scroller.scrollHeight - h0;
+      }
+    }
+    rendered = keys; renderedStart = histStart; painted = true;
+    emptyEl.style.display = msgs.length ? 'none' : '';
+    var act = afterPaint(first, follow, shift > 0);
+    if (act === 'anchor') setTop(top0 + grew);
+    else if (act === 'bottom') toBottom();
+    else if (appended) showPill(true);
   }
   // A thinking block: one muted line, tap to read it all. Open ones stay open across repaints.
   function thinkingRow(text) {
@@ -716,7 +768,7 @@ function detailScreen(r) {
       if (q.shown) b.appendChild(h('div', { text: q.shown }));
       optEl.appendChild(b);
     });
-    if (stick && !touching) scroller.scrollTop = scroller.scrollHeight;
+    toBottomIfFollowing();
   }
   function paintLive(ls) {
     var on = !!(ls && ls.text) || sess.group === 'working';
@@ -726,7 +778,7 @@ function detailScreen(r) {
     if (!on) return;
     liveEl.appendChild(h('div', { class: 'mlive-a' }, h('span', { class: 'mlive-dot', 'aria-hidden': 'true' }), h('span', { text: ls && ls.text ? ls.text : 'Working…' })));
     if (lastTool) liveEl.appendChild(h('div', { class: 'mlive-b' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: lastTool })));
-    if (stick && !touching) scroller.scrollTop = scroller.scrollHeight;
+    toBottomIfFollowing();
   }
   function paintEnabled() {
     talkBtn.disabled = !canReply; ta.disabled = !canReply; attachBtn.disabled = !canReply; sendBtn.disabled = !canReply; stopBtn.disabled = !canReply;
@@ -761,14 +813,14 @@ function detailScreen(r) {
     var payload = { key: key, text: text };
     if (ready.length) payload.images = ready.map(function (p) { return p.id; });
     var q = { text: flatText(text), shown: text, urls: ready.map(function (p) { return p.url; }), at: Date.now(), base: usersOf(lastMsgs).length, sent: false };
-    sentQ.push(q); stick = true; paintOpt();
+    sentQ.push(q); follow = true; showPill(false); paintOpt();
     api('/m/api/reply', { body: payload }).then(function (x) {
       busy = false; sendBtn.disabled = !canReply;
       if (x.ok) {
         ta.value = ''; drafts[key] = ''; grow();
         if (own) { pending.forEach(function (p) { if (q.urls.indexOf(p.url) < 0) URL.revokeObjectURL(p.url); }); pending = []; paintThumbs(); }
         q.sent = true; q.at = Date.now();
-        stick = true; sentAt = Date.now(); liveOn = true;
+        follow = true; showPill(false); sentAt = Date.now(); liveOn = true;
         sess = Object.assign({}, sess, { group: 'working', tail: '' });
         paintHead(); paintLive(null);
         toast('Sent to ' + (sess.name || 'session'));
