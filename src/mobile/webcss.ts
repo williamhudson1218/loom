@@ -11,6 +11,7 @@ export const APP_CSS = String.raw`
   --st-discovery-fg:#5fafff; --st-discovery-bg:#15243a; --st-implementation-fg:#87d787; --st-implementation-bg:#16281b;
   --st-shipping-fg:#d787d7; --st-shipping-bg:#2a1a2c; --st-thread-fg:#ffaf5f; --st-thread-bg:#2d2113; --st-blocked-fg:#ff875f; --st-blocked-bg:#2e1a14;
   --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --agent-bg:#241f3f; --agent-fg:#d6d0f5; --agent-label:#a79cf0; --agent-bd:#3b3366;
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -19,6 +20,7 @@ export const APP_CSS = String.raw`
   --tabbar:rgba(255,255,255,.94); --bubble:#2563eb; --toast:#1b1f2a; --sheet:#ffffff; --mac-card:#e9ecf2; --track-off:#d5d8df;
   --st-discovery-fg:#1f5fbf; --st-discovery-bg:#e3edfc; --st-implementation-fg:#22743a; --st-implementation-bg:#e0f2e4;
   --st-shipping-fg:#86308f; --st-shipping-bg:#f4e5f6; --st-thread-fg:#9a4f00; --st-thread-bg:#fbecd9; --st-blocked-fg:#b4380c; --st-blocked-bg:#fde4da;
+  --agent-bg:#ece9fb; --agent-fg:#2d2754; --agent-label:#5b4bc4; --agent-bd:#d3cdf3;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
@@ -28,6 +30,7 @@ export const APP_CSS = String.raw`
     --tabbar:rgba(255,255,255,.94); --bubble:#2563eb; --toast:#1b1f2a; --sheet:#ffffff; --mac-card:#e9ecf2; --track-off:#d5d8df;
     --st-discovery-fg:#1f5fbf; --st-discovery-bg:#e3edfc; --st-implementation-fg:#22743a; --st-implementation-bg:#e0f2e4;
     --st-shipping-fg:#86308f; --st-shipping-bg:#f4e5f6; --st-thread-fg:#9a4f00; --st-thread-bg:#fbecd9; --st-blocked-fg:#b4380c; --st-blocked-bg:#fde4da;
+    --agent-bg:#ece9fb; --agent-fg:#2d2754; --agent-label:#5b4bc4; --agent-bd:#d3cdf3;
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -104,6 +107,8 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .band .mono { font-size: 12px; color: var(--muted); }
 .msgs { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .m-user { align-self: flex-end; max-width: 85%; padding: 10px 14px; border-radius: 18px 18px 4px 18px; font-size: 15px; line-height: 1.4; background: var(--bubble); color: #fff; white-space: pre-wrap; word-break: break-word; }
+.m-agent { align-self: center; max-width: 85%; padding: 8px 14px 10px; border-radius: 14px; border: 1px solid var(--agent-bd); font-size: 14px; line-height: 1.4; background: var(--agent-bg); color: var(--agent-fg); white-space: pre-wrap; word-break: break-word; }
+.m-from { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--agent-label); margin-bottom: 2px; }
 .m-tool { display: flex; gap: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--muted); word-break: break-word; }
 .m-think { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 0; font: italic 13px/1.45 inherit; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-think.open { white-space: pre-wrap; word-break: break-word; }

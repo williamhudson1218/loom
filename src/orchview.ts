@@ -129,6 +129,7 @@ function orchMsgHtml(x){if(x.l){const l=x.l;
   const m=x.m;const t=m.text||'';
   if(m.role==='user'&&t.indexOf('[Loom events]')===0)return '<div class="olog ev">'+esc(t.replace('[Loom events]','Loom events ·').split(' -- ')[0])+'</div>';
   if(m.role==='user'&&(t.indexOf('Loom started you')===0||t.indexOf('Loom restarted you')===0))return '<div class="olog">'+hhmm(m.at)+' · '+esc(t.split('.')[0])+'</div>';
+  if(m.role==='user'&&m.src)return '<div class="msg agent"><div class="who">'+(m.src.kind==='agent'?'from '+esc(m.src.label):esc(m.src.label))+(m.at?' · '+hhmm(m.at):'')+'</div>'+esc(t)+'</div>';
   return '<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':'Orchestrator')+(m.at?' · '+hhmm(m.at):'')+'</div>'+esc(t)+'</div>';}
 // Which filter chip a feed row belongs to. Failed relays are problems, so they ignore the chips.
 function orchRowKind(x){if(x.l){const k=x.l.kind;return k==='failed'?'failed':k==='started'?'sys':'relay';}

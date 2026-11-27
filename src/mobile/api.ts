@@ -18,6 +18,7 @@ import { VOICE_ROUTES, setVoiceDeps } from './voice.ts';
 import { paneLiveStatus } from './livestatus.ts';
 import type Database from 'better-sqlite3';
 import { openDb as realOpenDb } from '../db.ts';
+import { userTurn, type InjectedSrc } from '../injected.ts';
 import { listGroups, reorderGroups, setChatGroup, type GroupResult } from '../chatgroups.ts';
 
 // The phone's API (/m/api/*). The gate (src/routes/index.ts) has already checked
@@ -322,11 +323,13 @@ export interface MobileMsg {
   /** 'thinking': a thinking block that carries text (most are signature-only and dropped). */
   role: 'user' | 'assistant' | 'tool' | 'thinking';
   text: string;
+  /** A user turn Will did not type (another agent, Loom, Claude Code): the phone shows it centered with a label. */
+  src?: InjectedSrc;
 }
 
 /** The last ~100 messages, tool calls as one-liners. Claude transcripts only carry tool calls; Codex uses the shared reader. */
 export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): MobileMsg[] {
-  if (agent !== 'claude') return readTranscript(agent, jsonlPath, { limit }).map((m) => ({ role: m.role, text: m.text }));
+  if (agent !== 'claude') return readTranscript(agent, jsonlPath, { limit }).map((m) => ({ role: m.role, text: m.text, ...(m.src ? { src: m.src } : {}) }));
   let text = '';
   try {
     const st = fs.statSync(jsonlPath);
@@ -355,7 +358,7 @@ export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): 
     const content = o.message?.content;
     if (o.type === 'user' && o.message?.role === 'user' && !o.isMeta) {
       const t = typeof content === 'string' ? content.trim() : Array.isArray(content) ? content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text.trim()).join('\n').trim() : '';
-      if (t) out.push({ role: 'user', text: t });
+      if (t) out.push({ role: 'user', ...userTurn(t) });
     } else if (o.type === 'assistant' && o.message?.role === 'assistant') {
       if (typeof content === 'string') {
         if (content.trim()) out.push({ role: 'assistant', text: content.trim() });

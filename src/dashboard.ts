@@ -552,6 +552,8 @@ ${PRUNE_VIEW_CSS}
   .msg { max-width:90%; padding:8px 11px; border-radius:10px; font-size:13px; line-height:1.45; white-space:pre-wrap; word-break:break-word; }
   .msg.user { align-self:flex-end; background:#1c2f4d; color:#dbe7ff; }
   .msg.assistant { align-self:flex-start; background:#191d28; border:1px solid #232634; color:#dfe4ee; }
+  .msg.agent { align-self:center; max-width:85%; background:#241f3f; border:1px solid #3b3366; color:#d6d0f5; }
+  .msg.agent .who { color:#a79cf0; opacity:1; }
   .msg .who { font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.55; margin-bottom:2px; }
   .pfoot { padding:12px 16px; border-top:1px solid #232634; }
   .pfoot textarea { width:100%; box-sizing:border-box; resize:vertical; min-height:48px; background:#1b1f2a; color:#e6e6e6; border:1px solid #2b3040; border-radius:8px; padding:8px; font:inherit; }

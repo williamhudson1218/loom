@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import type { Agent } from './types.ts';
+import { userTurn, type InjectedSrc } from './injected.ts';
 
 export interface Msg {
   role: 'user' | 'assistant';
   text: string;
+  /** Set on a user turn Will did not type (another agent, Loom, Claude Code); text is already stripped. */
+  src?: InjectedSrc;
   at?: number; // the entry's timestamp, only with { withTime: true }
 }
 
@@ -66,10 +69,12 @@ export function readTranscript(
   let lines = text.split('\n');
   if (start > 0) lines = lines.slice(1); // drop the partial first line
   const msgs: Msg[] = [];
-  const push = (role: Msg['role'], text: string, o: any) => {
-    if (!opts.withTime) return void msgs.push({ role, text });
+  const push = (role: Msg['role'], raw: string, o: any) => {
+    const turn = role === 'user' ? userTurn(raw) : { text: raw };
+    const base: Msg = { role, ...turn };
+    if (!opts.withTime) return void msgs.push(base);
     const at = Date.parse(o?.timestamp ?? '');
-    msgs.push({ role, text, ...(Number.isFinite(at) ? { at } : {}) });
+    msgs.push({ ...base, ...(Number.isFinite(at) ? { at } : {}) });
   };
   for (const line of lines) {
     if (!line.trim()) continue;

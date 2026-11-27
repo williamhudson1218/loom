@@ -653,7 +653,8 @@ function detailScreen(r) {
     // Already the transcript's last line: the live row doesn't repeat it.
     if (msgs.length && msgs[msgs.length - 1].role === 'tool') lastTool = '';
     msgs.forEach(function (m) {
-      if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
+      if (m.role === 'user' && m.src) msgsEl.appendChild(h('div', { class: 'm-agent k-' + m.src.kind }, h('div', { class: 'm-from', text: m.src.kind === 'agent' ? 'from ' + m.src.label : m.src.label }), linked(m.text)));
+      else if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
       else if (m.role === 'thinking') msgsEl.appendChild(thinkingRow(m.text));
       else if (m.role === 'tool') msgsEl.appendChild(h('div', { class: 'm-tool' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: m.text })));
       else msgsEl.appendChild(h('div', { class: 'm-asst' }, linked(m.text)));
