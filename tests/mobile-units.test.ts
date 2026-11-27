@@ -7,7 +7,7 @@ import { CODE_ALPHABET, CODE_TTL_MS, DeviceStore, PENDING_TTL_MS, cleanName, dev
 import { encryptPayload, generateVapidKeys, loadVapidKeys, sendPush, validSubscription, vapidAuthorization } from '../src/mobile/webpush.ts';
 import { applyServe, clearLeftoverServe, serveIsLoomOnly, tailscaleStatus, type TailscaleDeps } from '../src/mobile/tailscale.ts';
 import { DraftWatch, PushDispatcher, chatEventPush, inPushQuiet, parseHidIdle, type PushDeps } from '../src/mobile/push-triggers.ts';
-import { draftKind, draftUrl, statusOf, isStaleAge, paneTopics, isClaudeCommand, mobileTranscript, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
+import { draftKind, draftUrl, statusOf, isStaleAge, paneTopics, isClaudeCommand, mobileTranscript, transcriptPage, outboxPayload, sessionsPayload, toolLine, type MobileChat } from '../src/mobile/api.ts';
 import type { Device } from '../src/mobile/devices.ts';
 import type { Draft } from '../src/outbox.ts';
 
@@ -437,6 +437,37 @@ describe('sessions and transcripts for the phone', () => {
       { role: 'thinking', text: 'The lint step fails first.' },
       { role: 'assistant', text: 'Lint.' },
     ]);
+  });
+
+  it('pages back through a long transcript, reads only what was appended, and shows a compaction as a divider', () => {
+    const file = path.join(tmp(), 'long.jsonl');
+    const turn = (i: number) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `m${i}` }] } });
+    const lines = Array.from({ length: 250 }, (_, i) => turn(i));
+    lines.splice(120, 0,
+      JSON.stringify({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted' }),
+      JSON.stringify({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued from a previous conversation.' } }));
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    const tail = transcriptPage('claude', file);
+    expect([tail.start, tail.total, tail.messages.length]).toEqual([151, 251, 100]);
+    expect(tail.messages[0].text).toBe('m150');
+    const back = transcriptPage('claude', file, { from: tail.start - 100 });
+    expect([back.start, back.messages.length]).toEqual([51, 200]);
+    expect(back.messages.filter((m) => m.role === 'event')).toEqual([{ role: 'event', text: 'Context compacted' }]);
+    expect(back.messages.some((m) => /continued from a previous/.test(m.text))).toBe(false);
+    expect(back.messages[120 - 51]).toEqual({ role: 'event', text: 'Context compacted' });
+    // A poll after more lines: the paged-back window keeps its start and gains the new tail;
+    // a half-written last line waits for the next read.
+    fs.appendFileSync(file, turn(250) + '\n' + turn(251).slice(0, 20));
+    const more = transcriptPage('claude', file, { from: 51 });
+    expect([more.start, more.total, more.messages.at(-1)!.text]).toEqual([51, 252, 'm250']);
+    fs.appendFileSync(file, turn(251).slice(20) + '\n');
+    expect(transcriptPage('claude', file).messages.at(-1)!.text).toBe('m251');
+    // from past the default window never returns fewer than the last page; a bad from is ignored.
+    expect(transcriptPage('claude', file, { from: 250 }).start).toBe(153);
+    expect(transcriptPage('claude', file, { from: -3 }).start).toBe(153);
+    // A file replaced by a shorter one is parsed again.
+    fs.writeFileSync(file, turn(0) + '\n');
+    expect(transcriptPage('claude', file)).toEqual({ messages: [{ role: 'assistant', text: 'm0' }], start: 0, total: 1 });
   });
 
   it('names draft kinds', () => {

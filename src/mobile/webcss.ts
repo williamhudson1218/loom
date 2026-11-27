@@ -76,6 +76,10 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .mvopt + .mvopt { border-top: 1px solid var(--border); }
 .mvopt.on { color: var(--accent); font-weight: 600; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.hdrr { display: flex; align-items: center; gap: 8px; }
+.reloadbtn { display: flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 8px; border-radius: 16px; background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.reloadbtn > span:first-child { font-size: 15px; font-family: inherit; }
+.reloadbtn.stale { color: var(--accent); border-color: var(--accent); }
 .gempty { padding: 12px 14px; color: var(--muted); font-size: 13.5px; }
 .empty { padding: 28px 20px; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; }
 
@@ -123,6 +127,9 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .mlive-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: mlivepulse 1.2s ease-in-out infinite; }
 @keyframes mlivepulse { 0%,100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .mlive-dot { animation: none; } }
+.m-earlier { align-self: center; padding: 6px 14px; border-radius: 16px; font-size: 13px; color: var(--accent); background: var(--surface); border: 1px solid var(--border); }
+.m-event { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.m-event::before, .m-event::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
 .m-asst { font-size: 15px; line-height: 1.5; padding: 12px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; background: var(--surface); border: 1px solid var(--border); }
 .composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); background: var(--bg); }
 .quick { display: flex; gap: 8px; overflow-x: auto; }

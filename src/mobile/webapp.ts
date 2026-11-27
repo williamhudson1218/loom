@@ -278,6 +278,7 @@ function loadSessions() {
     if (r.ok) {
       S.live = true;
       S.raw = r.json;
+      if (r.json.version) S.version = r.json.version;
       relayout();
       S.counts = r.json.counts || { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 };
       S.outboxPending = r.json.outbox_pending || 0;
@@ -373,15 +374,19 @@ function setCollapsed(k, on) { var m = collapsedMap(); if (on) m[k] = 1; else de
 function sessionsScreen() {
   var chipDot = h('span', { class: 'dot' }), chipText = h('span', { text: 'Mac · live' });
   var line = h('p', { text: '' });
+  var verEl = h('span', { class: 'ver' });
+  var reloadBtn = h('button', { class: 'reloadbtn', 'aria-label': 'Reload app', title: 'Reload app', on: { click: hardReload } }, h('span', { 'aria-hidden': 'true', text: '↻' }), verEl);
   var list = h('div', { class: 'list' });
   var scroller = h('div', { class: 'scroll' }, list);
   screenEl.appendChild(h('div', { class: 'scr' },
-    h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'chip' }, chipDot, chipText)), line),
+    h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'hdrr' }, reloadBtn, h('span', { class: 'chip' }, chipDot, chipText))), line),
     scroller));
   var last = '', deferred = false, justDragged = 0;
   function render() {
     chipDot.className = 'dot' + (S.live ? '' : ' off');
     chipText.textContent = S.live ? 'Mac · live' : 'Mac · offline';
+    verEl.textContent = stalePage() ? 'Update' : (S.version || '');
+    reloadBtn.classList.toggle('stale', stalePage());
     var c = S.counts;
     line.textContent = '~ ' + (c.working || 0) + ' working · ● ' + (c.turn || 0) + ' your turn · ‖ ' + (c.waiting || 0) + ' waiting';
     if (D) { deferred = true; return; } // never rebuild the list under a finger
@@ -558,8 +563,21 @@ function detailScreen(r) {
   // stops the follow; scrolling back down resumes it. While a finger is on the list, a poll's
   // repaint waits for the touch (and its momentum) to end, so it can't snap the view back down.
   var stick = true, touching = false, pendingMsgs = null, settleTimer = 0;
+  // History paging: a poll returns the last 100 messages (histStart = the first one's index in the
+  // whole chat). Load earlier sets fromIdx, and from then on every poll asks for everything from
+  // there, so the older pages stay while new messages arrive. anchor holds the distance from the
+  // bottom across the repaint, so the prepended page lands above what was on screen.
+  var histStart = 0, fromIdx = null, anchor = null, paging = false;
+  function loadEarlier() {
+    if (paging || histStart <= 0) return;
+    paging = true;
+    fromIdx = Math.max(0, histStart - 100);
+    anchor = scroller.scrollHeight - scroller.scrollTop;
+    load().then(function () { paging = false; }, function () { paging = false; anchor = null; });
+  }
   scroller.addEventListener('scroll', function () {
     stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+    if (scroller.scrollTop < 80 && histStart > 0 && !touching) loadEarlier();
     if (pendingMsgs && !touching) { clearTimeout(settleTimer); settleTimer = setTimeout(flushPending, 250); }
   }, { passive: true });
   scroller.addEventListener('touchstart', function () { touching = true; }, { passive: true });
@@ -642,12 +660,13 @@ function detailScreen(r) {
     });
   }
   function paintMsgs(msgs) {
-    var sig = JSON.stringify(msgs);
-    if (sig === lastSig) return;
-    if (touching) { pendingMsgs = msgs; return; }
+    var sig = histStart + ':' + JSON.stringify(msgs);
+    if (sig === lastSig) { anchor = null; return; }
+    if (touching && anchor === null) { pendingMsgs = msgs; return; }
     lastSig = sig;
     var first = !msgsEl.firstChild, keep = scroller.scrollTop;
     clear(msgsEl);
+    if (histStart > 0) msgsEl.appendChild(h('button', { class: 'm-earlier', text: paging ? 'Loading…' : 'Load earlier messages', on: { click: loadEarlier } }));
     lastTool = '';
     for (var i = msgs.length - 1; i >= 0 && msgs[i].role !== 'user'; i--) if (msgs[i].role === 'tool') { lastTool = msgs[i].text; break; }
     // Already the transcript's last line: the live row doesn't repeat it.
@@ -656,11 +675,13 @@ function detailScreen(r) {
       if (m.role === 'user' && m.src) msgsEl.appendChild(h('div', { class: 'm-agent k-' + m.src.kind }, h('div', { class: 'm-from', text: m.src.kind === 'agent' ? 'from ' + m.src.label : m.src.label }), linked(m.text)));
       else if (m.role === 'user') msgsEl.appendChild(h('div', { class: 'm-user' }, linked(m.text)));
       else if (m.role === 'thinking') msgsEl.appendChild(thinkingRow(m.text));
+      else if (m.role === 'event') msgsEl.appendChild(h('div', { class: 'm-event', role: 'separator' }, h('span', { text: m.text })));
       else if (m.role === 'tool') msgsEl.appendChild(h('div', { class: 'm-tool' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: m.text })));
       else msgsEl.appendChild(h('div', { class: 'm-asst' }, linked(m.text)));
     });
     if (!msgs.length) msgsEl.appendChild(h('div', { class: 'empty', text: 'No messages yet.' }));
-    scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
+    if (anchor !== null) { scroller.scrollTop = scroller.scrollHeight - anchor; anchor = null; }
+    else scroller.scrollTop = first || stick ? scroller.scrollHeight : keep;
   }
   // A thinking block: one muted line, tap to read it all. Open ones stay open across repaints.
   function thinkingRow(text) {
@@ -714,7 +735,7 @@ function detailScreen(r) {
   }
   function load() {
     lastLoad = Date.now();
-    var live = Date.now() - sentAt < 60000 ? '&live=1' : '';
+    var live = (Date.now() - sentAt < 60000 ? '&live=1' : '') + (fromIdx !== null ? '&from=' + fromIdx : '');
     return api('/m/api/session?key=' + encodeURIComponent(key) + live).then(function (x) {
       if (!alive) return;
       if (x.status === 404) { toast0('That session has ended'); location.hash = '#sessions'; return; }
@@ -722,6 +743,7 @@ function detailScreen(r) {
       if (x.json.session) sess = x.json.session;
       canReply = x.json.can_reply !== false;
       lastMsgs = x.json.messages || [];
+      histStart = typeof x.json.start === 'number' ? x.json.start : 0;
       reconcile(lastMsgs);
       // A reply still in flight means the agent is (about to be) busy, whatever the board says yet.
       if (sentQ.some(function (q) { return q.sent; }) && sess.group !== 'working') sess = Object.assign({}, sess, { group: 'working', tail: '' });
@@ -1044,6 +1066,19 @@ var TOGGLES = [
   ['quiet', 'Quiet hours', '10 pm to 7 am, nothing but blocked']
 ];
 function prefsNow() { var p = Object.assign({}, DEFAULT_PREFS, (S.me && S.me.prefs) || {}); return p; }
+// Reload to the newest app: drop the shell cache, ask the service worker to update (it is not
+// unregistered: that would end the push subscription), then reload from the network.
+function hardReload() {
+  var done = function () { location.reload(); };
+  var jobs = [];
+  try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+  try { if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistration('/m/').then(function (r) { return r && r.update(); })); } catch (e) {}
+  Promise.all(jobs.map(function (j) { return j.catch(function () {}); })).then(done, done);
+  setTimeout(done, 2500);
+}
+// The running Loom's version, and whether this page predates it (Loom updated since it loaded).
+function versionLabel() { return S.version ? 'Loom ' + S.version : ''; }
+function stalePage() { return !!(S.version && S.bootVersion && S.version !== S.bootVersion); }
 function settingsScreen() {
   var alive = true, devices = [], pstate = 'off';
   var body = h('div', { class: 'list', style: 'gap:22px;padding-bottom:24px' });
@@ -1099,7 +1134,7 @@ function settingsScreen() {
     var host = (S.me && S.me.tailnetHost) || location.host;
     body.appendChild(h('section', { class: 'setgrp' }, h('h2', { text: 'Connection' }),
       h('div', { class: 'card conn' }, h('div', {}, h('span', { text: 'Loom on' }), h('span', { class: 'mono', text: host })), h('div', { class: 'muted' }, h('span', { text: 'Via' }), h('span', { text: location.protocol === 'https:' ? 'Tailscale · HTTPS' : 'Local · HTTP' }))),
-      h('div', { class: 'note', style: 'display:flex' }, h('button', { class: 'btn link', style: 'padding:0;height:auto;font-size:15px', text: 'Reload app', on: { click: function () { location.reload(); } } }))));
+      h('div', { class: 'note', style: 'display:flex;align-items:center;gap:10px' }, h('button', { class: 'btn link', style: 'padding:0;height:auto;font-size:15px', text: stalePage() ? 'Reload to update' : 'Reload app', on: { click: hardReload } }), h('span', { class: 'muted mono', style: 'font-size:12px', text: versionLabel() }))));
   }
   function refresh() {
     api('/m/api/devices').then(function (x) { if (x.ok) devices = x.json.devices || []; render(); });
@@ -1254,7 +1289,7 @@ function boot() {
   api('/m/api/me', { pub: true }).then(function (r) {
     if (r.status === 401) return showPairing();
     if (!r.ok) return showOffline();
-    S.me = r.json; startApp();
+    S.me = r.json; S.bootVersion = S.version = r.json.version || ''; startApp();
   });
 }
 boot();

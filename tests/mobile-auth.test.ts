@@ -374,15 +374,20 @@ describe('what a paired phone can do', () => {
   it('reads me, sessions and one session', async () => {
     const meR = await raw('GET', '/m/api/me', ph());
     expect(meR.body).toMatchObject({ device: { name: 'Working phone' }, tailnetHost: null });
+    expect(typeof meR.body.version).toBe('string');
     const s = await raw('GET', '/m/api/sessions', ph());
     expect(s.status).toBe(200);
     expect(s.body.counts).toEqual({ working: 1, turn: 1, waiting: 0, saved: 0, recent: 0 });
     expect(s.body.outbox_pending).toBe(1);
+    expect(s.body.version).toBe(meR.body.version);
     const secs = s.body.sections as { key: string; kind: string; sessions: { key: string; group: string; tail: string; pane: string; drafts: number }[] }[];
     expect(secs.map((x) => [x.key, x.kind, x.sessions.map((r) => r.group)])).toEqual([['stale', 'list', ['turn', 'working']]]);
     expect(secs[0].sessions[0]).toMatchObject({ key: 'claude:s1', group: 'turn', tail: 'Should I ship it?', pane: 'loom-work:1.0', drafts: 1 });
     const one = await raw('GET', '/m/api/session?key=claude:s1', ph());
     expect(one.body.can_reply).toBe(true);
+    expect(one.body).toMatchObject({ start: 0 });
+    expect(typeof one.body.total).toBe('number');
+    expect((await raw('GET', '/m/api/session?key=claude:s1&from=0', ph())).body.start).toBe(0);
     expect((one.body.session as { drafts: number }).drafts).toBe(1);
     expect(one.body.live_status).toBeNull();
   });

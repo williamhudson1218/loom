@@ -1,4 +1,5 @@
 import type http from 'node:http';
+import { buildInfo } from '../diagnostics.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -317,59 +318,113 @@ export function toolLine(name: string, input: unknown): string {
 }
 
 export interface MobileMsg {
-  /** 'thinking': a thinking block that carries text (most are signature-only and dropped). */
-  role: 'user' | 'assistant' | 'tool' | 'thinking';
+  /** 'thinking': a thinking block that carries text (most are signature-only and dropped).
+   *  'event': a marker between messages (a compaction boundary), shown as a small centered divider. */
+  role: 'user' | 'assistant' | 'tool' | 'thinking' | 'event';
   text: string;
   /** A user turn Will did not type (another agent, Loom, Claude Code): the phone shows it centered with a label. */
   src?: InjectedSrc;
 }
 
-/** The last ~100 messages, tool calls as one-liners. Claude transcripts only carry tool calls; Codex uses the shared reader. */
-export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): MobileMsg[] {
-  if (agent !== 'claude') return readTranscript(agent, jsonlPath, { limit }).map((m) => ({ role: m.role, text: m.text, ...(m.src ? { src: m.src } : {}) }));
-  let text = '';
+/** One transcript record as phone messages. A compaction is a divider; its summary (a long
+ *  user turn Claude Code writes for itself) is left out. */
+function claudeRecord(line: string, out: MobileMsg[]): void {
+  let o: { type?: string; subtype?: string; isMeta?: boolean; isCompactSummary?: boolean; message?: { role?: string; content?: unknown } };
   try {
-    const st = fs.statSync(jsonlPath);
-    const start = Math.max(0, st.size - 400_000);
-    const fd = fs.openSync(jsonlPath, 'r');
-    try {
-      const buf = Buffer.alloc(st.size - start);
-      fs.readSync(fd, buf, 0, buf.length, start);
-      text = buf.toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
-    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    o = JSON.parse(line);
   } catch {
+    return;
+  }
+  if (o.type === 'system' && o.subtype === 'compact_boundary') {
+    out.push({ role: 'event', text: 'Context compacted' });
+    return;
+  }
+  const content = o.message?.content;
+  if (o.type === 'user' && o.message?.role === 'user' && !o.isMeta && !o.isCompactSummary) {
+    const t = typeof content === 'string' ? content.trim() : Array.isArray(content) ? content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text.trim()).join('\n').trim() : '';
+    if (t) out.push({ role: 'user', ...userTurn(t) });
+  } else if (o.type === 'assistant' && o.message?.role === 'assistant') {
+    if (typeof content === 'string') {
+      if (content.trim()) out.push({ role: 'assistant', text: content.trim() });
+      return;
+    }
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ role: 'assistant', text: b.text.trim() });
+      else if (b?.type === 'tool_use' && typeof b.name === 'string') out.push({ role: 'tool', text: toolLine(b.name, b.input) });
+      else if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) out.push({ role: 'thinking', text: b.thinking.trim() });
+    }
+  }
+}
+
+// Every message of a Claude transcript, parsed once and then only the bytes appended since (the
+// phone polls every few seconds; a long chat is many MB). Keyed by path; a file that shrank or was
+// replaced is parsed again. Indexes into msgs are stable while the file only grows, which is what
+// lets the phone page back through history.
+interface Parsed { size: number; ino: number; offset: number; msgs: MobileMsg[] }
+const parsedCache = new Map<string, Parsed>();
+const PARSED_MAX = 12;
+
+function claudeMessages(jsonlPath: string): MobileMsg[] {
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(jsonlPath);
+  } catch {
+    parsedCache.delete(jsonlPath);
     return [];
   }
-  const out: MobileMsg[] = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let o: { type?: string; isMeta?: boolean; message?: { role?: string; content?: unknown } };
+  let p = parsedCache.get(jsonlPath);
+  if (!p || st.size < p.size || st.ino !== p.ino) p = { size: 0, ino: st.ino, offset: 0, msgs: [] };
+  if (st.size > p.offset) {
+    let fd = -1;
     try {
-      o = JSON.parse(line);
+      fd = fs.openSync(jsonlPath, 'r');
+      const buf = Buffer.alloc(st.size - p.offset);
+      fs.readSync(fd, buf, 0, buf.length, p.offset);
+      // Only whole lines: a record still being written is read on the next poll.
+      const end = buf.lastIndexOf(0x0a);
+      if (end >= 0) {
+        for (const line of buf.subarray(0, end).toString('utf8').split('\n')) if (line.trim()) claudeRecord(line, p.msgs);
+        p.offset += end + 1;
+      }
     } catch {
-      continue;
-    }
-    const content = o.message?.content;
-    if (o.type === 'user' && o.message?.role === 'user' && !o.isMeta) {
-      const t = typeof content === 'string' ? content.trim() : Array.isArray(content) ? content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text.trim()).join('\n').trim() : '';
-      if (t) out.push({ role: 'user', ...userTurn(t) });
-    } else if (o.type === 'assistant' && o.message?.role === 'assistant') {
-      if (typeof content === 'string') {
-        if (content.trim()) out.push({ role: 'assistant', text: content.trim() });
-        continue;
-      }
-      if (!Array.isArray(content)) continue;
-      for (const b of content) {
-        if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ role: 'assistant', text: b.text.trim() });
-        else if (b?.type === 'tool_use' && typeof b.name === 'string') out.push({ role: 'tool', text: toolLine(b.name, b.input) });
-        else if (b?.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) out.push({ role: 'thinking', text: b.thinking.trim() });
-      }
+      return p.msgs;
+    } finally {
+      if (fd >= 0) fs.closeSync(fd);
     }
   }
-  return out.slice(-limit);
+  p.size = st.size;
+  parsedCache.delete(jsonlPath);
+  parsedCache.set(jsonlPath, p);
+  while (parsedCache.size > PARSED_MAX) parsedCache.delete(parsedCache.keys().next().value!);
+  return p.msgs;
+}
+
+/** Tests: forget parsed transcripts. */
+export function resetTranscriptCache(): void {
+  parsedCache.clear();
+}
+
+/** The last `limit` messages, tool calls as one-liners. Claude transcripts only carry tool calls; Codex uses the shared reader. */
+export function mobileTranscript(agent: Agent, jsonlPath: string, limit = 100): MobileMsg[] {
+  return transcriptPage(agent, jsonlPath, { limit }).messages;
+}
+
+export const PAGE_MAX = 3000;
+
+/**
+ * A window of the transcript for the phone. Without `from`, the last `limit` messages. With
+ * `from` (an index from an earlier page's start), every message from there to the end, capped
+ * at PAGE_MAX: the phone asks for this once it has paged back, so its polls keep the older
+ * pages it already shows. start is the first returned message's index; start > 0 means more.
+ */
+export function transcriptPage(agent: Agent, jsonlPath: string, o: { limit?: number; from?: number } = {}): { messages: MobileMsg[]; start: number; total: number } {
+  const all: MobileMsg[] = agent === 'claude' ? claudeMessages(jsonlPath) : readTranscript(agent, jsonlPath, { limit: PAGE_MAX }).map((m) => ({ role: m.role, text: m.text, ...(m.src ? { src: m.src } : {}) }));
+  const total = all.length;
+  const limit = Math.max(1, Math.min(PAGE_MAX, o.limit ?? 100));
+  let start = Math.max(0, total - limit);
+  if (o.from !== undefined && Number.isInteger(o.from) && o.from >= 0) start = Math.max(total - PAGE_MAX, Math.min(o.from, start), 0);
+  return { messages: all.slice(start), start, total };
 }
 
 /* ------------------------------------------------------------------ outbox */
@@ -478,12 +533,13 @@ function pairStatus(ctx: RouteCtx): void {
 
 function getMe(ctx: RouteCtx): void {
   const d = me(ctx);
-  ctx.json(200, { device: { id: d.id, name: d.name }, prefs: d.prefs, tailnetHost: tailnetHostNow() });
+  ctx.json(200, { device: { id: d.id, name: d.name }, prefs: d.prefs, tailnetHost: tailnetHostNow(), version: buildInfo().version });
 }
 
 function getSessions(ctx: RouteCtx): void {
   me(ctx);
-  ctx.json(200, sessionsPayload(deps.chats(), deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()));
+  // version: the running Loom, so a phone page loaded before an update can offer a reload.
+  ctx.json(200, { ...sessionsPayload(deps.chats(), deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()), version: buildInfo().version });
 }
 
 /** One chat: its row, transcript, and its pending drafts (the outbox cards, so the chat screen docks them without a second poll).
@@ -500,7 +556,9 @@ async function getSession(ctx: RouteCtx): Promise<void> {
   const live_status = can ? paneLiveStatus(deps.tmux, c.live.pane_id) : null;
   const row = sessionRow(c, deps.tail(c), paneTopics(deps.tmux), mine.length);
   const session = live_status && row.group !== 'working' && !c.parked && !c.saved ? { ...row, group: 'working' as const, tail: '' } : row;
-  ctx.json(200, { session, messages: mobileTranscript(c.agent, c.jsonl_path), can_reply: can, drafts, live_status });
+  const fromQ = ctx.url.searchParams.get('from');
+  const page = transcriptPage(c.agent, c.jsonl_path, fromQ !== null && /^\d+$/.test(fromQ) ? { from: Number(fromQ) } : {});
+  ctx.json(200, { session, messages: page.messages, start: page.start, total: page.total, can_reply: can, drafts, live_status });
 }
 
 /** Reply and interrupt: the chat must be live and its pane running Claude right now. */
@@ -756,7 +814,7 @@ async function pushUnsubscribe(ctx: RouteCtx): Promise<void> {
 setVoiceDeps({
   chats: () => deps.chats(),
   tmux: (args) => deps.tmux(args),
-  messages: (c) => mobileTranscript(c.agent, c.jsonl_path, 200).filter((m) => m.role !== 'thinking'),
+  messages: (c) => mobileTranscript(c.agent, c.jsonl_path, 200).filter((m) => m.role !== 'thinking' && m.role !== 'event'),
   canReply: (c) => c.agent === 'claude' && isClaudeCommand(paneCommand(c.live.pane_id)),
 });
 

@@ -137,6 +137,10 @@ let build: BuildInfo = { version: 'source', commit: '', channel: 'local' };
 export function setBuildInfo(b: BuildInfo): void {
   build = { ...b };
 }
+/** The running build ('source' from a source run). */
+export function buildInfo(): BuildInfo {
+  return build;
+}
 
 let macMemo: string | null = null;
 function macosVersion(): string {
