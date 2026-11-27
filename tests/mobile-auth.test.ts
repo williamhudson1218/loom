@@ -33,6 +33,9 @@ const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-uploads-'));
 const outboxCalls: { kind: string; arg: unknown }[] = [];
 const closed: { pane: string; agent: string }[] = [];
 let extraChats: MobileChat[] = [];
+const started: { project: string; prompt: string; images: { type: string; data: string }[] }[] = [];
+const launchCalls: string[] = [];
+let launchList: { id: string; pane_id: string; project: string; prompt: string; status?: 'starting' | 'started' | 'failed'; lines?: string[] }[] = [];
 /** Panes whose capture shows Claude Code's spinner. */
 const busyPanes = new Set(['%8']);
 /** The group routes' db: in memory, never Loom's real one. Seeded in beforeAll. */
@@ -64,6 +67,21 @@ function fakeDeps(): Partial<MobileDeps> {
     close: (pane, agent) => {
       closed.push({ pane, agent });
       return { ok: true, detail: 'sent Ctrl-C x2' };
+    },
+    projects: () => [{ path: '/work/alpha', name: 'alpha' }, { path: '/work/beta', name: 'beta' }],
+    defaultProject: () => '/work/beta',
+    start: async (i) => {
+      started.push(i);
+      return { ok: true, detail: 'started', pane_id: '%12' };
+    },
+    launches: () => launchList,
+    retryLaunch: async (id) => {
+      launchCalls.push('retry:' + id);
+      return { status: 200, ok: true, detail: 'ok' };
+    },
+    dismissLaunch: (id) => {
+      launchCalls.push('dismiss:' + id);
+      return { status: 200, ok: true, detail: 'dismissed' };
     },
     drafts: () => [{ id: 'd1', session_id: 's1', channel: 'C0123', label: '#general', thread_ts: '1.2', messages: ['hello'], status: 'pending', created_at: '2026-01-01T10:00:00' }],
     outboxSend: async (b) => {
@@ -548,6 +566,96 @@ describe('what a paired phone can do', () => {
     expect(out.status).toBe(200);
     expect(String(out.headers['set-cookie']?.[0])).toContain('Max-Age=0');
     expect((await raw('GET', '/m/api/me', h)).status).toBe(401);
+  });
+
+  describe('new chat from the phone', () => {
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
+    beforeEach(() => {
+      started.length = 0;
+      launchCalls.length = 0;
+      launchList = [];
+      extraChats = [];
+    });
+    afterAll(() => {
+      extraChats = [];
+      launchList = [];
+    });
+    const post = (p: string, b: unknown) => raw('POST', p, ph(), JSON.stringify(b));
+
+    it('refuses an unpaired phone and a foreign Origin, starting nothing', async () => {
+      for (const p of ['/m/api/new', '/m/api/new/retry', '/m/api/new/dismiss']) {
+        expect((await raw('POST', p, { ...JSON_BODY, ...tail }, '{}')).status, p).toBe(401);
+        expect((await raw('POST', p, { ...ph(), origin: 'https://evil.example' }, '{}')).status, p).toBe(403);
+      }
+      expect((await raw('GET', '/m/api/new', { ...tail })).status).toBe(401);
+      expect(started).toEqual([]);
+      expect(launchCalls).toEqual([]);
+    });
+
+    it('lists the projects with the default preselected', async () => {
+      const r = await raw('GET', '/m/api/new', ph());
+      expect(r.body).toMatchObject({ default: '/work/beta', projects: [{ path: '/work/alpha' }, { path: '/work/beta' }] });
+    });
+
+    it('validates project, prompt, images and group before starting', async () => {
+      expect((await post('/m/api/new', { project: '/etc', prompt: 'hi' })).status).toBe(400);
+      expect((await post('/m/api/new', { project: '/work/alpha', prompt: '  ' })).status).toBe(400);
+      expect((await post('/m/api/new', { project: '/work/alpha', prompt: 'hi', images: ['../../x'] })).status).toBe(400);
+      expect((await post('/m/api/new', { project: '/work/alpha', prompt: 'hi', images: 'x' })).status).toBe(400);
+      expect((await post('/m/api/new', { project: '/work/alpha', prompt: 'hi', group_id: 999 })).status).toBe(400);
+      expect(started).toEqual([]);
+    });
+
+    it('starts through deps.start with the prompt and uploaded photos as base64', async () => {
+      const up = await raw('POST', '/m/api/image', { 'content-type': 'image/png', ...tail, cookie: `loom_device=${cookie}` }, PNG);
+      const r = await post('/m/api/new', { project: '/work/alpha', prompt: ' fix the bug ', images: [up.body.id] });
+      expect(r.body).toEqual({ ok: true, detail: 'started', pane_id: '%12' });
+      expect(started).toHaveLength(1);
+      expect(started[0]).toMatchObject({ project: '/work/alpha', prompt: 'fix the bug' });
+      expect(started[0].images[0].type).toBe('image/png');
+      expect(Buffer.from(started[0].images[0].data, 'base64').equals(PNG)).toBe(true);
+    });
+
+    it('a failed start is a 409 with the reason', async () => {
+      const prev = setMobileDeps({ start: async () => ({ ok: false, detail: 'no free pane' }) });
+      const r = await post('/m/api/new', { project: '/work/alpha', prompt: 'hi' });
+      setMobileDeps({ start: prev.start });
+      expect([r.status, r.body.detail]).toEqual([409, 'no free pane']);
+    });
+
+    it('shows launches in the sessions payload, with the chat key once its chat is live', async () => {
+      launchList = [
+        { id: 'L1', pane_id: '%12', project: 'alpha', prompt: 'fix', status: 'starting' },
+        { id: 'L2', pane_id: '%13', project: 'beta', prompt: 'x', status: 'failed', lines: ['boom'] },
+      ];
+      extraChats = [chat({ session_id: 'n1', live: live({ session_id: 'n1', pane_id: '%12' }) })];
+      const l = (await raw('GET', '/m/api/sessions', ph())).body.launches as Record<string, unknown>[];
+      expect(l[0]).toMatchObject({ id: 'L1', key: 'claude:n1', status: 'starting' });
+      expect(l[1]).toMatchObject({ id: 'L2', key: '', status: 'failed', lines: ['boom'] });
+    });
+
+    it('applies the chosen group once the new chat is live and indexed', async () => {
+      const gid = (createGroup(gdb, 'Phone starts') as { group: { id: number } }).group.id;
+      const prev = setMobileDeps({ groups: () => [{ id: gid, name: 'Phone starts' }] });
+      try {
+        expect((await post('/m/api/new', { project: '/work/alpha', prompt: 'hi', group_id: gid })).status).toBe(200);
+        await raw('GET', '/m/api/sessions', ph()); // chat not live yet: stays pending
+        expect(gdb.prepare(`SELECT 1 FROM chat_group_members WHERE group_id = ?`).get(gid)).toBeUndefined();
+        extraChats = [chat({ session_id: gChat.sid, agent: gChat.agent as 'claude', live: live({ session_id: gChat.sid, pane_id: '%12' }) })];
+        await raw('GET', '/m/api/sessions', ph());
+        expect(gdb.prepare(`SELECT session_id FROM chat_group_members WHERE group_id = ?`).get(gid)).toEqual({ session_id: gChat.sid });
+      } finally {
+        setMobileDeps({ groups: prev.groups });
+        gdb.prepare(`DELETE FROM chat_group_members WHERE group_id = ?`).run(gid);
+      }
+    });
+
+    it('retry and dismiss go to the desktop launch functions', async () => {
+      expect((await post('/m/api/new/retry', {})).status).toBe(400);
+      expect((await post('/m/api/new/retry', { id: 'L2' })).body).toEqual({ ok: true, detail: 'ok' });
+      expect((await post('/m/api/new/dismiss', { id: 'L2' })).body).toEqual({ ok: true, detail: 'dismissed' });
+      expect(launchCalls).toEqual(['retry:L2', 'dismiss:L2']);
+    });
   });
 
   describe('photo uploads', () => {

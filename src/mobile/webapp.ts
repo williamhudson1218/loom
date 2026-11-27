@@ -275,11 +275,103 @@ var STATUS = {
 };
 function statusInfo(k) { return STATUS[k] || STATUS.recent; }
 function sessionByKey(key) { return S.sessions.filter(function (s) { return s.key === key; })[0] || null; }
+// A chat just started from the + sheet: open it once its launch has a live chat (key), or give up after a minute.
+var OPENING = null;
+function openStarted() {
+  if (!OPENING) return;
+  if (Date.now() > OPENING.until) { OPENING = null; return; }
+  var l = (S.launches || []).filter(function (x) { return x.pane_id === OPENING.pane && x.key; })[0];
+  if (l) { OPENING = null; location.hash = '#s=' + encodeURIComponent(l.key); }
+}
+function launchAct(l, what) {
+  return api('/m/api/new/' + what, { body: { id: l.id } }).then(function (x) {
+    if (!x.ok) toast(errText(x, what === 'retry' ? 'Could not retry' : 'Could not dismiss'));
+    else if (what === 'retry') toast('Starting again…');
+    return loadSessions();
+  });
+}
+// The + sheet: project, group, first prompt, photos. Start hands it to the desktop's New thread.
+function newChatSheet() {
+  openSheet(function (sheet, close) {
+    var proj = h('select', { class: 'nsel', 'aria-label': 'Project' });
+    var grp = h('select', { class: 'nsel', 'aria-label': 'Group' });
+    var ta = h('textarea', { class: 'ninput', rows: '5', placeholder: 'What should Claude work on?', 'aria-label': 'First prompt' });
+    var fileIn = h('input', { type: 'file', accept: 'image/*', multiple: 'multiple', class: 'filein', 'aria-hidden': 'true', tabindex: '-1' });
+    var attachBtn = h('button', { class: 'btn', text: 'Add photo', on: { click: function () { fileIn.click(); } } });
+    var thumbs = h('div', { class: 'thumbs' });
+    var go = h('button', { class: 'btn big pri', text: 'Start' });
+    var pending = [], busy = false;
+    sheet.appendChild(h('div', { class: 'ttl', text: 'New chat' }));
+    sheet.appendChild(h('label', { class: 'nlab', text: 'Project' }));
+    sheet.appendChild(proj);
+    sheet.appendChild(h('label', { class: 'nlab', text: 'Group' }));
+    sheet.appendChild(grp);
+    sheet.appendChild(ta);
+    sheet.appendChild(thumbs);
+    sheet.appendChild(h('div', { class: 'ro' }, attachBtn, fileIn));
+    sheet.appendChild(h('div', { class: 'ro' }, h('button', { class: 'btn big', text: 'Cancel', on: { click: close } }), go));
+    proj.appendChild(h('option', { value: '', text: 'Loading…' }));
+    grp.appendChild(h('option', { value: '0', text: 'No group' }));
+    S.groups.forEach(function (g) { grp.appendChild(h('option', { value: String(g.id), text: g.name })); });
+    api('/m/api/new').then(function (r) {
+      clear(proj);
+      var list = r.ok ? (r.json.projects || []) : [];
+      if (!list.length) { proj.appendChild(h('option', { value: '', text: 'No projects' })); return; }
+      list.forEach(function (p) { proj.appendChild(h('option', { value: p.path, text: p.name || p.path })); });
+      proj.value = r.json.default || list[0].path;
+    });
+    function paintThumbs() {
+      clear(thumbs);
+      pending.forEach(function (p) {
+        var rm = h('button', { class: 'thumbx', 'aria-label': 'Remove photo', on: { click: function () {
+          pending = pending.filter(function (q) { return q !== p; }); URL.revokeObjectURL(p.url); paintThumbs();
+        } } }, '×');
+        thumbs.appendChild(h('div', { class: 'thumb' + (p.err ? ' bad' : p.id ? '' : ' up') }, h('img', { src: p.url, alt: '' }), rm));
+      });
+    }
+    fileIn.addEventListener('change', function () {
+      Array.prototype.forEach.call(fileIn.files || [], function (f) {
+        if (!/^image\//.test(f.type) || pending.length >= 10) return;
+        var p = { url: URL.createObjectURL(f), id: '', err: false };
+        pending.push(p); paintThumbs();
+        shrink(f).then(function (blob) {
+          return fetch('/m/api/image', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
+        }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, json: j }; }); })
+          .catch(function () { return { ok: false, json: {} }; })
+          .then(function (x) {
+            if (x.ok && x.json.id) p.id = x.json.id; else { p.err = true; toast(errText({ json: x.json }, 'Could not upload photo')); }
+            paintThumbs();
+          });
+      });
+      fileIn.value = '';
+    });
+    go.addEventListener('click', function () {
+      if (busy) return;
+      var prompt = ta.value.trim(), ids = pending.filter(function (p) { return p.id; }).map(function (p) { return p.id; });
+      if (pending.some(function (p) { return !p.id && !p.err; })) { toast('Photos are still uploading'); return; }
+      if (!proj.value) { toast('Pick a project'); return; }
+      if (!prompt && !ids.length) { toast('Write a prompt first'); return; }
+      busy = true; go.disabled = true; go.textContent = 'Starting…';
+      var body = { project: proj.value, prompt: prompt, images: ids };
+      if (Number(grp.value)) body.group_id = Number(grp.value);
+      api('/m/api/new', { body: body }).then(function (x) {
+        busy = false; go.disabled = false; go.textContent = 'Start';
+        if (!x.ok) { toast(errText(x, 'Could not start the chat')); return; }
+        OPENING = { pane: x.json.pane_id || '', until: Date.now() + 60000 };
+        close();
+        toast('Starting…');
+        loadSessions(); setTimeout(loadSessions, 1500);
+      });
+    });
+  });
+}
 function loadSessions() {
   return api('/m/api/sessions').then(function (r) {
     if (r.ok) {
       S.live = true;
       S.raw = r.json;
+      S.launches = r.json.launches || [];
+      openStarted();
       if (r.json.version) S.version = r.json.version;
       relayout();
       S.counts = r.json.counts || { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 };
@@ -290,6 +382,18 @@ function loadSessions() {
   });
 }
 // ---- groups: optimistic moves, held over polls until the server agrees (grouping.ts) ----
+function shrink(file) {
+  if (file.type === 'image/gif' || !window.createImageBitmap) return Promise.resolve(file);
+  return createImageBitmap(file).then(function (bm) {
+    var k = Math.min(1, 2048 / Math.max(bm.width, bm.height));
+    if (k === 1 && file.type === 'image/jpeg' && file.size < 1500000) { if (bm.close) bm.close(); return file; }
+    var cv = document.createElement('canvas');
+    cv.width = Math.round(bm.width * k); cv.height = Math.round(bm.height * k);
+    cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+    if (bm.close) bm.close();
+    return new Promise(function (res) { cv.toBlob(function (b) { res(b || file); }, 'image/jpeg', 0.85); });
+  }).catch(function () { return file; });
+}
 var GH = { chats: {}, order: null };
 var HOLD_MS = 15000;
 function newestFirst(a, b) { return (toMs(b.last_active_at) || 0) - (toMs(a.last_active_at) || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); }
@@ -382,10 +486,11 @@ function sessionsScreen() {
   var line = h('p', { text: '' });
   var verEl = h('span', { class: 'ver' });
   var reloadBtn = h('button', { class: 'reloadbtn', 'aria-label': 'Reload app', title: 'Reload app', on: { click: hardReload } }, h('span', { 'aria-hidden': 'true', text: '↻' }), verEl);
+  var newBtn = h('button', { class: 'reloadbtn newbtn', 'aria-label': 'New chat', title: 'New chat', on: { click: newChatSheet } }, h('span', { 'aria-hidden': 'true', text: '+' }));
   var list = h('div', { class: 'list' });
   var scroller = h('div', { class: 'scroll' }, list);
   screenEl.appendChild(h('div', { class: 'scr' },
-    h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'hdrr' }, reloadBtn, h('span', { class: 'chip' }, chipDot, chipText))), line),
+    h('header', { class: 'hdr' }, h('div', { class: 'row' }, h('h1', { text: 'Sessions' }), h('span', { class: 'hdrr' }, newBtn, reloadBtn, h('span', { class: 'chip' }, chipDot, chipText))), line),
     scroller));
   var last = '', deferred = false, justDragged = 0;
   function render() {
@@ -397,13 +502,31 @@ function sessionsScreen() {
     line.textContent = '~ ' + (c.working || 0) + ' working · ● ' + (c.turn || 0) + ' your turn · ‖ ' + (c.waiting || 0) + ' waiting';
     if (D) { deferred = true; return; } // never rebuild the list under a finger
     var shut = collapsedMap();
-    var sig = JSON.stringify([S.live, shut, S.sections.map(function (x) { return [x.key, x.name, x.sessions.map(function (s) { return [s.key, s.group, s.topic, s.tail, s.stage, ago(s.last_active_at)]; })]; })]);
+    var pend = (S.launches || []).filter(function (l) { return !l.key; });
+    var sig = JSON.stringify([S.live, shut, pend, S.sections.map(function (x) { return [x.key, x.name, x.sessions.map(function (s) { return [s.key, s.group, s.topic, s.tail, s.stage, ago(s.last_active_at)]; })]; })]);
     if (sig === last) return;
     last = sig;
     var keep = scroller.scrollTop;
     SW = null;
     clear(list);
-    var any = false;
+    var any = pend.length > 0;
+    if (pend.length) {
+      var pc = h('div', { class: 'card' });
+      pend.forEach(function (l) {
+        var bad = l.status === 'failed';
+        pc.appendChild(h('div', { class: 'srow prow' + (bad ? ' bad' : ''), 'data-launch': l.id },
+          h('span', { class: 'glyph', text: bad ? '!' : '…' }),
+          h('span', { class: 'sbody' },
+            h('span', { class: 'sline' }, h('span', { class: 'stopic', text: bad ? 'Did not start' : 'Starting…' })),
+            h('span', { class: 'smeta' }, h('span', { text: l.project || '' })),
+            h('span', { class: 'stail', text: l.prompt || '' }),
+            bad && l.lines && l.lines.length ? h('span', { class: 'stail mono', text: l.lines.join('\n') }) : null,
+            bad ? h('span', { class: 'ro' },
+              h('button', { class: 'btn', text: 'Retry', on: { click: function () { launchAct(l, 'retry'); } } }),
+              h('button', { class: 'btn', text: 'Dismiss', on: { click: function () { launchAct(l, 'dismiss'); } } })) : null)));
+      });
+      list.appendChild(h('section', { class: 'grp' }, h('h2', { class: 'gh', style: 'color:var(--text2)' }, h('span', { text: 'Starting · ' + pend.length })), pc));
+    }
     S.sections.forEach(function (g) {
       var items = g.sessions || [];
       if (!items.length && g.kind !== 'group') return;
@@ -674,18 +797,6 @@ function detailScreen(r) {
 
   // Photos: downscaled in the browser (2048 px long edge, JPEG), uploaded as soon as they are picked,
   // and sent with the reply as ids. A gif goes up as it is.
-  function shrink(file) {
-    if (file.type === 'image/gif' || !window.createImageBitmap) return Promise.resolve(file);
-    return createImageBitmap(file).then(function (bm) {
-      var k = Math.min(1, 2048 / Math.max(bm.width, bm.height));
-      if (k === 1 && file.type === 'image/jpeg' && file.size < 1500000) { if (bm.close) bm.close(); return file; }
-      var cv = document.createElement('canvas');
-      cv.width = Math.round(bm.width * k); cv.height = Math.round(bm.height * k);
-      cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
-      if (bm.close) bm.close();
-      return new Promise(function (res) { cv.toBlob(function (b) { res(b || file); }, 'image/jpeg', 0.85); });
-    }).catch(function () { return file; });
-  }
   function paintThumbs() {
     clear(thumbs);
     pending.forEach(function (p) {

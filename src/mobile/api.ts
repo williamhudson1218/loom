@@ -55,6 +55,15 @@ export interface SidebarGroup {
   name: string;
 }
 
+export interface LaunchInfo {
+  id: string;
+  pane_id: string;
+  project: string;
+  prompt: string;
+  status?: 'starting' | 'started' | 'failed';
+  lines?: string[];
+}
+
 export interface OutboxResult {
   status: number;
   body: Record<string, unknown>;
@@ -73,6 +82,16 @@ export interface MobileDeps {
   send(paneId: string, text: string, agent: Agent): { ok: boolean; detail: string };
   /** End the agent in a pane, the desktop's Close (src/goto.ts closeSession). */
   close(paneId: string, agent: Agent): { ok: boolean; detail: string };
+  /** The folders a chat can start in (projects.ts), most recently used first, and the default one (null = the first). */
+  projects(): { path: string; name: string }[];
+  defaultProject(): string | null;
+  /** Start a fresh Claude chat in a managed pane: the desktop's New thread (server.ts startNewThread). */
+  start(input: { project: string; prompt: string; images: { type: string; data: string; name?: string }[] }): Promise<{ ok: boolean; detail: string; pane_id?: string }>;
+  /** Launches the board has not yet seen a chat for (newthread.ts recentLaunches, as launchView). */
+  launches(): LaunchInfo[];
+  /** The desktop's Retry / Dismiss on a failed launch. status is the HTTP status to answer with. */
+  retryLaunch(id: string): Promise<{ status: number; ok: boolean; detail: string }>;
+  dismissLaunch(id: string): { status: number; ok: boolean; detail: string };
   drafts(): Draft[];
   fresh?(d: Draft): Promise<FreshItem[]>;
   outboxSend(body: Record<string, unknown>): Promise<OutboxResult>;
@@ -104,6 +123,12 @@ let deps: MobileDeps = {
   tmux: unwired,
   send: () => ({ ok: false, detail: 'not wired' }),
   close: () => ({ ok: false, detail: 'not wired' }),
+  projects: () => [],
+  defaultProject: () => null,
+  start: async () => ({ ok: false, detail: 'not wired' }),
+  launches: () => [],
+  retryLaunch: async () => ({ status: 503, ok: false, detail: 'not wired' }),
+  dismissLaunch: () => ({ status: 503, ok: false, detail: 'not wired' }),
   drafts: () => [],
   outboxSend: async () => ({ status: 503, body: { ok: false, detail: 'not wired' } }),
   outboxDiscard: async () => ({ status: 503, body: { ok: false, detail: 'not wired' } }),
@@ -539,7 +564,88 @@ function getMe(ctx: RouteCtx): void {
 function getSessions(ctx: RouteCtx): void {
   me(ctx);
   // version: the running Loom, so a phone page loaded before an update can offer a reload.
-  ctx.json(200, { ...sessionsPayload(deps.chats(), deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()), version: buildInfo().version });
+  const chats = deps.chats();
+  applyPendingGroups(chats);
+  ctx.json(200, { ...sessionsPayload(chats, deps.tail, deps.drafts(), paneTopics(deps.tmux), deps.groups()), launches: launchRows(chats), version: buildInfo().version });
+}
+
+/* ------------------------------------------------------------------ new chat */
+
+/** A group chosen for a chat that has no session id yet, by the pane it launched in. Applied once the chat is live and indexed. */
+const pendingGroups = new Map<string, { group: number; until: number }>();
+const PENDING_GROUP_MS = 10 * 60_000;
+
+function applyPendingGroups(chats: MobileChat[], now: number = Date.now()): void {
+  for (const [pane, p] of pendingGroups) {
+    if (now > p.until) { pendingGroups.delete(pane); continue; }
+    const c = chats.find((x) => x.live.pane_id === pane && x.session_id);
+    if (!c) continue;
+    try {
+      const r = deps.withDb((db) => setChatGroup(db, c.agent, c.session_id, p.group));
+      // 'unknown session' means the index has not caught up: try again on the next poll.
+      if (r.ok) pendingGroups.delete(pane);
+    } catch {
+      /* try again */
+    }
+  }
+}
+
+/** The launches the phone shows as pending rows. `key` is set once their chat is live, so the phone can open it. */
+function launchRows(chats: MobileChat[]) {
+  return deps.launches().map((l) => {
+    const c = chats.find((x) => x.live.pane_id === l.pane_id && x.session_id);
+    return { id: l.id, pane_id: l.pane_id, project: l.project, prompt: l.prompt, status: l.status ?? 'starting', lines: l.status === 'failed' ? (l.lines ?? []).slice(-8) : [], key: c ? sessionKey(c) : '' };
+  });
+}
+
+/** GET /m/api/new: what the New chat sheet offers. */
+function newOptions(ctx: RouteCtx): void {
+  me(ctx);
+  const projects = deps.projects();
+  const def = deps.defaultProject();
+  ctx.json(200, { projects, default: def && projects.some((p) => p.path === def) ? def : (projects[0]?.path ?? ''), groups: deps.groups() });
+}
+
+/** POST /m/api/new {project, prompt, images?, group_id?}: the desktop's New thread. The project must be one Loom lists. */
+async function newChat(ctx: RouteCtx): Promise<void> {
+  me(ctx);
+  const b = (await ctx.body()) ?? {};
+  const project = str(b.project);
+  if (!deps.projects().some((p) => p.path === project)) return ctx.json(400, { ok: false, detail: 'unknown project' });
+  const prompt = str(b.prompt).trim();
+  const ids = b.images === undefined ? [] : b.images;
+  if (!Array.isArray(ids) || ids.length > 10) return ctx.json(400, { ok: false, detail: 'images must be a list of up to 10 ids' });
+  if (prompt.length > 20000) return ctx.json(400, { ok: false, detail: 'prompt is too long' });
+  const images: { type: string; data: string; name?: string }[] = [];
+  for (const id of ids) {
+    const fp = uploadPath(id);
+    if (!fp) return ctx.json(400, { ok: false, detail: 'unknown image' });
+    const ext = path.extname(fp).slice(1);
+    images.push({ type: ext === 'jpg' ? 'image/jpeg' : 'image/' + ext, data: fs.readFileSync(fp).toString('base64'), name: path.basename(fp) });
+  }
+  if (!prompt && !images.length) return ctx.json(400, { ok: false, detail: 'a prompt is required' });
+  let group: number | null = null;
+  if (b.group_id !== undefined && b.group_id !== null) {
+    if (!Number.isInteger(b.group_id) || !deps.groups().some((g) => g.id === b.group_id)) return ctx.json(400, { ok: false, detail: 'unknown group' });
+    group = b.group_id as number;
+  }
+  let r;
+  try {
+    r = await deps.start({ project, prompt, images });
+  } catch (e) {
+    return ctx.json(500, { ok: false, detail: (e as Error).message });
+  }
+  if (r.ok && group !== null && r.pane_id) pendingGroups.set(r.pane_id, { group, until: Date.now() + PENDING_GROUP_MS });
+  ctx.json(r.ok ? 200 : 409, { ok: r.ok, detail: r.detail, pane_id: r.pane_id ?? '' });
+}
+
+/** POST /m/api/new/retry and /dismiss {id}: the desktop's buttons on a launch that never started. */
+async function launchAction(ctx: RouteCtx, retry: boolean): Promise<void> {
+  me(ctx);
+  const id = str((await ctx.body())?.id);
+  if (!id) return ctx.json(400, { ok: false, detail: 'id is required' });
+  const r = retry ? await deps.retryLaunch(id) : deps.dismissLaunch(id);
+  ctx.json(r.status, { ok: r.ok, detail: r.detail });
 }
 
 /** One chat: its row, transcript, and its pending drafts (the outbox cards, so the chat screen docks them without a second poll).
@@ -831,6 +937,10 @@ export const MOBILE_ROUTES: RouteDef[] = [
   dv('POST', '/m/api/image', uploadImage),
   dv('POST', '/m/api/interrupt', interrupt),
   dv('POST', '/m/api/close', closeChat),
+  dv('GET', '/m/api/new', newOptions),
+  dv('POST', '/m/api/new', newChat),
+  dv('POST', '/m/api/new/retry', (ctx) => launchAction(ctx, true)),
+  dv('POST', '/m/api/new/dismiss', (ctx) => launchAction(ctx, false)),
   dv('GET', '/m/api/outbox', getOutbox),
   dv('POST', '/m/api/outbox/send', outboxSend),
   dv('POST', '/m/api/outbox/discard', outboxDiscard),

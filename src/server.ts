@@ -1430,6 +1430,28 @@ function rememberProject(dir: string): void {
   }
 }
 
+/** The desktop's New thread, shared with the phone's: start the chat, and remember the folder when it starts. */
+async function startNewThread(input: Parameters<typeof startThreadAsync>[0]): Promise<Awaited<ReturnType<typeof startThreadAsync>>> {
+  const r = await startThreadAsync(input, undefined, { liveByPane: () => snapshot().live });
+  if (r.ok) rememberProject(input.projectDir);
+  return r;
+}
+
+/** Retry a failed launch into a different pane; the red card goes once it starts. */
+async function retryFailedLaunch(id: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const l = launchById(id);
+  if (!l || l.status !== 'failed') return { status: 404, body: { ok: false, detail: 'no such failed launch' } };
+  const r = await startThreadAsync({ prompt: l.fullPrompt ?? l.prompt, projectDir: l.projectDir, agent: l.agent, exclude: [l.pane_id] }, undefined, { liveByPane: () => snapshot().live });
+  if (r.ok) dismissLaunch(id);
+  return { status: r.ok ? 200 : 409, body: r as unknown as Record<string, unknown> };
+}
+
+function dismissFailedLaunch(id: string): { status: number; ok: boolean; detail: string } {
+  const l = launchById(id);
+  if (!l || l.status !== 'failed') return { status: 404, ok: false, detail: 'no such failed launch' };
+  return { status: 200, ok: dismissLaunch(id), detail: 'dismissed' };
+}
+
 /** Read a small JSON object body; a bad body is a 400, so the callback always gets an object. */
 function readBody(req: http.IncomingMessage, res: http.ServerResponse, then: (body: Record<string, unknown>) => void): void {
   let raw = '';
@@ -1637,6 +1659,15 @@ function wireMobile(): void {
     tmux: (args) => tmux(args),
     send: (paneId, text, agent) => sendToPane(paneId, text, agent),
     close: (paneId, agent) => closeSession(paneId, agent),
+    projects: () => projectList().map((p) => ({ path: p.path, name: p.name })),
+    defaultProject: defaultProjectSafe,
+    start: (i) => startNewThread({ prompt: i.prompt, projectDir: i.project, agent: 'claude', images: i.images }),
+    launches: () => recentLaunches().map(launchView),
+    retryLaunch: async (id) => {
+      const r = await retryFailedLaunch(id);
+      return { status: r.status, ok: r.body.ok === true, detail: String(r.body.detail ?? '') };
+    },
+    dismissLaunch: dismissFailedLaunch,
     drafts: () => pendingDrafts(),
     fresh: async (d) => {
       const deps = freshDeps();
@@ -2328,7 +2359,7 @@ export function createServer(): http.Server {
           return json(res, 400, { ok: false, detail: 'invalid body' });
         }
         const images = Array.isArray(b.images) ? b.images.filter((i: any) => i && typeof i.type === 'string' && typeof i.data === 'string') : [];
-        void startThreadAsync({
+        void startNewThread({
           prompt: typeof b.prompt === 'string' ? b.prompt : '',
           projectDir: typeof b.project === 'string' ? b.project : '',
           agent: b.agent === 'codex' ? 'codex' : 'claude',
@@ -2337,11 +2368,8 @@ export function createServer(): http.Server {
           focus: b.focus === true,
           images,
           trust: b.trust === true,
-        }, undefined, { liveByPane: () => snapshot().live })
-          .then((r) => {
-            if (r.ok) rememberProject(typeof b.project === 'string' ? b.project : '');
-            json(res, r.ok ? 200 : 409, r);
-          })
+        })
+          .then((r) => json(res, r.ok ? 200 : 409, r))
           .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });
       return;
@@ -2359,14 +2387,12 @@ export function createServer(): http.Server {
         } catch {
           return json(res, 400, { ok: false, detail: 'invalid body' });
         }
-        const l = launchById(id);
-        if (!l || l.status !== 'failed') return json(res, 404, { ok: false, detail: 'no such failed launch' });
-        if (url.pathname.endsWith('/dismiss')) return json(res, 200, { ok: dismissLaunch(id), detail: 'dismissed' });
-        void startThreadAsync({ prompt: l.fullPrompt ?? l.prompt, projectDir: l.projectDir, agent: l.agent, exclude: [l.pane_id] }, undefined, { liveByPane: () => snapshot().live })
-          .then((r) => {
-            if (r.ok) dismissLaunch(id);
-            json(res, r.ok ? 200 : 409, r);
-          })
+        if (url.pathname.endsWith('/dismiss')) {
+          const d = dismissFailedLaunch(id);
+          return json(res, d.status, { ok: d.ok, detail: d.detail });
+        }
+        void retryFailedLaunch(id)
+          .then((r) => json(res, r.status, r.body))
           .catch((e) => json(res, 500, { ok: false, detail: (e as Error).message }));
       });
       return;

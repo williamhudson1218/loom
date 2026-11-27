@@ -79,6 +79,14 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .hdrr { display: flex; align-items: center; gap: 8px; }
 .reloadbtn { display: flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 8px; border-radius: 16px; background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .reloadbtn > span:first-child { font-size: 15px; font-family: inherit; }
+.newbtn { width: 32px; justify-content: center; padding: 0; }
+.newbtn > span { font-size: 20px; line-height: 1; }
+.nsel, .ninput { width: 100%; min-height: 44px; margin-bottom: 10px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 16px; }
+.ninput { resize: vertical; }
+.nlab { display: block; margin: 8px 0 4px; font-size: 12px; color: var(--muted); }
+.prow { cursor: default; }
+.prow.bad .stopic { color: var(--danger); }
+.prow .stail { white-space: pre-wrap; }
 .reloadbtn.stale { color: var(--accent); border-color: var(--accent); }
 .gempty { padding: 12px 14px; color: var(--muted); font-size: 13.5px; }
 .empty { padding: 28px 20px; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; }
