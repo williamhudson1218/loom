@@ -309,9 +309,13 @@ function buildSections(chats, groups) {
   if (stale.length) out.push({ key: 'stale', name: 'Stale', kind: 'list', sessions: stale.sort(newestFirst) });
   return out;
 }
+// Chats closed from the list's swipe, hidden at once until the server drops them (or 15 s pass).
+var CLOSING = {};
 function relayout() {
   if (!S.raw) return;
   var secs = S.raw.sections || [], groups = (S.raw.groups || []).slice();
+  var now = Date.now(), closing = Object.keys(CLOSING).filter(function (k) { if (now > CLOSING[k]) { delete CLOSING[k]; return false; } return true; });
+  if (closing.length) secs = secs.map(function (x) { return Object.assign({}, x, { sessions: (x.sessions || []).filter(function (s) { return !CLOSING[s.key]; }) }); });
   if (Object.keys(GH.chats).length || GH.order) {
     var chats = [];
     secs.forEach(function (x) { (x.sessions || []).forEach(function (s) { chats.push({ key: s.key, row: s, group: x.kind === 'group' && x.group_id ? { id: x.group_id } : null }); }); });
@@ -397,6 +401,7 @@ function sessionsScreen() {
     if (sig === last) return;
     last = sig;
     var keep = scroller.scrollTop;
+    SW = null;
     clear(list);
     var any = false;
     S.sections.forEach(function (g) {
@@ -414,15 +419,18 @@ function sessionsScreen() {
         var card = h('div', { class: 'card' });
         if (!items.length) card.appendChild(h('div', { class: 'gempty', text: 'Empty. Hold a chat and drag it here.' }));
         items.forEach(function (s) {
-          card.appendChild(h('button', { class: 'srow', 'data-key': s.key, on: { click: function () {
+          var rowEl = h('button', { class: 'srow', 'data-key': s.key, on: { click: function () {
             if (Date.now() - justDragged < 600) return;
+            if (SW) { swipeShut(); return; } // a tap with a row swiped open only closes the swipe
             location.hash = '#s=' + encodeURIComponent(s.key);
           } } },
             glyphEl(s),
             h('span', { class: 'sbody' },
               h('span', { class: 'sline' }, h('span', { class: 'stopic', text: s.topic || s.name || s.key }), h('span', { class: 'sage', text: ago(s.last_active_at) })),
               h('span', { class: 'smeta' }, h('span', { class: 'pill', text: s.name || '' }), h('span', { text: s.project || '' })),
-              s.tail ? h('span', { class: 'stail' }, h('span', { class: 'pfx', text: statusInfo(s.group).prefix }), ' ' + s.tail) : null)));
+              s.tail ? h('span', { class: 'stail' }, h('span', { class: 'pfx', text: statusInfo(s.group).prefix }), ' ' + s.tail) : null));
+          // Swipe left on a live chat (one with a pane) shows a Close button behind it.
+          card.appendChild(s.pane ? h('div', { class: 'swrap' }, h('button', { class: 'swx', 'aria-label': 'Close chat', tabindex: '-1', on: { click: function () { swipeClose(s); } } }, '✕'), rowEl) : rowEl);
         });
         sec.appendChild(card);
       }
@@ -436,6 +444,26 @@ function sessionsScreen() {
   // header; any move before that is an ordinary scroll. A lifted chat drops onto a section (a
   // user group moves it in, a status section takes it out of its group); a lifted group drops
   // above or below another group. Lifted and let go without moving: the Move to group sheet.
+  // ---- swipe left to close (iOS Mail style). A horizontal move before the long-press fires is a
+  // swipe (it cancels the drag); a vertical one is the list scrolling. One row open at a time;
+  // a tap elsewhere, a scroll or a swipe back right shuts it.
+  var SW = null, SWIPE_W = 76;
+  function swipeSet(row, x, animate) { row.style.transition = animate ? 'transform .18s ease-out' : 'none'; row.style.transform = x ? 'translateX(' + x + 'px)' : ''; }
+  function swipeShut() { if (SW) { swipeSet(SW.row, 0, true); SW = null; } }
+  function swipeClose(s) {
+    var nm = s.name || 'chat';
+    SW = null;
+    CLOSING[s.key] = Date.now() + 15000;
+    redraw();
+    api('/m/api/close', { body: { key: s.key } }).then(function (x) {
+      if (x.ok) { toast('Closed ' + nm); loadSessions(); setTimeout(loadSessions, 1500); return; }
+      delete CLOSING[s.key]; redraw();
+      if (x.status === 409) { toast('That session isn’t live anymore'); loadSessions(); }
+      else if (x.status === 403) toast('That pane isn’t running Claude or Codex');
+      else toast(errText(x, 'Could not close the chat'));
+    });
+  }
+  scroller.addEventListener('scroll', function () { if (SW && !D) swipeShut(); }, { passive: true });
   var D = null, HOLD = 350, SLOP = 8;
   function gidOf(el) { var sec = el && el.closest ? el.closest('.grp') : null; return sec ? dropGroupOf(sec.getAttribute('data-gid')) : 0; }
   function unmark() { Array.prototype.forEach.call(list.querySelectorAll('.dropin,.dropbefore,.dropafter'), function (x) { x.classList.remove('dropin', 'dropbefore', 'dropafter'); }); }
@@ -496,7 +524,9 @@ function sessionsScreen() {
     if (D) endDrag();
     if (e.touches.length !== 1) return;
     var t = e.touches[0];
+    if (e.target.closest && e.target.closest('.swx')) return; // the Close button takes its own tap
     var row = e.target.closest ? e.target.closest('.srow') : null;
+    if (SW && SW.row !== row) swipeShut();
     var hd = !row && e.target.closest ? e.target.closest('.gh') : null;
     if (row) D = { kind: 'chat', key: row.getAttribute('data-key'), gid: gidOf(row), src: row, dim: row };
     else if (hd && dropGroupOf(hd.parentNode.getAttribute('data-gid'))) D = { kind: 'group', gid: dropGroupOf(hd.parentNode.getAttribute('data-gid')), src: hd, dim: hd.parentNode };
@@ -508,7 +538,21 @@ function sessionsScreen() {
     if (!D) return;
     var t = e.touches[0];
     D.x = t.clientX; D.y = t.clientY;
-    if (!D.lifted) { if (Math.abs(D.x - D.sx) > SLOP || Math.abs(D.y - D.sy) > SLOP) endDrag(); return; }
+    if (!D.lifted) {
+      var dx = D.x - D.sx, dy = D.y - D.sy;
+      // Lock the axis on the first move past SLOP: sideways on a swipeable row is a swipe.
+      if (!D.axis && (Math.abs(dx) > SLOP || Math.abs(dy) > SLOP)) D.axis = D.kind === 'chat' && D.src.parentNode.classList.contains('swrap') && Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (D.axis === 'x') {
+        clearTimeout(D.timer);
+        e.preventDefault();
+        var base = SW && SW.row === D.src ? -SWIPE_W : 0;
+        D.tx = Math.max(-SWIPE_W - 24, Math.min(0, base + dx));
+        swipeSet(D.src, D.tx, false);
+        return;
+      }
+      if (D.axis) endDrag();
+      return;
+    }
     e.preventDefault();
     if (!D.moved && (Math.abs(D.x - D.lx) > SLOP || Math.abs(D.y - D.ly) > SLOP)) D.moved = true;
     D.ghost.style.top = (D.y - D.off) + 'px';
@@ -516,6 +560,15 @@ function sessionsScreen() {
   }, { passive: false });
   list.addEventListener('touchend', function (e) {
     if (!D) return;
+    if (D.axis === 'x') {
+      e.preventDefault();
+      justDragged = Date.now();
+      var sw = D;
+      endDrag();
+      if (sw.tx < -SWIPE_W / 2) { swipeSet(sw.src, -SWIPE_W, true); SW = { row: sw.src }; }
+      else { swipeSet(sw.src, 0, true); if (SW && SW.row === sw.src) SW = null; }
+      return;
+    }
     if (!D.lifted) { endDrag(); return; }
     e.preventDefault();
     justDragged = Date.now();
@@ -526,7 +579,7 @@ function sessionsScreen() {
       else if (d.target) moveChat(d.key, d.target.gid, d.gid);
     } else if (d.moved && d.target) reorderGroup(d.gid, d.target.gid, d.target.after);
   }, { passive: false });
-  list.addEventListener('touchcancel', function () { if (D && D.lifted) justDragged = Date.now(); endDrag(); });
+  list.addEventListener('touchcancel', function () { if (D && D.axis === 'x') { swipeSet(D.src, SW && SW.row === D.src ? -SWIPE_W : 0, true); } if (D && D.lifted) justDragged = Date.now(); endDrag(); });
   list.addEventListener('contextmenu', function (e) { if (D) e.preventDefault(); });
 
   S.onSessions = render;

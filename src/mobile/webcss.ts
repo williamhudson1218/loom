@@ -84,7 +84,11 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .empty { padding: 28px 20px; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; }
 
 .srow { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; padding: 12px 14px; border: 0; background: transparent; }
-.srow + .srow { border-top: 1px solid var(--border); }
+.srow + .srow, .swrap + .srow, .srow + .swrap, .swrap + .swrap { border-top: 1px solid var(--border); }
+.swrap { position: relative; overflow: hidden; }
+.swrap > .srow { position: relative; z-index: 1; background: var(--surface); touch-action: pan-y; }
+.swrap > .srow:active { background: var(--surface2); }
+.swx { position: absolute; top: 0; right: 0; bottom: 0; width: 76px; border: 0; background: var(--danger); color: #fff; font-size: 22px; display: flex; align-items: center; justify-content: center; }
 .srow:active { background: var(--surface2); }
 .glyph { flex: none; width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-weight: 700; font-size: 16px; }
 .st-discovery { color: var(--st-discovery-fg); background: var(--st-discovery-bg); }
