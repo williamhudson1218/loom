@@ -289,23 +289,21 @@ function loadSessions() {
 // ---- groups: optimistic moves, held over polls until the server agrees (grouping.ts) ----
 var GH = { chats: {}, order: null };
 var HOLD_MS = 15000;
-var STATUS_NAME = { working: 'Working', turn: 'Your turn', waiting: 'Waiting on others', saved: 'Saved for later', recent: 'Recent', stale: 'Stale' };
 function newestFirst(a, b) { return (toMs(b.last_active_at) || 0) - (toMs(a.last_active_at) || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); }
-// The server's layout (Recent = every fresh ungrouped chat, the user groups, then the stale ones by
-// status, idle ones under Stale; sessionsPayload in api.ts), rebuilt from rows
-// whose group a pending move has changed.
+// The server's layout (sessionsPayload in api.ts, the desktop's default view): every user group in
+// order, empty ones too, then Recent (fresh ungrouped chats), then Stale (older ungrouped ones),
+// rebuilt from rows whose group a pending move has changed.
 function buildSections(chats, groups) {
-  var known = {}, byG = {}, bySt = {}, out = [];
-  groups.forEach(function (g) { known[g.id] = 1; });
+  var byG = {}, recent = [], stale = [], out = [];
+  groups.forEach(function (g) { byG[g.id] = []; });
   chats.forEach(function (c) {
     var gid = c.group ? c.group.id : 0;
-    if (gid && known[gid]) (byG[gid] = byG[gid] || []).push(c.row);
-    else { var st = !c.row.stale ? 'recent' : c.row.group === 'recent' || !STATUS_NAME[c.row.group] ? 'stale' : c.row.group; (bySt[st] = bySt[st] || []).push(c.row); }
+    if (gid && byG[gid]) byG[gid].push(c.row);
+    else (c.row.stale ? stale : recent).push(c.row);
   });
-  function status(k) { if (bySt[k]) out.push({ key: k, name: STATUS_NAME[k], kind: 'status', sessions: bySt[k].sort(newestFirst) }); }
-  status('recent');
-  groups.forEach(function (g) { if (byG[g.id]) out.push({ key: 'g:' + g.id, name: g.name, kind: 'group', group_id: g.id, sessions: byG[g.id].sort(newestFirst) }); });
-  ['working', 'turn', 'waiting', 'saved', 'stale'].forEach(status);
+  groups.forEach(function (g) { out.push({ key: 'g:' + g.id, name: g.name, kind: 'group', group_id: g.id, sessions: byG[g.id].sort(newestFirst) }); });
+  if (recent.length) out.push({ key: 'recent', name: 'Recent', kind: 'list', sessions: recent.sort(newestFirst) });
+  if (stale.length) out.push({ key: 'stale', name: 'Stale', kind: 'list', sessions: stale.sort(newestFirst) });
   return out;
 }
 function relayout() {
@@ -396,10 +394,10 @@ function sessionsScreen() {
     var any = false;
     S.sections.forEach(function (g) {
       var items = g.sessions || [];
-      if (!items.length) return;
-      any = true;
+      if (!items.length && g.kind !== 'group') return;
+      if (items.length) any = true;
       var open = !shut[g.key];
-      var color = g.kind === 'status' ? statusInfo(g.key).color : 'var(--text2)';
+      var color = g.key === 'stale' ? 'var(--muted)' : 'var(--text2)';
       var hd = h('h2', { class: 'gh', role: 'button', tabindex: '0', 'aria-expanded': open ? 'true' : 'false', 'data-sec': g.key, style: 'color:' + color, on: { click: function () {
         if (Date.now() - justDragged < 600) return;
         setCollapsed(g.key, open); render();
@@ -407,6 +405,7 @@ function sessionsScreen() {
       var sec = h('section', { class: 'grp' + (g.kind === 'group' ? ' ugrp' : '') + (open ? '' : ' shut'), 'data-gid': g.kind === 'group' ? String(g.group_id) : null }, hd);
       if (open) {
         var card = h('div', { class: 'card' });
+        if (!items.length) card.appendChild(h('div', { class: 'gempty', text: 'Empty. Hold a chat and drag it here.' }));
         items.forEach(function (s) {
           card.appendChild(h('button', { class: 'srow', 'data-key': s.key, on: { click: function () {
             if (Date.now() - justDragged < 600) return;
@@ -546,7 +545,7 @@ function detailScreen(r) {
   var attachBtn = h('button', { class: 'attachbtn', 'aria-label': 'Attach photos', title: 'Attach photos' }, icon('image'));
   var fileIn = h('input', { type: 'file', accept: 'image/*', multiple: 'multiple', class: 'filein', 'aria-hidden': 'true', tabindex: '-1' });
   var thumbs = h('div', { class: 'thumbs' });
-  var composer = h('div', { class: 'composer' }, quick, thumbs, h('div', { class: 'crow' }, stopBtn, attachBtn, ta, sendBtn, fileIn));
+  var composer = h('div', { class: 'composer' }, quick, thumbs, h('div', { class: 'crow' }, stopBtn, h('div', { class: 'tbox' }, attachBtn, ta), sendBtn, fileIn));
   var pending = [];
   var canReply = true, lastSig = '', busy = false, alive = true;
   // The live row: while the chat works (or for a minute after a reply, before the board catches

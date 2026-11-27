@@ -332,7 +332,7 @@ describe('sessions and transcripts for the phone', () => {
     expect(at('waiting_on_user', { saved: true })).toBe('saved');
   });
 
-  it('lays out user groups in their order, then old ungrouped chats by status (idle ones under Stale); newest first everywhere', () => {
+  it('lays out every user group in order (empty ones too), then ungrouped chats; no status sections; newest first everywhere', () => {
     const G1 = { id: 7, name: 'Billing' }, G2 = { id: 3, name: 'Infra' }, GONE = { id: 99, name: 'Deleted' };
     const chats = [
       c('t-old', 'waiting_on_user', 10), c('t-new', 'waiting_on_user', 30), c('w-old', 'done', 1, { working: true }), c('w-new', 'done', 50, { working: true }),
@@ -345,13 +345,11 @@ describe('sessions and transcripts for the phone', () => {
     expect(p.sections.map((s) => [s.key, s.name, s.kind, s.sessions.map((r) => r.key.slice(7))])).toEqual([
       ['g:3', 'Infra', 'group', ['g2']],
       ['g:7', 'Billing', 'group', ['g1-b', 'g1-a']],
-      ['working', 'Working', 'status', ['w-new', 'w-old']],
-      ['turn', 'Your turn', 'status', ['t-new', 't-old']],
-      ['waiting', 'Waiting on others', 'status', ['p']],
-      ['stale', 'Stale', 'status', ['r', 'tie-a', 'tie-b', 'orphan']],
+      ['g:5', 'Empty', 'group', []],
+      ['stale', 'Stale', 'list', ['w-new', 't-new', 't-old', 'p', 'r', 'tie-a', 'tie-b', 'orphan', 'w-old']],
     ]);
-    expect(p.sections.filter((s) => s.kind === 'group').map((s) => s.group_id)).toEqual([3, 7]);
-    expect(p.sections.filter((s) => s.kind === 'status').every((s) => s.group_id === undefined)).toBe(true);
+    expect(p.sections.filter((s) => s.kind === 'group').map((s) => s.group_id)).toEqual([3, 7, 5]);
+    expect(p.sections.filter((s) => s.kind === 'list').every((s) => s.group_id === undefined)).toBe(true);
     expect(p.groups).toEqual([G2, G1, { id: 5, name: 'Empty' }]);
     expect(p.counts).toEqual({ working: 3, turn: 3, waiting: 1, saved: 0, recent: 5 });
     expect(p.outbox_pending).toBe(3);
@@ -363,24 +361,23 @@ describe('sessions and transcripts for the phone', () => {
     expect(rows[0].pane).toBe('loom-a:1.2');
   });
 
-  it('puts every chat active since the start of yesterday in Recent on top, whatever its status, like the desktop list', () => {
+  it('puts every ungrouped chat active since the start of yesterday in Recent, whatever its status, and older ones in Stale, like the desktop list', () => {
     const h = 3_600_000;
     const G = { id: 4, name: 'Ops' };
     const chats = [
       c('live-now', 'done', NOW - 60_000, { working: true }), c('turn-today', 'waiting_on_user', NOW - 3 * h), c('idle-yday', 'done', NOW - 20 * h),
-      { ...c('parked', 'done', NOW - 2 * h), parked: 'waiting' as const }, { ...c('grouped', 'done', NOW - h), group: G },
+      { ...c('parked', 'done', NOW - 2 * h), parked: 'waiting' as const }, { ...c('grouped', 'done', NOW - 30 * 24 * h), group: G },
       c('old-idle', 'done', NOW - 5 * 24 * h), c('old-turn', 'waiting_on_user', NOW - 4 * 24 * h), c('old-working', 'done', NOW - 6 * 24 * h, { working: true }),
       { ...c('turned', 'done', NOW - 9 * 24 * h), last_turn_at: NOW - 5 * 60_000 },
     ];
     const p = sessionsPayload(chats, () => '', [], new Map(), [G], NOW);
     expect(p.sections.map((s) => [s.key, s.sessions.map((r) => r.key.slice(7))])).toEqual([
-      ['recent', ['live-now', 'turned', 'parked', 'turn-today', 'idle-yday']],
       ['g:4', ['grouped']],
-      ['working', ['old-working']],
-      ['turn', ['old-turn']],
-      ['stale', ['old-idle']],
+      ['recent', ['live-now', 'turned', 'parked', 'turn-today', 'idle-yday']],
+      ['stale', ['old-turn', 'old-idle', 'old-working']],
     ]);
-    expect(p.sections[0].sessions.map((r) => r.group)).toEqual(['working', 'recent', 'waiting', 'turn', 'recent']);
+    expect(p.sections[2].sessions.map((r) => [r.group, r.stale])).toEqual([['turn', true], ['recent', true], ['working', true]]);
+    expect(p.sections[1].sessions.map((r) => r.group)).toEqual(['working', 'recent', 'waiting', 'turn', 'recent']);
     expect(p.counts).toEqual({ working: 2, turn: 2, waiting: 1, saved: 0, recent: 4 });
     // Yesterday is a wall-clock day: 11pm the day before yesterday is already stale, 1am yesterday is not.
     const d = new Date(NOW); d.setHours(0, 0, 0, 0); const today = d.getTime();

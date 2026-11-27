@@ -76,6 +76,7 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .mvopt + .mvopt { border-top: 1px solid var(--border); }
 .mvopt.on { color: var(--accent); font-weight: 600; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.gempty { padding: 12px 14px; color: var(--muted); font-size: 13.5px; }
 .empty { padding: 28px 20px; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; }
 
 .srow { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; padding: 12px 14px; border: 0; background: transparent; }
@@ -126,12 +127,14 @@ html.dragging, html.dragging body { overscroll-behavior: none; }
 .composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); background: var(--bg); }
 .quick { display: flex; gap: 8px; overflow-x: auto; }
 .qbtn { flex: none; height: 36px; padding: 0 14px; border-radius: 18px; font-size: 14px; background: var(--surface); border: 1px solid var(--border); }
-.crow { display: flex; gap: 8px; align-items: flex-end; }
-.stopbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); color: var(--danger); }
-.sendbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; border: 0; display: flex; align-items: center; justify-content: center; background: var(--primary); color: #fff; }
+.crow { display: flex; gap: 6px; align-items: flex-end; }
+/* The photo button sits inside the text box's left edge, so the box gets most of the row. */
+.tbox { flex: 1; min-width: 0; position: relative; display: flex; }
+.stopbtn { flex: none; width: 34px; height: 34px; margin-bottom: 1px; border-radius: 17px; display: flex; align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); color: var(--danger); }
+.sendbtn { flex: none; width: 36px; height: 36px; border-radius: 18px; border: 0; display: flex; align-items: center; justify-content: center; background: var(--primary); color: #fff; }
 .sendbtn[disabled], .btn[disabled], .qbtn[disabled], .stopbtn[disabled] { opacity: .45; }
-.tinput { flex: 1; resize: none; min-height: 44px; max-height: 140px; padding: 11px 14px; border-radius: 22px; font-size: 16px; outline: none; background: var(--surface); border: 1px solid var(--border); line-height: 20px; }
-button.attachbtn { flex: none; width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+.tinput { flex: 1; min-width: 0; resize: none; min-height: 36px; max-height: 140px; padding: 7px 12px 7px 38px; border-radius: 18px; font-size: 16px; outline: none; background: var(--surface); border: 1px solid var(--border); line-height: 20px; }
+button.attachbtn { position: absolute; left: 1px; bottom: 1px; z-index: 1; width: 34px; height: 34px; padding: 0; border-radius: 17px; display: flex; align-items: center; justify-content: center; background: transparent; border: 0; color: var(--muted); }
 .attachbtn[disabled] { opacity: .45; }
 .filein { display: none; }
 .thumbs { display: flex; gap: 8px; overflow-x: auto; padding-top: 6px; }

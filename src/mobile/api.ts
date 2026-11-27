@@ -175,16 +175,9 @@ export function resetPhoneAccessCache(): void {
 
 /* ------------------------------------------------------------------ sessions */
 
-// The desktop sidebar's status sections (src/grouping.ts STATUS_GROUPS / statusGroupOf), for
-// the live chats the phone lists. Closed never applies: a Send & close chat is off the phone.
+// A chat's status, as the desktop sidebar's statusGroupOf (src/grouping.ts). The phone shows it
+// per row (dot, tail prefix) and counts it for the badge; it no longer decides a section.
 export type Status = 'working' | 'turn' | 'waiting' | 'saved' | 'recent';
-export const STATUS_SECTIONS: { key: Status; name: string }[] = [
-  { key: 'working', name: 'Working' },
-  { key: 'turn', name: 'Your turn' },
-  { key: 'waiting', name: 'Waiting on others' },
-  { key: 'saved', name: 'Saved for later' },
-  { key: 'recent', name: 'Recent' },
-];
 
 /** statusGroupOf with the dashboard's predicates: parked first, then saved, working, your turn (live and waiting_on_user), else Recent. */
 export function statusOf(c: Pick<MobileChat, 'state' | 'parked' | 'saved'> & { live: Pick<LiveLoc, 'working'> }): Status {
@@ -240,7 +233,7 @@ export type SessionRow = ReturnType<typeof sessionRow> & { stale?: boolean };
 export interface SessionSection {
   key: string;
   name: string;
-  kind: 'group' | 'status';
+  kind: 'group' | 'list';
   /** The user group's id (kind 'group'), for the phone's drag and drop. */
   group_id?: number;
   sessions: SessionRow[];
@@ -264,13 +257,12 @@ export function isStaleAge(t: number, now: number): boolean {
 }
 
 /**
- * The phone's list, laid out like the desktop sidebar (default sort, Recent activity): Recent on
- * top is every ungrouped chat active since the start of yesterday, whatever its status (working,
- * your turn, idle), as the desktop's flat recency list is. Then the user's groups (drag order,
- * only those with a live chat here), then the ungrouped chats older than that (the desktop's
- * Stale), split into the status sections in desktop order, idle ones under Stale. `groups` is every group, empty ones
- * too, for the move sheet. Every section is most recently active first, ties on key. counts are
- * by status over every chat, grouped or not, so the badge still counts every chat whose turn it is.
+ * The phone's list, laid out like the desktop sidebar's default view (Recent activity,
+ * sidebarRows in src/dashboard.ts): the user's groups first, in their saved order and empty ones
+ * too (a drop target), each holding its chats however old; then Recent, every ungrouped chat
+ * active since the start of yesterday; then Stale, the older ungrouped ones. No status sections:
+ * a row's status shows on the row. Every section is most recently active first, ties on key.
+ * counts are by status over every chat, so the badge still counts every chat whose turn it is.
  */
 export function sessionsPayload(
   chats: MobileChat[],
@@ -285,30 +277,18 @@ export function sessionsPayload(
   rows.sort((a, b) => fresh(b.c) - fresh(a.c) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const counts: Record<Status, number> = { working: 0, turn: 0, waiting: 0, saved: 0, recent: 0 };
   for (const r of rows) counts[r.st]++;
-  const known = new Set(groups.map((g) => g.id));
-  const byGroup = new Map<number, SessionRow[]>();
-  const byStatus = new Map<Status, SessionRow[]>();
+  const byGroup = new Map<number, SessionRow[]>(groups.map((g) => [g.id, []]));
   const recent: SessionRow[] = [];
+  const stale: SessionRow[] = [];
   for (const r of rows) {
-    const stale = isStaleAge(fresh(r.c), now);
-    const row = { ...sessionRow(r.c, r.st === 'working' ? '' : tail(r.c), topics, nDrafts.get(r.c.session_id) ?? 0), stale };
-    const gid = r.c.group?.id;
-    if (gid && known.has(gid)) (byGroup.get(gid) ?? byGroup.set(gid, []).get(gid)!).push(row);
-    else if (!stale) recent.push(row);
-    else (byStatus.get(r.st) ?? byStatus.set(r.st, []).get(r.st)!).push(row);
+    const old = isStaleAge(fresh(r.c), now);
+    const row = { ...sessionRow(r.c, r.st === 'working' ? '' : tail(r.c), topics, nDrafts.get(r.c.session_id) ?? 0), stale: old };
+    const g = r.c.group?.id ? byGroup.get(r.c.group.id) : undefined;
+    (g ?? (old ? stale : recent)).push(row);
   }
-  const sections: SessionSection[] = [];
-  const status = (st: { key: Status; name: string }) => {
-    const s = byStatus.get(st.key);
-    // An old idle chat is the desktop's Stale, not a second Recent.
-    if (s?.length) sections.push(st.key === 'recent' ? { key: 'stale', name: 'Stale', kind: 'status', sessions: s } : { key: st.key, name: st.name, kind: 'status', sessions: s });
-  };
-  if (recent.length) sections.push({ key: 'recent', name: 'Recent', kind: 'status', sessions: recent });
-  for (const g of groups) {
-    const s = byGroup.get(g.id);
-    if (s?.length) sections.push({ key: `g:${g.id}`, name: g.name, kind: 'group', group_id: g.id, sessions: s });
-  }
-  STATUS_SECTIONS.forEach(status);
+  const sections: SessionSection[] = groups.map((g) => ({ key: `g:${g.id}`, name: g.name, kind: 'group', group_id: g.id, sessions: byGroup.get(g.id)! }));
+  if (recent.length) sections.push({ key: 'recent', name: 'Recent', kind: 'list', sessions: recent });
+  if (stale.length) sections.push({ key: 'stale', name: 'Stale', kind: 'list', sessions: stale });
   return { sections, groups: groups.map((g) => ({ id: g.id, name: g.name })), counts, outbox_pending: drafts.length };
 }
 

@@ -379,8 +379,8 @@ describe('what a paired phone can do', () => {
     expect(s.body.counts).toEqual({ working: 1, turn: 1, waiting: 0, saved: 0, recent: 0 });
     expect(s.body.outbox_pending).toBe(1);
     const secs = s.body.sections as { key: string; kind: string; sessions: { key: string; group: string; tail: string; pane: string; drafts: number }[] }[];
-    expect(secs.map((x) => [x.key, x.kind])).toEqual([['working', 'status'], ['turn', 'status']]);
-    expect(secs[1].sessions[0]).toMatchObject({ key: 'claude:s1', group: 'turn', tail: 'Should I ship it?', pane: 'loom-work:1.0', drafts: 1 });
+    expect(secs.map((x) => [x.key, x.kind, x.sessions.map((r) => r.group)])).toEqual([['stale', 'list', ['turn', 'working']]]);
+    expect(secs[0].sessions[0]).toMatchObject({ key: 'claude:s1', group: 'turn', tail: 'Should I ship it?', pane: 'loom-work:1.0', drafts: 1 });
     const one = await raw('GET', '/m/api/session?key=claude:s1', ph());
     expect(one.body.can_reply).toBe(true);
     expect((one.body.session as { drafts: number }).drafts).toBe(1);
