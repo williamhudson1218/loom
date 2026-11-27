@@ -65,10 +65,18 @@ describe('closeSession', () => {
   it('quits Claude with Ctrl-C twice', () => {
     vi.mocked(execFileSync).mockClear().mockReturnValue('');
 
-    expect(closeSession('%9', 'claude')).toEqual({ ok: true, detail: 'sent Ctrl-C x2' });
+    expect(closeSession('%9', 'claude', () => false)).toEqual({ ok: true, detail: 'sent Ctrl-C x2' });
 
     const sent = vi.mocked(execFileSync).mock.calls.map((c) => (c[1] as string[]).join(' '));
     expect(sent).toEqual(['send-keys -t %9 C-c', 'send-keys -t %9 C-c']);
+  });
+
+  it('presses the pair again while Claude is still in the pane', () => {
+    vi.mocked(execFileSync).mockClear().mockReturnValue('');
+    let checks = 0;
+    closeSession('%9', 'claude', () => ++checks === 1);
+    const sent = vi.mocked(execFileSync).mock.calls.map((c) => (c[1] as string[]).join(' '));
+    expect(sent).toEqual(Array(4).fill('send-keys -t %9 C-c'));
   });
 });
 

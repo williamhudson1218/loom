@@ -320,6 +320,23 @@ describe('closing the pane, on a throwaway tmux socket', () => {
     for (let i = 0; i < 20 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 100));
     expect(fs.existsSync(marker)).toBe(true);
   });
+
+  it('presses Ctrl-C again when a busy agent only interrupted its turn', async () => {
+    process.env.LOOM_TMUX_SOCKET = sock;
+    // Ignores the first two Ctrl-Cs (a busy turn being interrupted), exits on the third.
+    const script = marker + '.sh';
+    fs.writeFileSync(script, `n=0\non_int() { n=$((n+1)); if [ $n -ge 3 ]; then echo closed > ${marker}; exit 0; fi; }\ntrap on_int INT\nwhile :; do sleep 0.1; done\n`);
+    execFileSync('tmux', ['-L', sock, '-f', path.join(__dirname, 'fixtures', 'tmux-test.conf'), 'new-session', '-d', '-s', 'park-test', '-x', '80', '-y', '24', `sh -c 'sh ${script}; sleep 30'`]);
+    const pane = execFileSync('tmux', ['-L', sock, 'list-panes', '-a', '-F', '#{pane_id}'], { encoding: 'utf-8' }).trim().split('\n')[0];
+    await new Promise((r) => setTimeout(r, 400));
+    try {
+      expect(closeSession(pane, 'claude', () => !fs.existsSync(marker)).ok).toBe(true);
+      for (let i = 0; i < 20 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 100));
+      expect(fs.existsSync(marker)).toBe(true);
+    } finally {
+      fs.rmSync(script, { force: true });
+    }
+  });
 });
 
 // The three outcomes of the confirm step, with a stubbed sender and a stubbed pane closer.

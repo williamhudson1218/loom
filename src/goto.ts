@@ -54,7 +54,17 @@ export function sendToPane(paneId: string, text: string, agent: Agent = 'claude'
 // completion list, and whether the first Enter accepts the completion or submits
 // outright depends on whether that popup has rendered yet. The second Enter covers
 // the accept case, and lands harmlessly on the freed shell otherwise.
-export function closeSession(paneId: string, agent: Agent = 'claude'): GotoResult {
+/** Is a Claude Code process still in the pane? Its pane command is its version string (2.1.332). */
+export function claudeInPane(paneId: string): boolean {
+  try {
+    const cmd = tmux(['display-message', '-p', '-t', paneId, '#{pane_current_command}']).trim();
+    return /^\d+\.\d+/.test(cmd) || cmd === 'claude';
+  } catch {
+    return false;
+  }
+}
+
+export function closeSession(paneId: string, agent: Agent = 'claude', stillRunning: (paneId: string) => boolean = claudeInPane): GotoResult {
   try {
     if (agent === 'codex') {
       tmux(['send-keys', '-t', paneId, '-l', '/quit']);
@@ -65,6 +75,15 @@ export function closeSession(paneId: string, agent: Agent = 'claude'): GotoResul
     } else {
       tmux(['send-keys', '-t', paneId, 'C-c']);
       tmux(['send-keys', '-t', paneId, 'C-c']);
+      // A busy Claude spends the first Ctrl-C interrupting its turn, so the pair
+      // can leave it at its composer. Check, and press the pair again if so.
+      for (let i = 0; i < 2; i++) {
+        settle(700);
+        if (!stillRunning(paneId)) break;
+        tmux(['send-keys', '-t', paneId, 'C-c']);
+        settle(150);
+        tmux(['send-keys', '-t', paneId, 'C-c']);
+      }
     }
   } catch (e) {
     return { ok: false, detail: 'send-keys failed: ' + (e as Error).message };

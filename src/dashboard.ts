@@ -983,6 +983,7 @@ ${TEST_LINKS_CSS}
   #mmsgs { flex:999 1 420px; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:9px; padding-bottom:16px; }
   #mdetail { flex:1 1 300px; max-width:420px; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding-bottom:16px; }
   #mmsgs .msg { max-width:100%; align-self:stretch; box-sizing:border-box; flex:none; }
+  #mmsgs .msg.agent { align-self:center; max-width:85%; }
   #mbanner:empty { display:none; }
   .banner { padding:12px 14px; border-radius:10px; border:1px solid #2a2f40; background:#121620; display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
   .banner .bt { flex:1 1 260px; min-width:0; }
@@ -1954,7 +1955,7 @@ function wireRename(){$('#rncancel').onclick=closeRename;$('#rnsave').onclick=sa
 // ---- Transcript tab -----------------------------------------------------------
 // A chat's transcript, fetched and rendered the same way for the Board and the Watchers tab (watcherview.ts).
 function transcriptUrl(sid,agent){return '/api/transcript?session='+encodeURIComponent(sid)+'&agent='+encodeURIComponent(agent);}
-function transcriptMsgsHtml(d){return d.messages.map(m=>'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':agentLabel(d.agent))+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';}
+function transcriptMsgsHtml(d){return d.messages.map(m=>m.role==='user'&&m.src?'<div class="msg agent"><div class="who">'+(m.src.kind==='agent'?'from '+esc(m.src.label):esc(m.src.label))+'</div>'+esc(m.text)+'</div>':'<div class="msg '+m.role+'"><div class="who">'+(m.role==='user'?'You':agentLabel(d.agent))+'</div>'+esc(m.text)+'</div>').join('')||'<p class="muted">no messages yet</p>';}
 function loadTranscript(toBottom){if(!sel)return;const req=selKey();var u=transcriptUrl(sel.sid,sel.agent);if(sel.arch)u+='&jsonl='+encodeURIComponent(sel.arch.jsonl)+'&proj='+encodeURIComponent(sel.arch.proj)+'&title='+encodeURIComponent(sel.arch.title);
   fetch(u).then(r=>r.json()).then(d=>{if(selKey()!==req||!d.ok)return;const wrap=$('#mmsgs');const atBottom=wrap.scrollTop+wrap.clientHeight>=wrap.scrollHeight-50;
     const last=d.messages.length?d.messages[d.messages.length-1].text:'';const sig=d.messages.length+':'+last.length;
