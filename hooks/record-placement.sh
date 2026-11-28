@@ -8,8 +8,9 @@
 # session_id / transcript_path / cwd / hook_event_name keys), so one script serves
 # both — it just has to record WHICH agent it was, since a session id alone is
 # ambiguous across the two.
-[ -z "$TMUX" ] && exit 0
-[ -z "$TMUX_PANE" ] && exit 0
+# Outside tmux there is nothing to record. Drain stdin first so the caller writing the payload
+# never hits a closed pipe (EPIPE).
+if [ -z "$TMUX" ] || [ -z "$TMUX_PANE" ]; then cat >/dev/null 2>&1; exit 0; fi
 
 INPUT=$(cat)
 # Emit "<session_id> <agent>". The agent is read off transcript_path: Codex writes
