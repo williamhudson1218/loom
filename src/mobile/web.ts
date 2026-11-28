@@ -19,7 +19,9 @@ export const MOBILE_HTML = `<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Loom">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Not black-translucent: on iOS 26 that sizes the home-screen web view short by the status bar
+     height (WebKit 301108), leaving a strip at the bottom nothing can paint. Read at install time. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="/m/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/m/icon-180.png">
 <link rel="icon" type="image/png" href="/m/icon-192.png">
