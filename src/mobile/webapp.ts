@@ -130,30 +130,28 @@ var shellUp = false;
 // Fill the screen: #app is fixed to the layout viewport (CSS). With the keyboard up, iOS keeps the
 // layout viewport full height and pans the page; pin #app to the visible part instead so the
 // composer sits right above the keyboard (and drop its home-indicator padding, which the keyboard covers).
-// Closing the keyboard: iOS (home-screen app) can leave the layout viewport at its keyboard-up
-// height, so #app stopped short and left dead space at the bottom. The home-screen app owns the
-// whole screen, so without the keyboard it is sized to the screen, and fit() runs again once the
-// keyboard has finished closing (focusout) and puts any leftover page scroll back at 0.
-function fullScreenH() {
-  if (!standalone() || !window.screen) return 0;
-  var portrait = !window.matchMedia || window.matchMedia('(orientation: portrait)').matches;
-  return portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
-}
+// Closing the keyboard: iOS (home-screen app) can leave the web view itself shorter than the
+// screen afterwards. Nothing the page draws can reach below that, and sizing #app to the screen
+// only cut the tab bar off, so #app follows the visible area. Once the keyboard has closed
+// (focusout), the leftover page scroll goes back to 0 and the viewport meta is re-applied, which
+// prompts iOS to re-measure the view.
 (function () {
   var vv = window.visualViewport;
   if (!vv) return;
   function fit() {
-    var full = fullScreenH();
-    var kb = Math.max(full, window.innerHeight) - vv.height > 120;
+    var kb = window.innerHeight - vv.height > 120;
     app.classList.toggle('kb', kb);
-    app.style.height = kb ? vv.height + 'px' : full ? full + 'px' : '';
+    app.style.height = kb ? vv.height + 'px' : '';
     if (window.scrollY || vv.offsetTop) window.scrollTo(0, 0);
+  }
+  function remeasure() {
+    var meta = document.querySelector('meta[name=viewport]');
+    if (meta) { var c = meta.getAttribute('content'); meta.setAttribute('content', c + ', maximum-scale=1'); setTimeout(function () { meta.setAttribute('content', c); fit(); }, 30); }
+    fit();
   }
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
-  window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
-  document.addEventListener('focusout', function () { setTimeout(fit, 60); setTimeout(fit, 400); });
-  fit();
+  document.addEventListener('focusout', function () { setTimeout(fit, 60); setTimeout(remeasure, 400); });
 })();
 
 function api(path, opt) {
