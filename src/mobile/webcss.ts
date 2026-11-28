@@ -45,7 +45,7 @@ h1, h2, p { margin: 0; }
 .accent { color: var(--accent); }
 .ico { display: inline-flex; vertical-align: middle; }
 
-#app { position: fixed; top: 0; right: 0; bottom: 0; left: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
+#app { position: fixed; top: 0; right: 0; bottom: 0; left: 0; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
 #app.kb { bottom: auto; }
 #app.kb .composer { padding-bottom: 10px; }
 .scr { flex: 1; min-height: 0; display: flex; flex-direction: column; }
