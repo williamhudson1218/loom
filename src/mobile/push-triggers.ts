@@ -102,7 +102,10 @@ export class PushDispatcher {
         d.dropEndpoint(dev.push.endpoint);
         skipped[dev.id] = 'gone';
       } else if (status >= 200 && status < 300) sent.push(dev.id);
-      else skipped[dev.id] = `status-${status}`;
+      else {
+        skipped[dev.id] = `status-${status}`;
+        console.error(`[push] ${dev.id}: push service answered ${status}`);
+      }
     }
     return { sent, skipped };
   }

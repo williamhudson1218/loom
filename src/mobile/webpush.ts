@@ -88,8 +88,8 @@ export function loadVapidKeys(file: string = VAPID_PATH()): VapidKeys {
   return k;
 }
 
-/** Generic contact for the push services; never a person's address. */
-export const VAPID_SUBJECT = 'https://localhost';
+/** Contact for the push services; never a person's address. Apple rejects a localhost subject (403 BadJwtToken), so it is the public project URL. */
+export const VAPID_SUBJECT = 'https://github.com/williamhudson1218/loom';
 
 /** `vapid t=<jwt>, k=<public key>` for one push service origin. */
 export function vapidAuthorization(endpoint: string, keys: VapidKeys, now: number = Date.now(), subject: string = VAPID_SUBJECT): string {

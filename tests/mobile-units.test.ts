@@ -115,7 +115,7 @@ describe('Web Push encryption (RFC 8291)', () => {
     const m = /^vapid t=([^.]+)\.([^.]+)\.([^,]+), k=(.+)$/.exec(auth)!;
     expect(m[4]).toBe(k.publicKey);
     const claims = JSON.parse(Buffer.from(m[2], 'base64url').toString());
-    expect(claims).toEqual({ aud: 'https://web.push.apple.com', exp: 1_700_000_000 + 12 * 3600, sub: 'https://localhost' });
+    expect(claims).toEqual({ aud: 'https://web.push.apple.com', exp: 1_700_000_000 + 12 * 3600, sub: 'https://github.com/williamhudson1218/loom' });
     const pub = Buffer.from(k.publicKey, 'base64url');
     const key = createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') }, format: 'jwk' });
     expect(verify('sha256', Buffer.from(`${m[1]}.${m[2]}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(m[3], 'base64url'))).toBe(true);
