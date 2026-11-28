@@ -130,28 +130,37 @@ var shellUp = false;
 // Fill the screen: #app is fixed to the layout viewport (CSS). With the keyboard up, iOS keeps the
 // layout viewport full height and pans the page; pin #app to the visible part instead so the
 // composer sits right above the keyboard (and drop its home-indicator padding, which the keyboard covers).
-// Closing the keyboard: iOS (home-screen app) can leave the web view itself shorter than the
-// screen afterwards. Nothing the page draws can reach below that, and sizing #app to the screen
-// only cut the tab bar off, so #app follows the visible area. Once the keyboard has closed
-// (focusout), the leftover page scroll goes back to 0 and the viewport meta is re-applied, which
-// prompts iOS to re-measure the view.
+// #app follows the visual viewport (the part of the screen actually visible): its height and top
+// come from window.visualViewport every time it changes. iOS's own signals were unreliable both
+// ways: with the keyboard up the layout viewport sometimes stayed full height (the composer sat
+// under the keyboard), and after it closed the page could stay scrolled (dead space at the bottom
+// until dragged). 'kb' (keyboard up, which drops the composer's home-indicator padding) compares
+// against the tallest height seen at this width. Skipped while pinch-zoomed.
 (function () {
   var vv = window.visualViewport;
   if (!vv) return;
+  var tallest = 0, width = 0;
   function fit() {
-    var kb = window.innerHeight - vv.height > 120;
-    app.classList.toggle('kb', kb);
-    app.style.height = kb ? vv.height + 'px' : '';
-    if (window.scrollY || vv.offsetTop) window.scrollTo(0, 0);
+    if (Math.abs(vv.scale - 1) > 0.01) return;
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    if (document.scrollingElement && document.scrollingElement.scrollTop) document.scrollingElement.scrollTop = 0;
+    var h = Math.round(vv.height), w = Math.round(vv.width);
+    if (w !== width) { width = w; tallest = 0; }
+    tallest = Math.max(tallest, h, vv.offsetTop ? 0 : window.innerHeight);
+    app.classList.add('vv');
+    app.classList.toggle('kb', tallest - h > 120);
+    app.style.height = h + 'px';
+    app.style.top = Math.round(vv.offsetTop) + 'px';
   }
-  function remeasure() {
-    var meta = document.querySelector('meta[name=viewport]');
-    if (meta) { var c = meta.getAttribute('content'); meta.setAttribute('content', c + ', maximum-scale=1'); setTimeout(function () { meta.setAttribute('content', c); fit(); }, 30); }
-    fit();
-  }
+  function soon() { fit(); setTimeout(fit, 60); setTimeout(fit, 300); setTimeout(fit, 700); }
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
-  document.addEventListener('focusout', function () { setTimeout(fit, 60); setTimeout(remeasure, 400); });
+  window.addEventListener('scroll', fit, { passive: true });
+  document.addEventListener('focusin', soon);
+  document.addEventListener('focusout', soon);
+  window.addEventListener('pageshow', soon);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) soon(); });
+  fit();
 })();
 
 function api(path, opt) {

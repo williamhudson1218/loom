@@ -34,7 +34,8 @@ export const APP_CSS = String.raw`
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--text); }
+/* The page itself never scrolls (a leftover page scroll after the keyboard closed was the dead space); #app follows the visible viewport. */
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
 body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
 button { font: inherit; cursor: pointer; color: inherit; }
 textarea, input { font: inherit; color: inherit; }
@@ -46,7 +47,7 @@ h1, h2, p { margin: 0; }
 .ico { display: inline-flex; vertical-align: middle; }
 
 #app { position: fixed; top: 0; right: 0; bottom: 0; left: 0; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
-#app.kb { bottom: auto; }
+#app.vv { bottom: auto; }
 #app.kb .composer { padding-bottom: 10px; }
 .scr { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
