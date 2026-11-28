@@ -130,17 +130,30 @@ var shellUp = false;
 // Fill the screen: #app is fixed to the layout viewport (CSS). With the keyboard up, iOS keeps the
 // layout viewport full height and pans the page; pin #app to the visible part instead so the
 // composer sits right above the keyboard (and drop its home-indicator padding, which the keyboard covers).
+// Closing the keyboard: iOS (home-screen app) can leave the layout viewport at its keyboard-up
+// height, so #app stopped short and left dead space at the bottom. The home-screen app owns the
+// whole screen, so without the keyboard it is sized to the screen, and fit() runs again once the
+// keyboard has finished closing (focusout) and puts any leftover page scroll back at 0.
+function fullScreenH() {
+  if (!standalone() || !window.screen) return 0;
+  var portrait = !window.matchMedia || window.matchMedia('(orientation: portrait)').matches;
+  return portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+}
 (function () {
   var vv = window.visualViewport;
   if (!vv) return;
   function fit() {
-    var kb = window.innerHeight - vv.height > 120;
+    var full = fullScreenH();
+    var kb = Math.max(full, window.innerHeight) - vv.height > 120;
     app.classList.toggle('kb', kb);
-    app.style.height = kb ? vv.height + 'px' : '';
-    if (kb && (window.scrollY || vv.offsetTop)) window.scrollTo(0, 0);
+    app.style.height = kb ? vv.height + 'px' : full ? full + 'px' : '';
+    if (window.scrollY || vv.offsetTop) window.scrollTo(0, 0);
   }
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
+  window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
+  document.addEventListener('focusout', function () { setTimeout(fit, 60); setTimeout(fit, 400); });
+  fit();
 })();
 
 function api(path, opt) {
