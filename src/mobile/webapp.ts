@@ -777,7 +777,7 @@ function detailScreen(r) {
   var earlierEl = h('button', { class: 'm-earlier', style: 'display:none' });
   var emptyEl = h('div', { class: 'empty', text: 'No messages yet.', style: 'display:none' });
   var pillEl = h('button', { class: 'newpill', style: 'display:none', text: '↓ New messages' });
-  var scroller = h('div', { class: 'scroll' }, h('div', { class: 'msgs-top' }, earlierEl), msgsEl, emptyEl, optEl, liveEl, h('div', { class: 'pillwrap' }, pillEl));
+  var scroller = h('div', { class: 'scroll noover' }, h('div', { class: 'msgs-top' }, earlierEl), msgsEl, emptyEl, optEl, liveEl, h('div', { class: 'pillwrap' }, pillEl));
   var ta = h('textarea', { class: 'tinput', rows: '1', placeholder: 'Reply', enterkeyhint: 'send', 'aria-label': 'Reply' });
   var sendBtn = h('button', { class: 'sendbtn', 'aria-label': 'Send reply' }, icon('send'));
   var stopBtn = h('button', { class: 'stopbtn', 'aria-label': 'Interrupt (sends Esc)', title: 'Interrupt (Esc)' }, icon('stop'));
@@ -900,7 +900,12 @@ function detailScreen(r) {
     pane.textContent = sess.pane || '';
     ta.placeholder = 'Reply to ' + (sess.name || 'session');
   }
+  // Polls repaint the head, quick replies, sending bubbles and live row every 1.5-3 s. Rebuilding
+  // DOM that didn't change under a finger makes iOS drop or misroute the scroll gesture (the chat
+  // "won't scroll up until tapped"), so each of these skips when its content is the same.
+  function unchanged(el, sig) { if (el._sig === sig) return true; el._sig = sig; return false; }
   function paintQuick() {
+    if (unchanged(quick, String(canReply))) return;
     clear(quick);
     ['Yes, go ahead', 'Keep going', 'What’s left?'].forEach(function (q) {
       quick.appendChild(h('button', { class: 'qbtn', text: q, disabled: !canReply, on: { click: function () { send(q); } } }));
@@ -978,6 +983,7 @@ function detailScreen(r) {
     });
   }
   function paintOpt() {
+    if (unchanged(optEl, JSON.stringify(sentQ.map(function (q) { return [q.shown, q.urls]; })))) return;
     clear(optEl);
     optEl.style.display = sentQ.length ? '' : 'none';
     sentQ.forEach(function (q) {
@@ -988,14 +994,21 @@ function detailScreen(r) {
     });
     toBottomIfFollowing();
   }
+  // The live row's nodes are built once and only their text changes, so the spinner line ticking
+  // every poll doesn't add or remove nodes under a scrolling finger.
+  var liveText = h('span', { text: '' }), liveTool = h('span', { text: '' });
+  var liveB = h('div', { class: 'mlive-b' }, h('span', { 'aria-hidden': 'true', text: '▸' }), liveTool);
+  liveEl.appendChild(h('div', { class: 'mlive-a' }, h('span', { class: 'mlive-dot', 'aria-hidden': 'true' }), liveText));
+  liveEl.appendChild(liveB);
   function paintLive(ls) {
     var on = !!(ls && ls.text) || sess.group === 'working';
     liveOn = on || Date.now() - sentAt < 60000;
-    clear(liveEl);
+    var text = on ? (ls && ls.text ? ls.text : 'Working…') : '', tool = on ? lastTool : '';
+    if (unchanged(liveEl, on + '\u0001' + text + '\u0001' + tool)) return;
     liveEl.style.display = on ? '' : 'none';
-    if (!on) return;
-    liveEl.appendChild(h('div', { class: 'mlive-a' }, h('span', { class: 'mlive-dot', 'aria-hidden': 'true' }), h('span', { text: ls && ls.text ? ls.text : 'Working…' })));
-    if (lastTool) liveEl.appendChild(h('div', { class: 'mlive-b' }, h('span', { 'aria-hidden': 'true', text: '▸' }), h('span', { text: lastTool })));
+    if (liveText.textContent !== text) liveText.textContent = text;
+    if (liveTool.textContent !== tool) liveTool.textContent = tool;
+    liveB.style.display = tool ? '' : 'none';
     toBottomIfFollowing();
   }
   function paintEnabled() {
